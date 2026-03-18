@@ -1,0 +1,354 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String         @id @default(cuid())
+  name           String?
+  email          String         @unique
+  password       String?
+  phoneNumber    String?        @unique
+  role           Role           @default(USER)
+  isActive       Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  lastLoginAt    DateTime?
+  profilePicture String?
+  addresses      Address[]
+  reviews        Review[]
+  cart           Cart?
+  order          Order[]
+  authProvider   AuthProvider[]
+  auditLog       AuditLog[]
+  wishlist       WishList?
+}
+
+model AuthProvider {
+  id         String   @id @default(cuid())
+  userId     String
+  provider   String
+  providerId String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([provider, providerId])
+  @@unique([userId, provider])
+}
+
+model Address {
+  id        String   @id @default(cuid())
+  street    String
+  city      String
+  state     String
+  zipCode   String
+  country   String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Order     Order[]
+
+  @@index([userId])
+}
+
+model Category {
+  id            String        @id @default(cuid())
+  name          String        @unique
+  description   String?       @db.Text
+  image         String?
+  products      Product[]
+  subcategories SubCategory[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  discount      Discount?     @relation(fields: [discountId], references: [id])
+  discountId    String?
+}
+
+model SubCategory {
+  id          String    @id @default(cuid())
+  name        String
+  description String?   @db.Text
+  image       String?
+  categoryId  String
+  category    Category  @relation(fields: [categoryId], references: [id])
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Brand {
+  id          String    @id @default(cuid())
+  name        String    @unique @db.VarChar(255)
+  description String?   @db.Text
+  logo        String?
+  products    Product[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Tag {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Variant {
+  id         String      @id @default(cuid())
+  size       String?
+  color      String?
+  quantity   Int         @default(0)
+  price      Decimal     @db.Decimal(10, 2)
+  productId  String
+  product    Product     @relation(fields: [productId], references: [id])
+  cartItem   CartItem[]
+  orderItem  OrderItem[]
+  discount   Discount?   @relation(fields: [discountId], references: [id])
+  discountId String?
+}
+
+model Product {
+  id               String  @id @default(cuid())
+  name             String  @db.VarChar(255)
+  description      String? @db.Text
+  shortDescription String? @db.VarChar(500)
+
+  price        Decimal?  @db.Decimal(10, 2)
+  currentPrice Decimal?  @db.Decimal(10, 2)
+  currency     Currency? @default(GHS)
+  taxRate      Decimal?  @default(0.00) @db.Decimal(5, 2)
+  isTaxable    Boolean   @default(false)
+
+  sku     String? @unique
+  barcode String? @unique
+
+  quantity      Int          @default(0)
+  stockStatus   StockStatus? @default(IN_STOCK)
+  lowStockAlert Int?         @default(5)
+
+  images      String[]
+  attachments String[]
+
+  isActive    Boolean        @default(true)
+  status      ProductStatus? @default(DRAFT)
+  publishedAt DateTime?
+
+  deliveryOptions         DeliveryOptions[] @default([LOCAL_DELIVERY])
+  selectedDeliveryRegions String[]
+
+  expiryDate DateTime?
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  categoryId    String?
+  category      Category?    @relation(fields: [categoryId], references: [id])
+  subcategoryId String?
+  subcategory   SubCategory? @relation(fields: [subcategoryId], references: [id])
+  tags          Tag[]
+  reviews       Review[]
+  variants      Variant[]
+  discounts     Discount[]
+  cartItem      CartItem[]
+  orderItem     OrderItem[]
+  wishlist      WishList[]
+  brand         Brand?       @relation(fields: [brandId], references: [id])
+  brandId       String?
+
+  @@index([sku])
+}
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum StockStatus {
+  IN_STOCK
+  OUT_OF_STOCK
+  PREORDER
+  BACKORDER
+}
+
+enum Currency {
+  GHS
+  USD
+  EUR
+  GBP
+  NGN
+}
+
+enum DeliveryOptions {
+  LOCAL_DELIVERY
+  INTERNATIONAL_DELIVERY
+  SELECTED_REGIONS
+}
+
+model Review {
+  id        String  @id @default(cuid())
+  score     Int
+  comment   String?
+  productId String
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+}
+
+model Discount {
+  id              String       @id @default(cuid())
+  name            String
+  description     String?
+  type            DiscountType
+  value           Decimal
+  startDate       DateTime
+  endDate         DateTime
+  isActive        Boolean      @default(false)
+  products        Product[]
+  variants        Variant[]
+  categories      Category[]
+  minimumPurchase Decimal?     @db.Decimal(10, 2)
+  orderItems      OrderItem[]
+  cartItems       CartItem[]
+
+  @@index([startDate, endDate, isActive])
+}
+
+model Cart {
+  id        String     @id @default(cuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  items     CartItem[]
+}
+
+model CartItem {
+  id              String    @id @default(cuid())
+  cartId          String
+  productId       String
+  variantId       String?
+  quantity        Int       @default(1)
+  cart            Cart      @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product         Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant         Variant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  originalPrice   Decimal?  @db.Decimal(10, 2)
+  discountedPrice Decimal?  @db.Decimal(10, 2)
+  discount        Discount? @relation(fields: [discountId], references: [id])
+  discountId      String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([cartId, productId])
+}
+
+model Order {
+  id                   String      @id @default(cuid())
+  userId               String
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  discountTotal        Decimal?
+  totalWithOutDiscount Decimal?
+  totalAmount          Float
+  status               OrderStatus @default(PENDING)
+  shippingAddressId    String
+  shippingAddress      Address     @relation(fields: [shippingAddressId], references: [id])
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  items                OrderItem[]
+  payment              Payment?
+
+  @@index([userId])
+}
+
+model OrderItem {
+  id             String    @id @default(cuid())
+  orderId        String
+  productId      String
+  variantId      String?
+  quantity       Int       @default(1)
+  priceAtOrder   Float
+  order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product        Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant        Variant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt      DateTime  @default(now())
+  originalPrice  Decimal   @db.Decimal(10, 2)
+  discountAmount Decimal?  @db.Decimal(10, 2)
+  discount       Discount? @relation(fields: [discountId], references: [id])
+  discountId     String?
+
+  @@index([productId, orderId])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  orderId        String        @unique
+  order          Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount         Float
+  currency       String        @default("GHS")
+  paymentMethod  String
+  status         PaymentStatus @default(PENDING)
+  transactionId  String?
+  paymentDetails Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deleted        Boolean       @default(false)
+  deletedAt      DateTime?
+}
+
+model WishList {
+  id        String    @id @default(cuid())
+  userId    String    @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  entity    String
+  entityId  String
+  action    String
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  details   Json?
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FLAT
+}
