@@ -144,8 +144,8 @@ export class CartService {
 
     await this.prismaService.cartItem.upsert({
       where: { id: existingItem?.id ?? '' },
-      update: { quantity: newQuantity },
-      create: { cartId, productId: product.id, quantity },
+      update: { quantity: newQuantity, originalPrice: product.price },
+      create: { cartId, productId: product.id, quantity, originalPrice: product.price },
     });
   }
 

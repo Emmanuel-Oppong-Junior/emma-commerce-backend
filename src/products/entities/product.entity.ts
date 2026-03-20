@@ -31,6 +31,9 @@ export class Product {
   @Field(() => Float, { description: 'price of the product' })
   price: Prisma.Decimal;
 
+  @Field(() => Float, { description: 'current price of the product', nullable: true })
+  currentPrice?: Prisma.Decimal;
+
   @Field(() => String, { nullable: true })
   currency?: string;
 

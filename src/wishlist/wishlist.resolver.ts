@@ -5,7 +5,7 @@ import { ActiveUser } from '../iam/authentication/decorators/active-user.decorat
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '../users/enums/role.enum';
 
-@Roles(Role.USER)
+@Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
 @Resolver(() => Wishlist)
 export class WishlistResolver {
   constructor(private readonly wishlistService: WishlistService) {}

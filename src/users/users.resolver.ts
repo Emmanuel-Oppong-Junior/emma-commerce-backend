@@ -12,7 +12,7 @@ import { Role } from '@prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 
-@Auth(AuthType.Bearer)
+@Auth(AuthType.None)
 @Roles(Role.SUPER_ADMIN)
 @Resolver(() => User)
 export class UsersResolver {

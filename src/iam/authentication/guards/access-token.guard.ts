@@ -17,19 +17,19 @@ export class AccessTokenGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    // const ctx = GqlExecutionContext.create(context);
-    // const request = ctx.getContext().req;
-    // const token = this.extractTokenFromHeader(request);
-    // if (!token) throw new UnauthorizedException();
-    // try {
-    //   const authenticatedUser = await this.jwtService.verifyAsync(token, this.jwtConfiguration);
-    //   const id = authenticatedUser.sub;
-    //   const user = await this.userService.findOne(id);
-    //   if (!user) throw new UnauthorizedException();
-    //   request[REQUEST_USER_KEY] = user;
-    // } catch (e) {
-    //   throw new UnauthorizedException();
-    // }
+    const ctx = GqlExecutionContext.create(context);
+    const request = ctx.getContext().req;
+    const token = this.extractTokenFromHeader(request);
+    if (!token) throw new UnauthorizedException();
+    try {
+      const authenticatedUser = await this.jwtService.verifyAsync(token, this.jwtConfiguration);
+      const id = authenticatedUser.sub;
+      const user = await this.userService.findOne(id);
+      if (!user) throw new UnauthorizedException();
+      request[REQUEST_USER_KEY] = user;
+    } catch (e) {
+      throw new UnauthorizedException();
+    }
     return true;
   }
 

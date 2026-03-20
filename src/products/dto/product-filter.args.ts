@@ -83,4 +83,14 @@ export class ProductFilterArgs {
   })
   @IsOptional()
   inStock?: boolean;
+
+  @Field(() => String, { nullable: true, description: 'Filter by tag ID' })
+  @IsOptional()
+  @IsString()
+  tagId?: string;
+
+  @Field(() => String, { nullable: true, description: 'Filter by tag name' })
+  @IsOptional()
+  @IsString()
+  tagName?: string;
 }

@@ -12,7 +12,7 @@ import { Cart } from './entities/cart.entity';
 import { DiscountService } from '../discount/discount.service';
 
 @Auth(AuthType.Bearer)
-@Roles(Role.USER)
+@Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.USER)
 @Resolver('Cart')
 export class CartResolver {
   constructor(

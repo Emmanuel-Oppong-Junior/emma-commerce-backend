@@ -12,10 +12,10 @@ export class Cart {
   @Field(() => [CartItem], { description: 'Items in the cart' })
   items: CartItem[];
 
-  @Field(() => Float, { description: 'Total original price of all items' })
+  @Field(() => Float, { description: 'Total original price of all items', nullable: true })
   total: number;
 
-  @Field(() => Float, { description: 'Total discount amount applied' })
+  @Field(() => Float, { description: 'Total discount amount applied', nullable: true })
   discountTotal: number;
 
   @Field(() => Float, { description: 'Final total after discounts', nullable: true })

@@ -215,6 +215,8 @@ export class ProductsService {
       categoryName,
       subCategoryName,
       inStock,
+      tagId,
+      tagName,
     } = filter;
     return {
       ...(categoryName && { category: { name: { equals: categoryName, mode: 'insensitive' } } }),
@@ -236,6 +238,8 @@ export class ProductsService {
       ...(priceMax !== undefined && { price: { lte: priceMax } }),
       ...(brand && { brand: { name: { equals: brand, mode: 'insensitive' } } }),
       ...(inStock && { quantity: { gte: 0 } }),
+      ...(tagId && { tags: { some: { id: { equals: tagId } } } }),
+      ...(tagName && { tags: { some: { name: { equals: tagName, mode: 'insensitive' } } } }),
     };
   }
 

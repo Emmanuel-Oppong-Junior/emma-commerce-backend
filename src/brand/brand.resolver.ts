@@ -7,6 +7,9 @@ import { GraphQLResolveInfo } from 'graphql/type';
 import { extractRequestedFieldsFromQuery } from '../commons/useful-functions';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '@prisma/client';
+import { AuthGuard } from '@nestjs/passport';
+import { AuthType } from 'src/iam/authentication/enums/auth-type.enum';
+import { Auth } from 'src/iam/authentication/decorators/auth.decorator';
 
 @Resolver(() => Brand)
 export class BrandResolver {
@@ -30,11 +33,13 @@ export class BrandResolver {
     return this.brandService.deleteBrand(id);
   }
 
+  @Auth(AuthType.None)
   @Query(() => Brand, { nullable: true })
   async brand(@Args('id') id: string) {
     return this.brandService.getBrandById(id);
   }
 
+  @Auth(AuthType.None)
   @Query(() => [Brand], { nullable: 'itemsAndList' })
   async brands(@Info() requestInfo?: GraphQLResolveInfo) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo, {
