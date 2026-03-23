@@ -11,7 +11,7 @@ import { UpdateAddressInput } from './dto/update-address.input';
 export class AddressesResolver {
   constructor(private readonly addressService: AddressesService) {}
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => Address, {
     name: 'address',
     description: 'Retrieves a specific address by ID for the current user',
@@ -20,7 +20,7 @@ export class AddressesResolver {
     return this.addressService.getAddress(userId, addressId);
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => [Address], {
     name: 'userAddresses',
     description: 'Retrieves all addresses for the current user',
@@ -29,7 +29,7 @@ export class AddressesResolver {
     return this.addressService.getUserAddresses(userId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => [Address], {
     name: 'addresses',
     description: 'Retrieves all addresses (admin only)',
@@ -38,7 +38,7 @@ export class AddressesResolver {
     return this.addressService.getAllAddresses();
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Address, {
     name: 'createAddress',
     description: 'Creates a new address for the user',
@@ -47,7 +47,7 @@ export class AddressesResolver {
     return this.addressService.createAddress(userId, input);
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Address, {
     name: 'updateAddress',
     description: 'Updates an existing address for the user',
@@ -60,7 +60,7 @@ export class AddressesResolver {
     return this.addressService.updateAddress(userId, addressId, input);
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Address, {
     name: 'deleteAddress',
     description: 'Deletes an address for the user',

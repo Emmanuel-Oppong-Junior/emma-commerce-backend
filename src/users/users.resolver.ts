@@ -12,7 +12,7 @@ import { Role } from '@prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 
-@Auth(AuthType.None)
+@Auth(AuthType.Bearer)
 @Roles(Role.SUPER_ADMIN)
 @Resolver(() => User)
 export class UsersResolver {
@@ -66,7 +66,7 @@ export class UsersResolver {
     return this.usersService.update(id, updateUserInput);
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Update user profile' })
   updateMyProfile(@ActiveUser('id') id: string, @Args('updateMyProfileInput') updateMyProfileInput: UpdateUserInput) {
     return this.usersService.update(id, updateMyProfileInput);

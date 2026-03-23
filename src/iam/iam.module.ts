@@ -8,6 +8,7 @@ import { UsersModule } from '../users/users.module';
 import { ConfigModule } from '@nestjs/config';
 import { AuthenticationResolver } from './authentication/authentication.resolver';
 import { GoogleAuthenticationService } from './authentication/social/google-authentication.service';
+import { FacebookAuthenticationService } from './authentication/social/facebook-authentication.service';
 import { APP_GUARD } from '@nestjs/core';
 import { AccessTokenGuard } from './authentication/guards/access-token.guard';
 import { AuthenticationGuard } from './authentication/guards/authentication.guard';
@@ -20,6 +21,7 @@ import { RolesGuard } from './authentication/guards/roles.guard';
     { provide: HashingService, useClass: BcryptService },
     AuthenticationResolver,
     GoogleAuthenticationService,
+    FacebookAuthenticationService,
     AccessTokenGuard,
     {
       provide: APP_GUARD,

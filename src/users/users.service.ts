@@ -33,9 +33,18 @@ export class UsersService {
     });
   }
 
-  async createUserByAuthProvider(providerId: string, provider: string, email: string) {
+  async createUserByAuthProvider(providerId: string, provider: string, email?: string, name?: string, profilePicture?: string) {
+    if (email) {
+      const existingUser = await this.findUserByEmail(email);
+      if (existingUser) {
+        await this.prismaService.authProvider.create({
+          data: { userId: existingUser.id, providerId, provider },
+        });
+        return existingUser;
+      }
+    }
     return this.prismaService.user.create({
-      data: { email, authProvider: { create: { providerId, provider } } },
+      data: { email, name, profilePicture, authProvider: { create: { providerId, provider } } },
     });
   }
 
@@ -149,11 +158,10 @@ export class UsersService {
     return this.prismaService.user.findUnique({ where: { email } });
   }
 
-  async findUserByProviderId(providerId: string) {
-    const users = await this.prismaService.user.findMany({
-      where: { authProvider: { every: { providerId } } },
+  findUserByProviderId(providerId: string) {
+    return this.prismaService.user.findFirst({
+      where: { authProvider: { some: { providerId } } },
     });
-    return users[0];
   }
 
   async update(id: string, updateUserInput: UpdateUserInput) {

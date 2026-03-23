@@ -4,13 +4,20 @@ import { SignUpInput } from './dto/sign-up.input';
 import { AuthenticationService } from './authentication.service';
 import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
+import { SocialLoginInput } from './dto/social-login.input';
 import { AuthType } from './enums/auth-type.enum';
 import { Auth } from './decorators/auth.decorator';
+import { GoogleAuthenticationService } from './social/google-authentication.service';
+import { FacebookAuthenticationService } from './social/facebook-authentication.service';
 
 @Auth(AuthType.None)
 @Resolver(() => AuthEntity)
 export class AuthenticationResolver {
-  constructor(private readonly authService: AuthenticationService) {}
+  constructor(
+    private readonly authService: AuthenticationService,
+    private readonly googleAuthService: GoogleAuthenticationService,
+    private readonly facebookAuthService: FacebookAuthenticationService,
+  ) {}
 
   @Mutation(() => AuthEntity, {
     description: 'Register a new user with email and password',
@@ -33,9 +40,13 @@ export class AuthenticationResolver {
     return this.authService.refreshToken(input);
   }
 
-  // Commented out for MVP; to be revisited for social login
-  // @Mutation(() => AuthEntity, { description: 'Sign in with Google OAuth token' })
-  // signInWithGoogle(@Args('input', { type: () => SocialLoginInput }) input: SocialLoginInput) {
-  //   return this.googleService.authenticate(input.token);
-  // }
+  @Mutation(() => AuthEntity, { description: 'Sign in or register with a Google ID token' })
+  signInWithGoogle(@Args('input', { type: () => SocialLoginInput }) input: SocialLoginInput) {
+    return this.googleAuthService.authenticate(input.token);
+  }
+
+  @Mutation(() => AuthEntity, { description: 'Sign in or register with a Facebook access token' })
+  signInWithFacebook(@Args('input', { type: () => SocialLoginInput }) input: SocialLoginInput) {
+    return this.facebookAuthService.authenticate(input.token);
+  }
 }

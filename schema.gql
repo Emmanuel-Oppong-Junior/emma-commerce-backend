@@ -469,6 +469,12 @@ type Mutation {
   """Sign in an existing user with email and password"""
   signIn(input: SignInInput!): AuthEntity!
 
+  """Sign in or register with a Facebook access token"""
+  signInWithFacebook(input: SocialLoginInput!): AuthEntity!
+
+  """Sign in or register with a Google ID token"""
+  signInWithGoogle(input: SocialLoginInput!): AuthEntity!
+
   """Register a new user with email and password"""
   signUp(input: SignUpInput!): AuthEntity!
   softDeletePayment(id: String!): Payment!
@@ -841,6 +847,11 @@ input SignUpInput {
 
   """Password (required for manual signup)"""
   password: String!
+}
+
+input SocialLoginInput {
+  """token"""
+  token: String!
 }
 
 type SubCategory {
