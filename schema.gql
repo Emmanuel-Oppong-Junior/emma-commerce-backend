@@ -434,6 +434,9 @@ type Mutation {
   finalizeOrder(id: String!): Order!
   permanentlyDeleteProduct(productId: String!): Product!
 
+  """Refresh access and refresh tokens using a valid refresh token"""
+  refreshToken(input: RefreshTokenInput!): AuthEntity!
+
   """Deletes a category by ID (admin only)"""
   removeCategory(
     """The ID of the category to delete"""
@@ -794,6 +797,10 @@ type Query {
 
   """Retrieves the user’s wishlist"""
   wishlist: Wishlist!
+}
+
+input RefreshTokenInput {
+  refreshToken: String!
 }
 
 input RemoveProductsFromTagDto {

@@ -3,6 +3,7 @@ import { AuthEntity } from './entities/auth.entity';
 import { SignUpInput } from './dto/sign-up.input';
 import { AuthenticationService } from './authentication.service';
 import { SignInInput } from './dto/sign-in.input';
+import { RefreshTokenInput } from './dto/refresh-token.input';
 import { AuthType } from './enums/auth-type.enum';
 import { Auth } from './decorators/auth.decorator';
 
@@ -23,6 +24,13 @@ export class AuthenticationResolver {
   })
   signIn(@Args('input', { type: () => SignInInput }) input: SignInInput) {
     return this.authService.signIn(input);
+  }
+
+  @Mutation(() => AuthEntity, {
+    description: 'Refresh access and refresh tokens using a valid refresh token',
+  })
+  refreshToken(@Args('input', { type: () => RefreshTokenInput }) input: RefreshTokenInput) {
+    return this.authService.refreshToken(input);
   }
 
   // Commented out for MVP; to be revisited for social login

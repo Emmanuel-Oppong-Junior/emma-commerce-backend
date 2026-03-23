@@ -8,6 +8,7 @@ import jwtConfig from '../config/jwt.config';
 import { ConfigType } from '@nestjs/config';
 import { SignUpInput } from './dto/sign-up.input';
 import { SignInInput } from './dto/sign-in.input';
+import { RefreshTokenInput } from './dto/refresh-token.input';
 
 @Injectable()
 export class AuthenticationService {
@@ -55,10 +56,28 @@ export class AuthenticationService {
     return await this.generateTokens(user);
   }
 
+  async refreshToken(refreshTokenInput: RefreshTokenInput) {
+    try {
+      const { sub: userId } = await this.jwtServices.verifyAsync<{ sub: string }>(
+        refreshTokenInput.refreshToken,
+        {
+          audience: this.jwtConfiguration.audience,
+          issuer: this.jwtConfiguration.issuer,
+          secret: this.jwtConfiguration.refreshSecret,
+        },
+      );
+      const user = await this.userService.findOne(userId);
+      if (!user) throw new UnauthorizedException('User not found');
+      return this.generateTokens(user);
+    } catch {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+  }
+
   async generateTokens(user: User) {
     const [accessToken, refreshToken] = await Promise.all([
-      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl),
-      this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl),
+      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret),
+      this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret),
     ]);
     await this.userService.updateLastLogin(user.id);
     return {
@@ -67,14 +86,14 @@ export class AuthenticationService {
     };
   }
 
-  private async signToken<T>(userId: string, expiresIn: number, payload?: T) {
+  private async signToken<T>(userId: string, expiresIn: number, secret: string, payload?: T) {
     return await this.jwtServices.signAsync(
       { sub: userId, ...payload },
       {
         audience: this.jwtConfiguration.audience,
         issuer: this.jwtConfiguration.issuer,
-        secret: this.jwtConfiguration.secret,
-        expiresIn: expiresIn,
+        secret,
+        expiresIn,
       },
     );
   }
