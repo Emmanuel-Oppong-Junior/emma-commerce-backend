@@ -604,9 +604,9 @@ type Payment {
 }
 
 enum PaymentStatus {
+  COMPLETED
   FAILED
   PENDING
-  SUCCESS
 }
 
 type Product {

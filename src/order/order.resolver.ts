@@ -15,7 +15,7 @@ export class OrdersResolver {
     private readonly discountService: DiscountService,
   ) {}
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => Order, {
     name: 'order',
     description: 'Retrieves a specific order by ID for the current user',
@@ -24,7 +24,7 @@ export class OrdersResolver {
     return this.ordersService.getOrder(userId, orderId);
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => [Order], {
     name: 'userOrders',
     description: 'Retrieves all orders for the current user',
@@ -51,7 +51,7 @@ export class OrdersResolver {
     return this.ordersService.viewOrder(orderId);
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Order, {
     name: 'createOrder',
     description: 'Creates an order from the user’s cart',
@@ -69,7 +69,7 @@ export class OrdersResolver {
     return this.ordersService.updateOrderStatus(input.orderId, input.status);
   }
 
-  @Roles(Role.USER)
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Order, {
     name: 'cancelOrder',
     description: 'Cancels an order and restores stock',

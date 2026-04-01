@@ -145,6 +145,7 @@ export class OrdersService {
         productId: item.productId,
         quantity: item.quantity,
         priceAtOrder: product.price as unknown as number,
+        originalPrice: product.price as unknown as Prisma.Decimal,
       } as OrderItem);
     }
     return orderItems;

@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
-import { Payment, PaymentStatus } from '@prisma/client';
+import { OrderStatus, Payment, PaymentStatus } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
@@ -216,13 +216,22 @@ export class PaymentService {
     verification: Paystack.Response<Paystack.Transaction.VerifyResponse>,
   ): Promise<Payment> {
     const status = verification.data.status === 'success' ? PaymentStatus.COMPLETED : PaymentStatus.FAILED;
-    return this.prismaService.payment.update({
+    const payment = await this.prismaService.payment.update({
       where: { id: paymentId },
       data: {
         status,
         paymentDetails: verification.data,
       },
     });
+
+    if (status === PaymentStatus.COMPLETED) {
+      await this.prismaService.order.update({
+        where: { id: payment.orderId, status: OrderStatus.PENDING },
+        data: { status: OrderStatus.PROCESSING },
+      });
+    }
+
+    return payment;
   }
 
   private async fetchPayment(paymentId: string): Promise<Payment> {
