@@ -35,3 +35,4 @@ import { RolesGuard } from './authentication/guards/roles.guard';
   controllers: [],
 })
 export class IamModule {}
+// Note: UsersRepository is exported from UsersModule and injected into AuthenticationService.

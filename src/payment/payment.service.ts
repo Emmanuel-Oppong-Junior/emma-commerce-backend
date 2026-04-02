@@ -6,15 +6,15 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Role } from '../users/enums/role.enum';
-import { PrismaService } from '../prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
-import { OrderStatus, Payment, PaymentStatus, Prisma } from '@prisma/client';
+import { Payment, PaymentStatus, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { PaystackEvent } from './enums/paystack-event.enum';
 import { LoggerService } from '../commons/logger.service';
+import { PaymentRepository } from './payment.repository';
 
 @Injectable()
 export class PaymentService {
@@ -25,7 +25,7 @@ export class PaymentService {
   } as const;
 
   constructor(
-    private readonly prismaService: PrismaService,
+    private readonly paymentRepository: PaymentRepository,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
   ) {
@@ -43,14 +43,13 @@ export class PaymentService {
     createPaymentDto: CreatePaymentDto,
   ): Promise<Payment & { authorizationUrl?: string }> {
     const { orderId } = createPaymentDto;
-    const {
-      totalAmount,
-      user: { email },
-    } = await this.validateOrderOwnership(userId, orderId);
+    const order = await this.validateOrderOwnership(userId, orderId);
+    const { totalAmount } = order;
+    const email = (order as unknown as { user: { email: string } }).user.email;
     await this.ensurePaymentNotInitiated(orderId);
     const totalAmountNumber = Number(totalAmount);
     const transaction = await this.initializePaystackTransaction({
-      email: email,
+      email,
       amount: totalAmountNumber,
       input: createPaymentDto,
     });
@@ -78,7 +77,7 @@ export class PaymentService {
    */
   async verifyPaymentAsUser(reference: string, userId: string): Promise<Payment> {
     const payment = await this.fetchPaymentByReference(reference);
-    const order = await this.prismaService.order.findUnique({ where: { id: payment.orderId } });
+    const order = await this.paymentRepository.findOrderById(payment.orderId);
     if (!order || order.userId !== userId) {
       throw new ForbiddenException('You do not have access to this payment');
     }
@@ -95,11 +94,11 @@ export class PaymentService {
    * @returns Payment record.
    */
   async getPayment(paymentId: string, requestingUserId: string, requestingUserRole: Role): Promise<Payment> {
-    const payment = await this.fetchPayment(paymentId);
+    const payment = await this.paymentRepository.findById(paymentId);
     if (!payment) throw new NotFoundException(`Payment "${paymentId}" not found`);
     const isAdmin = requestingUserRole === Role.ADMIN || requestingUserRole === Role.SUPER_ADMIN;
     if (!isAdmin) {
-      const order = await this.prismaService.order.findUnique({ where: { id: payment.orderId } });
+      const order = await this.paymentRepository.findOrderById(payment.orderId);
       if (!order || order.userId !== requestingUserId) {
         throw new UnauthorizedException('You do not have access to this payment');
       }
@@ -113,7 +112,7 @@ export class PaymentService {
    * @returns List of payments.
    */
   async getUserPayments(userId: string): Promise<Payment[]> {
-    return this.fetchUserPayments(userId);
+    return this.paymentRepository.findByUser(userId);
   }
 
   /**
@@ -137,10 +136,7 @@ export class PaymentService {
    */
   async softDelete(id: string) {
     await this.findPaymentOrThrow(id);
-    return this.prismaService.payment.update({
-      where: { id },
-      data: { deleted: true, deletedAt: new Date() },
-    });
+    return this.paymentRepository.update(id, { deleted: true, deletedAt: new Date() });
   }
 
   /**
@@ -152,10 +148,7 @@ export class PaymentService {
    */
   async restore(id: string) {
     await this.findPaymentOrThrow(id);
-    return this.prismaService.payment.update({
-      where: { id },
-      data: { deleted: false, deletedAt: null },
-    });
+    return this.paymentRepository.update(id, { deleted: false, deletedAt: null });
   }
 
   /**
@@ -166,30 +159,23 @@ export class PaymentService {
    */
   async remove(id: string) {
     await this.findPaymentOrThrow(id);
-    return this.prismaService.payment.delete({ where: { id } });
+    return this.paymentRepository.delete(id);
   }
 
   private async findPaymentOrThrow(id: string) {
-    const payment = await this.prismaService.payment.findUnique({
-      where: { id },
-    });
+    const payment = await this.paymentRepository.findById(id);
     if (!payment) throw new NotFoundException('Payment Not found');
   }
 
   private async validateOrderOwnership(userId: string, orderId: string) {
-    const order = await this.prismaService.order.findUnique({
-      where: { id: orderId },
-      include: { user: true },
-    });
+    const order = await this.paymentRepository.findOrderWithUser(orderId);
     if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
     if (order.userId !== userId) throw new ForbiddenException('Order does not belong to you');
     return order;
   }
 
   private async ensurePaymentNotInitiated(orderId: string): Promise<void> {
-    const existingPayment = await this.prismaService.payment.findUnique({
-      where: { orderId },
-    });
+    const existingPayment = await this.paymentRepository.findByOrderId(orderId);
     if (existingPayment) throw new BadRequestException('Payment already initiated for this order');
   }
 
@@ -223,16 +209,14 @@ export class PaymentService {
     transaction: Paystack.Response<Paystack.Transaction.InitializeResponse>,
   ): Promise<Payment & { authorizationUrl?: string }> {
     const { orderId, currency, paymentMethod } = input;
-    const payment = await this.prismaService.payment.create({
-      data: {
-        orderId,
-        amount,
-        currency,
-        paymentMethod,
-        status: PaymentStatus.PENDING,
-        transactionId: transaction.data.reference,
-        paymentDetails: this.sanitizeInitializeDetails(transaction.data),
-      },
+    const payment = await this.paymentRepository.create({
+      order: { connect: { id: orderId } },
+      amount,
+      currency,
+      paymentMethod,
+      status: PaymentStatus.PENDING,
+      transactionId: transaction.data.reference,
+      paymentDetails: this.sanitizeInitializeDetails(transaction.data),
     });
     return { ...payment, authorizationUrl: transaction.data.authorization_url };
   }
@@ -265,9 +249,7 @@ export class PaymentService {
   }
 
   private async fetchPaymentByReference(reference: string): Promise<Payment> {
-    const payment = await this.prismaService.payment.findFirst({
-      where: { transactionId: reference, deleted: false },
-    });
+    const payment = await this.paymentRepository.findByReference(reference);
     if (!payment) throw new NotFoundException(`Payment with reference "${reference}" not found`);
     return payment;
   }
@@ -283,36 +265,17 @@ export class PaymentService {
     verification: Paystack.Response<Paystack.Transaction.VerifyResponse>,
   ): Promise<Payment> {
     const status = verification.data.status === 'success' ? PaymentStatus.COMPLETED : PaymentStatus.FAILED;
-    const payment = await this.prismaService.payment.update({
-      where: { id: paymentId },
-      data: {
-        status,
-        paymentDetails: this.sanitizeVerifyDetails(verification.data),
-      },
-    });
+    const payment = await this.paymentRepository.updatePaymentWithStatus(
+      paymentId,
+      status,
+      this.sanitizeVerifyDetails(verification.data),
+    );
 
     if (status === PaymentStatus.COMPLETED) {
-      await this.prismaService.order.update({
-        where: { id: payment.orderId, status: OrderStatus.PENDING },
-        data: { status: OrderStatus.PROCESSING },
-      });
+      await this.paymentRepository.updateOrderStatus(payment.orderId, 'PROCESSING');
     }
 
     return payment;
-  }
-
-  private async fetchPayment(paymentId: string): Promise<Payment> {
-    return this.prismaService.payment.findUnique({
-      where: { id: paymentId, deleted: false },
-      include: { order: true },
-    });
-  }
-
-  private async fetchUserPayments(userId: string): Promise<Payment[]> {
-    return this.prismaService.payment.findMany({
-      where: { order: { userId }, deleted: false },
-      include: { order: true },
-    });
   }
 
   private canProcessWebhook(dto: PaystackWebhookDto, signature: string): boolean {

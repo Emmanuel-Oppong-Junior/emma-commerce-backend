@@ -1,9 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { AddToCartInput } from './dto/add-to-cart.input';
 
 import { Cart, CartItem, Product } from '@prisma/client';
 import { UpdateCartItemInput } from './dto/update-cart.input';
+import { CartRepository } from './cart.repository';
 
 /**
  * Service for managing user carts in an e-commerce system.
@@ -11,7 +11,7 @@ import { UpdateCartItemInput } from './dto/update-cart.input';
  */
 @Injectable()
 export class CartService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(private readonly cartRepository: CartRepository) {}
 
   /**
    * Retrieves the user's cart with its items.
@@ -19,10 +19,7 @@ export class CartService {
    * @returns The user's cart with its items.
    */
   async getCart(userId: string): Promise<Cart & { items: CartItem[] }> {
-    return this.prismaService.cart.findUnique({
-      where: { userId },
-      include: { items: { include: { product: true } } },
-    });
+    return this.cartRepository.findByUser(userId);
   }
 
   /**
@@ -36,7 +33,7 @@ export class CartService {
   async addToCart(userId: string, input: AddToCartInput): Promise<Cart & { items: CartItem[] }> {
     const { productId, quantity } = input;
     const product = await this.validateProductAndStock(productId, quantity);
-    const cart = await this.findOrCreateCart(userId);
+    const cart = await this.cartRepository.findOrCreate(userId);
     await this.upsertCartItem(cart.id, product, quantity);
     return this.getCart(userId);
   }
@@ -69,7 +66,7 @@ export class CartService {
     const cart = await this.getCartOrThrow(userId);
     const cartHasItem = cart.items.some((i) => i.id === cartItemId);
     if (!cartHasItem) throw new NotFoundException(`Cart item "${cartItemId}" not found in user's cart`);
-    await this.prismaService.cartItem.delete({ where: { id: cartItemId } });
+    await this.cartRepository.deleteCartItem(cartItemId);
     return this.getCart(userId);
   }
 
@@ -81,23 +78,8 @@ export class CartService {
    */
   async clearCart(userId: string): Promise<Cart & { items: CartItem[] }> {
     const cart = await this.getCartOrThrow(userId);
-    await this.prismaService.cartItem.deleteMany({
-      where: { cartId: cart.id },
-    });
+    await this.cartRepository.deleteAllCartItems(cart.id);
     return this.getCart(userId);
-  }
-
-  /**
-   * Finds an existing cart for the user or creates a new one if none exists.
-   * @param userId - The ID of the user.
-   * @returns The user's cart (existing or newly created).
-   */
-  private async findOrCreateCart(userId: string): Promise<Cart> {
-    const cart = await this.prismaService.cart.findUnique({
-      where: { userId },
-    });
-    if (cart) return cart;
-    return this.prismaService.cart.create({ data: { userId } });
   }
 
   /**
@@ -109,9 +91,7 @@ export class CartService {
    * @throws {BadRequestException} If the requested quantity exceeds available stock or product is inactive.
    */
   private async validateProductAndStock(productId: string, quantity: number): Promise<Product> {
-    const product = await this.prismaService.product.findUnique({
-      where: { id: productId },
-    });
+    const product = await this.cartRepository.findProductById(productId);
     if (!product) throw new NotFoundException(`Product "${productId}" not found`);
     if (!product.isActive) throw new BadRequestException(`Product "${productId}" is not active`);
     if (product.quantity < quantity) {
@@ -130,10 +110,7 @@ export class CartService {
    * @throws {BadRequestException} If the total quantity exceeds available stock.
    */
   private async upsertCartItem(cartId: string, product: Product, quantity: number): Promise<void> {
-    const existingItem = await this.prismaService.cartItem.findFirst({
-      where: { cartId, productId: product.id },
-      select: { id: true, quantity: true },
-    });
+    const existingItem = await this.cartRepository.findCartItem(cartId, product.id);
 
     const newQuantity = existingItem ? existingItem.quantity + quantity : quantity;
     if (newQuantity > product.quantity) {
@@ -142,11 +119,14 @@ export class CartService {
       );
     }
 
-    await this.prismaService.cartItem.upsert({
-      where: { id: existingItem?.id ?? '' },
-      update: { quantity: newQuantity, originalPrice: product.price },
-      create: { cartId, productId: product.id, quantity, originalPrice: product.price },
-    });
+    await this.cartRepository.upsertCartItem(
+      existingItem?.id,
+      cartId,
+      product.id,
+      product.price,
+      newQuantity,
+      quantity,
+    );
   }
 
   /**
@@ -169,10 +149,7 @@ export class CartService {
    * @throws {NotFoundException} If the cart does not exist.
    */
   async getCartOrThrow(userId: string): Promise<Cart & { items: CartItem[] }> {
-    const cart = await this.prismaService.cart.findUnique({
-      where: { userId },
-      include: { items: { include: { product: true } } },
-    });
+    const cart = await this.cartRepository.findByUser(userId);
     if (!cart) throw new NotFoundException(`Cart for user "${userId}" not found`);
     return cart;
   }
@@ -185,13 +162,10 @@ export class CartService {
    */
   private async handleCartItemUpdate(item: CartItem, quantity: number): Promise<void> {
     if (quantity <= 0) {
-      await this.prismaService.cartItem.delete({ where: { id: item.id } });
+      await this.cartRepository.deleteCartItem(item.id);
       return;
     }
     await this.validateProductAndStock(item.productId, quantity);
-    await this.prismaService.cartItem.update({
-      where: { id: item.id },
-      data: { quantity },
-    });
+    await this.cartRepository.updateCartItem(item.id, { quantity });
   }
 }

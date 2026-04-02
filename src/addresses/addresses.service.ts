@@ -1,12 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { Address } from '@prisma/client';
 import { CreateAddressInput } from './dto/create-address.input';
 import { UpdateAddressInput } from './dto/update-address.input';
+import { AddressesRepository } from './addresses.repository';
 
 @Injectable()
 export class AddressesService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(private readonly addressesRepository: AddressesRepository) {}
 
   /**
    * Creates a new address for the user.
@@ -16,7 +16,7 @@ export class AddressesService {
    */
   async createAddress(userId: string, data: CreateAddressInput): Promise<Address> {
     await this.enforceAddressLimit(userId);
-    return this.saveAddress({ ...data, userId });
+    return this.addressesRepository.create({ ...data, userId });
   }
 
   /**
@@ -35,7 +35,7 @@ export class AddressesService {
    * @returns List of addresses.
    */
   async getUserAddresses(userId: string): Promise<Address[]> {
-    return this.fetchUserAddresses(userId);
+    return this.addressesRepository.findByUser(userId);
   }
 
   /**
@@ -43,7 +43,7 @@ export class AddressesService {
    * @returns List of all addresses.
    */
   async getAllAddresses(): Promise<Address[]> {
-    return this.fetchAllAddresses();
+    return this.addressesRepository.findAll();
   }
 
   /**
@@ -55,7 +55,7 @@ export class AddressesService {
    */
   async updateAddress(userId: string, addressId: string, data: UpdateAddressInput): Promise<Address> {
     await this.retrieveUserAddress(userId, addressId);
-    return this.modifyAddress(addressId, data);
+    return this.addressesRepository.update(addressId, data);
   }
 
   /**
@@ -66,54 +66,21 @@ export class AddressesService {
    */
   async deleteAddress(userId: string, addressId: string): Promise<Address> {
     await this.retrieveUserAddress(userId, addressId);
-    return this.removeAddress(addressId);
+    return this.addressesRepository.delete(addressId);
   }
 
   private async enforceAddressLimit(userId: string): Promise<void> {
-    const count = await this.prismaService.address.count({ where: { userId } });
+    const count = await this.addressesRepository.countByUser(userId);
     if (count >= 10) {
       throw new BadRequestException('You have reached the maximum of 10 saved addresses');
     }
   }
 
-  private async saveAddress(data: Omit<Address, 'id' | 'createdAt' | 'updatedAt'>): Promise<Address> {
-    return this.prismaService.address.create({ data });
-  }
-
   private async retrieveUserAddress(userId: string, addressId: string): Promise<Address> {
-    const address = await this.prismaService.address.findUnique({
-      where: { id: addressId },
-    });
+    const address = await this.addressesRepository.findById(addressId);
     if (!address || address.userId !== userId) {
       throw new NotFoundException(`Address "${addressId}" not found for user "${userId}"`);
     }
     return address;
-  }
-
-  private async fetchUserAddresses(userId: string): Promise<Address[]> {
-    return this.prismaService.address.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  private async fetchAllAddresses(): Promise<Address[]> {
-    return this.prismaService.address.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  private async modifyAddress(
-    addressId: string,
-    data: Partial<Omit<Address, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>,
-  ): Promise<Address> {
-    return this.prismaService.address.update({
-      where: { id: addressId },
-      data,
-    });
-  }
-
-  private async removeAddress(addressId: string): Promise<Address> {
-    return this.prismaService.address.delete({ where: { id: addressId } });
   }
 }

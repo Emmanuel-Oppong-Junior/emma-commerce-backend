@@ -1,12 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { Review } from '@prisma/client';
 import { CreateReviewInput } from './dto/create-review.input';
 import { UpdateReviewInput } from './dto/update-review.input';
+import { ReviewRepository } from './review.repository';
 
 @Injectable()
 export class ReviewService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(private readonly reviewRepository: ReviewRepository) {}
 
   /**
    * Creates a review for a product by a user.
@@ -17,7 +17,13 @@ export class ReviewService {
   async createReview(userId: string, input: CreateReviewInput): Promise<Review> {
     await this.validateProductExists(input.productId);
     await this.ensureUserHasNotReviewed(userId, input.productId);
-    return this.saveReview(userId, input);
+    const { productId, score, comment } = input;
+    return this.reviewRepository.create({
+      user: { connect: { id: userId } },
+      product: { connect: { id: productId } },
+      score,
+      comment,
+    });
   }
 
   /**
@@ -36,7 +42,7 @@ export class ReviewService {
    */
   async getProductReviews(productId: string): Promise<(Review & { user: { id: string; email: string } })[]> {
     await this.validateProductExists(productId);
-    return this.fetchProductReviews(productId);
+    return this.reviewRepository.findByProduct(productId);
   }
 
   /**
@@ -45,7 +51,7 @@ export class ReviewService {
    * @returns List of reviews with product details.
    */
   async getUserReviews(userId: string): Promise<(Review & { product: { id: string; name: string } })[]> {
-    return this.fetchUserReviews(userId);
+    return this.reviewRepository.findByUser(userId);
   }
 
   /**
@@ -57,7 +63,7 @@ export class ReviewService {
   async updateReview(userId: string, input: UpdateReviewInput): Promise<Review> {
     const review = await this.fetchReview(input.id);
     await this.ensureUserOwnsReview(userId, review);
-    return this.modifyReview(input);
+    return this.reviewRepository.update(input.id, { score: input.score, comment: input.comment });
   }
 
   /**
@@ -69,22 +75,18 @@ export class ReviewService {
   async deleteReview(userId: string, reviewId: string): Promise<Review> {
     const review = await this.fetchReview(reviewId);
     await this.ensureUserOwnsReview(userId, review);
-    return this.removeReview(reviewId);
+    return this.reviewRepository.delete(reviewId);
   }
 
   private async validateProductExists(productId: string): Promise<void> {
-    const product = await this.prismaService.product.findUnique({
-      where: { id: productId },
-    });
+    const product = await this.reviewRepository.findProductById(productId);
     if (!product) {
       throw new NotFoundException(`Product "${productId}" not found`);
     }
   }
 
   private async ensureUserHasNotReviewed(userId: string, productId: string): Promise<void> {
-    const existingReview = await this.prismaService.review.findFirst({
-      where: { userId, productId },
-    });
+    const existingReview = await this.reviewRepository.findExisting(userId, productId);
     if (existingReview) {
       throw new BadRequestException(`You have already reviewed product "${productId}"`);
     }
@@ -96,60 +98,9 @@ export class ReviewService {
     }
   }
 
-  private async saveReview(userId: string, input: CreateReviewInput): Promise<Review> {
-    const { productId, score, comment } = input;
-    return this.prismaService.review.create({
-      data: { userId, productId, score, comment },
-      include: {
-        user: { select: { id: true, email: true } },
-        product: { select: { id: true, name: true } },
-      },
-    });
-  }
-
   private async fetchReview(reviewId: string) {
-    const review = await this.prismaService.review.findUnique({
-      where: { id: reviewId },
-      include: {
-        user: { select: { id: true, email: true } },
-        product: { select: { id: true, name: true } },
-      },
-    });
+    const review = await this.reviewRepository.findById(reviewId);
     if (!review) throw new NotFoundException(`Review "${reviewId}" not found`);
     return review;
-  }
-
-  private async fetchProductReviews(productId: string): Promise<(Review & { user: { id: string; email: string } })[]> {
-    return this.prismaService.review.findMany({
-      where: { productId },
-      include: { user: { select: { id: true, email: true } } },
-      orderBy: { id: 'asc' },
-    });
-  }
-
-  private async fetchUserReviews(userId: string): Promise<(Review & { product: { id: string; name: string } })[]> {
-    return this.prismaService.review.findMany({
-      where: { userId },
-      include: { product: { select: { id: true, name: true } } },
-      orderBy: { id: 'asc' },
-    });
-  }
-
-  private async modifyReview(input: UpdateReviewInput): Promise<Review> {
-    const { id, score, comment } = input;
-    return this.prismaService.review.update({
-      where: { id },
-      data: { score, comment },
-      include: {
-        user: { select: { id: true, email: true } },
-        product: { select: { id: true, name: true } },
-      },
-    });
-  }
-
-  private async removeReview(reviewId: string): Promise<Review> {
-    return this.prismaService.review.delete({
-      where: { id: reviewId },
-    });
   }
 }

@@ -1,12 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { CreateBrandInput } from './dto/create-brand.input';
 import { UpdateBrandInput } from './dto/update-brand.input';
 import { Brand, Prisma } from '@prisma/client';
+import { BrandRepository } from './brand.repository';
 
 @Injectable()
 export class BrandService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly brandRepository: BrandRepository) {}
 
   /**
    * Creates a new brand in the database.
@@ -14,9 +14,7 @@ export class BrandService {
    * @param createBrandInput
    */
   async createBrand(createBrandInput: CreateBrandInput): Promise<Brand> {
-    return this.prisma.brand.create({
-      data: createBrandInput,
-    });
+    return this.brandRepository.create(createBrandInput);
   }
 
   /**
@@ -28,10 +26,7 @@ export class BrandService {
    */
   async updateBrand(id: string, updateBrandInput: UpdateBrandInput): Promise<Brand> {
     await this.ensureBrandExists(id);
-    return this.prisma.brand.update({
-      where: { id },
-      data: updateBrandInput,
-    });
+    return this.brandRepository.update(id, updateBrandInput);
   }
 
   /**
@@ -41,9 +36,7 @@ export class BrandService {
    * @throws NotFoundException if the brand is not found.
    */
   async getBrandById(id: string): Promise<Brand> {
-    return this.prisma.brand.findUnique({
-      where: { id },
-    });
+    return this.brandRepository.findById(id);
   }
 
   /**
@@ -56,7 +49,7 @@ export class BrandService {
       orderBy: { createdAt: 'desc' },
     };
     if (Object.keys(requestedField).length) queryOptions.select = { ...requestedField, id: true };
-    return this.prisma.brand.findMany(queryOptions);
+    return this.brandRepository.findMany(queryOptions);
   }
 
   /**
@@ -67,7 +60,7 @@ export class BrandService {
    */
   async deleteBrand(id: string): Promise<Brand> {
     await this.ensureBrandExists(id);
-    return this.prisma.brand.delete({ where: { id } });
+    return this.brandRepository.delete(id);
   }
 
   /**
@@ -76,10 +69,7 @@ export class BrandService {
    * @throws NotFoundException if the brand is not found.
    */
   private async ensureBrandExists(id: string): Promise<void> {
-    const brand = await this.prisma.brand.findUnique({
-      where: { id },
-    });
-
+    const brand = await this.brandRepository.findById(id);
     if (!brand) throw new NotFoundException(`Brand with ID ${id} not found`);
   }
 }

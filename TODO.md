@@ -59,23 +59,23 @@ These are exploitable vulnerabilities or data-integrity failures that must be re
 
 The services currently call `PrismaService` directly, violating the Dependency Inversion Principle and making unit testing fragile.
 
-- [ ] Create `UsersRepository` — extract all `prisma.user.*` calls from `UsersService`
-- [ ] Create `ProductsRepository` — extract all `prisma.product.*` calls from `ProductsService`
-- [ ] Create `CategoriesRepository` — extract all `prisma.category.*` calls from `CategoriesService`
-- [ ] Create `SubCategoriesRepository` — extract all `prisma.subCategory.*` calls
-- [ ] Create `BrandRepository` — extract all `prisma.brand.*` calls
-- [ ] Create `TagRepository` — extract all `prisma.tag.*` calls
-- [ ] Create `VariantRepository` — extract all `prisma.variant.*` calls
-- [ ] Create `CartRepository` — extract all `prisma.cart.*` and `prisma.cartItem.*` calls
-- [ ] Create `OrdersRepository` — extract all `prisma.order.*` and `prisma.orderItem.*` calls
-- [ ] Create `PaymentRepository` — extract all `prisma.payment.*` calls
-- [ ] Create `DiscountRepository` — extract all `prisma.discount.*` calls
-- [ ] Create `AddressesRepository` — extract all `prisma.address.*` calls
-- [ ] Create `WishlistRepository` — extract all `prisma.wishlist.*` and `prisma.wishlistItem.*` calls
-- [ ] Create `ReviewRepository` — extract all `prisma.review.*` calls
-- [ ] Map Prisma error `P2002` (unique constraint) to `ConflictException` inside each repository (not service)
-- [ ] Map Prisma error `P2025` (record not found) to `NotFoundException` inside each repository
-- [ ] Remove all direct `PrismaService` imports from every service file after repositories are wired
+- [x] Create `UsersRepository` — extract all `prisma.user.*` calls from `UsersService`
+- [x] Create `ProductsRepository` — extract all `prisma.product.*` calls from `ProductsService`
+- [x] Create `CategoriesRepository` — extract all `prisma.category.*` calls from `CategoriesService`
+- [x] Create `SubCategoriesRepository` — extract all `prisma.subCategory.*` calls
+- [x] Create `BrandRepository` — extract all `prisma.brand.*` calls
+- [x] Create `TagRepository` — extract all `prisma.tag.*` calls
+- [x] Create `VariantRepository` — extract all `prisma.variant.*` calls
+- [x] Create `CartRepository` — extract all `prisma.cart.*` and `prisma.cartItem.*` calls
+- [x] Create `OrdersRepository` — extract all `prisma.order.*` and `prisma.orderItem.*` calls
+- [x] Create `PaymentRepository` — extract all `prisma.payment.*` calls
+- [x] Create `DiscountRepository` — extract all `prisma.discount.*` calls
+- [x] Create `AddressesRepository` — extract all `prisma.address.*` calls
+- [x] Create `WishlistRepository` — extract all `prisma.wishlist.*` and `prisma.wishlistItem.*` calls
+- [x] Create `ReviewRepository` — extract all `prisma.review.*` calls
+- [x] Map Prisma error `P2002` (unique constraint) to `ConflictException` inside each repository (not service)
+- [x] Map Prisma error `P2025` (record not found) to `NotFoundException` inside each repository
+- [x] Remove all direct `PrismaService` imports from every service file after repositories are wired
 
 ---
 

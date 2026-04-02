@@ -4,8 +4,8 @@ import { Cache } from 'cache-manager';
 import { Inject } from '@nestjs/common';
 import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
-import { PrismaService } from '../prisma/prisma.service';
 import { Category, Prisma } from '@prisma/client';
+import { CategoriesRepository } from './categories.repository';
 
 const CATEGORY_TREE_KEY = 'category:tree';
 const CATEGORY_TTL = 300000; // 5 minutes
@@ -13,7 +13,7 @@ const CATEGORY_TTL = 300000; // 5 minutes
 @Injectable()
 export class CategoriesService {
   constructor(
-    private readonly prismaService: PrismaService,
+    private readonly categoriesRepository: CategoriesRepository,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
@@ -27,7 +27,7 @@ export class CategoriesService {
     const { name } = createCategoryInput;
     const existing = await this.findCategoryByName(name);
     if (existing) throw new ConflictException(`A category with the name "${name}" already exists`);
-    const created = await this.prismaService.category.create({ data: createCategoryInput });
+    const created = await this.categoriesRepository.create(createCategoryInput);
     await this.cacheManager.del(CATEGORY_TREE_KEY);
     return created;
   }
@@ -38,7 +38,6 @@ export class CategoriesService {
    */
   async findAll(requestedFields: Prisma.CategorySelect): Promise<Category[]> {
     const hasSelectFilter = Object.keys(requestedFields).length > 0;
-    // Only cache unfiltered (full) category tree — the common case
     if (!hasSelectFilter) {
       const cached = await this.cacheManager.get<Category[]>(CATEGORY_TREE_KEY);
       if (cached) return cached;
@@ -46,7 +45,7 @@ export class CategoriesService {
 
     const queryOption: Prisma.CategoryFindManyArgs = { orderBy: { name: 'asc' } };
     if (hasSelectFilter) queryOption.select = requestedFields;
-    const categories = await this.prismaService.category.findMany(queryOption);
+    const categories = await this.categoriesRepository.findAll(queryOption);
 
     if (!hasSelectFilter) {
       await this.cacheManager.set(CATEGORY_TREE_KEY, categories, CATEGORY_TTL);
@@ -60,7 +59,7 @@ export class CategoriesService {
    * @returns A promise resolving to the category or null if not found.
    */
   async findOne(id: string): Promise<Category | null> {
-    return this.prismaService.category.findUnique({ where: { id } });
+    return this.categoriesRepository.findById(id);
   }
 
   /**
@@ -80,10 +79,7 @@ export class CategoriesService {
         throw new ConflictException(`A category with the name "${name}" already exists`);
       }
     }
-    const updated = await this.prismaService.category.update({
-      where: { id },
-      data: updateCategoryInput,
-    });
+    const updated = await this.categoriesRepository.update(id, updateCategoryInput);
     await this.cacheManager.del(CATEGORY_TREE_KEY);
     return updated;
   }
@@ -97,11 +93,9 @@ export class CategoriesService {
    */
   async remove(id: string): Promise<Category> {
     await this.checkCategory(id);
-    const productCount = await this.prismaService.product.count({
-      where: { categoryId: id },
-    });
+    const productCount = await this.categoriesRepository.countProducts(id);
     if (productCount > 0) throw new ConflictException('Cannot delete category with associated products');
-    const deleted = await this.prismaService.category.delete({ where: { id } });
+    const deleted = await this.categoriesRepository.delete(id);
     await this.cacheManager.del(CATEGORY_TREE_KEY);
     return deleted;
   }
@@ -112,9 +106,7 @@ export class CategoriesService {
    * @returns A promise resolving to the category or null if not found.
    */
   async findCategoryByName(name: string): Promise<Category | null> {
-    return this.prismaService.category.findFirst({
-      where: { name: { mode: 'insensitive', equals: name } },
-    });
+    return this.categoriesRepository.findFirst({ name: { mode: 'insensitive', equals: name } });
   }
 
   /**

@@ -4,10 +4,11 @@ import { UsersResolver } from './users.resolver';
 import { CommonsModule } from '../commons/commons.module';
 import { HashingService } from '../iam/hashing/hashing.service';
 import { BcryptService } from '../iam/hashing/bcrypt.service';
+import { UsersRepository } from './users.repository';
 
 @Module({
   imports: [CommonsModule],
-  providers: [UsersResolver, UsersService, { provide: HashingService, useClass: BcryptService }],
-  exports: [UsersService],
+  providers: [UsersResolver, UsersService, UsersRepository, { provide: HashingService, useClass: BcryptService }],
+  exports: [UsersService, UsersRepository],
 })
 export class UsersModule {}

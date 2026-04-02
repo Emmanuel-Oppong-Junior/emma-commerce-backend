@@ -1,23 +1,23 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateUserInput } from './dto/create-user.input';
 import { UpdateUserInput } from './dto/update-user.input';
-import { PrismaService } from '../prisma/prisma.service';
 import { HashingService } from '../iam/hashing/hashing.service';
 import { Prisma, User } from '@prisma/client';
 import { UserPaginateArgs } from './dto/user-paginate.args';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
+import { UsersRepository } from './users.repository';
 
 @Injectable()
 export class UsersService {
   constructor(
-    private readonly prismaService: PrismaService,
+    private readonly usersRepository: UsersRepository,
     private readonly passwordService: HashingService,
   ) {}
 
   async createUserByCredentials(createUserInput: CreateUserInput) {
     const { password } = createUserInput;
     createUserInput.password = await this.passwordService.hash(password);
-    return this.prismaService.user.create({ data: createUserInput });
+    return this.usersRepository.create(createUserInput);
   }
 
   async changePassword(id: string, input: ChangeUserPasswordInput): Promise<User> {
@@ -27,10 +27,7 @@ export class UsersService {
     if (!isOldPasswordValid) throw new ForbiddenException('Old password is incorrect');
     await this.compareNewPasswordToOld(newPassword, user.password);
     const hashedNewPassword = await this.passwordService.hash(newPassword);
-    return this.prismaService.user.update({
-      where: { id },
-      data: { password: hashedNewPassword },
-    });
+    return this.usersRepository.update(id, { password: hashedNewPassword });
   }
 
   async createUserByAuthProvider(
@@ -43,23 +40,19 @@ export class UsersService {
     if (email) {
       const existingUser = await this.findUserByEmail(email);
       if (existingUser) {
-        await this.prismaService.authProvider.create({
-          data: { userId: existingUser.id, providerId, provider },
-        });
+        await this.usersRepository.createAuthProvider(existingUser.id, providerId, provider);
         return existingUser;
       }
     }
-    return this.prismaService.user.create({
-      data: { email, name, profilePicture, authProvider: { create: { providerId, provider } } },
-    });
+    return this.usersRepository.createWithAuthProvider(email, name, profilePicture, providerId, provider);
   }
 
   async findAll(filter: UserPaginateArgs) {
     const paginationOptions = this.buildPaginationOptions(filter);
     const whereClause = this.buildWhereClause(filter);
 
-    const users = await this.fetchUsers(paginationOptions, whereClause);
-    const totalCount = await this.countUsers(whereClause);
+    const users = await this.usersRepository.findMany(paginationOptions, whereClause);
+    const totalCount = await this.usersRepository.count(whereClause);
     return this.formatPaginatedResponse(users, totalCount, paginationOptions);
   }
 
@@ -111,35 +104,6 @@ export class UsersService {
     };
   }
 
-  private async fetchUsers(
-    {
-      take,
-      skip,
-      cursor,
-      orderInAsc,
-      orderBy,
-    }: {
-      take: number;
-      skip: number;
-      cursor?: { id: string };
-      orderBy: string;
-      orderInAsc: boolean;
-    },
-    where: Prisma.UserWhereInput,
-  ) {
-    return this.prismaService.user.findMany({
-      take,
-      skip,
-      cursor,
-      where,
-      orderBy: orderBy ? { [orderBy]: orderInAsc ? 'asc' : 'desc' } : { name: 'asc' },
-    });
-  }
-
-  private async countUsers(where: Prisma.UserWhereInput): Promise<number> {
-    return this.prismaService.user.count({ where });
-  }
-
   private formatPaginatedResponse(users: User[], totalCount: number, { skip, take }: { take: number; skip: number }) {
     const lastUser = users[users.length - 1];
     const itemsFetched = skip + users.length;
@@ -157,24 +121,19 @@ export class UsersService {
   }
 
   findOne(id: string) {
-    return this.prismaService.user.findUnique({ where: { id } });
+    return this.usersRepository.findById(id);
   }
 
   findUserByEmail(email: string) {
-    return this.prismaService.user.findUnique({ where: { email } });
+    return this.usersRepository.findByEmail(email);
   }
 
   findUserByProviderId(providerId: string) {
-    return this.prismaService.user.findFirst({
-      where: { authProvider: { some: { providerId } } },
-    });
+    return this.usersRepository.findByProviderId(providerId);
   }
 
   async update(id: string, updateUserInput: UpdateUserInput) {
-    return this.prismaService.user.update({
-      where: { id },
-      data: updateUserInput,
-    });
+    return this.usersRepository.update(id, updateUserInput);
   }
 
   private async compareNewPasswordToOld(newPassword: string, oldEncryptedPassword: string) {
@@ -186,37 +145,25 @@ export class UsersService {
 
   async remove(id: string) {
     await this.findUserByIdOrThrow(id);
-    return this.prismaService.user.delete({ where: { id } });
+    return this.usersRepository.delete(id);
   }
 
   async archiveUser(id: string) {
     await this.findUserByIdOrThrow(id);
-    return this.prismaService.user.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    return this.usersRepository.update(id, { isActive: false });
   }
 
   async deArchiveUser(id: string) {
     await this.findUserByIdOrThrow(id);
-    return this.prismaService.user.update({
-      where: { id },
-      data: { isActive: true },
-    });
+    return this.usersRepository.update(id, { isActive: true });
   }
 
   async getUserProfile(id: string) {
-    return this.prismaService.user.findUnique({
-      where: { id },
-      include: { addresses: true, cart: true, wishlist: true, order: true },
-    });
+    return this.usersRepository.findWithRelations(id);
   }
 
   async updateLastLogin(id: string) {
-    return this.prismaService.user.update({
-      where: { id },
-      data: { lastLoginAt: new Date() },
-    });
+    return this.usersRepository.update(id, { lastLoginAt: new Date() });
   }
 
   /**
@@ -227,14 +174,11 @@ export class UsersService {
     const newAttempts = (user.failedLoginAttempts ?? 0) + 1;
     const LOCKOUT_THRESHOLD = 5;
     const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
-    await this.prismaService.user.update({
-      where: { id: user.id },
-      data: {
-        failedLoginAttempts: newAttempts,
-        ...(newAttempts >= LOCKOUT_THRESHOLD && {
-          lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS),
-        }),
-      },
+    await this.usersRepository.update(user.id, {
+      failedLoginAttempts: newAttempts,
+      ...(newAttempts >= LOCKOUT_THRESHOLD && {
+        lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS),
+      }),
     });
   }
 
@@ -242,14 +186,11 @@ export class UsersService {
    * Resets failed login attempts and removes any active lockout for a user.
    */
   async resetFailedLoginAttempts(userId: string): Promise<void> {
-    await this.prismaService.user.update({
-      where: { id: userId },
-      data: { failedLoginAttempts: 0, lockedUntil: null },
-    });
+    await this.usersRepository.update(userId, { failedLoginAttempts: 0, lockedUntil: null });
   }
 
   private async findUserByIdOrThrow(id: string) {
-    const user = await this.prismaService.user.findUnique({ where: { id } });
+    const user = await this.usersRepository.findById(id);
     if (!user) throw new NotFoundException('User not found');
     return user;
   }

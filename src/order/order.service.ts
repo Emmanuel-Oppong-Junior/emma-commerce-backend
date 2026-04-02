@@ -1,13 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { CartService } from '../cart/cart.service';
 import { Cart, CartItem, Order, OrderItem, OrderStatus, Prisma, Product } from '@prisma/client';
 import { AuditService } from '../commons/audit.service';
+import { OrdersRepository } from './order.repository';
 
 @Injectable()
 export class OrdersService {
   constructor(
-    private readonly prismaService: PrismaService,
+    private readonly ordersRepository: OrdersRepository,
     private readonly cartService: CartService,
     private readonly auditService: AuditService,
   ) {}
@@ -42,10 +42,7 @@ export class OrdersService {
    * @returns The order with its items.
    */
   async viewOrder(orderId: string) {
-    return this.prismaService.order.findUnique({
-      where: { id: orderId },
-      include: { items: true },
-    });
+    return this.ordersRepository.findById(orderId, { items: true });
   }
 
   /**
@@ -54,7 +51,7 @@ export class OrdersService {
    * @returns List of orders with their items.
    */
   async getUserOrders(userId: string): Promise<(Order & { items: OrderItem[] })[]> {
-    return this.fetchUserOrders(userId);
+    return this.ordersRepository.findByUser(userId);
   }
 
   /**
@@ -62,7 +59,7 @@ export class OrdersService {
    * @returns List of all orders.
    */
   async getOrders(): Promise<Order[]> {
-    return this.fetchAllOrders();
+    return this.ordersRepository.findAll();
   }
 
   /**
@@ -77,7 +74,7 @@ export class OrdersService {
     adminUserId?: string,
   ): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
-    const updated = await this.applyOrderStatus(orderId, status);
+    const updated = await this.ordersRepository.updateStatus(orderId, status);
     await this.auditService.log({
       entity: 'Order',
       entityId: orderId,
@@ -109,7 +106,7 @@ export class OrdersService {
   async markOrderAsPaid(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
     this.ensureOrderCanBePaid(order);
-    return this.applyOrderStatus(orderId, 'PROCESSING');
+    return this.ordersRepository.updateStatus(orderId, 'PROCESSING');
   }
 
   /**
@@ -136,18 +133,14 @@ export class OrdersService {
   }
 
   private async ensureValidShippingAddress(userId: string, shippingAddressId: string): Promise<void> {
-    const address = await this.prismaService.address.findFirst({
-      where: { id: shippingAddressId, userId },
-    });
+    const address = await this.ordersRepository.findAddressForUser(shippingAddressId, userId);
     if (!address) {
       throw new NotFoundException(`Shipping address "${shippingAddressId}" not found for user "${userId}"`);
     }
   }
 
   private async ensureUserCanOrder(userId: string, cart: Cart & { items: CartItem[] }): Promise<void> {
-    const user = await this.prismaService.user.findUnique({
-      where: { id: userId },
-    });
+    const user = await this.ordersRepository.findUserById(userId);
     if (!user || !user.isActive) throw new BadRequestException(`User "${userId}" is not eligible to place an order`);
     if (cart.items.length > 50) throw new BadRequestException('Order exceeds maximum item limit of 50');
   }
@@ -155,8 +148,6 @@ export class OrdersService {
   private async buildOrderDetails(
     cartItems: CartItem[],
   ): Promise<{ orderItems: OrderItem[]; totalAmount: Prisma.Decimal }> {
-    // Pre-validate outside the transaction for early user-friendly errors,
-    // but stock is re-checked with a lock inside saveOrderAndUpdateInventory.
     const orderItems = await this.createOrderItems(cartItems);
     const totalAmount = new Prisma.Decimal(this.computeTotalAmount(orderItems).toFixed(2));
     return { orderItems, totalAmount };
@@ -176,13 +167,9 @@ export class OrdersService {
     return orderItems;
   }
 
-  private async checkProductAvailability(item: CartItem, prisma?: Prisma.TransactionClient): Promise<Product> {
-    const client = prisma ?? this.prismaService;
-    const product = await client.product.findUnique({
-      where: { id: item.productId },
-    });
+  private async checkProductAvailability(item: CartItem): Promise<Product> {
+    const product = await this.ordersRepository.findProductById(item.productId);
     if (!product) throw new NotFoundException(`Product "${item.productId}" not found`);
-
     if (product.quantity < item.quantity) {
       throw new BadRequestException(
         `Insufficient stock for "${product.name}": ${product.quantity} available, ${item.quantity} requested`,
@@ -193,8 +180,8 @@ export class OrdersService {
 
   private computeTotalAmount(orderItems: OrderItem[]): number {
     const subtotal = orderItems.reduce((sum, item) => sum + Number(item.priceAtOrder) * item.quantity, 0);
-    const tax = subtotal * 0.1; // 10% tax, configurable later
-    const shippingFee = 5.0; // Flat fee, configurable later
+    const tax = subtotal * 0.1;
+    const shippingFee = 5.0;
     return subtotal + tax + shippingFee;
   }
 
@@ -204,88 +191,25 @@ export class OrdersService {
     orderDetails: { orderItems: OrderItem[]; totalAmount: Prisma.Decimal },
     cartId: string,
   ): Promise<Order & { items: OrderItem[] }> {
-    return this.prismaService.$transaction(async (prisma) => {
-      // Re-check stock inside the transaction to prevent overselling under concurrent load.
-      // The UPDATE with a decrement acts as a lock — if two transactions try to decrement
-      // the same product simultaneously, only one will succeed; the other sees quantity < 0
-      // and we roll back.
+    return this.ordersRepository.runTransaction(async (tx) => {
       for (const item of orderDetails.orderItems) {
-        const product = await prisma.product.update({
-          where: { id: item.productId },
-          data: { quantity: { decrement: item.quantity } },
-        });
+        const product = await this.ordersRepository.decrementProductStock(tx, item.productId, item.quantity);
         if (product.quantity < 0) {
           throw new BadRequestException(`Insufficient stock for product "${item.productId}" — please review your cart`);
         }
       }
-      const newOrder = await this.createOrderInDb(prisma, userId, shippingAddressId, orderDetails);
-      await this.emptyCart(prisma, cartId);
+      const newOrder = await this.ordersRepository.create(tx, userId, shippingAddressId, orderDetails);
+      await this.ordersRepository.clearCartItems(tx, cartId);
       return newOrder;
     });
   }
 
-  private async createOrderInDb(
-    prisma: Prisma.TransactionClient,
-    userId: string,
-    shippingAddressId: string,
-    orderDetails: { orderItems: OrderItem[]; totalAmount: Prisma.Decimal },
-  ): Promise<Order & { items: OrderItem[] }> {
-    return prisma.order.create({
-      data: {
-        userId,
-        shippingAddressId,
-        totalAmount: orderDetails.totalAmount,
-        items: { create: orderDetails.orderItems },
-      },
-      include: { items: { include: { product: true } } },
-    });
-  }
-
-  private async reduceProductStock(prisma: Prisma.TransactionClient, orderItems: OrderItem[]): Promise<void> {
-    for (const item of orderItems) {
-      await prisma.product.update({
-        where: { id: item.productId },
-        data: { quantity: { decrement: item.quantity } },
-      });
-    }
-  }
-
-  private async emptyCart(prisma: Prisma.TransactionClient, cartId: string): Promise<void> {
-    await prisma.cartItem.deleteMany({ where: { cartId } });
-  }
-
   private async retrieveUserOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
-    const order = await this.prismaService.order.findUnique({
-      where: { id: orderId },
-      include: { items: { include: { product: true } } },
-    });
+    const order = await this.ordersRepository.findById(orderId, { items: { include: { product: true } } });
     if (!order || order.userId !== userId) {
       throw new NotFoundException(`Order "${orderId}" not found`);
     }
     return order;
-  }
-
-  private async fetchUserOrders(userId: string): Promise<(Order & { items: OrderItem[] })[]> {
-    return this.prismaService.order.findMany({
-      where: { userId, deleted: false },
-      include: { items: { include: { product: true } } },
-      orderBy: { createdAt: 'desc' },
-    }) as unknown as Promise<(Order & { items: OrderItem[] })[]>;
-  }
-
-  private async fetchAllOrders(): Promise<Order[]> {
-    return this.prismaService.order.findMany({
-      where: { deleted: false },
-      include: { items: true },
-    }) as unknown as Promise<Order[]>;
-  }
-
-  private async applyOrderStatus(orderId: string, status: OrderStatus): Promise<Order & { items: OrderItem[] }> {
-    return this.prismaService.order.update({
-      where: { id: orderId },
-      data: { status },
-      include: { items: { include: { product: true } } },
-    });
   }
 
   private ensureOrderCanBeCancelled(order: Order & { items: OrderItem[] }): void {
@@ -294,14 +218,12 @@ export class OrdersService {
     }
   }
 
-  private async cancelOrderAndRestoreStock(order: Order & { items: OrderItem[] }): Promise<
-    Order & {
-      items: OrderItem[];
-    }
-  > {
-    return this.prismaService.$transaction(async (prisma) => {
-      await this.restoreProductStock(prisma, order.items);
-      return this.applyOrderStatus(order.id, 'CANCELLED');
+  private async cancelOrderAndRestoreStock(order: Order & { items: OrderItem[] }): Promise<Order & { items: OrderItem[] }> {
+    return this.ordersRepository.runTransaction(async (tx) => {
+      for (const item of order.items) {
+        await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
+      }
+      return this.ordersRepository.updateStatus(order.id, 'CANCELLED');
     });
   }
 
@@ -312,31 +234,17 @@ export class OrdersService {
   }
 
   private async retrieveOrder(orderId: string): Promise<Order & { items: OrderItem[] }> {
-    const order = await this.prismaService.order.findUnique({
-      where: { id: orderId },
-      include: { items: true },
-    });
+    const order = await this.ordersRepository.findById(orderId, { items: true });
     if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
     return order;
   }
 
   private async softDeleteOrder(order: Order & { items: OrderItem[] }): Promise<Order & { items: OrderItem[] }> {
-    return this.prismaService.$transaction(async (prisma) => {
-      await this.restoreProductStock(prisma, order.items);
-      return prisma.order.update({
-        where: { id: order.id },
-        data: { deleted: true, deletedAt: new Date() },
-        include: { items: { include: { product: true } } },
-      }) as unknown as Order & { items: OrderItem[] };
+    return this.ordersRepository.runTransaction(async (tx) => {
+      for (const item of order.items) {
+        await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
+      }
+      return this.ordersRepository.softDelete(order.id);
     });
-  }
-
-  private async restoreProductStock(prisma: Prisma.TransactionClient, orderItems: OrderItem[]): Promise<void> {
-    for (const item of orderItems) {
-      await prisma.product.update({
-        where: { id: item.productId },
-        data: { quantity: { increment: item.quantity } },
-      });
-    }
   }
 }

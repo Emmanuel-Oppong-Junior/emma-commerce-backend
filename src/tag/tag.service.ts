@@ -1,12 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { AddProductsToTagDto } from './dto/add-products-to-tag.dto';
 import { RemoveProductsFromTagDto } from './dto/remove-products-from-tag.dto';
 import { Tag } from '@prisma/client';
+import { TagRepository } from './tag.repository';
 
 @Injectable()
 export class TagService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(private readonly tagRepository: TagRepository) {}
 
   /**
    * Creates a new tag.
@@ -15,7 +15,7 @@ export class TagService {
    */
   async createTag(name: string): Promise<Tag> {
     await this.ensureTagNameUnique(name);
-    return this.saveTag(name);
+    return this.tagRepository.create(name);
   }
 
   /**
@@ -32,7 +32,7 @@ export class TagService {
    * @returns List of all tags.
    */
   async getAllTags(): Promise<Tag[]> {
-    return this.fetchAllTags();
+    return this.tagRepository.findAll();
   }
 
   /**
@@ -44,7 +44,7 @@ export class TagService {
   async updateTag(tagId: string, name: string): Promise<Tag> {
     await this.retrieveTag(tagId);
     await this.ensureTagNameUnique(name, tagId);
-    return this.modifyTag(tagId, name);
+    return this.tagRepository.update(tagId, name);
   }
 
   /**
@@ -54,7 +54,7 @@ export class TagService {
    */
   async deleteTag(tagId: string): Promise<Tag> {
     await this.retrieveTag(tagId);
-    return this.removeTag(tagId);
+    return this.tagRepository.delete(tagId);
   }
 
   /**
@@ -65,14 +65,7 @@ export class TagService {
    */
   async addProductsToTag(tagId: string, addProductsToTagDto: AddProductsToTagDto) {
     await this.retrieveTag(tagId);
-    return this.prismaService.tag.update({
-      where: { id: tagId },
-      data: {
-        products: {
-          connect: addProductsToTagDto?.productIds?.map((id) => ({ id })),
-        },
-      },
-    });
+    return this.tagRepository.connectProducts(tagId, addProductsToTagDto?.productIds ?? []);
   }
 
   /**
@@ -83,57 +76,21 @@ export class TagService {
    */
   async removeProductsFromTag(tagId: string, removeProductsFromTagDto: RemoveProductsFromTagDto) {
     await this.retrieveTag(tagId);
-    return this.prismaService.tag.update({
-      where: { id: tagId },
-      data: {
-        products: {
-          disconnect: removeProductsFromTagDto?.productIds?.map((id) => ({ id })),
-        },
-      },
-    });
+    return this.tagRepository.disconnectProducts(tagId, removeProductsFromTagDto?.productIds ?? []);
   }
 
   private async ensureTagNameUnique(name: string, excludeTagId?: string): Promise<void> {
-    const existingTag = await this.prismaService.tag.findUnique({
-      where: { name },
-    });
+    const existingTag = await this.tagRepository.findByName(name);
     if (existingTag && existingTag.id !== excludeTagId) {
       throw new BadRequestException(`Tag name "${name}" is already in use`);
     }
   }
 
-  private async saveTag(name: string): Promise<Tag> {
-    return this.prismaService.tag.create({
-      data: { name },
-    });
-  }
-
   private async retrieveTag(tagId: string): Promise<Tag> {
-    const tag = await this.prismaService.tag.findUnique({
-      where: { id: tagId },
-    });
+    const tag = await this.tagRepository.findById(tagId);
     if (!tag) {
       throw new NotFoundException(`Tag "${tagId}" not found`);
     }
     return tag;
-  }
-
-  private async fetchAllTags(): Promise<Tag[]> {
-    return this.prismaService.tag.findMany({
-      orderBy: { name: 'asc' },
-    });
-  }
-
-  private async modifyTag(tagId: string, name: string): Promise<Tag> {
-    return this.prismaService.tag.update({
-      where: { id: tagId },
-      data: { name },
-    });
-  }
-
-  private async removeTag(tagId: string): Promise<Tag> {
-    return this.prismaService.tag.delete({
-      where: { id: tagId },
-    });
   }
 }

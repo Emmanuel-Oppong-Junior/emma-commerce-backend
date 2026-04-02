@@ -1,15 +1,15 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
 import { Prisma, Product } from '@prisma/client';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
+import { ProductsRepository } from './products.repository';
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(private readonly productsRepository: ProductsRepository) {}
 
   /**
    * Creates a new product in the database.
@@ -22,10 +22,7 @@ export class ProductsService {
    */
   async create(createProductInput: CreateProductInput): Promise<Product> {
     await this.validateProductInput(createProductInput);
-    return this.prismaService.product.create({
-      data: createProductInput,
-      include: { category: true, subcategory: true },
-    });
+    return this.productsRepository.create(createProductInput, { category: true, subcategory: true });
   }
 
   /**
@@ -41,11 +38,7 @@ export class ProductsService {
   async update(id: string, updateProductInput: UpdateProductInput): Promise<Product> {
     await this.ensureProductExist(id);
     await this.validateProductInput({ ...updateProductInput, id });
-    return this.prismaService.product.update({
-      where: { id },
-      data: updateProductInput,
-      include: { category: true, subcategory: true },
-    });
+    return this.productsRepository.update(id, updateProductInput, { category: true, subcategory: true });
   }
 
   /**
@@ -60,7 +53,7 @@ export class ProductsService {
   async remove(id: string): Promise<Product> {
     await this.ensureProductExist(id);
     await this.checkProductDependencies(id);
-    return this.prismaService.product.delete({ where: { id } });
+    return this.productsRepository.delete(id);
   }
 
   async addTagToProduct(productId: string, tagId: string): Promise<Product> {
@@ -86,8 +79,8 @@ export class ProductsService {
     const paginationOptions = this.buildPaginationOptions(paginate);
     const whereClause = this.buildWhereClause(filter);
 
-    const products = await this.fetchProducts(paginationOptions, whereClause, requestedData);
-    const totalCount = await this.countProducts(whereClause);
+    const products = await this.productsRepository.findMany(paginationOptions, whereClause, requestedData);
+    const totalCount = await this.productsRepository.count(whereClause);
     return this.formatPaginatedResponse(products, totalCount, paginationOptions);
   }
 
@@ -99,41 +92,29 @@ export class ProductsService {
    * @returns The product with its associated category and subcategory, or null if not found.
    */
   async findOne(id: string, requestedFields: Prisma.ProductSelect = {}): Promise<Product | null> {
-    const queryOptions: Prisma.ProductFindUniqueArgs = { where: { id } };
-    if (Object.keys(requestedFields).length) queryOptions.select = { ...requestedFields, id: true };
-    return this.prismaService.product.findUnique(queryOptions);
+    return this.productsRepository.findById(id, requestedFields);
   }
 
   /**
    * Archives a product by setting its isActive status to false.
-   * Validates the product's existence before proceeding.
-   *
    * @param id - The unique identifier of the product to archive.
-   * @returns The updated product with its isActive status set to false.
+   * @returns The updated product.
    * @throws NotFoundException if the product does not exist.
    */
   async archiveProduct(id: string): Promise<Product> {
     await this.ensureProductExist(id);
-    return this.prismaService.product.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    return this.productsRepository.update(id, { isActive: false });
   }
 
   /**
    * Restores a previously archived product by setting its isActive status to true.
-   * Validates the product's existence before proceeding.
-   *
    * @param id - The unique identifier of the product to restore.
-   * @returns The updated product with its isActive status set to true.
+   * @returns The updated product.
    * @throws NotFoundException if the product does not exist.
    */
   async restoreProduct(id: string): Promise<Product> {
     await this.ensureProductExist(id);
-    return this.prismaService.product.update({
-      where: { id },
-      data: { isActive: true },
-    });
+    return this.productsRepository.update(id, { isActive: true });
   }
 
   private buildPaginationOptions({ first, after }: PaginationArgs) {
@@ -154,14 +135,12 @@ export class ProductsService {
 
   private async validateCategoryAndSubcategory(categoryId: string, subcategoryId?: string): Promise<void> {
     if (categoryId) {
-      const category = await this.prismaService.category.findUnique({ where: { id: categoryId } });
+      const category = await this.productsRepository.findCategoryById(categoryId);
       if (!category) throw new NotFoundException(`Category ID "${categoryId}" not found`);
     }
 
     if (subcategoryId) {
-      const subcategory = await this.prismaService.subCategory.findUnique({
-        where: { id: subcategoryId },
-      });
+      const subcategory = await this.productsRepository.findSubCategoryById(subcategoryId);
       if (!subcategory) throw new NotFoundException(`Subcategory ID "${subcategoryId}" not found`);
       if (subcategory.categoryId !== categoryId) {
         throw new ConflictException(`Subcategory ID "${subcategoryId}" does not belong to category ID "${categoryId}"`);
@@ -172,8 +151,8 @@ export class ProductsService {
   private async validateSkuUniqueness(input: CreateProductInput | UpdateProductInput): Promise<void> {
     const { sku } = input;
     if (sku) {
-      const existing = await this.prismaService.product.findFirst({
-        where: { sku: { equals: sku, mode: 'insensitive' } },
+      const existing = await this.productsRepository.findFirst({
+        sku: { equals: sku, mode: 'insensitive' },
       });
       if ('id' in input && existing && existing.id != input.id) {
         throw new ConflictException(`SKU "${sku}" is already in use by another product`);
@@ -191,12 +170,8 @@ export class ProductsService {
   }
 
   private async checkProductDependencies(id: string): Promise<void> {
-    const cartItemCount = await this.prismaService.cartItem.count({
-      where: { productId: id },
-    });
-    const orderItemCount = await this.prismaService.orderItem.count({
-      where: { productId: id },
-    });
+    const cartItemCount = await this.productsRepository.countCartItems(id);
+    const orderItemCount = await this.productsRepository.countOrderItems(id);
     if (cartItemCount > 0 || orderItemCount > 0) {
       throw new ConflictException('Cannot delete product referenced in active carts or orders');
     }
@@ -243,26 +218,6 @@ export class ProductsService {
     };
   }
 
-  private async fetchProducts(
-    { take, skip, cursor }: { take?: number; skip?: number; cursor?: { id: string } },
-    where: Prisma.ProductWhereInput,
-    requestedField: Prisma.ProductSelect = {},
-  ): Promise<Product[]> {
-    const queryOptions: Prisma.ProductFindManyArgs = {
-      take,
-      skip,
-      cursor,
-      where,
-      orderBy: { createdAt: 'desc' },
-    };
-    if (Object.keys(requestedField).length) queryOptions.select = { ...requestedField, id: true };
-    return this.prismaService.product.findMany(queryOptions);
-  }
-
-  private async countProducts(where: Prisma.ProductWhereInput): Promise<number> {
-    return this.prismaService.product.count({ where });
-  }
-
   private formatPaginatedResponse(
     products: Product[],
     totalCount: number,
@@ -284,9 +239,7 @@ export class ProductsService {
   }
 
   private async ensureTagExists(tagId: string): Promise<void> {
-    const tag = await this.prismaService.tag.findUnique({
-      where: { id: tagId },
-    });
+    const tag = await this.productsRepository.findTagById(tagId);
     if (!tag) throw new NotFoundException(`Tag "${tagId}" not found`);
   }
 
@@ -297,10 +250,6 @@ export class ProductsService {
   ): Promise<Product> {
     await this.ensureProductExist(productId);
     await this.ensureTagExists(tagId);
-    return this.prismaService.product.update({
-      where: { id: productId },
-      data: { tags: { [operation]: { id: tagId } } },
-      include: { tags: true },
-    });
+    return this.productsRepository.updateTags(productId, operation, tagId);
   }
 }

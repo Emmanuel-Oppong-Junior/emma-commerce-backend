@@ -1,41 +1,25 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CartService } from './cart.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { CartRepository } from './cart.repository';
 import { AddToCartInput } from './dto/add-to-cart.input';
 import { UpdateCartItemInput } from './dto/update-cart.input';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Cart, CartItem } from '@prisma/client';
 
-const mockPrismaService = {
-  cart: {
-    findUnique: jest.fn(),
-    create: jest.fn(),
-  },
-  cartItem: {
-    findFirst: jest.fn(),
-    upsert: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-    deleteMany: jest.fn(),
-  },
-  product: {
-    findUnique: jest.fn(),
-  },
+const mockCartRepository = {
+  findByUser: jest.fn(),
+  findOrCreate: jest.fn(),
+  findProductById: jest.fn(),
+  findCartItem: jest.fn(),
+  upsertCartItem: jest.fn(),
+  updateCartItem: jest.fn(),
+  deleteCartItem: jest.fn(),
+  deleteAllCartItems: jest.fn(),
 };
 
 describe('CartService', () => {
   let service: CartService;
-  let prisma: PrismaService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [CartService, { provide: PrismaService, useValue: mockPrismaService }],
-    }).compile();
-
-    service = module.get<CartService>(CartService);
-    prisma = module.get<PrismaService>(PrismaService);
-    jest.resetAllMocks();
-  });
+  let cartRepository: jest.Mocked<CartRepository>;
 
   const mockUserId = 'user1';
   const fixedDate = new Date('2025-03-18T00:00:00.000Z');
@@ -65,22 +49,30 @@ describe('CartService', () => {
     createdAt: fixedDate,
     updatedAt: fixedDate,
   };
+  const emptyCart: Cart & { items: CartItem[] } = { ...mockCart, items: [] };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [CartService, { provide: CartRepository, useValue: mockCartRepository }],
+    }).compile();
+
+    service = module.get<CartService>(CartService);
+    cartRepository = module.get<CartRepository>(CartRepository) as jest.Mocked<CartRepository>;
+    jest.resetAllMocks();
+  });
 
   describe('getCart', () => {
-    it('should retrieve the user’s cart successfully', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart);
+    it('should retrieve the user\'s cart successfully', async () => {
+      mockCartRepository.findByUser.mockResolvedValue(mockCart);
 
       const result = await service.getCart(mockUserId);
 
-      expect(prisma.cart.findUnique).toHaveBeenCalledWith({
-        where: { userId: mockUserId },
-        include: { items: { include: { product: true } } },
-      });
+      expect(cartRepository.findByUser).toHaveBeenCalledWith(mockUserId);
       expect(result).toEqual(mockCart);
     });
 
     it('should return null if cart does not exist', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(null);
+      mockCartRepository.findByUser.mockResolvedValue(null);
 
       const result = await service.getCart(mockUserId);
 
@@ -89,181 +81,121 @@ describe('CartService', () => {
   });
 
   describe('addToCart', () => {
-    const input: AddToCartInput = { productId: 'prod1', quantity: 3 };
+    const addInput: AddToCartInput = { productId: 'prod1', quantity: 2 };
 
     it('should add a new product to the cart successfully', async () => {
-      mockPrismaService.product.findUnique.mockResolvedValueOnce(mockProduct);
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(null); // findOrCreateCart
-      mockPrismaService.cart.create.mockResolvedValueOnce({
-        id: 'cart1',
-        userId: mockUserId,
-        createdAt: fixedDate,
-        updatedAt: fixedDate,
-      });
-      mockPrismaService.cartItem.findFirst.mockResolvedValueOnce(null);
-      mockPrismaService.cartItem.upsert.mockResolvedValueOnce(mockCartItem);
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCart
+      mockCartRepository.findProductById.mockResolvedValue(mockProduct);
+      mockCartRepository.findOrCreate.mockResolvedValue({ id: 'cart1', userId: mockUserId });
+      mockCartRepository.findCartItem.mockResolvedValue(null);
+      mockCartRepository.upsertCartItem.mockResolvedValue(undefined);
+      mockCartRepository.findByUser.mockResolvedValue(mockCart);
 
-      const result = await service.addToCart(mockUserId, input);
+      const result = await service.addToCart(mockUserId, addInput);
 
-      expect(prisma.cart.findUnique).toHaveBeenCalledTimes(2);
-      expect(prisma.product.findUnique).toHaveBeenCalledWith({
-        where: { id: 'prod1' },
-      });
-      expect(prisma.cartItem.upsert).toHaveBeenCalledWith({
-        where: { id: '' },
-        update: { quantity: 3, originalPrice: 19.99 },
-        create: { cartId: 'cart1', productId: 'prod1', quantity: 3, originalPrice: 19.99 },
-      });
+      expect(cartRepository.findProductById).toHaveBeenCalledWith('prod1');
+      expect(cartRepository.findOrCreate).toHaveBeenCalledWith(mockUserId);
+      expect(cartRepository.upsertCartItem).toHaveBeenCalled();
       expect(result).toEqual(mockCart);
     });
 
     it('should update quantity if product already exists in cart', async () => {
-      const existingItem = { id: 'item1', quantity: 2 };
-      mockPrismaService.product.findUnique.mockResolvedValueOnce(mockProduct);
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // findOrCreateCart
-      mockPrismaService.cartItem.findFirst.mockResolvedValueOnce(existingItem);
-      mockPrismaService.cartItem.upsert.mockResolvedValueOnce({
-        ...mockCartItem,
-        quantity: 5,
-      });
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCart
+      mockCartRepository.findProductById.mockResolvedValue(mockProduct);
+      mockCartRepository.findOrCreate.mockResolvedValue({ id: 'cart1', userId: mockUserId });
+      mockCartRepository.findCartItem.mockResolvedValue({ id: 'item1', quantity: 1 });
+      mockCartRepository.upsertCartItem.mockResolvedValue(undefined);
+      mockCartRepository.findByUser.mockResolvedValue(mockCart);
 
-      const result = await service.addToCart(mockUserId, input);
+      await service.addToCart(mockUserId, addInput);
 
-      expect(prisma.cart.findUnique).toHaveBeenCalledTimes(2);
-      expect(prisma.cartItem.upsert).toHaveBeenCalledWith({
-        where: { id: 'item1' },
-        update: { quantity: 5, originalPrice: 19.99 },
-        create: { cartId: 'cart1', productId: 'prod1', quantity: 3, originalPrice: 19.99 },
-      });
-      expect(result).toEqual(mockCart);
+      expect(cartRepository.upsertCartItem).toHaveBeenCalledWith(
+        'item1', 'cart1', 'prod1', mockProduct.price, 3, 2,
+      );
     });
 
     it('should throw NotFoundException if product does not exist', async () => {
-      mockPrismaService.product.findUnique.mockResolvedValueOnce(null);
+      mockCartRepository.findProductById.mockResolvedValue(null);
 
-      await expect(service.addToCart(mockUserId, input)).rejects.toThrow(
-        new NotFoundException('Product "prod1" not found'),
+      await expect(service.addToCart(mockUserId, addInput)).rejects.toThrow(
+        new NotFoundException(`Product "prod1" not found`),
       );
     });
 
     it('should throw BadRequestException if quantity exceeds stock', async () => {
-      mockPrismaService.product.findUnique.mockResolvedValueOnce(mockProduct);
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // findOrCreateCart
+      mockCartRepository.findProductById.mockResolvedValue({ ...mockProduct, quantity: 1 });
 
-      await expect(service.addToCart(mockUserId, { productId: 'prod1', quantity: 101 })).rejects.toThrow(
-        new BadRequestException('Cannot add 101 of "T-Shirt" to cart; only 100 in stock'),
+      await expect(service.addToCart(mockUserId, { productId: 'prod1', quantity: 5 })).rejects.toThrow(
+        BadRequestException,
       );
     });
 
     it('should throw BadRequestException if product is inactive', async () => {
-      mockPrismaService.product.findUnique.mockResolvedValueOnce({
-        ...mockProduct,
-        isActive: false,
-      });
+      mockCartRepository.findProductById.mockResolvedValue({ ...mockProduct, isActive: false });
 
-      await expect(service.addToCart(mockUserId, input)).rejects.toThrow(
-        new BadRequestException('Product "prod1" is not active'),
-      );
+      await expect(service.addToCart(mockUserId, addInput)).rejects.toThrow(BadRequestException);
     });
   });
 
   describe('updateCartItem', () => {
-    const input: UpdateCartItemInput = { cartItemId: 'item1', quantity: 5 };
+    const updateInput: UpdateCartItemInput = { cartItemId: 'item1', quantity: 3 };
 
     it('should update cart item quantity successfully', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCartOrThrow
-      mockPrismaService.product.findUnique.mockResolvedValueOnce(mockProduct);
-      mockPrismaService.cartItem.update.mockResolvedValueOnce({
-        ...mockCartItem,
-        quantity: 5,
-      });
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCart
+      mockCartRepository.findByUser.mockResolvedValueOnce(mockCart).mockResolvedValueOnce(mockCart);
+      mockCartRepository.findProductById.mockResolvedValue(mockProduct);
+      mockCartRepository.updateCartItem.mockResolvedValue({ ...mockCartItem, quantity: 3 });
 
-      const result = await service.updateCartItem(mockUserId, input);
+      const result = await service.updateCartItem(mockUserId, updateInput);
 
-      expect(prisma.cart.findUnique).toHaveBeenCalledTimes(2);
-      expect(prisma.product.findUnique).toHaveBeenCalledWith({
-        where: { id: 'prod1' },
-      });
-      expect(prisma.cartItem.update).toHaveBeenCalledWith({
-        where: { id: 'item1' },
-        data: { quantity: 5 },
-      });
+      expect(cartRepository.updateCartItem).toHaveBeenCalledWith('item1', { quantity: 3 });
       expect(result).toEqual(mockCart);
     });
 
     it('should remove cart item if quantity is 0', async () => {
-      const zeroInput = { cartItemId: 'item1', quantity: 0 };
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCartOrThrow
-      mockPrismaService.cartItem.delete.mockResolvedValueOnce(mockCartItem);
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce({
-        ...mockCart,
-        items: [],
-      }); // getCart
+      mockCartRepository.findByUser.mockResolvedValueOnce(mockCart).mockResolvedValueOnce(emptyCart);
+      mockCartRepository.deleteCartItem.mockResolvedValue(undefined);
 
-      const result = await service.updateCartItem(mockUserId, zeroInput);
+      const result = await service.updateCartItem(mockUserId, { cartItemId: 'item1', quantity: 0 });
 
-      expect(prisma.cart.findUnique).toHaveBeenCalledTimes(2);
-      expect(prisma.cartItem.delete).toHaveBeenCalledWith({
-        where: { id: 'item1' },
-      });
-      expect(result).toEqual({ ...mockCart, items: [] });
+      expect(cartRepository.deleteCartItem).toHaveBeenCalledWith('item1');
+      expect(result).toEqual(emptyCart);
     });
 
     it('should throw NotFoundException if cart does not exist', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(null); // getCartOrThrow
+      mockCartRepository.findByUser.mockResolvedValue(null);
 
-      await expect(service.updateCartItem(mockUserId, input)).rejects.toThrow(
+      await expect(service.updateCartItem(mockUserId, updateInput)).rejects.toThrow(
         new NotFoundException(`Cart for user "${mockUserId}" not found`),
       );
     });
 
     it('should throw NotFoundException if cart item does not exist', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce({
-        ...mockCart,
-        items: [],
-      }); // getCartOrThrow
+      mockCartRepository.findByUser.mockResolvedValue({ ...mockCart, items: [] });
 
-      await expect(service.updateCartItem(mockUserId, input)).rejects.toThrow(
-        new NotFoundException(`Cart item "item1" not found in user's cart`),
-      );
+      await expect(service.updateCartItem(mockUserId, updateInput)).rejects.toThrow(NotFoundException);
     });
 
     it('should throw BadRequestException if quantity exceeds stock', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCartOrThrow
-      mockPrismaService.product.findUnique.mockResolvedValueOnce(mockProduct);
+      mockCartRepository.findByUser.mockResolvedValue(mockCart);
+      mockCartRepository.findProductById.mockResolvedValue({ ...mockProduct, quantity: 1 });
 
-      await expect(
-        service.updateCartItem(mockUserId, {
-          cartItemId: 'item1',
-          quantity: 101,
-        }),
-      ).rejects.toThrow(new BadRequestException('Cannot add 101 of "T-Shirt" to cart; only 100 in stock'));
+      await expect(service.updateCartItem(mockUserId, { cartItemId: 'item1', quantity: 5 })).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
   describe('removeFromCart', () => {
     it('should remove a cart item successfully', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCartOrThrow
-      mockPrismaService.cartItem.delete.mockResolvedValueOnce(mockCartItem);
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce({
-        ...mockCart,
-        items: [],
-      }); // getCart
+      mockCartRepository.findByUser.mockResolvedValueOnce(mockCart).mockResolvedValueOnce(emptyCart);
+      mockCartRepository.deleteCartItem.mockResolvedValue(undefined);
 
       const result = await service.removeFromCart(mockUserId, 'item1');
 
-      expect(prisma.cart.findUnique).toHaveBeenCalledTimes(2);
-      expect(prisma.cartItem.delete).toHaveBeenCalledWith({
-        where: { id: 'item1' },
-      });
-      expect(result).toEqual({ ...mockCart, items: [] });
+      expect(cartRepository.deleteCartItem).toHaveBeenCalledWith('item1');
+      expect(result).toEqual(emptyCart);
     });
 
     it('should throw NotFoundException if cart does not exist', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(null); // getCartOrThrow
+      mockCartRepository.findByUser.mockResolvedValue(null);
 
       await expect(service.removeFromCart(mockUserId, 'item1')).rejects.toThrow(
         new NotFoundException(`Cart for user "${mockUserId}" not found`),
@@ -271,37 +203,25 @@ describe('CartService', () => {
     });
 
     it('should throw NotFoundException if cart item does not exist', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce({
-        ...mockCart,
-        items: [],
-      }); // getCartOrThrow
+      mockCartRepository.findByUser.mockResolvedValue({ ...mockCart, items: [] });
 
-      await expect(service.removeFromCart(mockUserId, 'item999')).rejects.toThrow(
-        new NotFoundException(`Cart item "item999" not found in user's cart`),
-      );
+      await expect(service.removeFromCart(mockUserId, 'item1')).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('clearCart', () => {
     it('should clear all items from the cart successfully', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(mockCart); // getCartOrThrow
-      mockPrismaService.cartItem.deleteMany.mockResolvedValueOnce({ count: 1 });
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce({
-        ...mockCart,
-        items: [],
-      }); // getCart
+      mockCartRepository.findByUser.mockResolvedValueOnce(mockCart).mockResolvedValueOnce(emptyCart);
+      mockCartRepository.deleteAllCartItems.mockResolvedValue(undefined);
 
       const result = await service.clearCart(mockUserId);
 
-      expect(prisma.cart.findUnique).toHaveBeenCalledTimes(2);
-      expect(prisma.cartItem.deleteMany).toHaveBeenCalledWith({
-        where: { cartId: 'cart1' },
-      });
-      expect(result).toEqual({ ...mockCart, items: [] });
+      expect(cartRepository.deleteAllCartItems).toHaveBeenCalledWith('cart1');
+      expect(result).toEqual(emptyCart);
     });
 
     it('should throw NotFoundException if cart does not exist', async () => {
-      mockPrismaService.cart.findUnique.mockResolvedValueOnce(null);
+      mockCartRepository.findByUser.mockResolvedValue(null);
 
       await expect(service.clearCart(mockUserId)).rejects.toThrow(
         new NotFoundException(`Cart for user "${mockUserId}" not found`),

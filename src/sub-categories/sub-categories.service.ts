@@ -1,12 +1,12 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
-import { PrismaService } from '../prisma/prisma.service';
 import { SubCategory } from '@prisma/client';
+import { SubCategoriesRepository } from './sub-categories.repository';
 
 @Injectable()
 export class SubCategoriesService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(private readonly subCategoriesRepository: SubCategoriesRepository) {}
 
   /**
    * Creates a new SubCategory using the provided input data.
@@ -17,7 +17,6 @@ export class SubCategoriesService {
   async create(createSubCategoryInput: CreateSubCategoryInput): Promise<SubCategory> {
     const { name, categoryId } = createSubCategoryInput;
 
-    // Check for existing SubCategory with the same name in the same category
     const existing = await this.findSubCategoryByNameAndCategory(name, categoryId);
     if (existing) {
       throw new ConflictException(
@@ -25,9 +24,7 @@ export class SubCategoriesService {
       );
     }
 
-    return this.prismaService.subCategory.create({
-      data: createSubCategoryInput,
-    });
+    return this.subCategoriesRepository.create(createSubCategoryInput);
   }
 
   /**
@@ -35,10 +32,7 @@ export class SubCategoriesService {
    * @returns A promise resolving to an array of subcategories.
    */
   async findAll(): Promise<SubCategory[]> {
-    return this.prismaService.subCategory.findMany({
-      include: { category: true },
-      orderBy: { name: 'asc' },
-    });
+    return this.subCategoriesRepository.findAll() as unknown as Promise<SubCategory[]>;
   }
 
   /**
@@ -47,7 +41,7 @@ export class SubCategoriesService {
    * @returns A promise resolving to the SubCategory or null if not found.
    */
   async findOne(id: string): Promise<SubCategory | null> {
-    return this.prismaService.subCategory.findUnique({ where: { id } });
+    return this.subCategoriesRepository.findById(id);
   }
 
   /**
@@ -72,10 +66,7 @@ export class SubCategoriesService {
       }
     }
 
-    return this.prismaService.subCategory.update({
-      where: { id },
-      data: updateSubCategoryInput,
-    });
+    return this.subCategoriesRepository.update(id, updateSubCategoryInput);
   }
 
   /**
@@ -88,14 +79,12 @@ export class SubCategoriesService {
   async remove(id: string): Promise<SubCategory> {
     await this.checkSubCategory(id);
 
-    const productCount = await this.prismaService.product.count({
-      where: { subcategoryId: id },
-    });
+    const productCount = await this.subCategoriesRepository.countProducts(id);
     if (productCount > 0) {
       throw new ConflictException('Cannot delete SubCategory with associated products');
     }
 
-    return this.prismaService.subCategory.delete({ where: { id } });
+    return this.subCategoriesRepository.delete(id);
   }
 
   /**
@@ -105,11 +94,9 @@ export class SubCategoriesService {
    * @returns A promise resolving to the SubCategory or null if not found.
    */
   async findSubCategoryByNameAndCategory(name: string, categoryId: string): Promise<SubCategory | null> {
-    return this.prismaService.subCategory.findFirst({
-      where: {
-        name: { mode: 'insensitive', equals: name },
-        categoryId,
-      },
+    return this.subCategoriesRepository.findFirst({
+      name: { mode: 'insensitive', equals: name },
+      categoryId,
     });
   }
 
@@ -119,7 +106,7 @@ export class SubCategoriesService {
    * @throws {NotFoundException} If the SubCategory does not exist.
    */
   private async checkSubCategory(id: string): Promise<void> {
-    const SubCategory = await this.findOne(id);
-    if (!SubCategory) throw new NotFoundException('SubCategory not found'); // Fixed message
+    const subCategory = await this.findOne(id);
+    if (!subCategory) throw new NotFoundException('SubCategory not found');
   }
 }

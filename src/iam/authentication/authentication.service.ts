@@ -9,7 +9,7 @@ import { ConfigType } from '@nestjs/config';
 import { SignUpInput } from './dto/sign-up.input';
 import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
-import { PrismaService } from '../../prisma/prisma.service';
+import { UsersRepository } from '../../users/users.repository';
 import { createHash } from 'crypto';
 
 @Injectable()
@@ -18,7 +18,7 @@ export class AuthenticationService {
     private readonly userService: UsersService,
     private readonly passwordService: HashingService,
     private readonly jwtServices: JwtService,
-    private readonly prismaService: PrismaService,
+    private readonly usersRepository: UsersRepository,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
@@ -89,9 +89,7 @@ export class AuthenticationService {
       });
 
       const tokenHash = this.hashToken(refreshTokenInput.refreshToken);
-      const storedToken = await this.prismaService.refreshToken.findUnique({
-        where: { tokenHash },
-      });
+      const storedToken = await this.usersRepository.findRefreshToken(tokenHash);
       if (!storedToken || storedToken.revoked) {
         throw new UnauthorizedException('Invalid or expired refresh token');
       }
@@ -101,10 +99,7 @@ export class AuthenticationService {
       if (!user.isActive) throw new UnauthorizedException('Account is inactive');
 
       // Revoke the used token (rotation — each token can only be used once)
-      await this.prismaService.refreshToken.update({
-        where: { tokenHash },
-        data: { revoked: true },
-      });
+      await this.usersRepository.revokeRefreshToken(tokenHash);
 
       return this.generateTokens(user);
     } catch (error) {
@@ -121,10 +116,7 @@ export class AuthenticationService {
    */
   async signOut(refreshToken: string): Promise<boolean> {
     const tokenHash = this.hashToken(refreshToken);
-    await this.prismaService.refreshToken.updateMany({
-      where: { tokenHash },
-      data: { revoked: true },
-    });
+    await this.usersRepository.revokeRefreshTokensByHash(tokenHash);
     return true;
   }
 
@@ -144,13 +136,8 @@ export class AuthenticationService {
   private async saveRefreshToken(userId: string, token: string): Promise<void> {
     const tokenHash = this.hashToken(token);
     const expiresAt = new Date(Date.now() + this.jwtConfiguration.refreshTokenTtl * 1000);
-    // Purge expired tokens for this user to keep the table lean
-    await this.prismaService.refreshToken.deleteMany({
-      where: { userId, expiresAt: { lt: new Date() } },
-    });
-    await this.prismaService.refreshToken.create({
-      data: { userId, tokenHash, expiresAt },
-    });
+    await this.usersRepository.deleteExpiredRefreshTokens(userId);
+    await this.usersRepository.createRefreshToken(userId, tokenHash, expiresAt);
   }
 
   private hashToken(token: string): string {

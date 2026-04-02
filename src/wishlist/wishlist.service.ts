@@ -1,19 +1,19 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { WishList } from '@prisma/client';
+import { WishlistRepository } from './wishlist.repository';
 
 @Injectable()
 export class WishlistService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(private readonly wishlistRepository: WishlistRepository) {}
 
   /**
-   * Retrieves the user's wishlist or creates one if it doesn’t exist.
+   * Retrieves the user's wishlist or creates one if it doesn't exist.
    * @param userId - The ID of the user.
    * @returns The user's wishlist with product details.
    */
   async getOrCreateWishlist(userId: string) {
-    const wishlist = await this.fetchWishlist(userId);
-    return wishlist || (await this.createWishlist(userId));
+    const wishlist = await this.wishlistRepository.findByUser(userId);
+    return wishlist || (await this.wishlistRepository.create(userId));
   }
 
   /**
@@ -27,7 +27,7 @@ export class WishlistService {
     const wishlist = await this.getOrCreateWishlist(userId);
     await this.ensureProductNotInWishlist(wishlist, productId);
     this.enforceWishlistLimit(wishlist);
-    return this.connectProductToWishlist(wishlist.id, productId);
+    return this.wishlistRepository.connectProduct(wishlist.id, productId);
   }
 
   /**
@@ -39,7 +39,7 @@ export class WishlistService {
   async removeFromWishlist(userId: string, productId: string) {
     const wishlist = await this.getOrCreateWishlist(userId);
     await this.ensureProductInWishlist(wishlist, productId);
-    return this.disconnectProductFromWishlist(wishlist.id, productId);
+    return this.wishlistRepository.disconnectProduct(wishlist.id, productId);
   }
 
   /**
@@ -49,27 +49,11 @@ export class WishlistService {
    */
   async clearWishlist(userId: string) {
     const wishlist = await this.getOrCreateWishlist(userId);
-    return this.resetWishlistProducts(wishlist.id);
-  }
-
-  private async fetchWishlist(userId: string) {
-    return this.prismaService.wishList.findUnique({
-      where: { userId },
-      include: { products: true },
-    });
-  }
-
-  private async createWishlist(userId: string): Promise<WishList & { products: { id: string; name: string }[] }> {
-    return this.prismaService.wishList.create({
-      data: { userId },
-      include: { products: true },
-    });
+    return this.wishlistRepository.clearProducts(wishlist.id);
   }
 
   private async validateProductExists(productId: string): Promise<void> {
-    const product = await this.prismaService.product.findUnique({
-      where: { id: productId },
-    });
+    const product = await this.wishlistRepository.findProductById(productId);
     if (!product) {
       throw new NotFoundException(`Product "${productId}" not found`);
     }
@@ -98,29 +82,5 @@ export class WishlistService {
 
   private isProductInWishlist(wishList: WishList & { products: { id: string }[] }, productId: string): boolean {
     return wishList.products.some((product) => product.id === productId);
-  }
-
-  private async connectProductToWishlist(wishListId: string, productId: string) {
-    return this.prismaService.wishList.update({
-      where: { id: wishListId },
-      data: { products: { connect: { id: productId } } },
-      include: { products: true },
-    });
-  }
-
-  private async disconnectProductFromWishlist(wishListId: string, productId: string) {
-    return this.prismaService.wishList.update({
-      where: { id: wishListId },
-      data: { products: { disconnect: { id: productId } } },
-      include: { products: true },
-    });
-  }
-
-  private async resetWishlistProducts(wishListId: string) {
-    return this.prismaService.wishList.update({
-      where: { id: wishListId },
-      data: { products: { set: [] } },
-      include: { products: true },
-    });
   }
 }

@@ -1,5 +1,4 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { CartItem, Discount, Order, OrderItem, Product, Variant } from '@prisma/client';
@@ -14,10 +13,11 @@ import {
   DiscountSetInput,
   OrderItemWithProduct,
 } from './types';
+import { DiscountRepository } from './discount.repository';
 
 @Injectable()
 export class DiscountService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly discountRepository: DiscountRepository) {}
 
   /**
    * Creates a new discount with the provided input.
@@ -29,20 +29,18 @@ export class DiscountService {
   async createDiscount(input: CreateDiscountInput): Promise<Discount> {
     await this.validateDiscountInput(input);
     const connectData = this.prepareDiscountConnectionData(input, 'connect') as DiscountConnectInput;
-    return this.prisma.discount.create({
-      data: {
-        name: input.name,
-        description: input.description,
-        type: input.type,
-        value: input.value,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        isActive: input.isActive ?? false,
-        minimumPurchase: input.minimumPurchase,
-        products: connectData.products,
-        variants: connectData.variants,
-        categories: connectData.categories,
-      },
+    return this.discountRepository.create({
+      name: input.name,
+      description: input.description,
+      type: input.type,
+      value: input.value,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      isActive: input.isActive ?? false,
+      minimumPurchase: input.minimumPurchase,
+      products: connectData.products,
+      variants: connectData.variants,
+      categories: connectData.categories,
     });
   }
 
@@ -59,21 +57,18 @@ export class DiscountService {
     await this.findDiscountOrThrow(id);
     await this.validateDiscountInput(input, true);
     const connectData = this.prepareDiscountConnectionData(input, 'set') as DiscountSetInput;
-    return this.prisma.discount.update({
-      where: { id },
-      data: {
-        name: input.name,
-        description: input.description,
-        type: input.type,
-        value: input.value,
-        startDate: input.startDate,
-        endDate: input.endDate,
-        isActive: input.isActive,
-        minimumPurchase: input.minimumPurchase,
-        products: connectData.products,
-        variants: connectData.variants,
-        categories: connectData.categories,
-      },
+    return this.discountRepository.update(id, {
+      name: input.name,
+      description: input.description,
+      type: input.type,
+      value: input.value,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      isActive: input.isActive,
+      minimumPurchase: input.minimumPurchase,
+      products: connectData.products,
+      variants: connectData.variants,
+      categories: connectData.categories,
     });
   }
 
@@ -82,7 +77,7 @@ export class DiscountService {
    * @returns A list of all discounts.
    */
   async findAllDiscounts(): Promise<Discount[]> {
-    return this.prisma.discount.findMany();
+    return this.discountRepository.findAll();
   }
 
   /**
@@ -92,7 +87,7 @@ export class DiscountService {
    * @throws NotFoundException if the discount is not found.
    */
   async findOneDiscount(id: string): Promise<Discount> {
-    return this.findDiscount(id);
+    return this.findDiscountOrThrow(id);
   }
 
   /**
@@ -103,7 +98,7 @@ export class DiscountService {
    */
   async deleteDiscount(id: string): Promise<Discount> {
     await this.findDiscountOrThrow(id);
-    return this.prisma.discount.delete({ where: { id } });
+    return this.discountRepository.delete(id);
   }
 
   /**
@@ -150,7 +145,7 @@ export class DiscountService {
   async finalizeDiscountsForOrder(orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.findOrderOrThrow(orderId);
     const { total, discountTotal } = await this.getOrderItemsCalculation(order.items);
-    return this.updateOrderWithDiscount(orderId, total, discountTotal);
+    return this.discountRepository.updateOrderWithDiscount(orderId, total, discountTotal);
   }
 
   private async validateDiscountInput(input: CreateOrUpdateDiscountInput, isUpdate = false): Promise<void> {
@@ -161,7 +156,6 @@ export class DiscountService {
     if (input.variants?.length) await this.ensureVariantsExist(input);
     if (input.categories?.length) await this.ensureCategoriesExist(input);
 
-    // For updates, ensure at least one field is provided (besides id)
     if (isUpdate) this.ensureUpdateInputNotEmpty(input as UpdateDiscountInput);
   }
 
@@ -177,78 +171,23 @@ export class DiscountService {
   }
 
   private async findDiscountOrThrow(id: string): Promise<Discount> {
-    const discount = await this.prisma.discount.findUnique({ where: { id } });
+    const discount = await this.discountRepository.findById(id);
     if (!discount) throw new NotFoundException(`Discount with ID ${id} not found`);
     return discount;
   }
 
-  private async findDiscount(id: string) {
-    return this.prisma.discount.findUnique({ where: { id } });
-  }
-
-  private async getInvalidIds(ids: string[], model: 'product' | 'variant' | 'category'): Promise<string[]> {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error
-    const count = await this.prisma[model].count({
-      where: { id: { in: ids } },
-    });
-    if (count !== ids.length) {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error
-      const existingIds = await this.prisma[model].findMany({
-        where: { id: { in: ids } },
-        select: { id: true },
-      });
-      const existingIdSet = new Set(existingIds.map((item) => item.id));
-      return ids.filter((id) => !existingIdSet.has(id));
-    }
-    return [];
-  }
-
   private async getApplicableDiscounts(productId: string, variantId?: string): Promise<Discount[]> {
-    const product = await this.getProductWithDiscounts(productId);
-    const discounts: Discount[] = product ? product.discounts : [];
-    const categoryDiscounts = await this.getCategoryDiscounts(product.categoryId);
-    discounts?.push(...categoryDiscounts);
+    const product = await this.discountRepository.findProductWithDiscounts(productId);
+    const discounts: Discount[] = product ? [...product.discounts] : [];
+    const categoryDiscounts = await this.discountRepository.findCategoryDiscounts(product.categoryId);
+    discounts.push(...categoryDiscounts);
 
     if (variantId) {
-      const variantDiscounts = await this.getVariantDiscounts(variantId);
-      discounts?.push(...variantDiscounts);
+      const variantDiscounts = await this.discountRepository.findVariantDiscounts(variantId);
+      discounts.push(...variantDiscounts);
     }
 
     return discounts;
-  }
-
-  private async getProductWithDiscounts(productId: string) {
-    return this.prisma.product.findUnique({
-      where: { id: productId },
-      select: {
-        categoryId: true,
-        discounts: { where: { isActive: true, startDate: { lte: new Date() }, endDate: { gte: new Date() } } },
-      },
-    });
-  }
-
-  private async getCategoryDiscounts(categoryId: string) {
-    return this.prisma.discount.findMany({
-      where: {
-        isActive: true,
-        startDate: { lte: new Date() },
-        endDate: { gte: new Date() },
-        categories: { some: { id: categoryId } },
-      },
-    });
-  }
-
-  private async getVariantDiscounts(variantId: string) {
-    return this.prisma.discount.findMany({
-      where: {
-        isActive: true,
-        startDate: { lte: new Date() },
-        endDate: { gte: new Date() },
-        variants: { some: { id: variantId } },
-      },
-    });
   }
 
   private selectBestDiscount(discounts: Discount[]): Discount | null {
@@ -260,7 +199,7 @@ export class DiscountService {
       if (currentValue > bestValue) return current;
 
       if (currentValue === bestValue && current.type === 'PERCENTAGE' && best.type === 'FLAT') {
-        return current; // Prefer percentage if values are equal
+        return current;
       }
       return best;
     }, discounts[0]);
@@ -272,15 +211,15 @@ export class DiscountService {
   }
 
   private async getProductOrThrow(id: string) {
-    const product = await this.prisma.product.findUnique({ where: { id }, select: { price: true } });
+    const product = await this.discountRepository.findProductById(id, { price: true });
     if (!product) throw new NotFoundException(`Product with ID ${id} not found`);
-    return product;
+    return product as { price: unknown };
   }
 
   private async getVariantOrThrow(id: string) {
-    const variant = await this.prisma.variant.findUnique({ where: { id }, select: { price: true } });
+    const variant = await this.discountRepository.findVariantById(id, { price: true });
     if (!variant) throw new NotFoundException(`Variant with ID ${id} not found`);
-    return variant;
+    return variant as { price: unknown };
   }
 
   private getBestDiscountDetails(originalPrice: number, bestDiscount: Discount): DiscountCalculation {
@@ -291,10 +230,7 @@ export class DiscountService {
   }
 
   private async findCartOrThrow(cartId: string) {
-    const cart = await this.prisma.cart.findUnique({
-      where: { id: cartId },
-      include: { items: { include: { product: true, variant: true } } },
-    });
+    const cart = await this.discountRepository.findCartById(cartId);
     if (!cart) throw new NotFoundException(`Cart with ID ${cartId} not found`);
     return cart;
   }
@@ -312,10 +248,10 @@ export class DiscountService {
       total += Number(cartItem.product.price) * cartItem.quantity;
       discountTotal += discountAmount * cartItem.quantity;
 
-      const updatedItem = await this.updateCartItemWithDiscountDetails(cartItem, {
-        discountId,
+      const updatedItem = await this.discountRepository.updateCartItem(cartItem.id, {
+        originalPrice: Number(cartItem.product.price),
         discountedPrice,
-        discountAmount,
+        discountId,
       });
 
       updatedItems.push(updatedItem);
@@ -355,26 +291,8 @@ export class DiscountService {
     }
   }
 
-  private async updateCartItemWithDiscountDetails(
-    cartItem: CartItemWithProduct,
-    discountDetails: DiscountCalculation,
-    tx: PrismaService = this.prisma,
-  ) {
-    return tx.cartItem.update({
-      where: { id: cartItem.id },
-      data: {
-        originalPrice: Number(cartItem.product.price),
-        discountedPrice: discountDetails.discountedPrice,
-        discountId: discountDetails.discountId,
-      },
-    });
-  }
-
   private async findOrderOrThrow(orderId: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: { items: { include: { product: true, variant: true } } },
-    });
+    const order = await this.discountRepository.findOrderById(orderId);
     if (!order) throw new NotFoundException(`Order with ID ${orderId} not found`);
     return order;
   }
@@ -392,40 +310,14 @@ export class DiscountService {
       total += Number(orderItem.product.price) * orderItem.quantity;
       discountTotal += discountAmount * orderItem.quantity;
 
-      const updatedItem = await this.updateOrderItemWithDiscount(orderItem, {
-        discountId,
+      const updatedItem = await this.discountRepository.updateOrderItem(orderItem.id, {
+        originalPrice: Number(orderItem.product.price),
         discountAmount,
-      } as DiscountCalculation);
+        discountId,
+      });
       updatedItems.push(updatedItem);
     }
-    return {
-      total,
-      discountTotal,
-      updatedItems,
-    };
-  }
-
-  private async updateOrderItemWithDiscount(
-    orderItem: OrderItemWithProduct,
-    discount: DiscountCalculation,
-    tx = this.prisma,
-  ) {
-    return tx.orderItem.update({
-      where: { id: orderItem.id },
-      data: {
-        originalPrice: Number(orderItem.product.price),
-        discountAmount: discount.discountAmount,
-        discountId: discount.discountId,
-      },
-    });
-  }
-
-  private async updateOrderWithDiscount(orderId: string, total: number, discountTotal: number) {
-    return this.prisma.order.update({
-      where: { id: orderId },
-      data: { totalAmount: total, discountTotal, totalWithOutDiscount: total - discountTotal },
-      include: { items: true },
-    });
+    return { total, discountTotal, updatedItems };
   }
 
   private ensureEndDateComeAfter(input: CreateOrUpdateDiscountInput) {
@@ -446,17 +338,17 @@ export class DiscountService {
   }
 
   private async ensureProductsExist(input: CreateOrUpdateDiscountInput) {
-    const invalidIds = await this.getInvalidIds(input.products, 'product');
+    const invalidIds = await this.discountRepository.getInvalidIds(input.products, 'product');
     if (invalidIds.length) throw new BadRequestException(`Invalid product IDs: ${invalidIds.join(', ')}`);
   }
 
   private async ensureVariantsExist(input: CreateOrUpdateDiscountInput) {
-    const invalidIds = await this.getInvalidIds(input.variants, 'variant');
+    const invalidIds = await this.discountRepository.getInvalidIds(input.variants, 'variant');
     if (invalidIds.length) throw new BadRequestException(`Invalid variant IDs: ${invalidIds.join(', ')}`);
   }
 
   private async ensureCategoriesExist(input: CreateOrUpdateDiscountInput) {
-    const invalidIds = await this.getInvalidIds(input.categories, 'category');
+    const invalidIds = await this.discountRepository.getInvalidIds(input.categories, 'category');
     if (invalidIds.length) throw new BadRequestException(`Invalid category IDs: ${invalidIds.join(', ')}`);
   }
 
