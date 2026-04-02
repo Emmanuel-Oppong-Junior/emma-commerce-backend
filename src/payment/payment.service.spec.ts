@@ -100,6 +100,7 @@ describe('PaymentService', () => {
       data: {
         reference: 'order1-1234567890',
         authorization_url: 'http://paystack.test/auth',
+        access_code: 'acc_test_123',
       },
     };
 
@@ -133,7 +134,10 @@ describe('PaymentService', () => {
           paymentMethod: 'card',
           status: PaymentStatus.PENDING,
           transactionId: 'order1-1234567890',
-          paymentDetails: transaction.data,
+          paymentDetails: {
+            reference: transaction.data.reference,
+            access_code: transaction.data.access_code,
+          },
         },
       });
       expect(result).toEqual({
@@ -279,7 +283,7 @@ describe('PaymentService', () => {
       expect(prisma.order.findUnique).not.toHaveBeenCalled();
     });
 
-    it('should throw UnauthorizedException if user tries to access another user\'s payment', async () => {
+    it("should throw UnauthorizedException if user tries to access another user's payment", async () => {
       mockPrismaService.payment.findUnique.mockResolvedValue(payment);
       mockPrismaService.order.findUnique.mockResolvedValue({ id: 'order1', userId: 'other-user' });
 

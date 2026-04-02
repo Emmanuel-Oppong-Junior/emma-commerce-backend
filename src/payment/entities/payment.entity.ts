@@ -1,6 +1,7 @@
 import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
 import { PaymentStatus } from '../enums/payment-status.enum';
 import { Order } from '../../order/entities/order.entity';
+import { Decimal } from '@prisma/client/runtime/library';
 
 @ObjectType()
 export class Payment {
@@ -14,7 +15,7 @@ export class Payment {
   order: Order;
 
   @Field(() => Float)
-  amount: number;
+  amount: Decimal;
 
   @Field(() => String)
   currency: string;

@@ -1,6 +1,7 @@
 import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
 import { Product } from '../../products/entities/product.entity';
 import { Discount } from '../../discount/entities/discount.entity';
+import { Decimal } from '@prisma/client/runtime/library';
 
 @ObjectType()
 export class OrderItem {
@@ -20,16 +21,16 @@ export class OrderItem {
   quantity: number;
 
   @Field(() => Float, { description: 'Original price per unit of the product or variant', nullable: true })
-  originalPrice?: number;
+  originalPrice?: Decimal;
 
   @Field(() => Float, { description: 'Discount amount applied to the item', nullable: true })
-  discountAmount?: number;
+  discountAmount?: Decimal;
 
   @Field(() => Discount, { description: 'Discount applied to the order item, if any', nullable: true })
   appliedDiscount?: Discount;
 
   @Field(() => Float)
-  priceAtOrder: number;
+  priceAtOrder: Decimal;
 
   @Field()
   createdAt: Date;

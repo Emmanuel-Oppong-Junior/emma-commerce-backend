@@ -71,7 +71,11 @@ export class OrdersService {
    * @param status - The new status.
    * @returns The updated order with its items.
    */
-  async updateOrderStatus(orderId: string, status: OrderStatus, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
+  async updateOrderStatus(
+    orderId: string,
+    status: OrderStatus,
+    adminUserId?: string,
+  ): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
     const updated = await this.applyOrderStatus(orderId, status);
     await this.auditService.log({
@@ -148,11 +152,13 @@ export class OrdersService {
     if (cart.items.length > 50) throw new BadRequestException('Order exceeds maximum item limit of 50');
   }
 
-  private async buildOrderDetails(cartItems: CartItem[]): Promise<{ orderItems: OrderItem[]; totalAmount: number }> {
+  private async buildOrderDetails(
+    cartItems: CartItem[],
+  ): Promise<{ orderItems: OrderItem[]; totalAmount: Prisma.Decimal }> {
     // Pre-validate outside the transaction for early user-friendly errors,
     // but stock is re-checked with a lock inside saveOrderAndUpdateInventory.
     const orderItems = await this.createOrderItems(cartItems);
-    const totalAmount = this.computeTotalAmount(orderItems);
+    const totalAmount = new Prisma.Decimal(this.computeTotalAmount(orderItems).toFixed(2));
     return { orderItems, totalAmount };
   }
 
@@ -163,7 +169,7 @@ export class OrdersService {
       orderItems.push({
         productId: item.productId,
         quantity: item.quantity,
-        priceAtOrder: product.price as unknown as number,
+        priceAtOrder: product.price as unknown as Prisma.Decimal,
         originalPrice: product.price as unknown as Prisma.Decimal,
       } as OrderItem);
     }
@@ -186,7 +192,7 @@ export class OrdersService {
   }
 
   private computeTotalAmount(orderItems: OrderItem[]): number {
-    const subtotal = orderItems.reduce((sum, item) => sum + item.priceAtOrder * item.quantity, 0);
+    const subtotal = orderItems.reduce((sum, item) => sum + Number(item.priceAtOrder) * item.quantity, 0);
     const tax = subtotal * 0.1; // 10% tax, configurable later
     const shippingFee = 5.0; // Flat fee, configurable later
     return subtotal + tax + shippingFee;
@@ -195,7 +201,7 @@ export class OrdersService {
   private async saveOrderAndUpdateInventory(
     userId: string,
     shippingAddressId: string,
-    orderDetails: { orderItems: OrderItem[]; totalAmount: number },
+    orderDetails: { orderItems: OrderItem[]; totalAmount: Prisma.Decimal },
     cartId: string,
   ): Promise<Order & { items: OrderItem[] }> {
     return this.prismaService.$transaction(async (prisma) => {
@@ -209,9 +215,7 @@ export class OrdersService {
           data: { quantity: { decrement: item.quantity } },
         });
         if (product.quantity < 0) {
-          throw new BadRequestException(
-            `Insufficient stock for product "${item.productId}" — please review your cart`,
-          );
+          throw new BadRequestException(`Insufficient stock for product "${item.productId}" — please review your cart`);
         }
       }
       const newOrder = await this.createOrderInDb(prisma, userId, shippingAddressId, orderDetails);
@@ -224,7 +228,7 @@ export class OrdersService {
     prisma: Prisma.TransactionClient,
     userId: string,
     shippingAddressId: string,
-    orderDetails: { orderItems: OrderItem[]; totalAmount: number },
+    orderDetails: { orderItems: OrderItem[]; totalAmount: Prisma.Decimal },
   ): Promise<Order & { items: OrderItem[] }> {
     return prisma.order.create({
       data: {
@@ -316,9 +320,7 @@ export class OrdersService {
     return order;
   }
 
-  private async softDeleteOrder(
-    order: Order & { items: OrderItem[] },
-  ): Promise<Order & { items: OrderItem[] }> {
+  private async softDeleteOrder(order: Order & { items: OrderItem[] }): Promise<Order & { items: OrderItem[] }> {
     return this.prismaService.$transaction(async (prisma) => {
       await this.restoreProductStock(prisma, order.items);
       return prisma.order.update({

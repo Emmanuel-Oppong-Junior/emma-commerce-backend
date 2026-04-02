@@ -10,9 +10,10 @@ import { ActiveUser } from '../iam/authentication/decorators/active-user.decorat
 export class PaymentResolver {
   constructor(private readonly paymentService: PaymentService) {}
 
+  @Roles(Role.USER)
   @Mutation(() => Payment)
-  verifyPayment(@Args('verifyPaymentInput') verifyPaymentInput: VerifyPaymentInput) {
-    return this.paymentService.verifyPayment(verifyPaymentInput.reference);
+  verifyPayment(@Args('verifyPaymentInput') verifyPaymentInput: VerifyPaymentInput, @ActiveUser('id') userId: string) {
+    return this.paymentService.verifyPaymentAsUser(verifyPaymentInput.reference, userId);
   }
 
   @Roles(Role.USER)

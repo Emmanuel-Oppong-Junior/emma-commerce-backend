@@ -7,7 +7,7 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { User } from '@prisma/client';
 import { Role } from './enums/role.enum';
 import { UpdateUserInput } from './dto/update-user.input';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 
 const mockPrismaService = {

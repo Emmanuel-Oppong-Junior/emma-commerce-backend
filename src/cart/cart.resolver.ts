@@ -55,7 +55,7 @@ export class CartResolver {
   }
 
   @Query(() => Cart)
-  async cartWithDiscount(@Args('id', { type: () => String }) id: string) {
-    return this.discountService.applyDiscountsToCart(id);
+  async cartWithDiscount(@ActiveUser('id') userId: string) {
+    return this.discountService.applyDiscountsToCart(userId);
   }
 }

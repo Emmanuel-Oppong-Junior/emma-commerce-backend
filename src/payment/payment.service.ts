@@ -1,9 +1,15 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Role } from '../users/enums/role.enum';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
-import { OrderStatus, Payment, PaymentStatus } from '@prisma/client';
+import { OrderStatus, Payment, PaymentStatus, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
@@ -42,21 +48,40 @@ export class PaymentService {
       user: { email },
     } = await this.validateOrderOwnership(userId, orderId);
     await this.ensurePaymentNotInitiated(orderId);
+    const totalAmountNumber = Number(totalAmount);
     const transaction = await this.initializePaystackTransaction({
       email: email,
-      amount: totalAmount,
+      amount: totalAmountNumber,
       input: createPaymentDto,
     });
-    return this.createPaymentRecord(totalAmount, createPaymentDto, transaction);
+    return this.createPaymentRecord(totalAmountNumber, createPaymentDto, transaction);
   }
 
   /**
    * Verifies a payment status using Paystack reference.
+   * For internal use by the webhook and REST callback only — no ownership check.
    * @param reference - Paystack transaction reference.
    * @returns Updated payment record.
    */
   async verifyPayment(reference: string): Promise<Payment> {
     const payment = await this.fetchPaymentByReference(reference);
+    const verification = await this.verifyPaystackTransaction(reference);
+    return this.updatePaymentStatus(payment.id, verification);
+  }
+
+  /**
+   * Verifies a payment on behalf of an authenticated user.
+   * Enforces ownership — the reference must belong to an order owned by the requesting user.
+   * @param reference - Paystack transaction reference.
+   * @param userId - ID of the requesting user.
+   * @returns Updated payment record.
+   */
+  async verifyPaymentAsUser(reference: string, userId: string): Promise<Payment> {
+    const payment = await this.fetchPaymentByReference(reference);
+    const order = await this.prismaService.order.findUnique({ where: { id: payment.orderId } });
+    if (!order || order.userId !== userId) {
+      throw new ForbiddenException('You do not have access to this payment');
+    }
     const verification = await this.verifyPaystackTransaction(reference);
     return this.updatePaymentStatus(payment.id, verification);
   }
@@ -206,10 +231,37 @@ export class PaymentService {
         paymentMethod,
         status: PaymentStatus.PENDING,
         transactionId: transaction.data.reference,
-        paymentDetails: transaction.data,
+        paymentDetails: this.sanitizeInitializeDetails(transaction.data),
       },
     });
     return { ...payment, authorizationUrl: transaction.data.authorization_url };
+  }
+
+  /**
+   * Strips raw Paystack initialization data down to the minimum fields needed for audit.
+   * Never persist authorization_url or any field that could expose redirect tokens.
+   */
+  private sanitizeInitializeDetails(data: Paystack.Transaction.InitializeResponse): Prisma.InputJsonValue {
+    return {
+      reference: data.reference,
+      access_code: data.access_code,
+    } as Prisma.InputJsonValue;
+  }
+
+  /**
+   * Strips raw Paystack verification data down to safe audit fields.
+   * Omits customer PII, IP addresses, raw channel tokens, and authorization objects.
+   */
+  private sanitizeVerifyDetails(data: Paystack.Transaction.VerifyResponse): Prisma.InputJsonValue {
+    return {
+      reference: data.reference,
+      status: data.status,
+      amount: data.amount,
+      currency: data.currency,
+      channel: data.channel,
+      paid_at: data.paid_at,
+      gateway_response: data.gateway_response,
+    } as Prisma.InputJsonValue;
   }
 
   private async fetchPaymentByReference(reference: string): Promise<Payment> {
@@ -235,7 +287,7 @@ export class PaymentService {
       where: { id: paymentId },
       data: {
         status,
-        paymentDetails: verification.data,
+        paymentDetails: this.sanitizeVerifyDetails(verification.data),
       },
     });
 
@@ -286,11 +338,7 @@ export class PaymentService {
       const hash = this.computeWebhookSignature(dto);
       return hash === signature;
     } catch (error) {
-      this.logger.error(
-        `Signature validation error | ${error.message}`,
-        error.stack,
-        'PaymentService',
-      );
+      this.logger.error(`Signature validation error | ${error.message}`, error.stack, 'PaymentService');
       return false;
     }
   }

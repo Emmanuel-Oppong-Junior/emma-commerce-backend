@@ -125,8 +125,8 @@ model Variant {
 }
 
 model Product {
-  id               String  @id @default(cuid())
-  // Note: brandId index added below via @@index
+  id String @id @default(cuid())
+
   name             String  @db.VarChar(255)
   description      String? @db.Text
   shortDescription String? @db.VarChar(500)
@@ -207,15 +207,15 @@ enum DeliveryOptions {
 }
 
 model Review {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   score     Int
   comment   String?
   productId String
   userId    String
-  deleted   Boolean  @default(false)
+  deleted   Boolean   @default(false)
   deletedAt DateTime?
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
   @@index([userId])
@@ -276,7 +276,7 @@ model Order {
   user                 User        @relation(fields: [userId], references: [id], onDelete: Restrict)
   discountTotal        Decimal?
   totalWithOutDiscount Decimal?
-  totalAmount          Float
+  totalAmount          Decimal  @db.Decimal(10, 2)
   status               OrderStatus @default(PENDING)
   shippingAddressId    String
   shippingAddress      Address     @relation(fields: [shippingAddressId], references: [id], onDelete: Restrict)
@@ -298,7 +298,7 @@ model OrderItem {
   productId      String
   variantId      String?
   quantity       Int       @default(1)
-  priceAtOrder   Float
+  priceAtOrder   Decimal  @db.Decimal(10, 2)
   order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product        Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
   variant        Variant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
@@ -317,7 +317,7 @@ model Payment {
   id             String        @id @default(cuid())
   orderId        String        @unique
   order          Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  amount         Float
+  amount         Decimal  @db.Decimal(10, 2)
   currency       String        @default("GHS")
   paymentMethod  String
   status         PaymentStatus @default(PENDING)

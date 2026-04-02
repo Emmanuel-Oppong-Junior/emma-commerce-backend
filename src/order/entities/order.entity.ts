@@ -2,6 +2,7 @@ import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
 import { OrderStatusEnum } from '../enums/order.enum';
 import { OrderStatus } from '@prisma/client';
 import { OrderItem } from './order-item.entity';
+import { Decimal } from '@prisma/client/runtime/library';
 
 @ObjectType()
 export class Order {
@@ -12,13 +13,13 @@ export class Order {
   userId: string;
 
   @Field(() => Float)
-  totalAmount: number;
+  totalAmount: Decimal;
 
   @Field(() => Float, { description: 'Total discount amount applied', nullable: true })
-  discountTotal?: number;
+  discountTotal?: Decimal;
 
   @Field(() => Float, { description: 'Final total after discounts', nullable: true })
-  finalTotal?: number;
+  finalTotal?: Decimal;
 
   @Field(() => OrderStatusEnum)
   status: OrderStatus;

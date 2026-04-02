@@ -9,7 +9,6 @@ import { DiscountType } from './enums/discount-type.enum';
 
 describe('DiscountService', () => {
   let service: DiscountService;
-  let prisma: PrismaService;
 
   // Mock PrismaService
   const mockPrismaService = {
@@ -109,36 +108,12 @@ describe('DiscountService', () => {
     updatedAt: new Date(),
   };
 
-  const mockOrderItem = {
-    id: 'orderItem1',
-    orderId: 'order1',
-    productId: 'product1',
-    variantId: null,
-    quantity: 2,
-    originalPrice: 100,
-    discountAmount: null,
-    discountId: null,
-    createdAt: new Date(),
-  };
-
-  const mockOrder = {
-    id: 'order1',
-    userId: 'user1',
-    items: [mockOrderItem],
-    total: 200,
-    discountTotal: null,
-    finalTotal: 200,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [DiscountService, { provide: PrismaService, useValue: mockPrismaService }],
     }).compile();
 
     service = module.get<DiscountService>(DiscountService);
-    prisma = module.get<PrismaService>(PrismaService);
   });
 
   afterEach(() => {

@@ -5,7 +5,7 @@ import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
 import { ProductConnection } from './entities/product-connection.entity';
-import { Prisma, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { DiscountService } from '../discount/discount.service';
 import { Discount } from '../discount/entities/discount.entity';
