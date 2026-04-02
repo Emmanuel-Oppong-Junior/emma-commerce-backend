@@ -111,10 +111,8 @@ The services currently call `PrismaService` directly, violating the Dependency I
 - [ ] Configure `CacheModule.registerAsync` with Redis connection via `ConfigService`
 - [ ] Migrate category caching from in-memory to Redis so cache is shared across instances
 - [ ] Cache frequently read, rarely written data: active discounts, product detail pages
-- [ ] Implement Redis-backed `ThrottlerStorage` so rate limit counters are shared across all instances
 
-### Distributed Rate Limiting
-- [ ] Replace in-memory throttler storage with `ThrottlerStorageRedisService`
+### Rate Limiting
 - [ ] Add specific rate limit to payment initiation endpoint (e.g., 5 per minute per user)
 - [ ] Add specific rate limit to file upload endpoint
 
