@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { CartItem, Discount, Order, OrderItem, Product, Variant } from '@prisma/client';
@@ -15,9 +17,15 @@ import {
 } from './types';
 import { DiscountRepository } from './discount.repository';
 
+const DISCOUNT_ALL_KEY = 'discount:all';
+const discountKey = (id: string) => `discount:${id}`;
+
 @Injectable()
 export class DiscountService {
-  constructor(private readonly discountRepository: DiscountRepository) {}
+  constructor(
+    private readonly discountRepository: DiscountRepository,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
 
   /**
    * Creates a new discount with the provided input.
@@ -29,7 +37,7 @@ export class DiscountService {
   async createDiscount(input: CreateDiscountInput): Promise<Discount> {
     await this.validateDiscountInput(input);
     const connectData = this.prepareDiscountConnectionData(input, 'connect') as DiscountConnectInput;
-    return this.discountRepository.create({
+    const discount = await this.discountRepository.create({
       name: input.name,
       description: input.description,
       type: input.type,
@@ -42,6 +50,8 @@ export class DiscountService {
       variants: connectData.variants,
       categories: connectData.categories,
     });
+    await this.cacheManager.del(DISCOUNT_ALL_KEY);
+    return discount;
   }
 
   /**
@@ -57,7 +67,7 @@ export class DiscountService {
     await this.findDiscountOrThrow(id);
     await this.validateDiscountInput(input, true);
     const connectData = this.prepareDiscountConnectionData(input, 'set') as DiscountSetInput;
-    return this.discountRepository.update(id, {
+    const updated = await this.discountRepository.update(id, {
       name: input.name,
       description: input.description,
       type: input.type,
@@ -70,6 +80,8 @@ export class DiscountService {
       variants: connectData.variants,
       categories: connectData.categories,
     });
+    await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(id))]);
+    return updated;
   }
 
   /**
@@ -77,7 +89,11 @@ export class DiscountService {
    * @returns A list of all discounts.
    */
   async findAllDiscounts(): Promise<Discount[]> {
-    return this.discountRepository.findAll();
+    const cached = await this.cacheManager.get<Discount[]>(DISCOUNT_ALL_KEY);
+    if (cached) return cached;
+    const discounts = await this.discountRepository.findAll();
+    await this.cacheManager.set(DISCOUNT_ALL_KEY, discounts);
+    return discounts;
   }
 
   /**
@@ -87,7 +103,11 @@ export class DiscountService {
    * @throws NotFoundException if the discount is not found.
    */
   async findOneDiscount(id: string): Promise<Discount> {
-    return this.findDiscountOrThrow(id);
+    const cached = await this.cacheManager.get<Discount>(discountKey(id));
+    if (cached) return cached;
+    const discount = await this.findDiscountOrThrow(id);
+    await this.cacheManager.set(discountKey(id), discount);
+    return discount;
   }
 
   /**
@@ -98,7 +118,9 @@ export class DiscountService {
    */
   async deleteDiscount(id: string): Promise<Discount> {
     await this.findDiscountOrThrow(id);
-    return this.discountRepository.delete(id);
+    const deleted = await this.discountRepository.delete(id);
+    await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(id))]);
+    return deleted;
   }
 
   /**

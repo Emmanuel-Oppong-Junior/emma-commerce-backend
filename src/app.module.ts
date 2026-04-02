@@ -55,6 +55,16 @@ import { HealthModule } from './health/health.module';
         ttl: 60000, // 1 minute
         limit: 10, // 10 auth attempts per minute
       },
+      {
+        name: 'payment',
+        ttl: 60000, // 1 minute
+        limit: 5, // 5 payment initiations per minute per user
+      },
+      {
+        name: 'upload',
+        ttl: 60000, // 1 minute
+        limit: 10, // 10 uploads per minute per user
+      },
     ]),
     PrismaModule,
     UsersModule,

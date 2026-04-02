@@ -107,14 +107,14 @@ The services currently call `PrismaService` directly, violating the Dependency I
 ## Phase 4 — Infrastructure: Caching & Rate Limiting
 
 ### Redis Integration
-- [ ] Add `ioredis` or `@nestjs/cache-manager` Redis store to dependencies
-- [ ] Configure `CacheModule.registerAsync` with Redis connection via `ConfigService`
-- [ ] Migrate category caching from in-memory to Redis so cache is shared across instances
-- [ ] Cache frequently read, rarely written data: active discounts, product detail pages
+- [x] Add `ioredis` or `@nestjs/cache-manager` Redis store to dependencies — `@keyv/redis` + `@nestjs/cache-manager` already installed
+- [x] Configure `CacheModule.registerAsync` with Redis connection via `ConfigService` — `cacheConfig` uses `createKeyv` from `@keyv/redis`; falls back to in-memory when `REDIS_HOST` is absent
+- [x] Migrate category caching from in-memory to Redis so cache is shared across instances — `CategoriesService` already uses `CACHE_MANAGER`; automatically uses Redis when `REDIS_HOST` is set
+- [x] Cache frequently read, rarely written data: active discounts, product detail pages — `DiscountService.findAllDiscounts` and `findOneDiscount` cached with `CACHE_MANAGER`; invalidated on create/update/delete
 
 ### Rate Limiting
-- [ ] Add specific rate limit to payment initiation endpoint (e.g., 5 per minute per user)
-- [ ] Add specific rate limit to file upload endpoint
+- [x] Add specific rate limit to payment initiation endpoint (e.g., 5 per minute per user) — `@Throttle({ payment: { limit: 5, ttl: 60000 } })` on `PaymentController.initializeTransaction`
+- [x] Add specific rate limit to file upload endpoint — `@Throttle({ upload: { limit: 10, ttl: 60000 } })` on both `UploadController` endpoints
 
 ---
 

@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { PaystackCallbackDto, PaystackWebhookDto } from './dto/paystack.dto';
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -11,6 +12,7 @@ import { PAYSTACK_WEBHOOK_SIGNATURE_KEY } from './constant';
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
+  @Throttle({ payment: { limit: 5, ttl: 60000 } })
   @Post('/initialize')
   async initializeTransaction(@Body() createPaymentDto: CreatePaymentDto, @ActiveUser('id') userId: string) {
     return this.paymentService.initiatePayment(userId, createPaymentDto);

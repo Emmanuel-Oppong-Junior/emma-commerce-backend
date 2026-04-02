@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { DiscountService } from './discount.service';
 import { DiscountRepository } from './discount.repository';
 import { CreateDiscountInput } from './dto/create-discount.input';
@@ -6,6 +7,12 @@ import { UpdateDiscountInput } from './dto/update-discount.input';
 import { Discount, Prisma, Product } from '@prisma/client';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
+
+const mockCacheManager = {
+  get: jest.fn(),
+  set: jest.fn(),
+  del: jest.fn(),
+};
 
 const mockDiscountRepository = {
   create: jest.fn(),
@@ -83,7 +90,11 @@ describe('DiscountService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [DiscountService, { provide: DiscountRepository, useValue: mockDiscountRepository }],
+      providers: [
+        DiscountService,
+        { provide: DiscountRepository, useValue: mockDiscountRepository },
+        { provide: CACHE_MANAGER, useValue: mockCacheManager },
+      ],
     }).compile();
 
     service = module.get<DiscountService>(DiscountService);
@@ -120,6 +131,7 @@ describe('DiscountService', () => {
           products: { connect: [{ id: 'product1' }] },
         }),
       );
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
     });
 
     it('should throw BadRequestException for invalid product IDs', async () => {
@@ -155,6 +167,8 @@ describe('DiscountService', () => {
         input.id,
         expect.objectContaining({ name: input.name, isActive: false }),
       );
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:discount1');
     });
 
     it('should throw NotFoundException for non-existent discount', async () => {
@@ -173,26 +187,49 @@ describe('DiscountService', () => {
   });
 
   describe('findAllDiscounts', () => {
-    it('should return all discounts', async () => {
+    it('should return all discounts from cache when cached', async () => {
+      mockCacheManager.get.mockResolvedValue([mockDiscount]);
+
+      const result = await service.findAllDiscounts();
+
+      expect(result).toEqual([mockDiscount]);
+      expect(discountRepository.findAll).not.toHaveBeenCalled();
+    });
+
+    it('should fetch from repository on cache miss and populate cache', async () => {
+      mockCacheManager.get.mockResolvedValue(null);
       mockDiscountRepository.findAll.mockResolvedValue([mockDiscount]);
 
       const result = await service.findAllDiscounts();
 
       expect(result).toEqual([mockDiscount]);
       expect(discountRepository.findAll).toHaveBeenCalled();
+      expect(mockCacheManager.set).toHaveBeenCalledWith('discount:all', [mockDiscount]);
     });
   });
 
   describe('findOneDiscount', () => {
-    it('should return a discount by ID', async () => {
+    it('should return a discount from cache when cached', async () => {
+      mockCacheManager.get.mockResolvedValue(mockDiscount);
+
+      const result = await service.findOneDiscount('discount1');
+
+      expect(result).toEqual(mockDiscount);
+      expect(discountRepository.findById).not.toHaveBeenCalled();
+    });
+
+    it('should fetch from repository on cache miss', async () => {
+      mockCacheManager.get.mockResolvedValue(null);
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
 
       const result = await service.findOneDiscount('discount1');
 
       expect(result).toEqual(mockDiscount);
+      expect(mockCacheManager.set).toHaveBeenCalledWith('discount:discount1', mockDiscount);
     });
 
     it('should throw NotFoundException for non-existent discount', async () => {
+      mockCacheManager.get.mockResolvedValue(null);
       mockDiscountRepository.findById.mockResolvedValue(null);
 
       await expect(service.findOneDiscount('discount2')).rejects.toThrow(NotFoundException);
@@ -208,6 +245,8 @@ describe('DiscountService', () => {
 
       expect(result).toEqual(mockDiscount);
       expect(discountRepository.delete).toHaveBeenCalledWith('discount1');
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:discount1');
     });
 
     it('should throw NotFoundException for non-existent discount', async () => {

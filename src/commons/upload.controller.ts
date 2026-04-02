@@ -6,6 +6,7 @@ import {
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { CloudinaryService } from './cloudinary.service';
 import { memoryStorage } from 'multer';
@@ -21,6 +22,7 @@ const multerOptions = {
 @Controller('upload')
 export class UploadController {
   constructor(private readonly cloudinaryService: CloudinaryService) {}
+  @Throttle({ upload: { limit: 10, ttl: 60000 } })
   @Post('/multiple-images')
   @UseInterceptors(FilesInterceptor('files', 3, multerOptions))
   async uploadProductImages(@UploadedFiles() images: Express.Multer.File[]) {
@@ -36,6 +38,7 @@ export class UploadController {
     };
   }
 
+  @Throttle({ upload: { limit: 10, ttl: 60000 } })
   @Post('/single-image')
   @UseInterceptors(FileInterceptor('file', multerOptions))
   async uploadCategoryImage(@UploadedFile() image: Express.Multer.File) {
