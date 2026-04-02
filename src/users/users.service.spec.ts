@@ -127,29 +127,24 @@ describe('UsersService', () => {
   describe('findAll', () => {
     it('should return paginated users with filters', async () => {
       const filter: UserPaginateArgs = { first: 2, name: 'John', isActive: true };
-      const users: User[] = [
-        { ...mockUser, id: '1', name: 'John Doe', email: 'john@example.com' },
-        { ...mockUser, id: '2', name: 'John Smith', email: 'john.smith@example.com' },
-      ];
-      const totalCount = 5;
+      const user1 = { ...mockUser, id: '1', name: 'John Doe', email: 'john@example.com' };
+      const user2 = { ...mockUser, id: '2', name: 'John Smith', email: 'john.smith@example.com' };
+      const user3 = { ...mockUser, id: '3', name: 'John Extra', email: 'john.extra@example.com' };
 
-      mockUsersRepository.findMany.mockResolvedValue(users);
-      mockUsersRepository.count.mockResolvedValue(totalCount);
+      // Return 3 items (take+1) to signal there is a next page
+      mockUsersRepository.findMany.mockResolvedValue([user1, user2, user3]);
 
       const result = await service.findAll(filter);
 
       expect(usersRepository.findMany).toHaveBeenCalledWith(
-        { take: 2, skip: 0, cursor: undefined, orderBy: undefined, orderInAsc: undefined },
+        { take: 3, skip: 0, cursor: undefined, orderBy: undefined, orderInAsc: undefined },
         { name: { contains: 'John', mode: 'insensitive' }, isActive: true },
       );
-      expect(usersRepository.count).toHaveBeenCalledWith({
-        name: { contains: 'John', mode: 'insensitive' },
-        isActive: true,
-      });
+      expect(usersRepository.count).not.toHaveBeenCalled();
       expect(result).toEqual({
         edges: [
-          { cursor: '1', node: users[0] },
-          { cursor: '2', node: users[1] },
+          { cursor: '1', node: user1 },
+          { cursor: '2', node: user2 },
         ],
         pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true },
       });
@@ -157,15 +152,16 @@ describe('UsersService', () => {
 
     it('should handle pagination with cursor', async () => {
       const filter: UserPaginateArgs = { first: 1, after: '1' };
-      const users: User[] = [{ ...mockUser, id: '2', name: 'Jane', email: 'jane@example.com' }];
+      const user2 = { ...mockUser, id: '2', name: 'Jane', email: 'jane@example.com' };
+      const user3 = { ...mockUser, id: '3', name: 'Jim', email: 'jim@example.com' };
 
-      mockUsersRepository.findMany.mockResolvedValue(users);
-      mockUsersRepository.count.mockResolvedValue(3);
+      // Return 2 items (take+1) to signal there is a next page
+      mockUsersRepository.findMany.mockResolvedValue([user2, user3]);
 
       const result = await service.findAll(filter);
 
       expect(usersRepository.findMany).toHaveBeenCalledWith(
-        { take: 1, skip: 1, cursor: { id: '1' }, orderBy: undefined, orderInAsc: undefined },
+        { take: 2, skip: 1, cursor: { id: '1' }, orderBy: undefined, orderInAsc: undefined },
         {},
       );
       expect(result.pageInfo.hasNextPage).toBe(true);

@@ -51,9 +51,12 @@ export class UsersService {
     const paginationOptions = this.buildPaginationOptions(filter);
     const whereClause = this.buildWhereClause(filter);
 
-    const users = await this.usersRepository.findMany(paginationOptions, whereClause);
-    const totalCount = await this.usersRepository.count(whereClause);
-    return this.formatPaginatedResponse(users, totalCount, paginationOptions);
+    // Fetch one extra item to determine hasNextPage without a COUNT query
+    const users = await this.usersRepository.findMany(
+      { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
+      whereClause,
+    );
+    return this.formatPaginatedResponse(users, paginationOptions);
   }
 
   private buildPaginationOptions({ first, after, orderBy, orderInAsc }: UserPaginateArgs) {
@@ -104,18 +107,19 @@ export class UsersService {
     };
   }
 
-  private formatPaginatedResponse(users: User[], totalCount: number, { skip, take }: { take: number; skip: number }) {
-    const lastUser = users[users.length - 1];
-    const itemsFetched = skip + users.length;
+  private formatPaginatedResponse(users: User[], { skip, take }: { take: number; skip: number }) {
+    const pageSize = take;
+    const hasNextPage = users.length > pageSize;
+    const items = hasNextPage ? users.slice(0, pageSize) : users;
     return {
-      edges: users.map((user) => ({
+      edges: items.map((user) => ({
         cursor: user.id,
         node: user,
       })),
       pageInfo: {
-        pageSize: take,
+        pageSize,
         hasPreviousPage: skip > 0,
-        hasNextPage: !!lastUser && totalCount > itemsFetched,
+        hasNextPage,
       },
     };
   }

@@ -425,7 +425,7 @@ type Mutation {
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
 
-  """Deletes a user’s review"""
+  """Deletes a user's review"""
   deleteReview(reviewId: String!): Review!
 
   """Deletes a tag"""
@@ -506,7 +506,7 @@ type Mutation {
   updateOrderStatus(input: UpdateOrderStatusInput!): Order!
   updateProduct(productId: String!, updateProductInput: UpdateProductInput!): Product!
 
-  """Updates a user’s review"""
+  """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
 
   """Updates an existing subcategory (admin only)"""
@@ -788,7 +788,7 @@ type Query {
   """Retrieves all orders for the current user"""
   userOrders: [Order!]!
 
-  """Fetch a user’s profile with related data"""
+  """Fetch a user's profile with related data"""
   userProfile: User!
 
   """Retrieves all reviews by the user"""
@@ -1080,6 +1080,9 @@ input UpdateVariantInput {
 }
 
 type User {
+  """Saved addresses for this user"""
+  addresses: [Address!]
+
   """Google ID for social login"""
   authProvider: String
 
@@ -1103,6 +1106,9 @@ type User {
 
   """User’s full name"""
   name: String
+
+  """Orders placed by this user"""
+  orders: [Order!]
 
   """Phone number"""
   phoneNumber: String

@@ -9,6 +9,8 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { Role } from '@prisma/client';
 import { Reflector } from '@nestjs/core';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
+import { AddressesLoader } from './loaders/addresses.loader';
+import { OrdersLoader } from './loaders/orders.loader';
 
 const mockUsersService = {
   createUserByCredentials: jest.fn(),
@@ -28,6 +30,8 @@ const mockUsersService = {
 const mockReflector = {
   get: jest.fn(),
 };
+const mockAddressesLoader = { loader: { load: jest.fn().mockResolvedValue([]) } };
+const mockOrdersLoader = { loader: { load: jest.fn().mockResolvedValue([]) } };
 
 describe('UsersResolver', () => {
   let resolver: UsersResolver;
@@ -39,6 +43,8 @@ describe('UsersResolver', () => {
         UsersResolver,
         { provide: UsersService, useValue: mockUsersService },
         { provide: Reflector, useValue: mockReflector },
+        { provide: AddressesLoader, useValue: mockAddressesLoader },
+        { provide: OrdersLoader, useValue: mockOrdersLoader },
       ],
     }).compile();
 
@@ -252,7 +258,7 @@ describe('UsersResolver', () => {
   });
 
   describe('userProfile', () => {
-    it('should return the active user’s profile using the injected ID', async () => {
+    it('should return the active user profile using findOne', async () => {
       const userId = '1';
       const profile: User = {
         id: userId,
@@ -260,18 +266,15 @@ describe('UsersResolver', () => {
         role: Role.USER,
         isActive: true,
         name: 'test',
-        // addresses: [],
-        // wishlist: [],
-
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
-      mockUsersService.getUserProfile.mockResolvedValue(profile);
+      mockUsersService.findOne.mockResolvedValue(profile);
 
       const result = await resolver.userProfile(userId);
 
-      expect(usersService.getUserProfile).toHaveBeenCalledWith(userId);
+      expect(usersService.findOne).toHaveBeenCalledWith(userId);
       expect(result).toEqual(profile);
     });
   });

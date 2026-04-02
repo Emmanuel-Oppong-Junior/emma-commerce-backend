@@ -15,6 +15,10 @@ import { extractRequestedFieldsFromQuery } from '../commons/useful-functions';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { DiscountLoader } from './loaders/discount.loader';
+import { VariantsLoader } from './loaders/variants.loader';
+import { ReviewsLoader } from './loaders/reviews.loader';
+import { Variant } from '../variant/entities/variant.entity';
+import { Review } from '../review/entities/review.entity';
 
 @Resolver(() => Product)
 export class ProductsResolver {
@@ -22,6 +26,8 @@ export class ProductsResolver {
     private readonly productsService: ProductsService,
     private readonly discountService: DiscountService,
     private readonly discountLoader: DiscountLoader,
+    private readonly variantsLoader: VariantsLoader,
+    private readonly reviewsLoader: ReviewsLoader,
   ) {}
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
@@ -89,7 +95,7 @@ export class ProductsResolver {
     @Info() requestInfo?: GraphQLResolveInfo,
   ) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo, {
-      excludedFields: ['edges', 'cursor', 'node', 'discountedPrice', 'appliedDiscount'],
+      excludedFields: ['edges', 'cursor', 'node', 'discountedPrice', 'appliedDiscount', 'variants', 'reviews'],
       level: 3,
     });
     return this.productsService.findAll(paginationArgs, filterArgs, requestedFields);
@@ -99,9 +105,19 @@ export class ProductsResolver {
   @Query(() => Product, { name: 'product', nullable: true })
   findOne(@Args('productId', { type: () => String }) productId: string, @Info() requestInfo?: GraphQLResolveInfo) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo, {
-      excludedFields: ['discountedPrice'],
+      excludedFields: ['discountedPrice', 'appliedDiscount', 'variants', 'reviews'],
     });
     return this.productsService.findOne(productId, requestedFields);
+  }
+
+  @ResolveField(() => [Variant], { nullable: true })
+  async variants(@Parent() product: Product) {
+    return this.variantsLoader.loader.load(product.id);
+  }
+
+  @ResolveField(() => [Review], { nullable: true })
+  async reviews(@Parent() product: Product) {
+    return this.reviewsLoader.loader.load(product.id);
   }
 
   @ResolveField(() => Float, { nullable: true })

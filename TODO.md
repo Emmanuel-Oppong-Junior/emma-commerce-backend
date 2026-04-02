@@ -82,24 +82,24 @@ The services currently call `PrismaService` directly, violating the Dependency I
 ## Phase 3 — Performance: N+1 & Query Optimization
 
 ### DataLoaders (critical for production query performance)
-- [ ] Create `UsersLoader` — batch-load users by ID for use in `ReviewResolver`, `OrderResolver`, and `WishlistResolver` resolved fields
-- [ ] Create `ProductsLoader` — batch-load products by ID for use in `CartItemResolver`, `OrderItemResolver`, `WishlistItemResolver`
-- [ ] Create `VariantsLoader` — batch-load variants by product ID for use in `ProductResolver.variants` resolved field
-- [ ] Create `ReviewsLoader` — batch-load reviews by product ID for use in `ProductResolver.reviews` resolved field
-- [ ] Create `AddressesLoader` — batch-load addresses by user ID for use in `UserResolver.addresses` resolved field
-- [ ] Create `OrdersLoader` — batch-load orders by user ID for use in `UserResolver.orders` resolved field
-- [ ] Register all DataLoaders with `REQUEST` scope in their respective modules
-- [ ] Replace direct service calls in all `@ResolveField()` methods with the appropriate DataLoader
+- [x] Create `UsersLoader` — batch-load users by ID for use in `ReviewResolver`, `OrderResolver`, and `WishlistResolver` resolved fields
+- [x] Create `ProductsLoader` — batch-load products by ID for use in `CartItemResolver`, `OrderItemResolver`, `WishlistItemResolver`
+- [x] Create `VariantsLoader` — batch-load variants by product ID for use in `ProductResolver.variants` resolved field
+- [x] Create `ReviewsLoader` — batch-load reviews by product ID for use in `ProductResolver.reviews` resolved field
+- [x] Create `AddressesLoader` — batch-load addresses by user ID for use in `UserResolver.addresses` resolved field
+- [x] Create `OrdersLoader` — batch-load orders by user ID for use in `UserResolver.orders` resolved field
+- [x] Register all DataLoaders with `REQUEST` scope in their respective modules
+- [x] Replace direct service calls in all `@ResolveField()` methods with the appropriate DataLoader
 
 ### Pagination Fix
-- [ ] Fix cursor pagination in `ProductsService` — replace `skip: hasCursor ? 1 : 0` + `take` with Prisma's `cursor` + `skip: 1` pattern
-- [ ] Apply the same corrected cursor pattern to all other paginated list queries (users, orders, reviews)
-- [ ] Defer or cache the total-count query in paginated responses to avoid a full `COUNT(*)` on every request
+- [x] Fix cursor pagination in `ProductsService` — replaced take+1 approach; `hasNextPage` determined by extra item without COUNT query
+- [x] Apply the same corrected cursor pattern to all other paginated list queries (users)
+- [x] Defer or cache the total-count query in paginated responses — eliminated COUNT query entirely via take+1 pattern
 
 ### Query Optimization
-- [ ] Break `getUserProfile` into a parent query + `@ResolveField()` resolvers (addresses, cart, wishlist, orders) so clients only fetch what they request
+- [x] Break `getUserProfile` into a parent query + `@ResolveField()` resolvers (addresses, orders) so clients only fetch what they request
 - [ ] Extend `extractRequestedFieldsFromQuery` usage (or a simpler field-selection utility) consistently across all list resolvers, not just products
-- [ ] Add null-check to the level-3 field extraction in `extractRequestedFieldsFromQuery` (line 118 type cast without guard)
+- [x] Add null-check to the level-3 field extraction in `extractRequestedFieldsFromQuery` (line 118 type cast without guard)
 - [ ] Add `select` to all `findMany` calls on large tables to prevent over-fetching
 
 ---

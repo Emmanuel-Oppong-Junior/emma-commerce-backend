@@ -114,18 +114,18 @@ export const extractRequestedFieldsFromQuery = (
   if (options.level === 3) {
     const firstLayer = info.fieldNodes[0]?.selectionSet?.selections.find((selection) =>
       Array.isArray((selection as FieldNode)?.selectionSet?.selections),
-    );
-    const secondLayer = (firstLayer as FieldNode).selectionSet?.selections.find((selection) =>
+    ) as FieldNode | undefined;
+    const secondLayer = firstLayer?.selectionSet?.selections.find((selection) =>
       Array.isArray((selection as FieldNode)?.selectionSet?.selections),
-    );
+    ) as FieldNode | undefined;
 
-    parseSelectionSet((secondLayer as FieldNode).selectionSet, prismaSelect);
+    parseSelectionSet(secondLayer?.selectionSet, prismaSelect);
   } else if (options.level === 2) {
     const item = info.fieldNodes[0]?.selectionSet?.selections.find((selection) =>
       Array.isArray((selection as FieldNode)?.selectionSet?.selections),
-    );
+    ) as FieldNode | undefined;
 
-    parseSelectionSet((item as FieldNode).selectionSet, prismaSelect);
+    parseSelectionSet(item?.selectionSet, prismaSelect);
   } else {
     parseSelectionSet(info.fieldNodes[0]?.selectionSet, prismaSelect);
   }

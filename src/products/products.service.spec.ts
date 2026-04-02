@@ -105,17 +105,27 @@ describe('ProductsService', () => {
     ];
 
     it('should return paginated products with filters', async () => {
-      mockProductsRepository.findMany.mockResolvedValue(products);
-      mockProductsRepository.count.mockResolvedValue(3);
+      const extraProduct = {
+        id: 'prod3',
+        name: 'Hoodie',
+        price: 59.99,
+        categoryId: 'cat1',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      };
+      // Return take+1 items to signal hasNextPage=true
+      mockProductsRepository.findMany.mockResolvedValue([...products, extraProduct]);
 
       const result = await service.findAll(paginate, filter);
 
       expect(productsRepository.findMany).toHaveBeenCalledWith(
-        { take: 2, skip: 0, cursor: undefined },
+        { take: 3, skip: 0, cursor: undefined },
         { categoryId: 'cat1', isActive: true },
         undefined,
       );
-      expect(productsRepository.count).toHaveBeenCalledWith({ categoryId: 'cat1', isActive: true });
+      expect(productsRepository.count).not.toHaveBeenCalled();
       expect(result).toEqual({
         edges: products.map((p) => ({ cursor: p.id, node: p })),
         pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true },
@@ -144,12 +154,11 @@ describe('ProductsService', () => {
 
     it('should select only requested fields when requestedField is provided', async () => {
       mockProductsRepository.findMany.mockResolvedValue(products);
-      mockProductsRepository.count.mockResolvedValue(3);
 
       await service.findAll(paginate, filter, { id: true, name: true });
 
       expect(productsRepository.findMany).toHaveBeenCalledWith(
-        { take: 2, skip: 0, cursor: undefined },
+        { take: 3, skip: 0, cursor: undefined },
         { categoryId: 'cat1', isActive: true },
         { id: true, name: true },
       );
@@ -158,12 +167,11 @@ describe('ProductsService', () => {
     it('should respect pagination with after cursor', async () => {
       const paginateWithCursor: PaginationArgs = { first: 1, after: 'prod1' };
       mockProductsRepository.findMany.mockResolvedValue([products[1]]);
-      mockProductsRepository.count.mockResolvedValue(2);
 
       await service.findAll(paginateWithCursor, {});
 
       expect(productsRepository.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 1, skip: 1, cursor: { id: 'prod1' } }),
+        expect.objectContaining({ take: 2, skip: 1, cursor: { id: 'prod1' } }),
         expect.any(Object),
         undefined,
       );

@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ProductsResolver } from './products.resolver';
 import { ProductsService } from './products.service';
 import { DiscountLoader } from './loaders/discount.loader';
+import { VariantsLoader } from './loaders/variants.loader';
+import { ReviewsLoader } from './loaders/reviews.loader';
 import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
@@ -26,6 +28,8 @@ const mockDiscountService = {
 };
 const mockDiscountLoaderFn = jest.fn();
 const mockDiscountLoader = { loader: { load: mockDiscountLoaderFn } };
+const mockVariantsLoader = { loader: { load: jest.fn().mockResolvedValue([]) } };
+const mockReviewsLoader = { loader: { load: jest.fn().mockResolvedValue([]) } };
 const mockProduct = {
   id: 'prod1',
   name: 'T-Shirt',
@@ -52,6 +56,8 @@ describe('ProductsResolver', () => {
         { provide: ProductsService, useValue: mockProductsService },
         { provide: DiscountService, useValue: mockDiscountService },
         { provide: DiscountLoader, useValue: mockDiscountLoader },
+        { provide: VariantsLoader, useValue: mockVariantsLoader },
+        { provide: ReviewsLoader, useValue: mockReviewsLoader },
       ],
     }).compile();
 

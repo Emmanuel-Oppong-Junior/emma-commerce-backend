@@ -1,4 +1,4 @@
-import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { ReviewService } from './review.service';
 import { Review } from './entities/review.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
@@ -6,11 +6,19 @@ import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '../users/enums/role.enum';
 import { CreateReviewInput } from './dto/create-review.input';
 import { UpdateReviewInput } from './dto/update-review.input';
+import { UsersLoader } from '../users/loaders/users.loader';
+import { ProductsLoader } from '../products/loaders/products.loader';
+import { User } from '../users/entities/user.entity';
+import { Product } from '../products/entities/product.entity';
 
 @Roles(Role.USER, Role.SUPER_ADMIN, Role.ADMIN)
 @Resolver(() => Review)
 export class ReviewResolver {
-  constructor(private readonly reviewService: ReviewService) {}
+  constructor(
+    private readonly reviewService: ReviewService,
+    private readonly usersLoader: UsersLoader,
+    private readonly productsLoader: ProductsLoader,
+  ) {}
 
   @Query(() => Review, {
     name: 'review',
@@ -50,7 +58,7 @@ export class ReviewResolver {
 
   @Mutation(() => Review, {
     name: 'updateReview',
-    description: 'Updates a user’s review',
+    description: "Updates a user's review",
   })
   @Roles(Role.USER)
   async updateReview(
@@ -62,9 +70,19 @@ export class ReviewResolver {
 
   @Mutation(() => Review, {
     name: 'deleteReview',
-    description: 'Deletes a user’s review',
+    description: "Deletes a user's review",
   })
   async deleteReview(@ActiveUser('id') userId: string, @Args('reviewId', { type: () => String }) reviewId: string) {
     return this.reviewService.deleteReview(userId, reviewId);
+  }
+
+  @ResolveField(() => User)
+  async user(@Parent() review: Review) {
+    return this.usersLoader.loader.load(review.userId);
+  }
+
+  @ResolveField(() => Product)
+  async product(@Parent() review: Review) {
+    return this.productsLoader.loader.load(review.productId);
   }
 }

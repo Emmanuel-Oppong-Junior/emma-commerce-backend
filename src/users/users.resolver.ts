@@ -1,4 +1,4 @@
-import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { UsersService } from './users.service';
 import { User } from './entities/user.entity';
 import { CreateUserInput } from './dto/create-user.input';
@@ -11,12 +11,20 @@ import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
+import { AddressesLoader } from './loaders/addresses.loader';
+import { OrdersLoader } from './loaders/orders.loader';
+import { Address } from '../addresses/entities/address.entity';
+import { Order } from '../order/entities/order.entity';
 
 @Auth(AuthType.Bearer)
 @Roles(Role.SUPER_ADMIN)
 @Resolver(() => User)
 export class UsersResolver {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly addressesLoader: AddressesLoader,
+    private readonly ordersLoader: OrdersLoader,
+  ) {}
 
   @Mutation(() => User, {
     description: 'Create a new user with email and password',
@@ -104,9 +112,19 @@ export class UsersResolver {
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => User, {
     name: 'userProfile',
-    description: 'Fetch a user’s profile with related data',
+    description: "Fetch a user's profile with related data",
   })
   userProfile(@ActiveUser('id') id: string) {
-    return this.usersService.getUserProfile(id);
+    return this.usersService.findOne(id);
+  }
+
+  @ResolveField(() => [Address], { nullable: true })
+  async addresses(@Parent() user: User) {
+    return this.addressesLoader.loader.load(user.id);
+  }
+
+  @ResolveField(() => [Order], { nullable: true })
+  async orders(@Parent() user: User) {
+    return this.ordersLoader.loader.load(user.id);
   }
 }

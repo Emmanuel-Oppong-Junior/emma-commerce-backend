@@ -1,4 +1,6 @@
 import { Field, ObjectType } from '@nestjs/graphql';
+import { Address } from '../../addresses/entities/address.entity';
+import { Order } from '../../order/entities/order.entity';
 
 @ObjectType()
 export class User {
@@ -43,4 +45,10 @@ export class User {
 
   @Field(() => Date, { nullable: true, description: 'Date of last login' })
   lastLoginAt?: Date;
+
+  @Field(() => [Address], { nullable: true, description: 'Saved addresses for this user' })
+  addresses?: Address[];
+
+  @Field(() => [Order], { nullable: true, description: 'Orders placed by this user' })
+  orders?: Order[];
 }

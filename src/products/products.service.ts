@@ -79,9 +79,13 @@ export class ProductsService {
     const paginationOptions = this.buildPaginationOptions(paginate);
     const whereClause = this.buildWhereClause(filter);
 
-    const products = await this.productsRepository.findMany(paginationOptions, whereClause, requestedData);
-    const totalCount = await this.productsRepository.count(whereClause);
-    return this.formatPaginatedResponse(products, totalCount, paginationOptions);
+    // Fetch one extra item to determine if there is a next page without a COUNT query
+    const products = await this.productsRepository.findMany(
+      { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
+      whereClause,
+      requestedData,
+    );
+    return this.formatPaginatedResponse(products, paginationOptions);
   }
 
   /**
@@ -220,20 +224,20 @@ export class ProductsService {
 
   private formatPaginatedResponse(
     products: Product[],
-    totalCount: number,
     { skip, take }: { take?: number; skip?: number },
   ): ProductConnection {
-    const lastProduct = products[products.length - 1];
-    const itemsFetched = skip + products.length;
+    const pageSize = take ?? 10;
+    const hasNextPage = products.length > pageSize;
+    const items = hasNextPage ? products.slice(0, pageSize) : products;
     return {
-      edges: products.map((product) => ({
+      edges: items.map((product) => ({
         cursor: product.id,
         node: product,
       })),
       pageInfo: {
-        pageSize: take,
+        pageSize,
         hasPreviousPage: skip > 0,
-        hasNextPage: !!lastProduct && totalCount > itemsFetched,
+        hasNextPage,
       },
     };
   }
