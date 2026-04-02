@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { DiscountType } from '../enums/discount-type.enum';
+import { IsEndDateAfterStartDate } from '../../commons/validators/is-end-date-after-start-date.validator';
 
 @InputType()
 export class CreateDiscountInput {
@@ -45,6 +46,7 @@ export class CreateDiscountInput {
   @Field(() => GraphQLISODateTime, { description: 'The end date and time of the discount' })
   @IsNotEmpty({ message: 'End date is required' })
   @IsDate({ message: 'End date must be a valid date' })
+  @IsEndDateAfterStartDate('startDate', { message: 'endDate must be after startDate' })
   @Type(() => Date)
   endDate: Date;
 

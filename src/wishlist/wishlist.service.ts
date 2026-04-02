@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { WishList } from '@prisma/client';
 
@@ -26,6 +26,7 @@ export class WishlistService {
     await this.validateProductExists(productId);
     const wishlist = await this.getOrCreateWishlist(userId);
     await this.ensureProductNotInWishlist(wishlist, productId);
+    this.enforceWishlistLimit(wishlist);
     return this.connectProductToWishlist(wishlist.id, productId);
   }
 
@@ -71,6 +72,12 @@ export class WishlistService {
     });
     if (!product) {
       throw new NotFoundException(`Product "${productId}" not found`);
+    }
+  }
+
+  private enforceWishlistLimit(wishlist: WishList & { products: { id: string }[] }): void {
+    if (wishlist.products.length >= 100) {
+      throw new UnprocessableEntityException('Wishlist is full — maximum of 100 products allowed');
     }
   }
 

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Address } from '@prisma/client';
 import { CreateAddressInput } from './dto/create-address.input';
@@ -15,6 +15,7 @@ export class AddressesService {
    * @returns The created address.
    */
   async createAddress(userId: string, data: CreateAddressInput): Promise<Address> {
+    await this.enforceAddressLimit(userId);
     return this.saveAddress({ ...data, userId });
   }
 
@@ -66,6 +67,13 @@ export class AddressesService {
   async deleteAddress(userId: string, addressId: string): Promise<Address> {
     await this.retrieveUserAddress(userId, addressId);
     return this.removeAddress(addressId);
+  }
+
+  private async enforceAddressLimit(userId: string): Promise<void> {
+    const count = await this.prismaService.address.count({ where: { userId } });
+    if (count >= 10) {
+      throw new BadRequestException('You have reached the maximum of 10 saved addresses');
+    }
   }
 
   private async saveAddress(data: Omit<Address, 'id' | 'createdAt' | 'updatedAt'>): Promise<Address> {

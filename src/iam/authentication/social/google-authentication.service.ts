@@ -28,6 +28,9 @@ export class GoogleAuthenticationService {
 
   async authenticate(token: string) {
     const { email, googleId, name, picture } = await this.getUserDetailsFromToken(token);
+    if (!email) {
+      throw new UnauthorizedException('Google account must have an email address to sign in');
+    }
     const user = await this.userService.findUserByProviderId(googleId);
     if (user) {
       return this.authService.generateTokens(user);

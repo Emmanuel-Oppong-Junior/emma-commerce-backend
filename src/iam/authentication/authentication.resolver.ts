@@ -4,6 +4,7 @@ import { SignUpInput } from './dto/sign-up.input';
 import { AuthenticationService } from './authentication.service';
 import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
+import { SignOutInput } from './dto/sign-out.input';
 import { SocialLoginInput } from './dto/social-login.input';
 import { AuthType } from './enums/auth-type.enum';
 import { Auth } from './decorators/auth.decorator';
@@ -40,6 +41,14 @@ export class AuthenticationResolver {
   })
   refreshToken(@Args('input', { type: () => RefreshTokenInput }) input: RefreshTokenInput) {
     return this.authService.refreshToken(input);
+  }
+
+  @Auth(AuthType.Bearer)
+  @Mutation(() => Boolean, {
+    description: 'Revoke the provided refresh token, signing the user out',
+  })
+  signOut(@Args('input', { type: () => SignOutInput }) input: SignOutInput) {
+    return this.authService.signOut(input.refreshToken);
   }
 
   @Mutation(() => AuthEntity, { description: 'Sign in or register with a Google ID token' })

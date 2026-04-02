@@ -16,6 +16,7 @@ describe('AddressesService', () => {
       findMany: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn(),
     },
   };
 
@@ -52,14 +53,24 @@ describe('AddressesService', () => {
 
   describe('createAddress', () => {
     it('should create an address successfully', async () => {
+      mockPrismaService.address.count.mockResolvedValue(0);
       mockPrismaService.address.create.mockResolvedValue(mockAddress);
 
       const result = await service.createAddress(mockUserId, mockAddressInput);
 
+      expect(prismaService.address.count).toHaveBeenCalledWith({ where: { userId: mockUserId } });
       expect(prismaService.address.create).toHaveBeenCalledWith({
         data: { ...mockAddressInput, userId: mockUserId },
       });
       expect(result).toEqual(mockAddress);
+    });
+
+    it('should throw BadRequestException when address limit is reached', async () => {
+      mockPrismaService.address.count.mockResolvedValue(10);
+
+      await expect(service.createAddress(mockUserId, mockAddressInput)).rejects.toThrow(
+        'You have reached the maximum of 10 saved addresses',
+      );
     });
   });
 

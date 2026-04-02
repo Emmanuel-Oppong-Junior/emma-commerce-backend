@@ -35,6 +35,9 @@ export class FacebookAuthenticationService {
 
   async authenticate(token: string) {
     const { facebookId, email } = await this.getUserDetailsFromToken(token);
+    if (!email) {
+      throw new UnauthorizedException('Facebook account must have an email address to sign in');
+    }
     const user = await this.userService.findUserByProviderId(facebookId);
     if (user) {
       return this.authService.generateTokens(user);

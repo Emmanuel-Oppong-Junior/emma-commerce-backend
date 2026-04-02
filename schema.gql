@@ -141,7 +141,7 @@ input CreateAddressInput {
   """City"""
   city: String!
 
-  """Country"""
+  """Country (full name or ISO 3166-1 alpha-2 code)"""
   country: String!
 
   """State or province"""
@@ -476,6 +476,9 @@ type Mutation {
 
   """Sign in or register with a Google ID token"""
   signInWithGoogle(input: SocialLoginInput!): AuthEntity!
+
+  """Revoke the provided refresh token, signing the user out"""
+  signOut(input: SignOutInput!): Boolean!
 
   """Register a new user with email and password"""
   signUp(input: SignUpInput!): AuthEntity!
@@ -840,6 +843,11 @@ input SignInInput {
   password: String!
 }
 
+input SignOutInput {
+  """The refresh token to revoke"""
+  refreshToken: String!
+}
+
 input SignUpInput {
   """Email address"""
   email: String!
@@ -895,7 +903,7 @@ input UpdateAddressInput {
   """City"""
   city: String
 
-  """Country"""
+  """Country (full name or ISO 3166-1 alpha-2 code)"""
   country: String
 
   """State or province"""

@@ -219,6 +219,35 @@ export class UsersService {
     });
   }
 
+  /**
+   * Increments failed login attempts for a user.
+   * Locks the account for 15 minutes once the threshold of 5 is reached.
+   */
+  async recordFailedLoginAttempt(user: User): Promise<void> {
+    const newAttempts = (user.failedLoginAttempts ?? 0) + 1;
+    const LOCKOUT_THRESHOLD = 5;
+    const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+    await this.prismaService.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginAttempts: newAttempts,
+        ...(newAttempts >= LOCKOUT_THRESHOLD && {
+          lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS),
+        }),
+      },
+    });
+  }
+
+  /**
+   * Resets failed login attempts and removes any active lockout for a user.
+   */
+  async resetFailedLoginAttempts(userId: string): Promise<void> {
+    await this.prismaService.user.update({
+      where: { id: userId },
+      data: { failedLoginAttempts: 0, lockedUntil: null },
+    });
+  }
+
   private async findUserByIdOrThrow(id: string) {
     const user = await this.prismaService.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('User not found');

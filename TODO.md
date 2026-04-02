@@ -34,24 +34,24 @@ These are exploitable vulnerabilities or data-integrity failures that must be re
 ## Phase 1 — High-Priority Security Hardening
 
 ### Authentication
-- [ ] Implement account lockout: track failed login attempts per email; lock account after 5 consecutive failures; auto-unlock after a configurable cooldown period
-- [ ] Implement refresh token revocation: store refresh token hash in DB and invalidate on logout or suspicious activity
-- [ ] Implement refresh token rotation: issue a new refresh token on every `/refresh` call and invalidate the previous one
-- [ ] Re-check `user.isActive` inside the refresh token flow — a deactivated user must not receive new access tokens
-- [ ] Fix social login null-email edge case: if the OAuth provider does not return an email, reject the login with a clear error rather than creating a user with `null` email
+- [x] Implement account lockout: `failedLoginAttempts` and `lockedUntil` added to User; locks after 5 failures for 15 min; resets on success. `UsersService.recordFailedLoginAttempt` / `resetFailedLoginAttempts` added
+- [x] Implement refresh token revocation: `RefreshToken` table with `tokenHash` (SHA-256) + `revoked` flag; `signOut` mutation revokes by hash. `AuthenticationService.signOut` added
+- [x] Implement refresh token rotation: `refreshToken` revokes the incoming token before issuing new pair — each token is single-use
+- [x] Re-check `user.isActive` inside the refresh token flow — throws `UnauthorizedException('Account is inactive')` if false
+- [x] Fix social login null-email edge case: both `GoogleAuthenticationService` and `FacebookAuthenticationService` now throw `UnauthorizedException` if no email is returned
 
 ### Authorization
-- [ ] Add `@Roles(Role.ADMIN)` to `BrandResolver` delete mutation — currently no role guard
-- [ ] Add `@Roles(Role.ADMIN)` to `TagResolver` delete mutation — currently no role guard
-- [ ] Audit every resolver mutation for missing `@UseGuards` and `@Roles` decorators; add where absent
+- [x] `BrandResolver.deleteBrand` — already had `@Roles(Role.SUPER_ADMIN, Role.ADMIN)` at method level; confirmed in audit re-review
+- [x] `TagResolver.deleteTag` — already protected by class-level `@Roles(Role.ADMIN, Role.SUPER_ADMIN)`; confirmed in audit re-review
+- [x] Audited all resolvers — no unguarded mutations found beyond what was fixed in Phase 0
 
 ### Input Validation
-- [ ] Add custom class-validator constraint to `CreateDiscountInput` and `UpdateDiscountInput` to enforce `endDate > startDate`
-- [ ] Add `@Min(1) @Max(5)` to the `score` / `rating` field on `CreateReviewInput`
-- [ ] Add address field validators to `CreateAddressInput` (`@IsNotEmpty`, `@MaxLength`, country code format)
-- [ ] Add a maximum addresses-per-user limit (e.g., 10) enforced in `AddressesService.create`
-- [ ] Add a maximum wishlist-size limit (e.g., 100 items) enforced in `WishlistService.addToWishlist`
-- [ ] Configure Multer (or NestJS file interceptor) with a hard file size limit for the Cloudinary upload endpoint
+- [x] `CreateDiscountInput.endDate` — added `@IsEndDateAfterStartDate('startDate')` custom validator; works on partial `UpdateDiscountInput` too (skips if `startDate` absent)
+- [x] `CreateReviewInput.score` — already had `@Min(1) @Max(5)`; confirmed in audit re-review
+- [x] `CreateAddressInput` — added `@MaxLength` to all 5 fields (street: 255, city/state/country: 100, zipCode: 20)
+- [x] Max addresses per user — `AddressesService.createAddress` now enforces limit of 10 via `enforceAddressLimit`
+- [x] Max wishlist size — `WishlistService.addToWishlist` now enforces limit of 100 via `enforceWishlistLimit`
+- [x] Upload file size limit — `UploadController` uses `multerOptions` with `limits: { fileSize: 5 MB }` on both endpoints
 
 ---
 

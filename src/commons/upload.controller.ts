@@ -8,12 +8,21 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { CloudinaryService } from './cloudinary.service';
+import { memoryStorage } from 'multer';
+
+/** 5 MB hard limit per file — prevents memory exhaustion and accidental large uploads. */
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+
+const multerOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE_BYTES },
+};
 
 @Controller('upload')
 export class UploadController {
   constructor(private readonly cloudinaryService: CloudinaryService) {}
   @Post('/multiple-images')
-  @UseInterceptors(FilesInterceptor('files', 3))
+  @UseInterceptors(FilesInterceptor('files', 3, multerOptions))
   async uploadProductImages(@UploadedFiles() images: Express.Multer.File[]) {
     if (!images || images.length === 0) {
       throw new Error('No files were uploaded!');
@@ -28,7 +37,7 @@ export class UploadController {
   }
 
   @Post('/single-image')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', multerOptions))
   async uploadCategoryImage(@UploadedFile() image: Express.Multer.File) {
     if (!image) {
       throw new InternalServerErrorException('File upload failed!');

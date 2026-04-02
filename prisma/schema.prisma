@@ -14,24 +14,40 @@ datasource db {
 }
 
 model User {
-  id             String         @id @default(cuid())
-  name           String?
-  email          String         @unique
-  password       String?
-  phoneNumber    String?        @unique
-  role           Role           @default(USER)
-  isActive       Boolean        @default(true)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-  lastLoginAt    DateTime?
-  profilePicture String?
-  addresses      Address[]
-  reviews        Review[]
-  cart           Cart?
-  order          Order[]
-  authProvider   AuthProvider[]
-  auditLog       AuditLog[]
-  wishlist       WishList?
+  id                  String         @id @default(cuid())
+  name                String?
+  email               String         @unique
+  password            String?
+  phoneNumber         String?        @unique
+  role                Role           @default(USER)
+  isActive            Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  lastLoginAt         DateTime?
+  profilePicture      String?
+  failedLoginAttempts Int            @default(0)
+  lockedUntil         DateTime?
+  addresses           Address[]
+  reviews             Review[]
+  cart                Cart?
+  order               Order[]
+  authProvider        AuthProvider[]
+  auditLog            AuditLog[]
+  wishlist            WishList?
+  refreshTokens       RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
 }
 
 model AuthProvider {

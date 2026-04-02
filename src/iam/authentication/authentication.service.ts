@@ -9,6 +9,8 @@ import { ConfigType } from '@nestjs/config';
 import { SignUpInput } from './dto/sign-up.input';
 import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
+import { PrismaService } from '../../prisma/prisma.service';
+import { createHash } from 'crypto';
 
 @Injectable()
 export class AuthenticationService {
@@ -16,6 +18,7 @@ export class AuthenticationService {
     private readonly userService: UsersService,
     private readonly passwordService: HashingService,
     private readonly jwtServices: JwtService,
+    private readonly prismaService: PrismaService,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
@@ -24,8 +27,7 @@ export class AuthenticationService {
    * Registers a new user by creating an account with the provided sign-up details.
    *
    * @throws ConflictException - If a user with the provided email already exists.
-   * @returns A promise that resolves to an object containing access and refresh tokens for the newly created user.
-   * @param signUpInput
+   * @returns Access and refresh tokens for the newly created user.
    */
   async signUp(signUpInput: SignUpInput) {
     const { email, password, name } = signUpInput;
@@ -42,20 +44,42 @@ export class AuthenticationService {
   }
 
   /**
-   * Authenticates a user using the provided sign-in details.
+   * Authenticates a user with email and password.
+   * Enforces account lockout after 5 consecutive failed attempts (15-minute cooldown).
    *
-   * @param signInDto - The data transfer object containing the user's sign-in information.
-   * @throws UnauthorizedException - If the user does not exist or the password is incorrect.
-   * @returns A promise that resolves to an object containing access and refresh tokens for the authenticated user.
+   * @throws UnauthorizedException - If credentials are invalid or the account is locked.
    */
   async signIn(signInDto: SignInInput) {
     const user = await this.userService.findUserByEmail(signInDto.email);
     if (!user || !user.password) throw new UnauthorizedException('Invalid email or password');
+
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      const remainingSeconds = Math.ceil((user.lockedUntil.getTime() - Date.now()) / 1000);
+      throw new UnauthorizedException(
+        `Account is temporarily locked due to too many failed attempts. Try again in ${remainingSeconds} seconds.`,
+      );
+    }
+
     const isPasswordEqual = await this.passwordService.compare(signInDto.password, user.password);
-    if (!isPasswordEqual) throw new UnauthorizedException('Invalid email or password');
+    if (!isPasswordEqual) {
+      await this.userService.recordFailedLoginAttempt(user);
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    if (user.failedLoginAttempts > 0) {
+      await this.userService.resetFailedLoginAttempts(user.id);
+    }
+
     return await this.generateTokens(user);
   }
 
+  /**
+   * Issues new tokens using a valid refresh token (rotation).
+   * The supplied refresh token is revoked immediately and replaced with a new one.
+   * Re-validates that the user's account is still active.
+   *
+   * @throws UnauthorizedException - If the token is invalid, revoked, or the user is inactive.
+   */
   async refreshToken(refreshTokenInput: RefreshTokenInput) {
     try {
       const { sub: userId } = await this.jwtServices.verifyAsync<{ sub: string }>(refreshTokenInput.refreshToken, {
@@ -63,24 +87,74 @@ export class AuthenticationService {
         issuer: this.jwtConfiguration.issuer,
         secret: this.jwtConfiguration.refreshSecret,
       });
+
+      const tokenHash = this.hashToken(refreshTokenInput.refreshToken);
+      const storedToken = await this.prismaService.refreshToken.findUnique({
+        where: { tokenHash },
+      });
+      if (!storedToken || storedToken.revoked) {
+        throw new UnauthorizedException('Invalid or expired refresh token');
+      }
+
       const user = await this.userService.findOne(userId);
       if (!user) throw new UnauthorizedException('User not found');
+      if (!user.isActive) throw new UnauthorizedException('Account is inactive');
+
+      // Revoke the used token (rotation — each token can only be used once)
+      await this.prismaService.refreshToken.update({
+        where: { tokenHash },
+        data: { revoked: true },
+      });
+
       return this.generateTokens(user);
-    } catch {
+    } catch (error) {
+      if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
   }
 
+  /**
+   * Revokes a refresh token, effectively signing the user out.
+   * Silent success if the token is not found — idempotent by design.
+   *
+   * @param refreshToken - The raw refresh token string to revoke.
+   */
+  async signOut(refreshToken: string): Promise<boolean> {
+    const tokenHash = this.hashToken(refreshToken);
+    await this.prismaService.refreshToken.updateMany({
+      where: { tokenHash },
+      data: { revoked: true },
+    });
+    return true;
+  }
+
+  /**
+   * Generates a new access + refresh token pair for a user.
+   * Persists the refresh token hash and purges expired tokens for that user.
+   */
   async generateTokens(user: User) {
     const [accessToken, refreshToken] = await Promise.all([
       this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret),
       this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret),
     ]);
-    await this.userService.updateLastLogin(user.id);
-    return {
-      accessToken,
-      refreshToken,
-    };
+    await Promise.all([this.saveRefreshToken(user.id, refreshToken), this.userService.updateLastLogin(user.id)]);
+    return { accessToken, refreshToken };
+  }
+
+  private async saveRefreshToken(userId: string, token: string): Promise<void> {
+    const tokenHash = this.hashToken(token);
+    const expiresAt = new Date(Date.now() + this.jwtConfiguration.refreshTokenTtl * 1000);
+    // Purge expired tokens for this user to keep the table lean
+    await this.prismaService.refreshToken.deleteMany({
+      where: { userId, expiresAt: { lt: new Date() } },
+    });
+    await this.prismaService.refreshToken.create({
+      data: { userId, tokenHash, expiresAt },
+    });
+  }
+
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 
   private async signToken<T>(userId: string, expiresIn: number, secret: string, payload?: T) {
