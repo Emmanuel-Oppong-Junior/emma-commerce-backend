@@ -62,7 +62,7 @@ describe('CartService', () => {
   });
 
   describe('getCart', () => {
-    it('should retrieve the user\'s cart successfully', async () => {
+    it("should retrieve the user's cart successfully", async () => {
       mockCartRepository.findByUser.mockResolvedValue(mockCart);
 
       const result = await service.getCart(mockUserId);
@@ -107,9 +107,7 @@ describe('CartService', () => {
 
       await service.addToCart(mockUserId, addInput);
 
-      expect(cartRepository.upsertCartItem).toHaveBeenCalledWith(
-        'item1', 'cart1', 'prod1', mockProduct.price, 3, 2,
-      );
+      expect(cartRepository.upsertCartItem).toHaveBeenCalledWith('item1', 'cart1', 'prod1', mockProduct.price, 3, 2);
     });
 
     it('should throw NotFoundException if product does not exist', async () => {

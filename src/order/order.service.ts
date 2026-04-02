@@ -218,7 +218,9 @@ export class OrdersService {
     }
   }
 
-  private async cancelOrderAndRestoreStock(order: Order & { items: OrderItem[] }): Promise<Order & { items: OrderItem[] }> {
+  private async cancelOrderAndRestoreStock(
+    order: Order & { items: OrderItem[] },
+  ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
       for (const item of order.items) {
         await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);

@@ -21,10 +21,7 @@ describe('SubCategoriesService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        SubCategoriesService,
-        { provide: SubCategoriesRepository, useValue: mockSubCategoriesRepository },
-      ],
+      providers: [SubCategoriesService, { provide: SubCategoriesRepository, useValue: mockSubCategoriesRepository }],
     }).compile();
 
     service = module.get<SubCategoriesService>(SubCategoriesService);

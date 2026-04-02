@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AddressesService } from './addresses.service';
 import { AddressesRepository } from './addresses.repository';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Address } from '@prisma/client';
 import { UpdateAddressInput } from './dto/update-address.input';
 
@@ -72,7 +72,7 @@ describe('AddressesService', () => {
   });
 
   describe('getAddress', () => {
-    it('should retrieve a user\'s address', async () => {
+    it("should retrieve a user's address", async () => {
       mockAddressesRepository.findById.mockResolvedValue(mockAddress);
 
       const result = await service.getAddress(mockUserId, 'addr1');
@@ -81,7 +81,7 @@ describe('AddressesService', () => {
       expect(result).toEqual(mockAddress);
     });
 
-    it('should throw NotFoundException if address doesn\'t exist', async () => {
+    it("should throw NotFoundException if address doesn't exist", async () => {
       mockAddressesRepository.findById.mockResolvedValue(null);
 
       await expect(service.getAddress(mockUserId, 'addr1')).rejects.toThrow(
@@ -143,7 +143,7 @@ describe('AddressesService', () => {
       expect(result).toEqual(updatedAddress);
     });
 
-    it('should throw NotFoundException if address doesn\'t exist', async () => {
+    it("should throw NotFoundException if address doesn't exist", async () => {
       mockAddressesRepository.findById.mockResolvedValue(null);
 
       await expect(
@@ -164,7 +164,7 @@ describe('AddressesService', () => {
       expect(result).toEqual(mockAddress);
     });
 
-    it('should throw NotFoundException if address doesn\'t exist', async () => {
+    it("should throw NotFoundException if address doesn't exist", async () => {
       mockAddressesRepository.findById.mockResolvedValue(null);
 
       await expect(service.deleteAddress(mockUserId, 'addr1')).rejects.toThrow(

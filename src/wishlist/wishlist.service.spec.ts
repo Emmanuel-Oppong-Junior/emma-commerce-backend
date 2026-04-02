@@ -80,7 +80,7 @@ describe('WishlistService', () => {
       expect(result).toEqual(mockWishlistWithProduct);
     });
 
-    it('should throw NotFoundException if product doesn\'t exist', async () => {
+    it("should throw NotFoundException if product doesn't exist", async () => {
       mockWishlistRepository.findProductById.mockResolvedValue(null);
 
       await expect(service.addToWishlist(mockUserId, mockProductId)).rejects.toThrow(

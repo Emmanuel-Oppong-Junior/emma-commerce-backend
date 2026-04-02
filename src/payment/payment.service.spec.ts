@@ -139,7 +139,13 @@ describe('PaymentService', () => {
 
   describe('verifyPayment', () => {
     const reference = 'ref1';
-    const payment = { id: 'pay1', orderId: 'order1', transactionId: 'ref1', status: PaymentStatus.PENDING, deleted: false };
+    const payment = {
+      id: 'pay1',
+      orderId: 'order1',
+      transactionId: 'ref1',
+      status: PaymentStatus.PENDING,
+      deleted: false,
+    };
     const verification = { data: { status: 'success', reference: 'ref1' } };
     const updatedPayment = { ...payment, status: PaymentStatus.COMPLETED, paymentDetails: verification.data };
 
@@ -233,7 +239,9 @@ describe('PaymentService', () => {
 
   describe('getUserPayments', () => {
     const userId = 'user1';
-    const payments = [{ id: 'pay1', orderId: 'order1', status: PaymentStatus.PENDING, deleted: false, order: { id: 'order1' } }];
+    const payments = [
+      { id: 'pay1', orderId: 'order1', status: PaymentStatus.PENDING, deleted: false, order: { id: 'order1' } },
+    ];
 
     it('should retrieve user payments successfully', async () => {
       mockPaymentRepository.findByUser.mockResolvedValue(payments);
@@ -373,7 +381,13 @@ describe('PaymentService', () => {
 
   describe('restore', () => {
     const paymentId = 'pay1';
-    const payment = { id: 'pay1', orderId: 'order1', status: PaymentStatus.PENDING, deleted: true, deletedAt: new Date() };
+    const payment = {
+      id: 'pay1',
+      orderId: 'order1',
+      status: PaymentStatus.PENDING,
+      deleted: true,
+      deletedAt: new Date(),
+    };
     const restoredPayment = { ...payment, deleted: false, deletedAt: null };
 
     it('should restore payment successfully', async () => {

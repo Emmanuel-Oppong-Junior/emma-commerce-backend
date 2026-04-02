@@ -82,8 +82,26 @@ describe('ProductsService', () => {
     const paginate: PaginationArgs = { first: 2, after: undefined };
     const filter: ProductFilterArgs = { categoryId: 'cat1', isActive: true };
     const products = [
-      { id: 'prod1', name: 'T-Shirt', price: 19.99, categoryId: 'cat1', isActive: true, createdAt: new Date(), updatedAt: new Date(), images: [] },
-      { id: 'prod2', name: 'Jeans', price: 49.99, categoryId: 'cat1', isActive: true, createdAt: new Date(), updatedAt: new Date(), images: [] },
+      {
+        id: 'prod1',
+        name: 'T-Shirt',
+        price: 19.99,
+        categoryId: 'cat1',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      },
+      {
+        id: 'prod2',
+        name: 'Jeans',
+        price: 49.99,
+        categoryId: 'cat1',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      },
     ];
 
     it('should return paginated products with filters', async () => {
@@ -154,7 +172,16 @@ describe('ProductsService', () => {
 
   describe('findOne', () => {
     it('should return a product by ID', async () => {
-      const product = { id: 'prod1', name: 'T-Shirt', price: 19.99, categoryId: 'cat1', isActive: true, createdAt: new Date(), updatedAt: new Date(), images: [] };
+      const product = {
+        id: 'prod1',
+        name: 'T-Shirt',
+        price: 19.99,
+        categoryId: 'cat1',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      };
       mockProductsRepository.findById.mockResolvedValue(product);
 
       const result = await service.findOne('prod1');
@@ -176,7 +203,15 @@ describe('ProductsService', () => {
     const updateInput = { name: 'Updated T-Shirt', price: '29.99', id: 'prod1' };
 
     it('should update a product successfully', async () => {
-      const product = { id: 'prod1', name: 'T-Shirt', categoryId: 'cat1', isActive: true, createdAt: new Date(), updatedAt: new Date(), images: [] };
+      const product = {
+        id: 'prod1',
+        name: 'T-Shirt',
+        categoryId: 'cat1',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      };
       const updatedProduct = { ...product, ...updateInput };
       mockProductsRepository.findById.mockResolvedValue(product);
       mockProductsRepository.findFirst.mockResolvedValue(null);
@@ -184,7 +219,10 @@ describe('ProductsService', () => {
 
       const result = await service.update('prod1', updateInput);
 
-      expect(productsRepository.update).toHaveBeenCalledWith('prod1', updateInput, { category: true, subcategory: true });
+      expect(productsRepository.update).toHaveBeenCalledWith('prod1', updateInput, {
+        category: true,
+        subcategory: true,
+      });
       expect(result).toEqual(updatedProduct);
     });
 
@@ -207,7 +245,15 @@ describe('ProductsService', () => {
 
   describe('remove', () => {
     it('should remove a product successfully', async () => {
-      const product = { id: 'prod1', name: 'T-Shirt', isActive: true, categoryId: 'cat1', createdAt: new Date(), updatedAt: new Date(), images: [] };
+      const product = {
+        id: 'prod1',
+        name: 'T-Shirt',
+        isActive: true,
+        categoryId: 'cat1',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      };
       mockProductsRepository.findById.mockResolvedValue(product);
       mockProductsRepository.countCartItems.mockResolvedValue(0);
       mockProductsRepository.countOrderItems.mockResolvedValue(0);
@@ -231,7 +277,15 @@ describe('ProductsService', () => {
 
   describe('archiveProduct', () => {
     it('should archive a product successfully', async () => {
-      const product = { id: 'prod1', name: 'T-Shirt', isActive: true, categoryId: 'cat1', createdAt: new Date(), updatedAt: new Date(), images: [] };
+      const product = {
+        id: 'prod1',
+        name: 'T-Shirt',
+        isActive: true,
+        categoryId: 'cat1',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      };
       const archivedProduct = { ...product, isActive: false };
       mockProductsRepository.findById.mockResolvedValue(product);
       mockProductsRepository.update.mockResolvedValue(archivedProduct);
@@ -251,7 +305,15 @@ describe('ProductsService', () => {
 
   describe('restoreProduct', () => {
     it('should restore a product successfully', async () => {
-      const product = { id: 'prod1', name: 'T-Shirt', isActive: false, categoryId: 'cat1', createdAt: new Date(), updatedAt: new Date(), images: [] };
+      const product = {
+        id: 'prod1',
+        name: 'T-Shirt',
+        isActive: false,
+        categoryId: 'cat1',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        images: [],
+      };
       const restoredProduct = { ...product, isActive: true };
       mockProductsRepository.findById.mockResolvedValue(product);
       mockProductsRepository.update.mockResolvedValue(restoredProduct);

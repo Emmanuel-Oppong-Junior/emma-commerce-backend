@@ -49,11 +49,11 @@ export class OrdersRepository {
 
   async updateStatus(orderId: string, status: OrderStatus): Promise<OrderWithItems> {
     try {
-      return await this.prisma.order.update({
+      return (await this.prisma.order.update({
         where: { id: orderId },
         data: { status },
         include: { items: { include: { product: true } } },
-      }) as unknown as OrderWithItems;
+      })) as unknown as OrderWithItems;
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Order "${orderId}" not found`);
@@ -78,22 +78,14 @@ export class OrdersRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  async updateProductStock(
-    tx: Prisma.TransactionClient,
-    productId: string,
-    delta: number,
-  ): Promise<Product> {
+  async updateProductStock(tx: Prisma.TransactionClient, productId: string, delta: number): Promise<Product> {
     return tx.product.update({
       where: { id: productId },
       data: { quantity: { increment: delta } },
     });
   }
 
-  async decrementProductStock(
-    tx: Prisma.TransactionClient,
-    productId: string,
-    quantity: number,
-  ): Promise<Product> {
+  async decrementProductStock(tx: Prisma.TransactionClient, productId: string, quantity: number): Promise<Product> {
     return tx.product.update({
       where: { id: productId },
       data: { quantity: { decrement: quantity } },

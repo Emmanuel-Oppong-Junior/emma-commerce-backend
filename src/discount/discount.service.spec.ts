@@ -3,7 +3,7 @@ import { DiscountService } from './discount.service';
 import { DiscountRepository } from './discount.repository';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
-import { Discount, Prisma, Product, Variant } from '@prisma/client';
+import { Discount, Prisma, Product } from '@prisma/client';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
 
@@ -53,14 +53,6 @@ const mockProduct = {
   subcategoryId: null,
   brandId: null,
 } as unknown as Product;
-
-const mockVariant: Variant = {
-  id: 'variant1',
-  productId: 'product1',
-  size: 'Large',
-  price: new Prisma.Decimal(120),
-  quantity: 5,
-} as Variant;
 
 const mockCartItem = {
   id: 'cartItem1',
@@ -388,13 +380,21 @@ describe('DiscountService', () => {
 
   describe('calculateDiscountAmount (private)', () => {
     it('should calculate percentage discount', () => {
-      const result = service['calculateDiscountAmount'](100, { ...mockDiscount, type: DiscountType.PERCENTAGE, value: new Prisma.Decimal(20) });
+      const result = service['calculateDiscountAmount'](100, {
+        ...mockDiscount,
+        type: DiscountType.PERCENTAGE,
+        value: new Prisma.Decimal(20),
+      });
 
       expect(result).toBe(20);
     });
 
     it('should calculate fixed amount discount', () => {
-      const result = service['calculateDiscountAmount'](100, { ...mockDiscount, type: DiscountType.FLAT, value: new Prisma.Decimal(15) });
+      const result = service['calculateDiscountAmount'](100, {
+        ...mockDiscount,
+        type: DiscountType.FLAT,
+        value: new Prisma.Decimal(15),
+      });
 
       expect(result).toBe(15);
     });

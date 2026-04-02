@@ -99,7 +99,13 @@ describe('UsersService', () => {
 
       const result = await service.createUserByAuthProvider(providerId, provider, email);
 
-      expect(usersRepository.createWithAuthProvider).toHaveBeenCalledWith(email, undefined, undefined, providerId, provider);
+      expect(usersRepository.createWithAuthProvider).toHaveBeenCalledWith(
+        email,
+        undefined,
+        undefined,
+        providerId,
+        provider,
+      );
       expect(result.email).toEqual(email);
     });
 
@@ -136,7 +142,10 @@ describe('UsersService', () => {
         { take: 2, skip: 0, cursor: undefined, orderBy: undefined, orderInAsc: undefined },
         { name: { contains: 'John', mode: 'insensitive' }, isActive: true },
       );
-      expect(usersRepository.count).toHaveBeenCalledWith({ name: { contains: 'John', mode: 'insensitive' }, isActive: true });
+      expect(usersRepository.count).toHaveBeenCalledWith({
+        name: { contains: 'John', mode: 'insensitive' },
+        isActive: true,
+      });
       expect(result).toEqual({
         edges: [
           { cursor: '1', node: users[0] },
@@ -227,7 +236,7 @@ describe('UsersService', () => {
   });
 
   describe('changePassword', () => {
-    it('should change the user\'s password', async () => {
+    it("should change the user's password", async () => {
       const input: ChangeUserPasswordInput = { oldPassword: 'oldPass123', newPassword: 'NewPass123' };
       const updatedUser = { ...mockUser, password: 'hashedNewPass' };
 
@@ -248,18 +257,18 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockHashingService.compare.mockResolvedValue(false);
 
-      await expect(service.changePassword('1', { oldPassword: 'wrongPass', newPassword: 'NewPass123' })).rejects.toThrow(
-        'Old password is incorrect',
-      );
+      await expect(
+        service.changePassword('1', { oldPassword: 'wrongPass', newPassword: 'NewPass123' }),
+      ).rejects.toThrow('Old password is incorrect');
     });
 
     it('should throw if new password matches old', async () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockHashingService.compare.mockResolvedValue(true);
 
-      await expect(service.changePassword('1', { oldPassword: 'oldPass123', newPassword: 'oldPass123' })).rejects.toThrow(
-        'New password must be different from old password',
-      );
+      await expect(
+        service.changePassword('1', { oldPassword: 'oldPass123', newPassword: 'oldPass123' }),
+      ).rejects.toThrow('New password must be different from old password');
     });
   });
 

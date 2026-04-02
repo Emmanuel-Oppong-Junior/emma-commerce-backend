@@ -14,7 +14,9 @@ export class ReviewRepository {
     return this.prisma.review.findFirst({ where: { userId, productId } });
   }
 
-  async create(data: Prisma.ReviewCreateInput): Promise<Review & { user: { id: string; email: string }; product: { id: string; name: string } }> {
+  async create(
+    data: Prisma.ReviewCreateInput,
+  ): Promise<Review & { user: { id: string; email: string }; product: { id: string; name: string } }> {
     return this.prisma.review.create({
       data,
       include: {
@@ -24,7 +26,9 @@ export class ReviewRepository {
     });
   }
 
-  async findById(reviewId: string): Promise<(Review & { user: { id: string; email: string }; product: { id: string; name: string } }) | null> {
+  async findById(
+    reviewId: string,
+  ): Promise<(Review & { user: { id: string; email: string }; product: { id: string; name: string } }) | null> {
     return this.prisma.review.findUnique({
       where: { id: reviewId },
       include: {

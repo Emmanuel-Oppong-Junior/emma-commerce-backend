@@ -55,7 +55,9 @@ describe('CategoriesService', () => {
 
       const result = await service.create(input);
 
-      expect(categoriesRepository.findFirst).toHaveBeenCalledWith({ name: { mode: 'insensitive', equals: 'Clothing' } });
+      expect(categoriesRepository.findFirst).toHaveBeenCalledWith({
+        name: { mode: 'insensitive', equals: 'Clothing' },
+      });
       expect(categoriesRepository.create).toHaveBeenCalledWith(input);
       expect(result).toEqual(category);
     });
@@ -204,7 +206,9 @@ describe('CategoriesService', () => {
 
       const result = await service.findCategoryByName('Clothing');
 
-      expect(categoriesRepository.findFirst).toHaveBeenCalledWith({ name: { mode: 'insensitive', equals: 'Clothing' } });
+      expect(categoriesRepository.findFirst).toHaveBeenCalledWith({
+        name: { mode: 'insensitive', equals: 'Clothing' },
+      });
       expect(result).toEqual(category);
     });
 
