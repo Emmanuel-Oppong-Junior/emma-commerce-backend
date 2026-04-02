@@ -1,8 +1,14 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { GqlThrottlerGuard } from './commons/guards/gql-throttler.guard';
+import { CacheModule } from '@nestjs/cache-manager';
+import { cacheConfig } from './config/cache.config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
+import { envValidationSchema } from './config/env.validation';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { ApolloServerPluginLandingPageLocalDefault } from '@apollo/server/plugin/landingPage/default';
@@ -22,15 +28,34 @@ import { WishlistModule } from './wishlist/wishlist.module';
 import { ReviewModule } from './review/review.module';
 import { PaymentModule } from './payment/payment.module';
 import { LoggerMiddleware } from './commons/middlewares/logger.middleware';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { GraphqlLoggingInterceptor } from './commons/interceptors/graphql-logging.interceptor';
 import { formatError } from './commons/error-formatters/grapqhl-error.formatter';
 import { LoggerService } from './commons/logger.service';
 import { DiscountModule } from './discount/discount.module';
 import { BrandModule } from './brand/brand.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validationSchema: envValidationSchema,
+      validationOptions: { abortEarly: false },
+    }),
+    CacheModule.registerAsync(cacheConfig),
+    ThrottlerModule.forRoot([
+      {
+        name: 'global',
+        ttl: 60000, // 1 minute
+        limit: 120, // 120 requests per minute globally
+      },
+      {
+        name: 'auth',
+        ttl: 60000, // 1 minute
+        limit: 10, // 10 auth attempts per minute
+      },
+    ]),
     PrismaModule,
     UsersModule,
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
@@ -42,7 +67,7 @@ import { BrandModule } from './brand/brand.module';
         plugins: [ApolloServerPluginLandingPageLocalDefault()],
         sortSchema: true,
         autoSchemaFile: 'schema.gql',
-        context: ({ req }) => ({ req }),
+        context: ({ req, res }) => ({ req, res }),
       }),
       inject: [LoggerService],
     }),
@@ -64,6 +89,7 @@ import { BrandModule } from './brand/brand.module';
     PaymentModule,
     DiscountModule,
     BrandModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [
@@ -72,6 +98,10 @@ import { BrandModule } from './brand/brand.module';
     {
       provide: APP_INTERCEPTOR,
       useClass: GraphqlLoggingInterceptor,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: GqlThrottlerGuard,
     },
   ],
 })

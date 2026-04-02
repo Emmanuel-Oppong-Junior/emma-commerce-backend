@@ -1,12 +1,21 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
+import { Inject } from '@nestjs/common';
 import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
 import { PrismaService } from '../prisma/prisma.service';
 import { Category, Prisma } from '@prisma/client';
 
+const CATEGORY_TREE_KEY = 'category:tree';
+const CATEGORY_TTL = 300000; // 5 minutes
+
 @Injectable()
 export class CategoriesService {
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
 
   /**
    * Creates a new category using the provided input data.
@@ -18,7 +27,9 @@ export class CategoriesService {
     const { name } = createCategoryInput;
     const existing = await this.findCategoryByName(name);
     if (existing) throw new ConflictException(`A category with the name "${name}" already exists`);
-    return this.prismaService.category.create({ data: createCategoryInput });
+    const created = await this.prismaService.category.create({ data: createCategoryInput });
+    await this.cacheManager.del(CATEGORY_TREE_KEY);
+    return created;
   }
 
   /**
@@ -26,9 +37,21 @@ export class CategoriesService {
    * @returns A promise resolving to an array of categories.
    */
   async findAll(requestedFields: Prisma.CategorySelect): Promise<Category[]> {
+    const hasSelectFilter = Object.keys(requestedFields).length > 0;
+    // Only cache unfiltered (full) category tree — the common case
+    if (!hasSelectFilter) {
+      const cached = await this.cacheManager.get<Category[]>(CATEGORY_TREE_KEY);
+      if (cached) return cached;
+    }
+
     const queryOption: Prisma.CategoryFindManyArgs = { orderBy: { name: 'asc' } };
-    if (Object.keys(requestedFields).length) queryOption.select = requestedFields;
-    return this.prismaService.category.findMany(queryOption);
+    if (hasSelectFilter) queryOption.select = requestedFields;
+    const categories = await this.prismaService.category.findMany(queryOption);
+
+    if (!hasSelectFilter) {
+      await this.cacheManager.set(CATEGORY_TREE_KEY, categories, CATEGORY_TTL);
+    }
+    return categories;
   }
 
   /**
@@ -57,10 +80,12 @@ export class CategoriesService {
         throw new ConflictException(`A category with the name "${name}" already exists`);
       }
     }
-    return this.prismaService.category.update({
+    const updated = await this.prismaService.category.update({
       where: { id },
       data: updateCategoryInput,
     });
+    await this.cacheManager.del(CATEGORY_TREE_KEY);
+    return updated;
   }
 
   /**
@@ -76,7 +101,9 @@ export class CategoriesService {
       where: { categoryId: id },
     });
     if (productCount > 0) throw new ConflictException('Cannot delete category with associated products');
-    return this.prismaService.category.delete({ where: { id } });
+    const deleted = await this.prismaService.category.delete({ where: { id } });
+    await this.cacheManager.del(CATEGORY_TREE_KEY);
+    return deleted;
   }
 
   /**

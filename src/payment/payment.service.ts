@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Role } from '../users/enums/role.enum';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
@@ -7,6 +8,7 @@ import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { PaystackEvent } from './enums/paystack-event.enum';
+import { LoggerService } from '../commons/logger.service';
 
 @Injectable()
 export class PaymentService {
@@ -19,6 +21,7 @@ export class PaymentService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly configService: ConfigService,
+    private readonly logger: LoggerService,
   ) {
     this.paystack = Paystack(this.configService.get('PAYSTACK_SECRET_KEY'));
   }
@@ -60,11 +63,23 @@ export class PaymentService {
 
   /**
    * Retrieves a payment by ID.
+   * Admins can access any payment; regular users can only access their own.
    * @param paymentId - The ID of the payment.
+   * @param requestingUserId - The ID of the requesting user.
+   * @param requestingUserRole - The role of the requesting user.
    * @returns Payment record.
    */
-  async getPayment(paymentId: string): Promise<Payment> {
-    return this.fetchPayment(paymentId);
+  async getPayment(paymentId: string, requestingUserId: string, requestingUserRole: Role): Promise<Payment> {
+    const payment = await this.fetchPayment(paymentId);
+    if (!payment) throw new NotFoundException(`Payment "${paymentId}" not found`);
+    const isAdmin = requestingUserRole === Role.ADMIN || requestingUserRole === Role.SUPER_ADMIN;
+    if (!isAdmin) {
+      const order = await this.prismaService.order.findUnique({ where: { id: payment.orderId } });
+      if (!order || order.userId !== requestingUserId) {
+        throw new UnauthorizedException('You do not have access to this payment');
+      }
+    }
+    return payment;
   }
 
   /**
@@ -199,7 +214,7 @@ export class PaymentService {
 
   private async fetchPaymentByReference(reference: string): Promise<Payment> {
     const payment = await this.prismaService.payment.findFirst({
-      where: { transactionId: reference },
+      where: { transactionId: reference, deleted: false },
     });
     if (!payment) throw new NotFoundException(`Payment with reference "${reference}" not found`);
     return payment;
@@ -257,11 +272,11 @@ export class PaymentService {
       await this.verifyPayment(reference);
       return true;
     } catch (error) {
-      console.error('Webhook processing failed', {
-        reference,
-        error: error.message,
-        stack: error.stack,
-      });
+      this.logger.error(
+        `Webhook processing failed | reference: ${reference} | ${error.message}`,
+        error.stack,
+        'PaymentService',
+      );
       return false;
     }
   }
@@ -271,10 +286,11 @@ export class PaymentService {
       const hash = this.computeWebhookSignature(dto);
       return hash === signature;
     } catch (error) {
-      console.error('Signature validation error', {
-        error: error.message,
-        stack: error.stack,
-      });
+      this.logger.error(
+        `Signature validation error | ${error.message}`,
+        error.stack,
+        'PaymentService',
+      );
       return false;
     }
   }

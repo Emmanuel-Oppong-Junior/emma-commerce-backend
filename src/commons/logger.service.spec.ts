@@ -1,12 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { LoggerService } from './logger.service';
+import { ConfigService } from '@nestjs/config';
 
 describe('LoggerService', () => {
   let service: LoggerService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [LoggerService],
+      providers: [
+        LoggerService,
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue('test') } },
+      ],
     }).compile();
 
     service = module.get<LoggerService>(LoggerService);

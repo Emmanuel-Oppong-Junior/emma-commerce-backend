@@ -27,9 +27,14 @@ export class PaymentResolver {
     return this.paymentService.getUserPayments(userId);
   }
 
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => Payment, { name: 'payment' })
-  getPayment(@Args('id', { type: () => String }) id: string) {
-    return this.paymentService.getPayment(id);
+  getPayment(
+    @Args('id', { type: () => String }) id: string,
+    @ActiveUser('id') userId: string,
+    @ActiveUser('role') userRole: Role,
+  ) {
+    return this.paymentService.getPayment(id, userId, userRole);
   }
 
   @Roles(Role.ADMIN)

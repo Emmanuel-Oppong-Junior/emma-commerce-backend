@@ -54,7 +54,7 @@ model Address {
   zipCode   String
   country   String
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   Order     Order[]
@@ -73,6 +73,8 @@ model Category {
   updatedAt     DateTime      @updatedAt
   discount      Discount?     @relation(fields: [discountId], references: [id])
   discountId    String?
+
+  @@index([discountId])
 }
 
 model SubCategory {
@@ -117,10 +119,14 @@ model Variant {
   orderItem  OrderItem[]
   discount   Discount?   @relation(fields: [discountId], references: [id])
   discountId String?
+
+  @@index([productId])
+  @@index([discountId])
 }
 
 model Product {
   id               String  @id @default(cuid())
+  // Note: brandId index added below via @@index
   name             String  @db.VarChar(255)
   description      String? @db.Text
   shortDescription String? @db.VarChar(500)
@@ -167,6 +173,10 @@ model Product {
   brandId       String?
 
   @@index([sku])
+  @@index([brandId])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([isActive, status])
 }
 
 enum ProductStatus {
@@ -197,15 +207,18 @@ enum DeliveryOptions {
 }
 
 model Review {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   score     Int
   comment   String?
   productId String
   userId    String
-  user      User    @relation(fields: [userId], references: [id])
-  product   Product @relation(fields: [productId], references: [id])
+  deleted   Boolean  @default(false)
+  deletedAt DateTime?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
+  @@index([userId])
 }
 
 model Discount {
@@ -253,6 +266,8 @@ model CartItem {
   updatedAt       DateTime  @updatedAt
 
   @@index([cartId, productId])
+  @@index([variantId])
+  @@index([discountId])
 }
 
 model Order {
@@ -264,13 +279,17 @@ model Order {
   totalAmount          Float
   status               OrderStatus @default(PENDING)
   shippingAddressId    String
-  shippingAddress      Address     @relation(fields: [shippingAddressId], references: [id])
+  shippingAddress      Address     @relation(fields: [shippingAddressId], references: [id], onDelete: Restrict)
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
+  deleted              Boolean     @default(false)
+  deletedAt            DateTime?
   items                OrderItem[]
   payment              Payment?
 
   @@index([userId])
+  @@index([userId, status])
+  @@index([deleted])
 }
 
 model OrderItem {
@@ -290,6 +309,8 @@ model OrderItem {
   discountId     String?
 
   @@index([productId, orderId])
+  @@index([variantId])
+  @@index([discountId])
 }
 
 model Payment {
@@ -323,9 +344,12 @@ model AuditLog {
   entityId  String
   action    String
   userId    String?
-  user      User?    @relation(fields: [userId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   details   Json?
   createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId])
 }
 
 enum Role {

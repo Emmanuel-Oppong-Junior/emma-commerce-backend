@@ -14,12 +14,14 @@ import { GraphQLResolveInfo } from 'graphql/type';
 import { extractRequestedFieldsFromQuery } from '../commons/useful-functions';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import { DiscountLoader } from './loaders/discount.loader';
 
 @Resolver(() => Product)
 export class ProductsResolver {
   constructor(
     private readonly productsService: ProductsService,
     private readonly discountService: DiscountService,
+    private readonly discountLoader: DiscountLoader,
   ) {}
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
@@ -104,13 +106,14 @@ export class ProductsResolver {
 
   @ResolveField(() => Float, { nullable: true })
   async discountedPrice(@Parent() product: Product) {
-    const { discountedPrice } = await this.discountService.getDiscountedPriceForProduct(product.id);
-    return (discountedPrice as unknown as Prisma.Decimal) !== product.price ? discountedPrice : null;
+    const { discountedPrice } = await this.discountLoader.loader.load(product.id);
+    const originalPrice = Number(product.price);
+    return discountedPrice !== originalPrice ? discountedPrice : null;
   }
 
   @ResolveField(() => Discount, { nullable: true })
   async appliedDiscount(@Parent() product: Product) {
-    const { discountId } = await this.discountService.getDiscountedPriceForProduct(product.id);
+    const { discountId } = await this.discountLoader.loader.load(product.id);
     return discountId ? this.discountService.findOneDiscount(discountId) : null;
   }
 }

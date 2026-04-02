@@ -47,7 +47,7 @@ describe('ProductsService', () => {
   describe('create', () => {
     const input = {
       name: 'T-Shirt',
-      price: 19.99,
+      price: '19.99',
       quantity: 100,
       categoryId: 'cat1',
       subcategoryId: 'sub1',
@@ -252,7 +252,7 @@ describe('ProductsService', () => {
   });
 
   describe('update', () => {
-    const updateInput = { name: 'Updated T-Shirt', price: 29.99, id: 'prod1' };
+    const updateInput = { name: 'Updated T-Shirt', price: '29.99', id: 'prod1' };
 
     it('should update a product successfully', async () => {
       const product = {

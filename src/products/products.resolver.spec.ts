@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProductsResolver } from './products.resolver';
 import { ProductsService } from './products.service';
+import { DiscountLoader } from './loaders/discount.loader';
 import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
@@ -23,6 +24,8 @@ const mockDiscountService = {
   getDiscountedPriceForProduct: jest.fn(),
   findOneDiscount: jest.fn(),
 };
+const mockDiscountLoaderFn = jest.fn();
+const mockDiscountLoader = { loader: { load: mockDiscountLoaderFn } };
 const mockProduct = {
   id: 'prod1',
   name: 'T-Shirt',
@@ -34,6 +37,7 @@ const mockProduct = {
 };
 jest.mock('../commons/useful-functions', () => ({
   extractRequestedFieldsFromQuery: jest.fn().mockReturnValue({ id: true }),
+  extractFieldsFromInfo: jest.fn().mockReturnValue({ id: true }),
 }));
 
 describe('ProductsResolver', () => {
@@ -47,6 +51,7 @@ describe('ProductsResolver', () => {
         ProductsResolver,
         { provide: ProductsService, useValue: mockProductsService },
         { provide: DiscountService, useValue: mockDiscountService },
+        { provide: DiscountLoader, useValue: mockDiscountLoader },
       ],
     }).compile();
 
@@ -60,7 +65,7 @@ describe('ProductsResolver', () => {
     it('should create a product', async () => {
       const input: CreateProductInput = {
         name: 'T-Shirt',
-        price: 19.99,
+        price: '19.99',
         quantity: 100,
         categoryId: 'cat1',
         isActive: true,
@@ -79,7 +84,7 @@ describe('ProductsResolver', () => {
     it('should update a product', async () => {
       const input: UpdateProductInput = {
         name: 'Updated T-Shirt',
-        price: 29.99,
+        price: '29.99',
       };
       const product: Product = {
         ...mockProduct,
@@ -169,15 +174,14 @@ describe('ProductsResolver', () => {
   });
   describe('discountedPrice', () => {
     it('should return discounted price', async () => {
-      mockDiscountService.getDiscountedPriceForProduct.mockResolvedValue({ discountedPrice: 5 });
+      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 5, discountId: 'disc1' });
       const result = await resolver.discountedPrice(mockProduct as unknown as Product);
-      expect(discountService.getDiscountedPriceForProduct).toHaveBeenCalled();
+      expect(mockDiscountLoaderFn).toHaveBeenCalledWith('prod1');
       expect(result).toEqual(5);
     });
     it('should return null if discounted price is equal to price', async () => {
-      mockDiscountService.getDiscountedPriceForProduct.mockResolvedValue({ discountedPrice: 19.99 });
+      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 19.99, discountId: null });
       const result = await resolver.discountedPrice(mockProduct as unknown as Product);
-      expect(discountService.getDiscountedPriceForProduct).toHaveBeenCalled();
       expect(result).toEqual(null);
     });
   });
@@ -194,12 +198,12 @@ describe('ProductsResolver', () => {
         isActive: true,
         minimumPurchase: null,
       };
-      mockDiscountService.getDiscountedPriceForProduct.mockResolvedValue({ discountId: mockDiscount.id });
+      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 80, discountId: mockDiscount.id });
       mockDiscountService.findOneDiscount.mockResolvedValueOnce(mockDiscount);
       const result = await resolver.appliedDiscount(mockProduct as unknown as Product);
-      expect(discountService.getDiscountedPriceForProduct).toHaveBeenCalled();
+      expect(mockDiscountLoaderFn).toHaveBeenCalledWith('prod1');
       expect(discountService.findOneDiscount).toHaveBeenCalledWith(mockDiscount.id);
-      expect(result).toEqual(result);
+      expect(result).toEqual(mockDiscount);
     });
   });
 });

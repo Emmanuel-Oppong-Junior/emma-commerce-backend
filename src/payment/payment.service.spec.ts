@@ -2,26 +2,27 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentService } from './payment.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
 import { PaystackEvent } from './enums/paystack-event.enum';
 import { createHmac } from 'crypto';
 import { PaymentStatus } from '@prisma/client';
+import { LoggerService } from '../commons/logger.service';
+import { Role } from '../users/enums/role.enum';
 
-// Mock the entire paystack-api module
-jest.mock('paystack-api', () => {
-  return jest.fn().mockImplementation(() => ({
-    transaction: {
-      initialize: jest.fn(),
-      verify: jest.fn(),
-    },
-  }));
-});
+// Stable mock instance shared between service constructor and test references
+const mockPaystackTransaction = {
+  initialize: jest.fn(),
+  verify: jest.fn(),
+};
+
+jest.mock('paystack-api', () => jest.fn(() => ({ transaction: mockPaystackTransaction })));
 
 const mockPrismaService = {
   order: {
     findUnique: jest.fn(),
+    update: jest.fn(),
   },
   payment: {
     findUnique: jest.fn(),
@@ -37,10 +38,15 @@ const mockConfigService = {
   get: jest.fn(),
 };
 
+const mockLoggerService = {
+  log: jest.fn(),
+  error: jest.fn(),
+  warn: jest.fn(),
+};
+
 describe('PaymentService', () => {
   let service: PaymentService;
   let prisma: PrismaService;
-  let paystackClient: any;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -48,14 +54,13 @@ describe('PaymentService', () => {
         PaymentService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: LoggerService, useValue: mockLoggerService },
       ],
     }).compile();
 
     service = module.get<PaymentService>(PaymentService);
     prisma = module.get<PrismaService>(PrismaService);
-    paystackClient = jest.requireMock('paystack-api')();
 
-    // Mock ConfigService
     mockConfigService.get.mockImplementation((key: string) => {
       if (key === 'PAYSTACK_SECRET_KEY') return 'test_secret';
       if (key === 'PAYSTACK_CALLBACK_URL') return 'http://callback.test';
@@ -101,7 +106,7 @@ describe('PaymentService', () => {
     it('should initiate payment successfully', async () => {
       mockPrismaService.order.findUnique.mockResolvedValue(order);
       mockPrismaService.payment.findUnique.mockResolvedValue(null);
-      paystackClient.transaction.initialize.mockResolvedValue(transaction);
+      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
       mockPrismaService.payment.create.mockResolvedValue(payment);
 
       const result = await service.initiatePayment(userId, createPaymentDto);
@@ -111,9 +116,9 @@ describe('PaymentService', () => {
         include: { user: true },
       });
       expect(prisma.payment.findUnique).toHaveBeenCalledWith({
-        where: { orderId: 'order1', deleted: false },
+        where: { orderId: 'order1' },
       });
-      expect(paystackClient.transaction.initialize).toHaveBeenCalledWith({
+      expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith({
         email: 'test@example.com',
         amount: 100000, // 1000 * 100
         currency: 'NGN',
@@ -129,7 +134,6 @@ describe('PaymentService', () => {
           status: PaymentStatus.PENDING,
           transactionId: 'order1-1234567890',
           paymentDetails: transaction.data,
-          deleted: false,
         },
       });
       expect(result).toEqual({
@@ -187,7 +191,7 @@ describe('PaymentService', () => {
 
     it('should verify payment successfully', async () => {
       mockPrismaService.payment.findFirst.mockResolvedValue(payment);
-      paystackClient.transaction.verify.mockResolvedValue(verification);
+      mockPaystackTransaction.verify.mockResolvedValue(verification);
       mockPrismaService.payment.update.mockResolvedValue(updatedPayment);
 
       const result = await service.verifyPayment(reference);
@@ -195,7 +199,7 @@ describe('PaymentService', () => {
       expect(prisma.payment.findFirst).toHaveBeenCalledWith({
         where: { transactionId: 'ref1', deleted: false },
       });
-      expect(paystackClient.transaction.verify).toHaveBeenCalledWith({
+      expect(mockPaystackTransaction.verify).toHaveBeenCalledWith({
         reference: 'ref1',
       });
       expect(prisma.payment.update).toHaveBeenCalledWith({
@@ -219,7 +223,7 @@ describe('PaymentService', () => {
       };
 
       mockPrismaService.payment.findFirst.mockResolvedValue(payment);
-      paystackClient.transaction.verify.mockResolvedValue(failedVerification);
+      mockPaystackTransaction.verify.mockResolvedValue(failedVerification);
       mockPrismaService.payment.update.mockResolvedValue(failedPayment);
 
       const result = await service.verifyPayment(reference);
@@ -250,19 +254,41 @@ describe('PaymentService', () => {
       orderId: 'order1',
       status: PaymentStatus.PENDING,
       deleted: false,
-      order: { id: 'order1' },
+      order: { id: 'order1', userId: 'user1' },
     };
 
-    it('should retrieve payment successfully', async () => {
+    it('should retrieve payment for owner user', async () => {
       mockPrismaService.payment.findUnique.mockResolvedValue(payment);
+      mockPrismaService.order.findUnique.mockResolvedValue({ id: 'order1', userId: 'user1' });
 
-      const result = await service.getPayment(paymentId);
+      const result = await service.getPayment(paymentId, 'user1', Role.USER);
 
       expect(prisma.payment.findUnique).toHaveBeenCalledWith({
         where: { id: 'pay1', deleted: false },
         include: { order: true },
       });
       expect(result).toEqual(payment);
+    });
+
+    it('should allow admin to retrieve any payment', async () => {
+      mockPrismaService.payment.findUnique.mockResolvedValue(payment);
+
+      const result = await service.getPayment(paymentId, 'admin1', Role.ADMIN);
+      expect(result).toEqual(payment);
+      // Admin does not need to check order ownership
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException if user tries to access another user\'s payment', async () => {
+      mockPrismaService.payment.findUnique.mockResolvedValue(payment);
+      mockPrismaService.order.findUnique.mockResolvedValue({ id: 'order1', userId: 'other-user' });
+
+      await expect(service.getPayment(paymentId, 'user1', Role.USER)).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should throw NotFoundException if payment not found', async () => {
+      mockPrismaService.payment.findUnique.mockResolvedValue(null);
+      await expect(service.getPayment(paymentId, 'user1', Role.USER)).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -341,6 +367,59 @@ describe('PaymentService', () => {
       const result = await service.handlePaystackWebhook(webhookDto, 'valid_signature');
 
       expect(result).toBe(false);
+    });
+  });
+
+  describe('handlePaystackWebhook — signature validation', () => {
+    it('should reject webhook with invalid HMAC signature', async () => {
+      const dto: PaystackWebhookDto = {
+        event: PaystackEvent.CHARGE_SUCCESS,
+        data: { reference: 'ref-sig-test', status: 'success' },
+      } as PaystackWebhookDto;
+      mockConfigService.get.mockReturnValue('real-secret');
+
+      const result = await service.handlePaystackWebhook(dto, 'invalid-sig');
+      expect(result).toBe(false);
+    });
+
+    it('should accept webhook with valid HMAC signature', async () => {
+      const dto: PaystackWebhookDto = {
+        event: PaystackEvent.CHARGE_SUCCESS,
+        data: { reference: 'ref-valid', status: 'success' },
+      } as PaystackWebhookDto;
+      const secret = 'real-secret';
+      mockConfigService.get.mockReturnValue(secret);
+      const validSig = createHmac('sha512', secret).update(JSON.stringify(dto)).digest('hex');
+
+      const payment = { id: 'pay1', transactionId: 'ref-valid', deleted: false };
+      const verifyData = { data: { status: 'success', reference: 'ref-valid' } };
+      mockPrismaService.payment.findFirst.mockResolvedValue(payment);
+      mockPaystackTransaction.verify.mockResolvedValue(verifyData);
+      mockPrismaService.payment.update.mockResolvedValue({ ...payment, status: PaymentStatus.COMPLETED });
+      mockPrismaService.order.update.mockResolvedValue({});
+
+      const result = await service.handlePaystackWebhook(dto, validSig);
+      expect(result).toBe(true);
+    });
+
+    it('should log error via LoggerService (not console) on webhook failure', async () => {
+      const dto: PaystackWebhookDto = {
+        event: PaystackEvent.CHARGE_SUCCESS,
+        data: { reference: 'ref-fail', status: 'success' },
+      } as PaystackWebhookDto;
+      const secret = 'real-secret';
+      mockConfigService.get.mockReturnValue(secret);
+      const validSig = createHmac('sha512', secret).update(JSON.stringify(dto)).digest('hex');
+
+      mockPrismaService.payment.findFirst.mockRejectedValue(new Error('DB down'));
+
+      const result = await service.handlePaystackWebhook(dto, validSig);
+      expect(result).toBe(false);
+      expect(mockLoggerService.error).toHaveBeenCalledWith(
+        expect.stringContaining('Webhook processing failed'),
+        expect.any(String),
+        'PaymentService',
+      );
     });
   });
 

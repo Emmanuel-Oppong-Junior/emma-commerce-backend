@@ -7,7 +7,10 @@ describe('DiscountResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [DiscountResolver, DiscountService],
+      providers: [
+        DiscountResolver,
+        { provide: DiscountService, useValue: {} },
+      ],
     }).compile();
 
     resolver = module.get<DiscountResolver>(DiscountResolver);

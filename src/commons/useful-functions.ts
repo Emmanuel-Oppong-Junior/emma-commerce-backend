@@ -1,5 +1,47 @@
 import { GraphQLResolveInfo } from 'graphql/type';
 import { FieldNode } from 'graphql/language';
+import { parseResolveInfo, ResolveTree } from 'graphql-parse-resolve-info';
+import { Prisma } from '@prisma/client';
+
+/**
+ * Converts the GraphQL resolve info into a Prisma `select` object.
+ * Uses graphql-parse-resolve-info for reliable field extraction (handles aliases,
+ * fragments, and nested selection sets correctly).
+ *
+ * @param info - The GraphQL resolve info object.
+ * @param excludedFields - Field names to exclude from the select (e.g. computed fields).
+ * @returns A Prisma-compatible select object, or an empty object if parsing fails.
+ */
+export const extractFieldsFromInfo = (
+  info: GraphQLResolveInfo,
+  excludedFields: string[] = [],
+): Prisma.ProductSelect => {
+  try {
+    const parsed = parseResolveInfo(info) as ResolveTree;
+    if (!parsed) return {};
+    const buildSelect = (fields: Record<string, ResolveTree>): Record<string, any> => {
+      const select: Record<string, any> = {};
+      for (const [alias, field] of Object.entries(fields)) {
+        const name = field.name;
+        if (excludedFields.includes(name) || name === '__typename') continue;
+        const nestedFields = Object.values(field.fieldsByTypeName)[0];
+        if (nestedFields && Object.keys(nestedFields).length > 0) {
+          select[name] = { select: buildSelect(nestedFields) };
+        } else {
+          select[name] = true;
+        }
+        // suppress unused alias warning
+        void alias;
+      }
+      return select;
+    };
+
+    const topLevelFields = Object.values(parsed.fieldsByTypeName)[0];
+    return topLevelFields ? buildSelect(topLevelFields) : {};
+  } catch {
+    return {};
+  }
+};
 
 export function sanitizeVariables(
   variables: Record<string, any>,
@@ -42,6 +84,7 @@ export const extractRequestedFieldsFromQuery = (
   info: GraphQLResolveInfo,
   options: { excludedFields?: string[]; level?: 1 | 2 | 3 } = { excludedFields: [], level: 1 },
 ): object => {
+  if (!info) return undefined;
   const prismaSelect = {};
   options.excludedFields.push('__typename');
   // if (options.level === 2) {

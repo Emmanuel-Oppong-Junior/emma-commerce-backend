@@ -50,7 +50,7 @@ export class AuthenticationService {
    */
   async signIn(signInDto: SignInInput) {
     const user = await this.userService.findUserByEmail(signInDto.email);
-    if (!user) throw new UnauthorizedException('Invalid email or password');
+    if (!user || !user.password) throw new UnauthorizedException('Invalid email or password');
     const isPasswordEqual = await this.passwordService.compare(signInDto.password, user.password);
     if (!isPasswordEqual) throw new UnauthorizedException('Invalid email or password');
     return await this.generateTokens(user);

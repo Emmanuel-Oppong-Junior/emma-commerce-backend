@@ -3,9 +3,10 @@ import { OrdersService } from './order.service';
 import { OrdersResolver } from './order.resolver';
 import { CartModule } from '../cart/cart.module';
 import { DiscountModule } from '../discount/discount.module';
+import { CommonsModule } from '../commons/commons.module';
 
 @Module({
-  providers: [OrdersResolver, OrdersService],
-  imports: [CartModule, DiscountModule],
+  providers: [OrdersService, OrdersResolver],
+  imports: [CartModule, DiscountModule, CommonsModule],
 })
 export class OrderModule {}

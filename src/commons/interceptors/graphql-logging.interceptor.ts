@@ -22,19 +22,22 @@ export class GraphqlLoggingInterceptor implements NestInterceptor {
     const sanitizedVariables = sanitizeVariables(rawVariables);
     const variables = JSON.stringify(sanitizedVariables);
 
+    const correlationId = req?.correlationId ?? req?.headers?.['x-correlation-id'] ?? '-';
+    const userId = req?.user?.id ?? 'anonymous';
+
     return next.handle().pipe(
       tap({
         next: () => {
           const duration = Date.now() - start;
           this.logger.log(
-            `${operationType} ${operationName} | Query: ${query} | Variables: ${variables} | Status: 200 | ${duration}ms`,
+            `${operationType} ${operationName} | Query: ${query} | Variables: ${variables} | Status: 200 | ${duration}ms | user:${userId} | cid:${correlationId}`,
             'GraphQL',
           );
         },
         error: (error) => {
           const duration = Date.now() - start;
           this.logger.error(
-            `${operationType} ${operationName} failed | Query: ${query} | Variables: ${variables} | Error: ${error.message} | ${duration}ms`,
+            `${operationType} ${operationName} failed | Query: ${query} | Variables: ${variables} | Error: ${error.message} | ${duration}ms | user:${userId} | cid:${correlationId}`,
             error.stack,
             'GraphQL',
           );

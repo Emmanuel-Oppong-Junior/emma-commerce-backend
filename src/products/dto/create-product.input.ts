@@ -1,4 +1,4 @@
-import { Field, Float, InputType, Int } from '@nestjs/graphql';
+import { Field, InputType, Int } from '@nestjs/graphql';
 import {
   ArrayMaxSize,
   IsBoolean,
@@ -9,6 +9,7 @@ import {
   Length,
   Matches,
   Min,
+  IsNumberString,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 
@@ -44,12 +45,13 @@ export class CreateProductInput {
   @Length(0, 5000, { message: 'Description must not exceed 5000 characters' })
   description?: string;
 
-  @Field(() => Float, {
-    description: 'Price of the product in default currency (e.g., 29.99)',
+  @Field(() => String, {
+    description: 'Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors',
   })
   @IsNotEmpty({ message: 'Price is required' })
+  @IsNumberString({}, { message: 'Price must be a valid decimal string (e.g., "29.99")' })
   @Min(0, { message: 'Price must be non-negative' })
-  price: number;
+  price: string;
 
   @Field(() => String, {
     nullable: true,

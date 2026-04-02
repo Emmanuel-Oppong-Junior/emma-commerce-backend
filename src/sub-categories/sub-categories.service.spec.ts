@@ -6,7 +6,7 @@ import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
 
 const mockPrismaService = {
-  subcategory: {
+  subCategory: {
     findFirst: jest.fn(),
     create: jest.fn(),
     findMany: jest.fn(),
@@ -48,8 +48,8 @@ describe('SubCategoriesService', () => {
         updatedAt: new Date(),
       };
 
-      mockPrismaService.subcategory.findFirst.mockResolvedValue(null);
-      mockPrismaService.subcategory.create.mockResolvedValue(subcategory);
+      mockPrismaService.subCategory.findFirst.mockResolvedValue(null);
+      mockPrismaService.subCategory.create.mockResolvedValue(subcategory);
 
       const result = await service.create(input);
 
@@ -70,10 +70,10 @@ describe('SubCategoriesService', () => {
       };
       const existing = { id: '1', name: 'shirts', categoryId: 'cat1' };
 
-      mockPrismaService.subcategory.findFirst.mockResolvedValue(existing);
+      mockPrismaService.subCategory.findFirst.mockResolvedValue(existing);
 
       await expect(service.create(input)).rejects.toThrow(
-        new ConflictException('A subcategory with the name "Shirts" already exists in category ID "cat1"'),
+        new ConflictException('A SubCategory with the name "Shirts" already exists in category ID "cat1"'),
       );
     });
   });
@@ -90,11 +90,12 @@ describe('SubCategoriesService', () => {
         },
       ];
 
-      mockPrismaService.subcategory.findMany.mockResolvedValue(subcategories);
+      mockPrismaService.subCategory.findMany.mockResolvedValue(subcategories);
 
       const result = await service.findAll();
 
       expect(prisma.subCategory.findMany).toHaveBeenCalledWith({
+        include: { category: true },
         orderBy: { name: 'asc' },
       });
       expect(result).toEqual(subcategories);
@@ -110,7 +111,7 @@ describe('SubCategoriesService', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(subcategory);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(subcategory);
 
       const result = await service.findOne('1');
 
@@ -121,7 +122,7 @@ describe('SubCategoriesService', () => {
     });
 
     it('should return null if subcategory not found', async () => {
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(null);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(null);
 
       const result = await service.findOne('999');
 
@@ -133,7 +134,6 @@ describe('SubCategoriesService', () => {
     it('should update an existing subcategory', async () => {
       const id = '1';
       const input: UpdateSubCategoryInput = {
-        id,
         name: 'Updated Shirts',
         description: 'Updated',
       };
@@ -146,9 +146,9 @@ describe('SubCategoriesService', () => {
       };
       const updated = { ...existing, ...input, updatedAt: new Date() };
 
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(existing);
-      mockPrismaService.subcategory.findFirst.mockResolvedValue(null);
-      mockPrismaService.subcategory.update.mockResolvedValue(updated);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(existing);
+      mockPrismaService.subCategory.findFirst.mockResolvedValue(null);
+      mockPrismaService.subCategory.update.mockResolvedValue(updated);
 
       const result = await service.update(id, input);
 
@@ -161,7 +161,7 @@ describe('SubCategoriesService', () => {
 
     it('should throw ConflictException if updating to an existing name in same category', async () => {
       const id = '1';
-      const input: UpdateSubCategoryInput = { id, name: 'Trousers' };
+      const input: UpdateSubCategoryInput = { name: 'Trousers' };
       const existing = {
         id,
         name: 'Shirts',
@@ -171,18 +171,18 @@ describe('SubCategoriesService', () => {
       };
       const conflicting = { id: '2', name: 'trousers', categoryId: 'cat1' };
 
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(existing);
-      mockPrismaService.subcategory.findFirst.mockResolvedValue(conflicting);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(existing);
+      mockPrismaService.subCategory.findFirst.mockResolvedValue(conflicting);
 
       await expect(service.update(id, input)).rejects.toThrow(
-        new ConflictException('A subcategory with the name "Trousers" already exists in category ID "cat1"'),
+        new ConflictException('A SubCategory with the name "Trousers" already exists in category ID "cat1"'),
       );
     });
 
     it('should throw NotFoundException if subcategory does not exist', async () => {
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(null);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(null);
       await expect(service.update('999', {} as UpdateSubCategoryInput)).rejects.toThrow(
-        new NotFoundException('Subcategory not found'),
+        new NotFoundException('SubCategory not found'),
       );
     });
   });
@@ -198,9 +198,9 @@ describe('SubCategoriesService', () => {
         updatedAt: new Date(),
       };
 
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(subcategory);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(subcategory);
       mockPrismaService.product.count.mockResolvedValue(0);
-      mockPrismaService.subcategory.delete.mockResolvedValue(subcategory);
+      mockPrismaService.subCategory.delete.mockResolvedValue(subcategory);
 
       const result = await service.remove(id);
 
@@ -215,18 +215,18 @@ describe('SubCategoriesService', () => {
       const id = '1';
       const subcategory = { id, name: 'Shirts', categoryId: 'cat1' };
 
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(subcategory);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(subcategory);
       mockPrismaService.product.count.mockResolvedValue(1);
 
       await expect(service.remove(id)).rejects.toThrow(
-        new ConflictException('Cannot delete subcategory with associated products'),
+        new ConflictException('Cannot delete SubCategory with associated products'),
       );
     });
 
     it('should throw NotFoundException if subcategory does not exist', async () => {
-      mockPrismaService.subcategory.findUnique.mockResolvedValue(null);
+      mockPrismaService.subCategory.findUnique.mockResolvedValue(null);
 
-      await expect(service.remove('999')).rejects.toThrow(new NotFoundException('Subcategory not found'));
+      await expect(service.remove('999')).rejects.toThrow(new NotFoundException('SubCategory not found'));
     });
   });
 });

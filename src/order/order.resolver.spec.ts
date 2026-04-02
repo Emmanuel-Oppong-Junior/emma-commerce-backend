@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersResolver } from './order.resolver';
 import { OrdersService } from './order.service';
+import { DiscountService } from '../discount/discount.service';
 import { CreateOrderInput } from './dto/create-order.input';
 import { UpdateOrderStatusInput } from './dto/update-order-status.input';
 import { OrderStatusEnum } from './enums/order.enum';
@@ -65,7 +66,11 @@ describe('OrdersResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [OrdersResolver, { provide: OrdersService, useValue: mockOrdersService }],
+      providers: [
+        OrdersResolver,
+        { provide: OrdersService, useValue: mockOrdersService },
+        { provide: DiscountService, useValue: {} },
+      ],
     })
       .overrideProvider(ActiveUser)
       .useValue(mockActiveUser)
@@ -125,9 +130,9 @@ describe('OrdersResolver', () => {
       const updatedOrder = { ...mockOrder, status: OrderStatusEnum.SHIPPED };
       mockOrdersService.updateOrderStatus.mockResolvedValue(updatedOrder);
 
-      const result = await resolver.updateOrderStatus(mockUpdateOrderStatusInput);
+      const result = await resolver.updateOrderStatus(mockUserId, mockUpdateOrderStatusInput);
 
-      expect(ordersService.updateOrderStatus).toHaveBeenCalledWith('order1', OrderStatusEnum.SHIPPED);
+      expect(ordersService.updateOrderStatus).toHaveBeenCalledWith('order1', OrderStatusEnum.SHIPPED, mockUserId);
       expect(result).toEqual(updatedOrder);
     });
   });
@@ -151,9 +156,9 @@ describe('OrdersResolver', () => {
     it('should delete an order (admin only)', async () => {
       mockOrdersService.deleteOrder.mockResolvedValue(mockOrder);
 
-      const result = await resolver.deleteOrder('order1');
+      const result = await resolver.deleteOrder(mockUserId, 'order1');
 
-      expect(ordersService.deleteOrder).toHaveBeenCalledWith('order1');
+      expect(ordersService.deleteOrder).toHaveBeenCalledWith('order1', mockUserId);
       expect(result).toEqual(mockOrder);
     });
   });

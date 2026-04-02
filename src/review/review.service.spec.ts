@@ -36,6 +36,8 @@ describe('ReviewService', () => {
     productId: mockProductId,
     score: 5,
     comment: 'Great product!',
+    deleted: false,
+    deletedAt: null,
     user: { id: mockUserId, email: 'user1@example.com' },
     product: { id: mockProductId, name: 'T-Shirt' },
   };

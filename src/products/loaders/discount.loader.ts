@@ -1,0 +1,102 @@
+import { Injectable, Scope } from '@nestjs/common';
+import * as DataLoader from 'dataloader';
+import { PrismaService } from '../../prisma/prisma.service';
+import { DiscountCalculation } from '../../discount/types';
+
+@Injectable({ scope: Scope.REQUEST })
+export class DiscountLoader {
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Batches discount lookups for multiple products in a single request.
+   * Prevents N+1 queries when resolving discountedPrice / appliedDiscount fields.
+   */
+  readonly loader = new DataLoader<string, DiscountCalculation>(
+    async (productIds: readonly string[]) => {
+      const ids = [...productIds];
+
+      // Fetch products with their active discounts + category discounts in bulk
+      const products = await this.prisma.product.findMany({
+        where: { id: { in: ids } },
+        select: {
+          id: true,
+          price: true,
+          categoryId: true,
+          discounts: {
+            where: {
+              isActive: true,
+              startDate: { lte: new Date() },
+              endDate: { gte: new Date() },
+            },
+          },
+        },
+      });
+
+      // Collect all unique categoryIds to batch category-discount lookup
+      const categoryIds = [...new Set(products.map((p) => p.categoryId).filter(Boolean))];
+
+      const categoryDiscounts =
+        categoryIds.length > 0
+          ? await this.prisma.discount.findMany({
+              where: {
+                isActive: true,
+                startDate: { lte: new Date() },
+                endDate: { gte: new Date() },
+                categories: { some: { id: { in: categoryIds } } },
+              },
+              include: { categories: { select: { id: true } } },
+            })
+          : [];
+
+      // Build a map: categoryId → discounts[]
+      const categoryDiscountMap = new Map<string, typeof categoryDiscounts>();
+      for (const discount of categoryDiscounts) {
+        for (const cat of (discount as any).categories) {
+          if (!categoryDiscountMap.has(cat.id)) categoryDiscountMap.set(cat.id, []);
+          categoryDiscountMap.get(cat.id).push(discount);
+        }
+      }
+
+      // Map results back in the same order as productIds
+      return ids.map((productId) => {
+        const product = products.find((p) => p.id === productId);
+        if (!product) return { discountedPrice: 0, discountAmount: 0 };
+
+        const price = Number(product.price ?? 0);
+        const allDiscounts = [
+          ...product.discounts,
+          ...(product.categoryId ? (categoryDiscountMap.get(product.categoryId) ?? []) : []),
+        ];
+
+        const best = this.selectBestDiscount(allDiscounts);
+        return this.getBestDiscountDetails(price, best);
+      });
+    },
+    { cache: false }, // Per-request cache disabled — data can change between resolves
+  );
+
+  private selectBestDiscount(discounts: { id: string; type: string; value: any }[]) {
+    if (!discounts.length) return null;
+    return discounts.reduce((best, current) => {
+      const bestVal = Number(best.value);
+      const curVal = Number(current.value);
+      if (curVal > bestVal) return current;
+      if (curVal === bestVal && current.type === 'PERCENTAGE' && best.type === 'FLAT') return current;
+      return best;
+    }, discounts[0]);
+  }
+
+  private getBestDiscountDetails(
+    price: number,
+    best: { id: string; type: string; value: any } | null,
+  ): DiscountCalculation {
+    if (!best) return { discountedPrice: price, discountAmount: 0 };
+    const amount =
+      best.type === 'PERCENTAGE' ? (price * Number(best.value)) / 100 : Number(best.value);
+    return {
+      discountedPrice: Math.max(0, price - amount),
+      discountAmount: amount,
+      discountId: best.id,
+    };
+  }
+}

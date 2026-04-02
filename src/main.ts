@@ -2,19 +2,64 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { LoggerService } from './commons/logger.service';
+import { AllExceptionsFilter } from './commons/filters/all-exceptions.filter';
+import helmet from 'helmet';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     // logger: false,
   });
 
-  app.enableCors();
-  //set custom logger
+  // Security headers
+  app.use(
+    helmet({
+      crossOriginEmbedderPolicy: false,
+      contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
+    }),
+  );
+
+  // CORS — restrict to configured origins
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : ['http://localhost:3000', 'http://localhost:4000'];
+
+  app.enableCors({
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  // Custom logger
   const logger = app.get(LoggerService);
   app.useLogger(logger);
 
-  app.useGlobalPipes(new ValidationPipe({ transform: true }));
-  await app.listen(3000);
+  // Global exception filter (REST)
+  app.useGlobalFilters(new AllExceptionsFilter(logger));
+
+  // Strict validation — strip unknown props and reject extra fields
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
+
+  const port = process.env.PORT ?? 3000;
+  await app.listen(port);
+  logger.log(`Application running on port ${port}`, 'Bootstrap');
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    logger.log(`${signal} received — closing application gracefully`, 'Bootstrap');
+    await app.close();
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 bootstrap();

@@ -112,8 +112,8 @@ describe('CartService', () => {
       });
       expect(prisma.cartItem.upsert).toHaveBeenCalledWith({
         where: { id: '' },
-        update: { quantity: 3 },
-        create: { cartId: 'cart1', productId: 'prod1', quantity: 3 },
+        update: { quantity: 3, originalPrice: 19.99 },
+        create: { cartId: 'cart1', productId: 'prod1', quantity: 3, originalPrice: 19.99 },
       });
       expect(result).toEqual(mockCart);
     });
@@ -134,8 +134,8 @@ describe('CartService', () => {
       expect(prisma.cart.findUnique).toHaveBeenCalledTimes(2);
       expect(prisma.cartItem.upsert).toHaveBeenCalledWith({
         where: { id: 'item1' },
-        update: { quantity: 5 },
-        create: { cartId: 'cart1', productId: 'prod1', quantity: 3 },
+        update: { quantity: 5, originalPrice: 19.99 },
+        create: { cartId: 'cart1', productId: 'prod1', quantity: 3, originalPrice: 19.99 },
       });
       expect(result).toEqual(mockCart);
     });

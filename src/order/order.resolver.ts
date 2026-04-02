@@ -65,8 +65,8 @@ export class OrdersResolver {
     name: 'updateOrderStatus',
     description: 'Updates the status of an order',
   })
-  async updateOrderStatus(@Args('input') input: UpdateOrderStatusInput) {
-    return this.ordersService.updateOrderStatus(input.orderId, input.status);
+  async updateOrderStatus(@ActiveUser('id') adminId: string, @Args('input') input: UpdateOrderStatusInput) {
+    return this.ordersService.updateOrderStatus(input.orderId, input.status, adminId);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
@@ -81,14 +81,20 @@ export class OrdersResolver {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Order, {
     name: 'deleteOrder',
-    description: 'Deletes an order and restores stock (admin only)',
+    description: 'Soft-deletes an order and restores stock (admin only)',
   })
-  async deleteOrder(@Args('orderId', { type: () => String }) orderId: string) {
-    return this.ordersService.deleteOrder(orderId);
+  async deleteOrder(@ActiveUser('id') adminId: string, @Args('orderId', { type: () => String }) orderId: string) {
+    return this.ordersService.deleteOrder(orderId, adminId);
   }
 
+  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Order)
-  async finalizeOrder(@Args('id', { type: () => String }) id: string) {
+  async finalizeOrder(
+    @ActiveUser('id') userId: string,
+    @Args('id', { type: () => String }) id: string,
+  ) {
+    // Verify the order belongs to the requesting user (admins bypass this check inside the service)
+    await this.ordersService.getOrder(userId, id);
     return this.discountService.finalizeDiscountsForOrder(id);
   }
 }

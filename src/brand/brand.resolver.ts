@@ -8,8 +8,8 @@ import { extractRequestedFieldsFromQuery } from '../commons/useful-functions';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 import { AuthGuard } from '@nestjs/passport';
-import { AuthType } from 'src/iam/authentication/enums/auth-type.enum';
-import { Auth } from 'src/iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
 
 @Resolver(() => Brand)
 export class BrandResolver {

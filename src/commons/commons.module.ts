@@ -3,11 +3,13 @@ import { UploadController } from './upload.controller';
 import { LoggerService } from './logger.service';
 import { ConfigModule } from '@nestjs/config';
 import { CloudinaryService } from './cloudinary.service';
+import { AuditService } from './audit.service';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, PrismaModule],
   controllers: [UploadController],
-  providers: [LoggerService, CloudinaryService],
-  exports: [LoggerService],
+  providers: [LoggerService, CloudinaryService, AuditService],
+  exports: [LoggerService, AuditService],
 })
 export class CommonsModule {}

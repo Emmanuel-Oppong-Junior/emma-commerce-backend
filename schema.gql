@@ -230,8 +230,10 @@ input CreateProductInput {
   """Name of the product (e.g., "Cotton T-Shirt")"""
   name: String!
 
-  """Price of the product in default currency (e.g., 29.99)"""
-  price: Float!
+  """
+  Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors
+  """
+  price: String!
 
   """Available stock quantity (e.g., 100)"""
   quantity: Int!
@@ -420,7 +422,7 @@ type Mutation {
   deleteAddress(addressId: String!): Address!
   deleteBrand(id: String!): Brand!
 
-  """Deletes an order and restores stock (admin only)"""
+  """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
 
   """Deletes a user’s review"""
@@ -842,10 +844,12 @@ input SignUpInput {
   """Email address"""
   email: String!
 
-  """User’s name"""
+  """User's name"""
   name: String!
 
-  """Password (required for manual signup)"""
+  """
+  Password - min 8 chars, must include uppercase, lowercase, number, and special character
+  """
   password: String!
 }
 
@@ -994,8 +998,10 @@ input UpdateProductInput {
   """Name of the product (e.g., "Cotton T-Shirt")"""
   name: String
 
-  """Price of the product in default currency (e.g., 29.99)"""
-  price: Float
+  """
+  Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors
+  """
+  price: String
 
   """Available stock quantity (e.g., 100)"""
   quantity: Int

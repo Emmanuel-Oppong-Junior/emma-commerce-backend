@@ -62,7 +62,7 @@ describe('DiscountService', () => {
     minimumPurchase: null,
   };
 
-  const mockProduct: Product = {
+  const mockProduct = {
     id: 'product1',
     name: 'T-Shirt',
     price: new Prisma.Decimal(100),
@@ -75,8 +75,8 @@ describe('DiscountService', () => {
     updatedAt: new Date(),
     categoryId: 'category1',
     subcategoryId: null,
-    brand: null,
-  };
+    brandId: null,
+  } as unknown as Product;
 
   const mockVariant: Variant = {
     id: 'variant1',

@@ -107,7 +107,6 @@ describe('CategoriesResolver', () => {
       const input: UpdateCategoryInput = {
         name: 'Updated Clothing',
         description: 'Updated description',
-        id,
       };
       const updatedCategory = {
         id,

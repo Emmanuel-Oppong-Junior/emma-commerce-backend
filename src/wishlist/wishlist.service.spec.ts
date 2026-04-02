@@ -2,14 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WishlistService } from './wishlist.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Wishlist } from '@prisma/client';
+import { WishList as Wishlist } from '@prisma/client';
 
 describe('WishlistService', () => {
   let service: WishlistService;
   let prismaService: PrismaService;
 
   const mockPrismaService = {
-    wishlist: {
+    wishList: {
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -52,31 +52,31 @@ describe('WishlistService', () => {
 
   describe('getOrCreateWishlist', () => {
     it('should return existing wishlist if it exists', async () => {
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlist);
 
       const result = await service.getOrCreateWishlist(mockUserId);
 
-      expect(prismaService.wishlist.findUnique).toHaveBeenCalledWith({
+      expect(prismaService.wishList.findUnique).toHaveBeenCalledWith({
         where: { userId: mockUserId },
-        include: { products: { select: { id: true, name: true } } },
+        include: { products: true },
       });
-      expect(prismaService.wishlist.create).not.toHaveBeenCalled();
+      expect(prismaService.wishList.create).not.toHaveBeenCalled();
       expect(result).toEqual(mockWishlist);
     });
 
     it('should create and return a new wishlist if none exists', async () => {
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(null);
-      mockPrismaService.wishlist.create.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(null);
+      mockPrismaService.wishList.create.mockResolvedValue(mockWishlist);
 
       const result = await service.getOrCreateWishlist(mockUserId);
 
-      expect(prismaService.wishlist.findUnique).toHaveBeenCalledWith({
+      expect(prismaService.wishList.findUnique).toHaveBeenCalledWith({
         where: { userId: mockUserId },
-        include: { products: { select: { id: true, name: true } } },
+        include: { products: true },
       });
-      expect(prismaService.wishlist.create).toHaveBeenCalledWith({
+      expect(prismaService.wishList.create).toHaveBeenCalledWith({
         data: { userId: mockUserId },
-        include: { products: { select: { id: true, name: true } } },
+        include: { products: true },
       });
       expect(result).toEqual(mockWishlist);
     });
@@ -85,19 +85,19 @@ describe('WishlistService', () => {
   describe('addToWishlist', () => {
     it('should add a product to the wishlist successfully', async () => {
       mockPrismaService.product.findUnique.mockResolvedValue(mockProduct);
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlist);
-      mockPrismaService.wishlist.update.mockResolvedValue(mockWishlistWithProduct);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.update.mockResolvedValue(mockWishlistWithProduct);
 
       const result = await service.addToWishlist(mockUserId, mockProductId);
 
       expect(prismaService.product.findUnique).toHaveBeenCalledWith({
         where: { id: mockProductId },
       });
-      expect(prismaService.wishlist.findUnique).toHaveBeenCalled();
-      expect(prismaService.wishlist.update).toHaveBeenCalledWith({
+      expect(prismaService.wishList.findUnique).toHaveBeenCalled();
+      expect(prismaService.wishList.update).toHaveBeenCalledWith({
         where: { id: mockWishlist.id },
         data: { products: { connect: { id: mockProductId } } },
-        include: { products: { select: { id: true, name: true } } },
+        include: { products: true },
       });
       expect(result).toEqual(mockWishlistWithProduct);
     });
@@ -108,69 +108,69 @@ describe('WishlistService', () => {
       await expect(service.addToWishlist(mockUserId, mockProductId)).rejects.toThrow(
         new NotFoundException(`Product "${mockProductId}" not found`),
       );
-      expect(prismaService.wishlist.findUnique).not.toHaveBeenCalled();
+      expect(prismaService.wishList.findUnique).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if product is already in wishlist', async () => {
       mockPrismaService.product.findUnique.mockResolvedValue(mockProduct);
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlistWithProduct);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlistWithProduct);
 
       await expect(service.addToWishlist(mockUserId, mockProductId)).rejects.toThrow(
         new BadRequestException(`Product "${mockProductId}" is already in your wishlist`),
       );
-      expect(prismaService.wishlist.update).not.toHaveBeenCalled();
+      expect(prismaService.wishList.update).not.toHaveBeenCalled();
     });
   });
 
   describe('removeFromWishlist', () => {
     it('should remove a product from the wishlist successfully', async () => {
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlistWithProduct);
-      mockPrismaService.wishlist.update.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlistWithProduct);
+      mockPrismaService.wishList.update.mockResolvedValue(mockWishlist);
 
       const result = await service.removeFromWishlist(mockUserId, mockProductId);
 
-      expect(prismaService.wishlist.findUnique).toHaveBeenCalled();
-      expect(prismaService.wishlist.update).toHaveBeenCalledWith({
+      expect(prismaService.wishList.findUnique).toHaveBeenCalled();
+      expect(prismaService.wishList.update).toHaveBeenCalledWith({
         where: { id: mockWishlist.id },
         data: { products: { disconnect: { id: mockProductId } } },
-        include: { products: { select: { id: true, name: true } } },
+        include: { products: true },
       });
       expect(result).toEqual(mockWishlist);
     });
 
     it('should throw NotFoundException if product is not in wishlist', async () => {
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlist);
 
       await expect(service.removeFromWishlist(mockUserId, mockProductId)).rejects.toThrow(
         new NotFoundException(`Product "${mockProductId}" not found in your wishlist`),
       );
-      expect(prismaService.wishlist.update).not.toHaveBeenCalled();
+      expect(prismaService.wishList.update).not.toHaveBeenCalled();
     });
   });
 
   describe('clearWishlist', () => {
     it('should clear all products from the wishlist', async () => {
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlistWithProduct);
-      mockPrismaService.wishlist.update.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlistWithProduct);
+      mockPrismaService.wishList.update.mockResolvedValue(mockWishlist);
 
       const result = await service.clearWishlist(mockUserId);
 
-      expect(prismaService.wishlist.findUnique).toHaveBeenCalled();
-      expect(prismaService.wishlist.update).toHaveBeenCalledWith({
+      expect(prismaService.wishList.findUnique).toHaveBeenCalled();
+      expect(prismaService.wishList.update).toHaveBeenCalledWith({
         where: { id: mockWishlist.id },
         data: { products: { set: [] } },
-        include: { products: { select: { id: true, name: true } } },
+        include: { products: true },
       });
       expect(result).toEqual(mockWishlist);
     });
 
     it('should return empty wishlist if already empty', async () => {
-      mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlist);
-      mockPrismaService.wishlist.update.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlist);
+      mockPrismaService.wishList.update.mockResolvedValue(mockWishlist);
 
       const result = await service.clearWishlist(mockUserId);
 
-      expect(prismaService.wishlist.update).toHaveBeenCalled();
+      expect(prismaService.wishList.update).toHaveBeenCalled();
       expect(result).toEqual(mockWishlist);
     });
   });
@@ -179,13 +179,13 @@ describe('WishlistService', () => {
   describe('private methods', () => {
     describe('fetchWishlist', () => {
       it('should fetch wishlist by userId', async () => {
-        mockPrismaService.wishlist.findUnique.mockResolvedValue(mockWishlist);
+        mockPrismaService.wishList.findUnique.mockResolvedValue(mockWishlist);
 
         const result = await service['fetchWishlist'](mockUserId);
 
-        expect(prismaService.wishlist.findUnique).toHaveBeenCalledWith({
+        expect(prismaService.wishList.findUnique).toHaveBeenCalledWith({
           where: { userId: mockUserId },
-          include: { products: { select: { id: true, name: true } } },
+          include: { products: true },
         });
         expect(result).toEqual(mockWishlist);
       });

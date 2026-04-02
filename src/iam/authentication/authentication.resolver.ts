@@ -9,8 +9,10 @@ import { AuthType } from './enums/auth-type.enum';
 import { Auth } from './decorators/auth.decorator';
 import { GoogleAuthenticationService } from './social/google-authentication.service';
 import { FacebookAuthenticationService } from './social/facebook-authentication.service';
+import { Throttle } from '@nestjs/throttler';
 
 @Auth(AuthType.None)
+@Throttle({ auth: { ttl: 60000, limit: 10 } })
 @Resolver(() => AuthEntity)
 export class AuthenticationResolver {
   constructor(
