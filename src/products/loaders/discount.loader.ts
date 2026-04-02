@@ -91,8 +91,7 @@ export class DiscountLoader {
     best: { id: string; type: string; value: any } | null,
   ): DiscountCalculation {
     if (!best) return { discountedPrice: price, discountAmount: 0 };
-    const amount =
-      best.type === 'PERCENTAGE' ? (price * Number(best.value)) / 100 : Number(best.value);
+    const amount = best.type === 'PERCENTAGE' ? (price * Number(best.value)) / 100 : Number(best.value);
     return {
       discountedPrice: Math.max(0, price - amount),
       discountAmount: amount,

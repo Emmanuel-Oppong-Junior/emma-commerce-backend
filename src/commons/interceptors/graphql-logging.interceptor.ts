@@ -6,7 +6,7 @@ import { sanitizeQuery, sanitizeVariables } from '../useful-functions';
 
 @Injectable()
 export class GraphqlLoggingInterceptor implements NestInterceptor {
-  constructor(private readonly logger: LoggerService) { }
+  constructor(private readonly logger: LoggerService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const start = Date.now();

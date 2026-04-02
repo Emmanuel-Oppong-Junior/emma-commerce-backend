@@ -58,14 +58,11 @@ export class AuthenticationService {
 
   async refreshToken(refreshTokenInput: RefreshTokenInput) {
     try {
-      const { sub: userId } = await this.jwtServices.verifyAsync<{ sub: string }>(
-        refreshTokenInput.refreshToken,
-        {
-          audience: this.jwtConfiguration.audience,
-          issuer: this.jwtConfiguration.issuer,
-          secret: this.jwtConfiguration.refreshSecret,
-        },
-      );
+      const { sub: userId } = await this.jwtServices.verifyAsync<{ sub: string }>(refreshTokenInput.refreshToken, {
+        audience: this.jwtConfiguration.audience,
+        issuer: this.jwtConfiguration.issuer,
+        secret: this.jwtConfiguration.refreshSecret,
+      });
       const user = await this.userService.findOne(userId);
       if (!user) throw new UnauthorizedException('User not found');
       return this.generateTokens(user);

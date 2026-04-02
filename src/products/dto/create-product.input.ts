@@ -46,7 +46,8 @@ export class CreateProductInput {
   description?: string;
 
   @Field(() => String, {
-    description: 'Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors',
+    description:
+      'Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors',
   })
   @IsNotEmpty({ message: 'Price is required' })
   @IsNumberString({}, { message: 'Price must be a valid decimal string (e.g., "29.99")' })

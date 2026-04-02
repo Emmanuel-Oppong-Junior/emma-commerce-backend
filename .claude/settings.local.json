@@ -7,7 +7,8 @@
       "Bash(node -e \"require\\('@opentelemetry/sdk-node'\\); require\\('@opentelemetry/auto-instrumentations-node'\\); console.log\\('OTel present'\\)\")",
       "Bash(npm run:*)",
       "Bash(npx prisma:*)",
-      "Bash(npx jest:*)"
+      "Bash(npx jest:*)",
+      "Bash(git add:*)"
     ]
   }
 }

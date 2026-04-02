@@ -723,7 +723,7 @@ type Query {
 
   """Retrieves the current user’s cart"""
   cart: Cart
-  cartWithDiscount(id: String!): Cart!
+  cartWithDiscount: Cart!
 
   """Retrieves a list of all categories, sorted alphabetically by name"""
   categories: [Category!]!

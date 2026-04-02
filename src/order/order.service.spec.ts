@@ -177,9 +177,7 @@ describe('OrdersService', () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
       mockPrismaService.product.findUnique.mockResolvedValue(mockProduct);
 
-      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(BadRequestException);
     });
 
     it('should roll back if stock goes negative inside transaction (oversell prevention)', async () => {
@@ -190,14 +188,12 @@ describe('OrdersService', () => {
       // Simulate concurrent purchase: decrement causes negative stock
       mockPrismaService.product.update.mockResolvedValue({ ...mockProduct, quantity: -1 });
 
-      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(BadRequestException);
     });
   });
 
   describe('getOrder', () => {
-    it('should retrieve a user\'s order', async () => {
+    it("should retrieve a user's order", async () => {
       mockPrismaService.order.findUnique.mockResolvedValue(mockOrder);
       const result = await ordersService.getOrder(mockUserId, 'order1');
       expect(result).toEqual(mockOrder);
@@ -231,9 +227,7 @@ describe('OrdersService', () => {
     it('should retrieve all non-deleted orders', async () => {
       mockPrismaService.order.findMany.mockResolvedValue([mockOrder]);
       await ordersService.getOrders();
-      expect(prismaService.order.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { deleted: false } }),
-      );
+      expect(prismaService.order.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { deleted: false } }));
     });
   });
 
@@ -285,7 +279,7 @@ describe('OrdersService', () => {
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(BadRequestException);
     });
 
-    it('should not allow cancelling another user\'s order', async () => {
+    it("should not allow cancelling another user's order", async () => {
       mockPrismaService.order.findUnique.mockResolvedValue({ ...mockOrder, userId: 'other-user' });
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(NotFoundException);
     });

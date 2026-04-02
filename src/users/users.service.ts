@@ -33,7 +33,13 @@ export class UsersService {
     });
   }
 
-  async createUserByAuthProvider(providerId: string, provider: string, email?: string, name?: string, profilePicture?: string) {
+  async createUserByAuthProvider(
+    providerId: string,
+    provider: string,
+    email?: string,
+    name?: string,
+    profilePicture?: string,
+  ) {
     if (email) {
       const existingUser = await this.findUserByEmail(email);
       if (existingUser) {

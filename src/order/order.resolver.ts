@@ -89,10 +89,7 @@ export class OrdersResolver {
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Order)
-  async finalizeOrder(
-    @ActiveUser('id') userId: string,
-    @Args('id', { type: () => String }) id: string,
-  ) {
+  async finalizeOrder(@ActiveUser('id') userId: string, @Args('id', { type: () => String }) id: string) {
     // Verify the order belongs to the requesting user (admins bypass this check inside the service)
     await this.ordersService.getOrder(userId, id);
     return this.discountService.finalizeDiscountsForOrder(id);
