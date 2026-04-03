@@ -37,14 +37,14 @@ Mark a phase as **done** only when every checkbox within it is ticked.
 
 ## Phase 3 — E2E Test Infrastructure Setup
 
-- [ ] Create a dedicated `.env.test` file (or verify it exists) with a separate test database URL(use SQLite database) and test JWT secrets.
-- [ ] Verify `test/jest-e2e.json` is configured correctly and the test database can be seeded/reset between test runs
-- [ ] Create `test/helpers/app.helper.ts` — bootstraps the NestJS app with `supertest` for e2e tests
-- [ ] Create `test/helpers/auth.helper.ts` — utility functions: `signUpUser()`, `signInUser()`, `signInAdmin()`, `signInSuperAdmin()`, `getAuthHeader(token)`
-- [ ] Create `test/helpers/db.helper.ts` — utility functions: `resetDb()`, `seedMinimal()` (creates base users, categories, products needed across tests)
-- [ ] Create `test/helpers/graphql.helper.ts` — utility: `gqlRequest(query, variables, token?)` wrapping supertest
+- [x] Create a dedicated `.env.test` file (or verify it exists) with a separate test database URL(use SQLite database) and test JWT secrets.
+- [x] Verify `test/jest-e2e.json` is configured correctly and the test database can be seeded/reset between test runs
+- [x] Create `test/helpers/app.helper.ts` — bootstraps the NestJS app with `supertest` for e2e tests
+- [x] Create `test/helpers/auth.helper.ts` — utility functions: `signUpUser()`, `signInUser()`, `signInAdmin()`, `signInSuperAdmin()`, `getAuthHeader(token)`
+- [x] Create `test/helpers/db.helper.ts` — utility functions: `resetDb()`, `seedMinimal()` (creates base users, categories, products needed across tests)
+- [x] Create `test/helpers/graphql.helper.ts` — utility: `gqlRequest(query, variables, token?)` wrapping supertest
 
-**Phase 3 complete when:** All 6 items above are ticked ✅
+**Phase 3 complete ✅**
 
 ---
 
