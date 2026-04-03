@@ -118,12 +118,22 @@ describe('AddressesService', () => {
   });
 
   describe('getAllAddresses', () => {
-    it('should retrieve all addresses', async () => {
+    it('should retrieve all addresses when no userId is provided (SUPER_ADMIN)', async () => {
       mockAddressesRepository.findAll.mockResolvedValue([mockAddress]);
 
       const result = await service.getAllAddresses();
 
       expect(addressesRepository.findAll).toHaveBeenCalled();
+      expect(result).toEqual([mockAddress]);
+    });
+
+    it('should retrieve only the specified user addresses when userId is provided (ADMIN)', async () => {
+      mockAddressesRepository.findByUser.mockResolvedValue([mockAddress]);
+
+      const result = await service.getAllAddresses(mockUserId);
+
+      expect(addressesRepository.findByUser).toHaveBeenCalledWith(mockUserId);
+      expect(addressesRepository.findAll).not.toHaveBeenCalled();
       expect(result).toEqual([mockAddress]);
     });
   });

@@ -258,11 +258,12 @@ export class PaymentService {
   /**
    * Strips raw Paystack initialization data down to the minimum fields needed for audit.
    * Never persist authorization_url or any field that could expose redirect tokens.
+   * [LOW-1] Null-coalesce each field to avoid storing `undefined` in the JSON column.
    */
   private sanitizeInitializeDetails(data: Paystack.Transaction.InitializeResponse): Prisma.InputJsonValue {
     return {
-      reference: data.reference,
-      access_code: data.access_code,
+      reference: data.reference ?? null,
+      access_code: data.access_code ?? null,
     } as Prisma.InputJsonValue;
   }
 

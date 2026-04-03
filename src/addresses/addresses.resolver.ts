@@ -6,6 +6,7 @@ import { Role } from '../users/enums/role.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateAddressInput } from './dto/create-address.input';
 import { UpdateAddressInput } from './dto/update-address.input';
+import { ForbiddenException } from '@nestjs/common';
 
 @Resolver(() => Address)
 export class AddressesResolver {
@@ -29,13 +30,25 @@ export class AddressesResolver {
     return this.addressService.getUserAddresses(userId);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  /**
+   * [MED-4] Restricted to ADMIN and SUPER_ADMIN only.
+   * - SUPER_ADMIN: may omit `userId` to retrieve all addresses.
+   * - ADMIN: must provide `userId` to retrieve a specific user's addresses.
+   * Regular users should use `userAddresses` instead.
+   */
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => [Address], {
     name: 'addresses',
-    description: 'Retrieves all addresses (admin only)',
+    description: 'Admin: retrieves addresses. SUPER_ADMIN may omit userId to get all; ADMIN must supply userId.',
   })
-  async getAllAddresses() {
-    return this.addressService.getAllAddresses();
+  async getAllAddresses(
+    @ActiveUser('role') role: Role,
+    @Args('userId', { type: () => String, nullable: true }) userId?: string,
+  ) {
+    if (role === Role.ADMIN && !userId) {
+      throw new ForbiddenException('ADMIN must supply a userId to retrieve addresses');
+    }
+    return this.addressService.getAllAddresses(userId);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)

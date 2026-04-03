@@ -32,13 +32,27 @@ async function bootstrap() {
               },
             }
           : false,
+      // [MED-1] HSTS — tell browsers to always use HTTPS for this domain
+      strictTransportSecurity:
+        process.env.NODE_ENV === 'production'
+          ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+          : false,
     }),
   );
 
-  // CORS — restrict to configured origins
+  // [MED-5] CORS — in production ALLOWED_ORIGINS must be explicitly configured.
+  // Falling back to localhost in production would silently open CORS to local dev servers.
+  const isProduction = process.env.NODE_ENV === 'production';
   const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-    : ['http://localhost:3000', 'http://localhost:4000'];
+    : isProduction
+      ? (() => {
+          throw new Error(
+            '[Security] ALLOWED_ORIGINS env var must be set in production. ' +
+              'Set it to a comma-separated list of allowed origins (e.g. https://yourdomain.com).',
+          );
+        })()
+      : ['http://localhost:3000', 'http://localhost:4000'];
 
   app.enableCors({
     origin: allowedOrigins,

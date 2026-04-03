@@ -30,6 +30,10 @@ const mockUsersRepository = {
   deleteExpiredRefreshTokens: jest.fn(),
   createRefreshToken: jest.fn(),
   rotateRefreshToken: jest.fn(),
+  savePasswordResetToken: jest.fn(),
+  findByResetToken: jest.fn(),
+  clearPasswordResetToken: jest.fn(),
+  update: jest.fn(),
 };
 
 const mockHashingService = {
@@ -259,6 +263,69 @@ describe('AuthenticationService', () => {
       const result = await service.signOut('unknown-token');
 
       expect(result).toBe(true);
+    });
+  });
+
+  describe('forgotPassword', () => {
+    beforeEach(() => {
+      // Keep tests fast — override setTimeout so the 200ms delay resolves immediately
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('should return true without processing when email is not found (constant-time path)', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(null);
+
+      const promise = service.forgotPassword('unknown@example.com');
+      jest.runAllTimers();
+      const result = await promise;
+
+      expect(result).toBe(true);
+      expect(mockNotificationsService.sendPasswordReset).not.toHaveBeenCalled();
+    });
+
+    it('should generate reset token, persist it, and send email when user exists', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(baseUser);
+      mockJwtService.signAsync.mockResolvedValueOnce('reset-token');
+      mockUsersRepository.savePasswordResetToken = jest.fn().mockResolvedValue(undefined);
+
+      const result = await service.forgotPassword(baseUser.email!);
+
+      expect(result).toBe(true);
+      expect(mockNotificationsService.sendPasswordReset).toHaveBeenCalledWith(baseUser.email, 'reset-token');
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('should reset password with a valid token', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', purpose: 'password-reset' });
+      mockUsersRepository.findByResetToken = jest.fn().mockResolvedValue(baseUser);
+      mockHashingService.hash.mockResolvedValue('newHashedPass');
+      mockUsersRepository.update.mockResolvedValue({ ...baseUser, password: 'newHashedPass' });
+      mockUsersRepository.clearPasswordResetToken = jest.fn().mockResolvedValue(undefined);
+
+      const result = await service.resetPassword('valid-token', 'NewPass123');
+
+      expect(result).toBe(true);
+      expect(mockUsersRepository.update).toHaveBeenCalledWith(baseUser.id, { password: 'newHashedPass' });
+    });
+
+    it('should throw UnauthorizedException when token verification fails', async () => {
+      mockJwtService.verifyAsync.mockRejectedValue(new Error('jwt expired'));
+
+      await expect(service.resetPassword('bad-token', 'NewPass123')).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should throw UnauthorizedException when reset token not found in DB', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', purpose: 'password-reset' });
+      mockUsersRepository.findByResetToken = jest.fn().mockResolvedValue(null);
+
+      await expect(service.resetPassword('stale-token', 'NewPass123')).rejects.toThrow(
+        'Invalid or expired reset token',
+      );
     });
   });
 

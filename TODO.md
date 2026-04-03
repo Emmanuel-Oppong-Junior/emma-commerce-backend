@@ -23,15 +23,15 @@ Mark a phase as **done** only when every checkbox within it is ticked.
 
 ## Phase 2 — Medium & Low Security Fixes
 
-- [ ] **[MED-1]** Add HSTS header to helmet config — `maxAge: 31536000, includeSubDomains: true, preload: true` (`main.ts`)
-- [ ] **[MED-2]** Lower auth throttle limit from 10/min to 3–5/min (`app.module.ts`)
-- [ ] **[MED-3]** Add constant-time delay on `forgotPassword` when user is not found to prevent timing-based user enumeration (`authentication.service.ts`)
-- [ ] **[MED-4]** Restrict `addresses` query — `USER` role should only return own addresses; `ADMIN` access should require explicit `userId` param or be `SUPER_ADMIN` only (`addresses.resolver.ts` + `addresses.service.ts`)
-- [ ] **[MED-5]** Require `ALLOWED_ORIGINS` env var to be set; remove insecure `http://localhost` defaults from production fallback (`main.ts`)
-- [ ] **[MED-6]** Verify `changeUserPassword` service requires and validates `currentPassword` before allowing the change (`users.service.ts`)
-- [ ] **[LOW-1]** Add null checks to `sanitizeInitializeDetails` to avoid storing `undefined` payment fields (`payment.service.ts`)
+- [x] **[MED-1]** Add HSTS header to helmet config — `maxAge: 31536000, includeSubDomains: true, preload: true` (`main.ts`)
+- [x] **[MED-2]** Lower auth throttle limit from 10/min to 3–5/min (`app.module.ts`)
+- [x] **[MED-3]** Add constant-time delay on `forgotPassword` when user is not found to prevent timing-based user enumeration (`authentication.service.ts`)
+- [x] **[MED-4]** Restrict `addresses` query — `USER` role removed; `ADMIN` must supply `userId`; `SUPER_ADMIN` may omit it to retrieve all (`addresses.resolver.ts` + `addresses.service.ts`)
+- [x] **[MED-5]** Require `ALLOWED_ORIGINS` env var in production — throws at startup if missing; removed insecure localhost defaults from production fallback (`main.ts`)
+- [x] **[MED-6]** `changeUserPassword` already requires and validates `currentPassword` (`oldPassword`) before allowing the change — confirmed correct (`users.service.ts`)
+- [x] **[LOW-1]** Add null checks to `sanitizeInitializeDetails` — each field now null-coalesces to avoid storing `undefined` in the JSON column (`payment.service.ts`)
 
-**Phase 2 complete when:** All 7 items above are ticked ✅
+**Phase 2 complete ✅**
 
 ---
 

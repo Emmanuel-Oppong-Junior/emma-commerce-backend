@@ -61,7 +61,8 @@ import { ScheduleModule } from '@nestjs/schedule';
       {
         name: 'auth',
         ttl: 60000, // 1 minute
-        limit: 10, // 10 auth attempts per minute
+        // [MED-2] Reduced from 10 to 5 — tighter limit to slow brute-force / credential-stuffing
+        limit: 5,
       },
       {
         // [HIGH-1] Strict rate limit for password-reset endpoints: 3 per hour

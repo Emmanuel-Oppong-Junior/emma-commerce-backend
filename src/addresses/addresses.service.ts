@@ -39,10 +39,17 @@ export class AddressesService {
   }
 
   /**
-   * Retrieves all addresses (admin only).
-   * @returns List of all addresses.
+   * Retrieves addresses for admin-level access.
+   * - SUPER_ADMIN: returns all addresses when no `userId` is provided.
+   * - ADMIN: must supply a `userId` to retrieve that user's addresses only.
+   * [MED-4] Regular users must never reach this path; route via `getUserAddresses` instead.
+   * @param userId - Optional filter to scope results to a single user.
+   * @returns List of addresses.
    */
-  async getAllAddresses(): Promise<Address[]> {
+  async getAllAddresses(userId?: string): Promise<Address[]> {
+    if (userId) {
+      return this.addressesRepository.findByUser(userId);
+    }
     return this.addressesRepository.findAll();
   }
 
