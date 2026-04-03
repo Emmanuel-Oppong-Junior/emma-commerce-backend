@@ -5,8 +5,17 @@ import { OrderStatus } from '@prisma/client';
 import { OrdersService } from './order.service';
 import { OrdersRepository } from './order.repository';
 import { AuditService } from '../commons/audit.service';
+import { CouponsService } from '../coupons/coupons.service';
+import { TaxService } from '../tax/tax.service';
+import { InventoryService } from '../inventory/inventory.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { Decimal } from '@prisma/client/runtime/library';
 
 const mockAuditService = { log: jest.fn() };
+const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn() };
+const mockTaxService = { getRateForCountry: jest.fn().mockResolvedValue(new Decimal('0.1')) };
+const mockInventoryService = { logInventoryChange: jest.fn().mockResolvedValue(undefined) };
+const mockNotificationsService = { sendOrderConfirmation: jest.fn(), sendOrderStatusUpdate: jest.fn() };
 
 const mockOrdersRepository = {
   findById: jest.fn(),
@@ -102,6 +111,10 @@ describe('OrdersService', () => {
         { provide: OrdersRepository, useValue: mockOrdersRepository },
         { provide: CartService, useValue: mockCartService },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: CouponsService, useValue: mockCouponsService },
+        { provide: TaxService, useValue: mockTaxService },
+        { provide: InventoryService, useValue: mockInventoryService },
+        { provide: NotificationsService, useValue: mockNotificationsService },
       ],
     }).compile();
 
@@ -124,7 +137,15 @@ describe('OrdersService', () => {
   describe('createOrderFromCart', () => {
     it('should create an order successfully', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
-      mockOrdersRepository.findAddressForUser.mockResolvedValue({ id: mockAddressId, userId: mockUserId });
+      mockOrdersRepository.findAddressForUser.mockResolvedValue({
+        id: mockAddressId,
+        userId: mockUserId,
+        country: 'GH',
+        street: '1 Main St',
+        city: 'Accra',
+        state: 'GA',
+        zipCode: '00233',
+      });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
@@ -155,7 +176,15 @@ describe('OrdersService', () => {
 
     it('should throw BadRequestException if user is inactive', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
-      mockOrdersRepository.findAddressForUser.mockResolvedValue({ id: mockAddressId, userId: mockUserId });
+      mockOrdersRepository.findAddressForUser.mockResolvedValue({
+        id: mockAddressId,
+        userId: mockUserId,
+        country: 'GH',
+        street: '1 Main St',
+        city: 'Accra',
+        state: 'GA',
+        zipCode: '00233',
+      });
       mockOrdersRepository.findUserById.mockResolvedValue({ ...mockUser, isActive: false });
 
       await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(
@@ -168,7 +197,15 @@ describe('OrdersService', () => {
         ...mockCart,
         items: [{ ...mockCartItem, quantity: 101 }],
       });
-      mockOrdersRepository.findAddressForUser.mockResolvedValue({ id: mockAddressId, userId: mockUserId });
+      mockOrdersRepository.findAddressForUser.mockResolvedValue({
+        id: mockAddressId,
+        userId: mockUserId,
+        country: 'GH',
+        street: '1 Main St',
+        city: 'Accra',
+        state: 'GA',
+        zipCode: '00233',
+      });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
 
@@ -177,7 +214,15 @@ describe('OrdersService', () => {
 
     it('should roll back if stock goes negative inside transaction (oversell prevention)', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
-      mockOrdersRepository.findAddressForUser.mockResolvedValue({ id: mockAddressId, userId: mockUserId });
+      mockOrdersRepository.findAddressForUser.mockResolvedValue({
+        id: mockAddressId,
+        userId: mockUserId,
+        country: 'GH',
+        street: '1 Main St',
+        city: 'Accra',
+        state: 'GA',
+        zipCode: '00233',
+      });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
       mockOrdersRepository.decrementProductStock.mockResolvedValue({ ...mockProduct, quantity: -1 });
@@ -236,6 +281,7 @@ describe('OrdersService', () => {
       const updatedOrder = { ...mockOrder, status: 'SHIPPED' as OrderStatus };
       mockOrdersRepository.findById.mockResolvedValue(mockOrder);
       mockOrdersRepository.updateStatus.mockResolvedValue(updatedOrder);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockAuditService.log.mockResolvedValue(undefined);
 
       const result = await ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1');

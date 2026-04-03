@@ -3,6 +3,7 @@ import { OrderStatusEnum } from '../enums/order.enum';
 import { OrderStatus } from '@prisma/client';
 import { OrderItem } from './order-item.entity';
 import { Decimal } from '@prisma/client/runtime/library';
+import GraphQLJSON from 'graphql-type-json';
 
 @ObjectType()
 export class Order {
@@ -21,11 +22,23 @@ export class Order {
   @Field(() => Float, { description: 'Final total after discounts', nullable: true })
   finalTotal?: Decimal;
 
+  @Field(() => Float, { nullable: true, description: 'Coupon discount amount' })
+  couponDiscount?: Decimal;
+
   @Field(() => OrderStatusEnum)
   status: OrderStatus;
 
   @Field(() => ID)
   shippingAddressId: string;
+
+  @Field(() => GraphQLJSON, { nullable: true, description: 'Address snapshot at time of order' })
+  shippingAddressSnapshot?: Record<string, unknown>;
+
+  @Field({ nullable: true, description: 'Shipment tracking number' })
+  trackingNumber?: string;
+
+  @Field({ nullable: true, description: 'Carrier name' })
+  carrier?: string;
 
   @Field()
   createdAt: Date;

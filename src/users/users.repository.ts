@@ -122,4 +122,26 @@ export class UsersRepository {
   async createRefreshToken(userId: string, tokenHash: string, expiresAt: Date): Promise<void> {
     await this.prisma.refreshToken.create({ data: { userId, tokenHash, expiresAt } });
   }
+
+  // Password reset operations
+
+  async savePasswordResetToken(userId: string, tokenHash: string, expiresAt: Date): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordResetToken: tokenHash, passwordResetTokenExp: expiresAt },
+    });
+  }
+
+  async findByResetToken(tokenHash: string): Promise<User | null> {
+    return this.prisma.user.findFirst({
+      where: { passwordResetToken: tokenHash, passwordResetTokenExp: { gt: new Date() } },
+    });
+  }
+
+  async clearPasswordResetToken(userId: string): Promise<void> {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordResetToken: null, passwordResetTokenExp: null },
+    });
+  }
 }

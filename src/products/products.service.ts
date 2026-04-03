@@ -205,11 +205,9 @@ export class ProductsService {
       ...(isActive !== undefined && { isActive }),
       ...(search && {
         OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } },
-          {
-            tags: { some: { name: { contains: search, mode: 'insensitive' } } },
-          },
+          { name: { search: search.trim().split(/\s+/).join(' & ') } },
+          { description: { search: search.trim().split(/\s+/).join(' & ') } },
+          { tags: { some: { name: { contains: search, mode: 'insensitive' } } } },
         ],
       }),
       ...(createdAfter && { createdAt: { gte: new Date(createdAfter) } }),

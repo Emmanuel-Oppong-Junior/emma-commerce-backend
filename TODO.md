@@ -139,52 +139,52 @@ The services currently call `PrismaService` directly, violating the Dependency I
 ## Phase 6 — Missing Ecommerce Features
 
 ### Notification / Email System
-- [ ] Integrate a transactional email provider (SendGrid, Resend, or AWS SES) via a dedicated `NotificationsModule`
-- [ ] Send order confirmation email on successful order creation
-- [ ] Send order status update email when order status changes (SHIPPED, DELIVERED)
-- [ ] Send payment confirmation email on successful payment
-- [ ] Implement password reset flow: generate a signed token, send reset email, verify token, update password
-- [ ] Send welcome email on new user registration
+- [x] Integrate a transactional email provider (SendGrid, Resend, or AWS SES) via a dedicated `NotificationsModule`
+- [x] Send order confirmation email on successful order creation
+- [x] Send order status update email when order status changes (SHIPPED, DELIVERED)
+- [x] Send payment confirmation email on successful payment
+- [x] Implement password reset flow: generate a signed token, send reset email, verify token, update password
+- [x] Send welcome email on new user registration
 
 ### Coupon / Promo Code Redemption
-- [ ] Add `Coupon` model to Prisma schema (`code`, `discountType`, `value`, `usageLimit`, `usedCount`, `expiresAt`, `isActive`)
-- [ ] Create `CouponsModule` with full CRUD (admin) and a `applyCoupon(code)` mutation (user)
-- [ ] Enforce single-use-per-user coupons via a `CouponUsage` join table
-- [ ] Apply coupon discount during order creation and reflect in `Order.discountAmount`
+- [x] Add `Coupon` model to Prisma schema (`code`, `discountType`, `value`, `usageLimit`, `usedCount`, `expiresAt`, `isActive`)
+- [x] Create `CouponsModule` with full CRUD (admin) and a `applyCoupon(code)` mutation (user)
+- [x] Enforce single-use-per-user coupons via a `CouponUsage` join table
+- [x] Apply coupon discount during order creation and reflect in `Order.discountAmount`
 
 ### Return & Refund Flow
-- [ ] Add `ReturnRequest` model to Prisma schema (`orderId`, `userId`, `reason`, `status`, `refundAmount`, `createdAt`)
-- [ ] Create `ReturnsModule` with: create return request (user), approve/reject return (admin), process refund (admin)
-- [ ] Integrate Paystack refund API call on return approval
-- [ ] Restore stock on approved return
+- [x] Add `ReturnRequest` model to Prisma schema (`orderId`, `userId`, `reason`, `status`, `refundAmount`, `createdAt`)
+- [x] Create `ReturnsModule` with: create return request (user), approve/reject return (admin), process refund (admin)
+- [x] Integrate Paystack refund API call on return approval
+- [x] Restore stock on approved return
 
 ### Inventory Management
-- [ ] Add `lowStockThreshold` field to `Product` and `Variant` models
-- [ ] Add a scheduled task (or database trigger) that emits a low-stock event when `stockQuantity <= lowStockThreshold`
-- [ ] Add an admin `restockProduct` mutation to increment stock
-- [ ] Add an `InventoryLog` model to track all stock changes with reason and actor
+- [x] Add `lowStockThreshold` field to `Product` and `Variant` models
+- [x] Add a scheduled task (or database trigger) that emits a low-stock event when `stockQuantity <= lowStockThreshold`
+- [x] Add an admin `restockProduct` mutation to increment stock
+- [x] Add an `InventoryLog` model to track all stock changes with reason and actor
 
 ### Order Fulfillment / Shipping
-- [ ] Add `ShippingAddress` snapshot to `Order` (copy from user address at time of order, not a FK)
-- [ ] Add `trackingNumber` and `carrier` fields to `Order`
-- [ ] Add `updateShipping` mutation for admin to set tracking info
-- [ ] Expose shipping status in the order GraphQL type
+- [x] Add `ShippingAddress` snapshot to `Order` (copy from user address at time of order, not a FK)
+- [x] Add `trackingNumber` and `carrier` fields to `Order`
+- [x] Add `updateShipping` mutation for admin to set tracking info
+- [x] Expose shipping status in the order GraphQL type
 
 ### Admin Analytics & Reporting
-- [ ] Add `getSalesReport(startDate, endDate)` query returning total revenue, order count, average order value
-- [ ] Add `getTopProducts(limit)` query returning best-selling products by order count and revenue
-- [ ] Add `getRevenueByCategory` query
-- [ ] Add `getDashboardSummary` query: total users, orders today, revenue today, low-stock items
+- [x] Add `getSalesReport(startDate, endDate)` query returning total revenue, order count, average order value
+- [x] Add `getTopProducts(limit)` query returning best-selling products by order count and revenue
+- [x] Add `getRevenueByCategory` query
+- [x] Add `getDashboardSummary` query: total users, orders today, revenue today, low-stock items
 
 ### Search
-- [ ] Implement Postgres full-text search on `Product` (`name`, `description`) using `@@fulltext` index
-- [ ] Add `search: String` argument to `products` query
+- [x] Implement Postgres full-text search on `Product` (`name`, `description`) using `@@fulltext` index
+- [x] Add `search: String` argument to `products` query
 - [ ] (Optional / future) Evaluate Elasticsearch or Typesense for advanced search with faceting
 
 ### Multi-Currency & Tax
-- [ ] Implement a `CurrencyConversionService` that fetches exchange rates (or uses static config)
+- [x] Implement a `CurrencyConversionService` that fetches exchange rates (or uses static config)
 - [ ] Add optional `currency` argument to product price queries
-- [ ] Add `TaxRate` model (`country`, `region`, `rate`) and apply during order totalling
+- [x] Add `TaxRate` model (`country`, `region`, `rate`) and apply during order totalling
 
 ---
 

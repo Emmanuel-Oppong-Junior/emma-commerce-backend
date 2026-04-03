@@ -3,6 +3,10 @@ import { CartService } from '../cart/cart.service';
 import { Cart, CartItem, Order, OrderItem, OrderStatus, Prisma, Product } from '@prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { OrdersRepository } from './order.repository';
+import { CouponsService } from '../coupons/coupons.service';
+import { TaxService } from '../tax/tax.service';
+import { InventoryService } from '../inventory/inventory.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class OrdersService {
@@ -10,64 +14,42 @@ export class OrdersService {
     private readonly ordersRepository: OrdersRepository,
     private readonly cartService: CartService,
     private readonly auditService: AuditService,
+    private readonly couponsService: CouponsService,
+    private readonly taxService: TaxService,
+    private readonly inventoryService: InventoryService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  /**
-   * Creates an order from the user's cart using the specified shipping address.
-   * @param userId - The ID of the user placing the order.
-   * @param shippingAddressId - The ID of the shipping address.
-   * @returns The created order with its items.
-   */
-  async createOrderFromCart(userId: string, shippingAddressId: string): Promise<Order & { items: OrderItem[] }> {
+  async createOrderFromCart(
+    userId: string,
+    shippingAddressId: string,
+    couponCode?: string,
+  ): Promise<Order & { items: OrderItem[] }> {
     const cart = await this.ensureValidCart(userId);
-    await this.ensureValidShippingAddress(userId, shippingAddressId);
+    const address = await this.ensureValidShippingAddress(userId, shippingAddressId);
     await this.ensureUserCanOrder(userId, cart);
-    const orderDetails = await this.buildOrderDetails(cart.items);
-    return this.saveOrderAndUpdateInventory(userId, shippingAddressId, orderDetails, cart.id);
+    const orderDetails = await this.buildOrderDetails(cart.items, address.country, userId, couponCode);
+    const order = await this.saveOrderAndUpdateInventory(userId, shippingAddressId, orderDetails, cart.id, address);
+    this.sendOrderConfirmationEmail(userId, order);
+    return order;
   }
 
-  /**
-   * Retrieves a specific order by ID for the user.
-   * @param userId - The ID of the user.
-   * @param orderId - The ID of the order.
-   * @returns The order with its items.
-   */
   async getOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     return this.retrieveUserOrder(userId, orderId);
   }
 
-  /**
-   * Retrieves a specific order by ID for administrator view purpose.
-   * @param orderId - The ID of the order.
-   * @returns The order with its items.
-   */
   async viewOrder(orderId: string) {
     return this.ordersRepository.findById(orderId, { items: true });
   }
 
-  /**
-   * Retrieves all orders for the user.
-   * @param userId - The ID of the user.
-   * @returns List of orders with their items.
-   */
   async getUserOrders(userId: string): Promise<(Order & { items: OrderItem[] })[]> {
     return this.ordersRepository.findByUser(userId);
   }
 
-  /**
-   * Retrieves all orders from the database (e.g., for admin use).
-   * @returns List of all orders.
-   */
   async getOrders(): Promise<Order[]> {
     return this.ordersRepository.findAll();
   }
 
-  /**
-   * Updates the status of an order.
-   * @param orderId - The ID of the order.
-   * @param status - The new status.
-   * @returns The updated order with its items.
-   */
   async updateOrderStatus(
     orderId: string,
     status: OrderStatus,
@@ -82,38 +64,24 @@ export class OrdersService {
       userId: adminUserId,
       details: { from: order.status as string, to: status as string },
     });
+    if (status === 'SHIPPED' || status === 'DELIVERED') {
+      this.sendOrderStatusEmail(order.userId, orderId, status, (updated as any).trackingNumber);
+    }
     return updated;
   }
 
-  /**
-   * Cancels an order and restores product stock.
-   * @param userId - The ID of the user.
-   * @param orderId - The ID of the order.
-   * @returns The cancelled order with its items.
-   */
   async cancelOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
     this.ensureOrderCanBeCancelled(order);
     return this.cancelOrderAndRestoreStock(order);
   }
 
-  /**
-   * Marks an order as paid, transitioning to PROCESSING status.
-   * @param userId - The ID of the user.
-   * @param orderId - The ID of the order.
-   * @returns The updated order with its items.
-   */
   async markOrderAsPaid(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
     this.ensureOrderCanBePaid(order);
     return this.ordersRepository.updateStatus(orderId, 'PROCESSING');
   }
 
-  /**
-   * Deletes an order and restores stock (admin only).
-   * @param orderId - The ID of the order.
-   * @returns The deleted order with its items.
-   */
   async deleteOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
     const result = await this.softDeleteOrder(order);
@@ -126,17 +94,39 @@ export class OrdersService {
     return result;
   }
 
+  async updateShipping(
+    orderId: string,
+    trackingNumber?: string,
+    carrier?: string,
+    adminUserId?: string,
+  ): Promise<Order & { items: OrderItem[] }> {
+    const order = await this.retrieveOrder(orderId);
+    const updated = await this.ordersRepository.updateShipping(orderId, trackingNumber, carrier);
+    await this.auditService.log({
+      entity: 'Order',
+      entityId: orderId,
+      action: 'UPDATE',
+      userId: adminUserId,
+      details: { trackingNumber, carrier },
+    });
+    if (trackingNumber) {
+      this.sendOrderStatusEmail(order.userId, orderId, 'SHIPPED', trackingNumber);
+    }
+    return updated;
+  }
+
   private async ensureValidCart(userId: string): Promise<Cart & { items: CartItem[] }> {
     const cart = await this.cartService.getCartOrThrow(userId);
     if (cart.items.length === 0) throw new NotFoundException(`Cart for user "${userId}" is empty`);
     return cart;
   }
 
-  private async ensureValidShippingAddress(userId: string, shippingAddressId: string): Promise<void> {
+  private async ensureValidShippingAddress(userId: string, shippingAddressId: string) {
     const address = await this.ordersRepository.findAddressForUser(shippingAddressId, userId);
     if (!address) {
       throw new NotFoundException(`Shipping address "${shippingAddressId}" not found for user "${userId}"`);
     }
+    return address;
   }
 
   private async ensureUserCanOrder(userId: string, cart: Cart & { items: CartItem[] }): Promise<void> {
@@ -147,10 +137,31 @@ export class OrdersService {
 
   private async buildOrderDetails(
     cartItems: CartItem[],
-  ): Promise<{ orderItems: OrderItem[]; totalAmount: Prisma.Decimal }> {
+    country: string,
+    userId: string,
+    couponCode?: string,
+  ): Promise<{
+    orderItems: OrderItem[];
+    totalAmount: Prisma.Decimal;
+    couponId?: string;
+    couponDiscount?: number;
+  }> {
     const orderItems = await this.createOrderItems(cartItems);
-    const totalAmount = new Prisma.Decimal(this.computeTotalAmount(orderItems).toFixed(2));
-    return { orderItems, totalAmount };
+    const subtotal = this.computeSubtotal(orderItems);
+    const taxRate = await this.taxService.getRateForCountry(country);
+    const tax = subtotal * Number(taxRate);
+    const shippingFee = 5.0;
+
+    let couponId: string | undefined;
+    let couponDiscount = 0;
+    if (couponCode) {
+      const { discountAmount, coupon } = await this.couponsService.validateCoupon(couponCode, userId, subtotal);
+      couponId = coupon.id;
+      couponDiscount = discountAmount;
+    }
+
+    const totalAmount = new Prisma.Decimal(Math.max(0, subtotal + tax + shippingFee - couponDiscount).toFixed(2));
+    return { orderItems, totalAmount, couponId, couponDiscount: couponDiscount || undefined };
   }
 
   private async createOrderItems(cartItems: CartItem[]): Promise<OrderItem[]> {
@@ -178,18 +189,21 @@ export class OrdersService {
     return product;
   }
 
-  private computeTotalAmount(orderItems: OrderItem[]): number {
-    const subtotal = orderItems.reduce((sum, item) => sum + Number(item.priceAtOrder) * item.quantity, 0);
-    const tax = subtotal * 0.1;
-    const shippingFee = 5.0;
-    return subtotal + tax + shippingFee;
+  private computeSubtotal(orderItems: OrderItem[]): number {
+    return orderItems.reduce((sum, item) => sum + Number(item.priceAtOrder) * item.quantity, 0);
   }
 
   private async saveOrderAndUpdateInventory(
     userId: string,
     shippingAddressId: string,
-    orderDetails: { orderItems: OrderItem[]; totalAmount: Prisma.Decimal },
+    orderDetails: {
+      orderItems: OrderItem[];
+      totalAmount: Prisma.Decimal;
+      couponId?: string;
+      couponDiscount?: number;
+    },
     cartId: string,
+    address: { id: string; street: string; city: string; state: string; zipCode: string; country: string },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
       for (const item of orderDetails.orderItems) {
@@ -197,8 +211,33 @@ export class OrdersService {
         if (product.quantity < 0) {
           throw new BadRequestException(`Insufficient stock for product "${item.productId}" — please review your cart`);
         }
+        await this.inventoryService.logInventoryChange(tx, {
+          productId: item.productId,
+          action: 'ORDER_DEDUCTION',
+          quantityChange: -item.quantity,
+          quantityAfter: product.quantity,
+          reason: `Order placed by user ${userId}`,
+          actorId: userId,
+        });
       }
-      const newOrder = await this.ordersRepository.create(tx, userId, shippingAddressId, orderDetails);
+
+      const shippingAddressSnapshot = {
+        street: address.street,
+        city: address.city,
+        state: address.state,
+        zipCode: address.zipCode,
+        country: address.country,
+      };
+
+      const newOrder = await this.ordersRepository.create(tx, userId, shippingAddressId, {
+        ...orderDetails,
+        shippingAddressSnapshot,
+      });
+
+      if (orderDetails.couponId) {
+        await this.couponsService.recordUsage(tx, orderDetails.couponId, userId, newOrder.id);
+      }
+
       await this.ordersRepository.clearCartItems(tx, cartId);
       return newOrder;
     });
@@ -223,7 +262,14 @@ export class OrdersService {
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
       for (const item of order.items) {
-        await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
+        const product = await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
+        await this.inventoryService.logInventoryChange(tx, {
+          productId: item.productId,
+          action: 'RETURN_RESTORE',
+          quantityChange: item.quantity,
+          quantityAfter: product.quantity,
+          reason: `Order ${order.id} cancelled`,
+        });
       }
       return this.ordersRepository.updateStatus(order.id, 'CANCELLED');
     });
@@ -247,6 +293,22 @@ export class OrdersService {
         await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
       }
       return this.ordersRepository.softDelete(order.id);
+    });
+  }
+
+  private sendOrderConfirmationEmail(userId: string, order: Order): void {
+    void this.ordersRepository.findUserById(userId).then((user) => {
+      if (user?.email) {
+        this.notificationsService.sendOrderConfirmation(user.email, order.id, Number(order.totalAmount));
+      }
+    });
+  }
+
+  private sendOrderStatusEmail(userId: string, orderId: string, status: string, trackingNumber?: string): void {
+    void this.ordersRepository.findUserById(userId).then((user) => {
+      if (user?.email) {
+        this.notificationsService.sendOrderStatusUpdate(user.email, orderId, status, trackingNumber);
+      }
     });
   }
 }

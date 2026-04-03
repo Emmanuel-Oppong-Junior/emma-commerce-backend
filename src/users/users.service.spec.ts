@@ -43,6 +43,8 @@ const mockUser: User = {
   password: 'hashedPass',
   failedLoginAttempts: 0,
   lockedUntil: null,
+  passwordResetToken: null,
+  passwordResetTokenExp: null,
 };
 
 describe('UsersService', () => {

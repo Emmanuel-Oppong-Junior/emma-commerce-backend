@@ -6,6 +6,8 @@ import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
 import { SignOutInput } from './dto/sign-out.input';
 import { SocialLoginInput } from './dto/social-login.input';
+import { ForgotPasswordInput } from './dto/forgot-password.input';
+import { ResetPasswordInput } from './dto/reset-password.input';
 import { AuthType } from './enums/auth-type.enum';
 import { Auth } from './decorators/auth.decorator';
 import { GoogleAuthenticationService } from './social/google-authentication.service';
@@ -59,5 +61,15 @@ export class AuthenticationResolver {
   @Mutation(() => AuthEntity, { description: 'Sign in or register with a Facebook access token' })
   signInWithFacebook(@Args('input', { type: () => SocialLoginInput }) input: SocialLoginInput) {
     return this.facebookAuthService.authenticate(input.token);
+  }
+
+  @Mutation(() => Boolean, { description: 'Request a password reset email' })
+  forgotPassword(@Args('input', { type: () => ForgotPasswordInput }) input: ForgotPasswordInput) {
+    return this.authService.forgotPassword(input.email);
+  }
+
+  @Mutation(() => Boolean, { description: 'Reset password using a valid reset token' })
+  resetPassword(@Args('input', { type: () => ResetPasswordInput }) input: ResetPasswordInput) {
+    return this.authService.resetPassword(input.resetToken, input.newPassword);
   }
 }

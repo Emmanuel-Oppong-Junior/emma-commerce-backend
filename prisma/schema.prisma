@@ -5,7 +5,8 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres"]
 }
 
 datasource db {
@@ -27,14 +28,18 @@ model User {
   profilePicture      String?
   failedLoginAttempts Int            @default(0)
   lockedUntil         DateTime?
-  addresses           Address[]
-  reviews             Review[]
-  cart                Cart?
-  order               Order[]
-  authProvider        AuthProvider[]
-  auditLog            AuditLog[]
-  wishlist            WishList?
-  refreshTokens       RefreshToken[]
+  addresses             Address[]
+  reviews               Review[]
+  cart                  Cart?
+  order                 Order[]
+  authProvider          AuthProvider[]
+  auditLog              AuditLog[]
+  wishlist              WishList?
+  refreshTokens         RefreshToken[]
+  passwordResetToken    String?
+  passwordResetTokenExp DateTime?
+  couponUsages          CouponUsage[]
+  returnRequests        ReturnRequest[]
 }
 
 model RefreshToken {
@@ -124,17 +129,19 @@ model Tag {
 }
 
 model Variant {
-  id         String      @id @default(cuid())
-  size       String?
-  color      String?
-  quantity   Int         @default(0)
-  price      Decimal     @db.Decimal(10, 2)
-  productId  String
-  product    Product     @relation(fields: [productId], references: [id])
-  cartItem   CartItem[]
-  orderItem  OrderItem[]
-  discount   Discount?   @relation(fields: [discountId], references: [id])
-  discountId String?
+  id                String         @id @default(cuid())
+  size              String?
+  color             String?
+  quantity          Int            @default(0)
+  price             Decimal        @db.Decimal(10, 2)
+  productId         String
+  product           Product        @relation(fields: [productId], references: [id])
+  cartItem          CartItem[]
+  orderItem         OrderItem[]
+  discount          Discount?      @relation(fields: [discountId], references: [id])
+  discountId        String?
+  lowStockThreshold Int?           @default(5)
+  inventoryLogs     InventoryLog[]
 
   @@index([productId])
   @@index([discountId])
@@ -185,8 +192,9 @@ model Product {
   cartItem      CartItem[]
   orderItem     OrderItem[]
   wishlist      WishList[]
-  brand         Brand?       @relation(fields: [brandId], references: [id])
+  brand         Brand?         @relation(fields: [brandId], references: [id])
   brandId       String?
+  inventoryLogs InventoryLog[]
 
   @@index([sku])
   @@index([brandId])
@@ -287,25 +295,33 @@ model CartItem {
 }
 
 model Order {
-  id                   String      @id @default(cuid())
-  userId               String
-  user                 User        @relation(fields: [userId], references: [id], onDelete: Restrict)
-  discountTotal        Decimal?
-  totalWithOutDiscount Decimal?
-  totalAmount          Decimal  @db.Decimal(10, 2)
-  status               OrderStatus @default(PENDING)
-  shippingAddressId    String
-  shippingAddress      Address     @relation(fields: [shippingAddressId], references: [id], onDelete: Restrict)
-  createdAt            DateTime    @default(now())
-  updatedAt            DateTime    @updatedAt
-  deleted              Boolean     @default(false)
-  deletedAt            DateTime?
-  items                OrderItem[]
-  payment              Payment?
+  id                      String          @id @default(cuid())
+  userId                  String
+  user                    User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  discountTotal           Decimal?
+  totalWithOutDiscount    Decimal?
+  totalAmount             Decimal         @db.Decimal(10, 2)
+  status                  OrderStatus     @default(PENDING)
+  shippingAddressId       String
+  shippingAddress         Address         @relation(fields: [shippingAddressId], references: [id], onDelete: Restrict)
+  shippingAddressSnapshot Json?
+  trackingNumber          String?
+  carrier                 String?
+  couponId                String?
+  coupon                  Coupon?         @relation(fields: [couponId], references: [id])
+  couponDiscount          Decimal?        @db.Decimal(10, 2)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  deleted                 Boolean         @default(false)
+  deletedAt               DateTime?
+  items                   OrderItem[]
+  payment                 Payment?
+  returnRequests          ReturnRequest[]
 
   @@index([userId])
   @@index([userId, status])
   @@index([deleted])
+  @@index([trackingNumber])
 }
 
 model OrderItem {
@@ -391,4 +407,101 @@ enum OrderStatus {
 enum DiscountType {
   PERCENTAGE
   FLAT
+}
+
+enum ReturnStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REFUNDED
+}
+
+enum InventoryAction {
+  RESTOCK
+  ORDER_DEDUCTION
+  RETURN_RESTORE
+  ADJUSTMENT
+}
+
+model Coupon {
+  id                 String        @id @default(cuid())
+  code               String        @unique @db.VarChar(50)
+  discountType       DiscountType
+  value              Decimal       @db.Decimal(10, 2)
+  usageLimit         Int?
+  usedCount          Int           @default(0)
+  expiresAt          DateTime?
+  isActive           Boolean       @default(true)
+  minimumOrderAmount Decimal?      @db.Decimal(10, 2)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  usages             CouponUsage[]
+  orders             Order[]
+
+  @@index([code])
+  @@index([isActive, expiresAt])
+}
+
+model CouponUsage {
+  id        String   @id @default(cuid())
+  couponId  String
+  userId    String
+  orderId   String   @unique
+  coupon    Coupon   @relation(fields: [couponId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, userId])
+  @@index([userId])
+  @@index([couponId])
+}
+
+model ReturnRequest {
+  id           String       @id @default(cuid())
+  orderId      String
+  userId       String
+  reason       String       @db.Text
+  status       ReturnStatus @default(PENDING)
+  refundAmount Decimal?     @db.Decimal(10, 2)
+  adminNote    String?      @db.Text
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([status])
+}
+
+model InventoryLog {
+  id             String          @id @default(cuid())
+  productId      String
+  variantId      String?
+  action         InventoryAction
+  quantityChange Int
+  quantityAfter  Int
+  reason         String?
+  actorId        String?
+  createdAt      DateTime        @default(now())
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant        Variant?        @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([productId])
+  @@index([variantId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model TaxRate {
+  id        String   @id @default(cuid())
+  country   String
+  region    String?
+  rate      Decimal  @db.Decimal(5, 4)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([country, region])
+  @@index([country])
 }

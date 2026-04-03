@@ -120,7 +120,7 @@ describe('OrdersResolver', () => {
 
       const result = await resolver.createOrder(mockUserId, mockCreateOrderInput);
 
-      expect(ordersService.createOrderFromCart).toHaveBeenCalledWith(mockUserId, 'addr1');
+      expect(ordersService.createOrderFromCart).toHaveBeenCalledWith(mockUserId, 'addr1', undefined);
       expect(result).toEqual(mockOrder);
     });
   });

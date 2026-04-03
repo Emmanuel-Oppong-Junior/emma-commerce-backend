@@ -34,17 +34,45 @@ export class OrdersRepository {
     tx: Prisma.TransactionClient,
     userId: string,
     shippingAddressId: string,
-    orderDetails: { orderItems: OrderItem[]; totalAmount: Prisma.Decimal },
+    orderDetails: {
+      orderItems: OrderItem[];
+      totalAmount: Prisma.Decimal;
+      shippingAddressSnapshot?: Record<string, unknown>;
+      couponId?: string;
+      couponDiscount?: number;
+    },
   ): Promise<OrderWithItems> {
     return tx.order.create({
       data: {
         userId,
         shippingAddressId,
         totalAmount: orderDetails.totalAmount,
+        shippingAddressSnapshot: (orderDetails.shippingAddressSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
+        couponId: orderDetails.couponId,
+        couponDiscount: orderDetails.couponDiscount,
         items: { create: orderDetails.orderItems },
       },
       include: { items: { include: { product: true } } },
     }) as unknown as OrderWithItems;
+  }
+
+  async findAddressById(addressId: string): Promise<Address | null> {
+    return this.prisma.address.findUnique({ where: { id: addressId } });
+  }
+
+  async updateShipping(orderId: string, trackingNumber?: string, carrier?: string): Promise<OrderWithItems> {
+    try {
+      return (await this.prisma.order.update({
+        where: { id: orderId },
+        data: { trackingNumber, carrier },
+        include: { items: { include: { product: true } } },
+      })) as unknown as OrderWithItems;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+        throw new NotFoundException(`Order "${orderId}" not found`);
+      }
+      throw e;
+    }
   }
 
   async updateStatus(orderId: string, status: OrderStatus): Promise<OrderWithItems> {

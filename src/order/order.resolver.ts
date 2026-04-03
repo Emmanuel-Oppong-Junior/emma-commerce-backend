@@ -5,6 +5,7 @@ import { Role } from '../users/enums/role.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateOrderInput } from './dto/create-order.input';
 import { UpdateOrderStatusInput } from './dto/update-order-status.input';
+import { UpdateShippingInput } from './dto/update-shipping.input';
 import { OrdersService } from './order.service';
 import { DiscountService } from '../discount/discount.service';
 
@@ -45,7 +46,7 @@ export class OrdersResolver {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => Order, {
     name: 'viewOrder',
-    description: 'Retrieves all orders (admin only)',
+    description: 'Retrieves a specific order by ID (admin only)',
   })
   async viewOrder(@Args('id', { type: () => String }) orderId: string) {
     return this.ordersService.viewOrder(orderId);
@@ -54,10 +55,19 @@ export class OrdersResolver {
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Order, {
     name: 'createOrder',
-    description: 'Creates an order from the user’s cart',
+    description: 'Creates an order from the cart',
   })
   async createOrder(@ActiveUser('id') userId: string, @Args('input') input: CreateOrderInput) {
-    return this.ordersService.createOrderFromCart(userId, input.shippingAddressId);
+    return this.ordersService.createOrderFromCart(userId, input.shippingAddressId, input.couponCode);
+  }
+
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Mutation(() => Order, {
+    name: 'updateShipping',
+    description: 'Update tracking number and carrier for an order (admin only)',
+  })
+  async updateShipping(@ActiveUser('id') adminId: string, @Args('input') input: UpdateShippingInput) {
+    return this.ordersService.updateShipping(input.orderId, input.trackingNumber, input.carrier, adminId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
@@ -90,7 +100,6 @@ export class OrdersResolver {
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Order)
   async finalizeOrder(@ActiveUser('id') userId: string, @Args('id', { type: () => String }) id: string) {
-    // Verify the order belongs to the requesting user (admins bypass this check inside the service)
     await this.ordersService.getOrder(userId, id);
     return this.discountService.finalizeDiscountsForOrder(id);
   }

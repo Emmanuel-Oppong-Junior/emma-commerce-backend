@@ -12,6 +12,7 @@ import { SignInInput } from './dto/sign-in.input';
 import { User } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { NotificationsService } from '../../notifications/notifications.service';
 
 const mockUsersService = {
   findUserByEmail: jest.fn(),
@@ -43,10 +44,17 @@ const mockJwtService = {
 const mockJwtConfig = {
   secret: 'test-secret',
   refreshSecret: 'test-refresh-secret',
+  resetSecret: 'test-reset-secret',
   audience: 'test-audience',
   issuer: 'test-issuer',
   accessTokenTtl: 3600,
   refreshTokenTtl: 86400,
+  resetTokenTtl: 900,
+};
+
+const mockNotificationsService = {
+  sendWelcomeEmail: jest.fn(),
+  sendPasswordReset: jest.fn(),
 };
 
 const baseUser: Partial<User> = {
@@ -76,6 +84,7 @@ describe('AuthenticationService', () => {
         { provide: HashingService, useValue: mockHashingService },
         { provide: JwtService, useValue: mockJwtService },
         { provide: jwtConfig.KEY, useValue: mockJwtConfig },
+        { provide: NotificationsService, useValue: mockNotificationsService },
       ],
     }).compile();
 

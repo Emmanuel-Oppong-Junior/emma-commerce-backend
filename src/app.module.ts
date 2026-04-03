@@ -35,6 +35,14 @@ import { LoggerService } from './commons/logger.service';
 import { DiscountModule } from './discount/discount.module';
 import { BrandModule } from './brand/brand.module';
 import { HealthModule } from './health/health.module';
+import { CouponsModule } from './coupons/coupons.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { CurrencyModule } from './currency/currency.module';
+import { TaxModule } from './tax/tax.module';
+import { InventoryModule } from './inventory/inventory.module';
+import { ReturnsModule } from './returns/returns.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -100,6 +108,14 @@ import { HealthModule } from './health/health.module';
     DiscountModule,
     BrandModule,
     HealthModule,
+    CouponsModule,
+    NotificationsModule,
+    CurrencyModule,
+    TaxModule,
+    InventoryModule,
+    ReturnsModule,
+    AnalyticsModule,
+    ScheduleModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [

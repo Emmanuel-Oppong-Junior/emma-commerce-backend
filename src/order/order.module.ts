@@ -5,9 +5,14 @@ import { CartModule } from '../cart/cart.module';
 import { DiscountModule } from '../discount/discount.module';
 import { CommonsModule } from '../commons/commons.module';
 import { OrdersRepository } from './order.repository';
+import { CouponsModule } from '../coupons/coupons.module';
+import { TaxModule } from '../tax/tax.module';
+import { InventoryModule } from '../inventory/inventory.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   providers: [OrdersService, OrdersResolver, OrdersRepository],
-  imports: [CartModule, DiscountModule, CommonsModule],
+  imports: [CartModule, DiscountModule, CommonsModule, CouponsModule, TaxModule, InventoryModule, NotificationsModule],
+  exports: [OrdersService, OrdersRepository],
 })
 export class OrderModule {}

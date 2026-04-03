@@ -13,9 +13,15 @@ import { APP_GUARD } from '@nestjs/core';
 import { AccessTokenGuard } from './authentication/guards/access-token.guard';
 import { AuthenticationGuard } from './authentication/guards/authentication.guard';
 import { RolesGuard } from './authentication/guards/roles.guard';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [JwtModule.registerAsync(jwtConfig.asProvider()), UsersModule, ConfigModule.forFeature(jwtConfig)],
+  imports: [
+    JwtModule.registerAsync(jwtConfig.asProvider()),
+    UsersModule,
+    ConfigModule.forFeature(jwtConfig),
+    NotificationsModule,
+  ],
   providers: [
     AuthenticationService,
     { provide: HashingService, useClass: BcryptService },

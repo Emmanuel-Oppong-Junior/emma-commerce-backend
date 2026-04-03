@@ -143,8 +143,8 @@ describe('ProductsService', () => {
         expect.any(Object),
         {
           OR: [
-            { name: { contains: 'shirt', mode: 'insensitive' } },
-            { description: { contains: 'shirt', mode: 'insensitive' } },
+            { name: { search: 'shirt' } },
+            { description: { search: 'shirt' } },
             { tags: { some: { name: { contains: 'shirt', mode: 'insensitive' } } } },
           ],
         },

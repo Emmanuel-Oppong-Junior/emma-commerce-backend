@@ -11,6 +11,7 @@ import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
 import { UsersRepository } from '../../users/users.repository';
 import { createHash } from 'crypto';
+import { NotificationsService } from '../../notifications/notifications.service';
 
 @Injectable()
 export class AuthenticationService {
@@ -19,6 +20,7 @@ export class AuthenticationService {
     private readonly passwordService: HashingService,
     private readonly jwtServices: JwtService,
     private readonly usersRepository: UsersRepository,
+    private readonly notificationsService: NotificationsService,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
@@ -40,6 +42,7 @@ export class AuthenticationService {
       role: Role.USER,
       isActive: true,
     });
+    this.notificationsService.sendWelcomeEmail(email, name ?? '');
     return this.generateTokens(user);
   }
 
@@ -117,6 +120,53 @@ export class AuthenticationService {
   async signOut(refreshToken: string): Promise<boolean> {
     const tokenHash = this.hashToken(refreshToken);
     await this.usersRepository.revokeRefreshTokensByHash(tokenHash);
+    return true;
+  }
+
+  /**
+   * Initiates a password reset by generating a signed reset token and emailing it.
+   * Silent success even if email not found (prevents user enumeration).
+   */
+  async forgotPassword(email: string): Promise<boolean> {
+    const user = await this.userService.findUserByEmail(email);
+    if (!user) return true;
+
+    const resetToken = await this.signToken(
+      user.id,
+      this.jwtConfiguration.resetTokenTtl,
+      this.jwtConfiguration.resetSecret,
+      { purpose: 'password-reset' },
+    );
+    const tokenHash = this.hashToken(resetToken);
+    const expiresAt = new Date(Date.now() + this.jwtConfiguration.resetTokenTtl * 1000);
+
+    await this.usersRepository.savePasswordResetToken(user.id, tokenHash, expiresAt);
+    this.notificationsService.sendPasswordReset(email, resetToken);
+    return true;
+  }
+
+  /**
+   * Resets the user's password using a valid reset token.
+   * @throws UnauthorizedException if the token is invalid or expired.
+   */
+  async resetPassword(resetToken: string, newPassword: string): Promise<boolean> {
+    try {
+      await this.jwtServices.verifyAsync<{ sub: string; purpose: string }>(resetToken, {
+        audience: this.jwtConfiguration.audience,
+        issuer: this.jwtConfiguration.issuer,
+        secret: this.jwtConfiguration.resetSecret,
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid or expired reset token');
+    }
+
+    const tokenHash = this.hashToken(resetToken);
+    const user = await this.usersRepository.findByResetToken(tokenHash);
+    if (!user) throw new UnauthorizedException('Invalid or expired reset token');
+
+    const hashedPassword = await this.passwordService.hash(newPassword);
+    await this.usersRepository.update(user.id, { password: hashedPassword });
+    await this.usersRepository.clearPasswordResetToken(user.id);
     return true;
   }
 
