@@ -103,7 +103,12 @@ export class OrdersService {
       details: { from: order.status as string, to: status as string },
     });
     if (status === 'SHIPPED' || status === 'DELIVERED') {
-      this.sendOrderStatusEmail(order.userId, orderId, status, (updated as Order & { trackingNumber?: string | null }).trackingNumber ?? undefined);
+      this.sendOrderStatusEmail(
+        order.userId,
+        orderId,
+        status,
+        (updated as Order & { trackingNumber?: string | null }).trackingNumber ?? undefined,
+      );
     }
     return updated;
   }

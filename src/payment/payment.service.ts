@@ -313,11 +313,7 @@ export class PaymentService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Webhook verification failed | reference: ${reference} | ${message}`,
-        stack,
-        'PaymentWebhook',
-      );
+      this.logger.error(`Webhook verification failed | reference: ${reference} | ${message}`, stack, 'PaymentWebhook');
       return false;
     }
   }

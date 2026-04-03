@@ -36,11 +36,13 @@ export class DiscountLoader {
       });
 
       // Collect all unique categoryIds to batch category-discount lookup
-      const categoryIds = [...new Set(products.map((p) => p.categoryId).filter((id): id is string => id !== null && id !== undefined))];
+      const categoryIds = [
+        ...new Set(products.map((p) => p.categoryId).filter((id): id is string => id !== null && id !== undefined)),
+      ];
 
       const categoryDiscounts: CategoryDiscount[] =
         categoryIds.length > 0
-          ? (await this.prisma.discount.findMany({
+          ? ((await this.prisma.discount.findMany({
               where: {
                 isActive: true,
                 startDate: { lte: new Date() },
@@ -48,7 +50,7 @@ export class DiscountLoader {
                 categories: { some: { id: { in: categoryIds } } },
               },
               include: { categories: { select: { id: true } } },
-            })) as unknown as CategoryDiscount[]
+            })) as unknown as CategoryDiscount[])
           : [];
 
       // Build a map: categoryId → discounts[]
@@ -89,10 +91,7 @@ export class DiscountLoader {
     }, discounts[0]);
   }
 
-  private getBestDiscountDetails(
-    price: number,
-    best: DiscountEntry | null,
-  ): DiscountCalculation {
+  private getBestDiscountDetails(price: number, best: DiscountEntry | null): DiscountCalculation {
     if (!best) return { discountedPrice: price, discountAmount: 0 };
     const amount = best.type === 'PERCENTAGE' ? (price * Number(best.value)) / 100 : Number(best.value);
     return {

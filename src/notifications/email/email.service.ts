@@ -53,7 +53,11 @@ export class EmailService {
       await this.resend.emails.send({ from: this.fromEmail, to, subject, html });
       this.logger.log(`Email sent: ${subject} → ${to}`, 'EmailService');
     } catch (error) {
-      this.logger.error(`Failed to send email: ${subject} → ${to}`, error instanceof Error ? error.message : String(error), 'EmailService');
+      this.logger.error(
+        `Failed to send email: ${subject} → ${to}`,
+        error instanceof Error ? error.message : String(error),
+        'EmailService',
+      );
     }
   }
 }

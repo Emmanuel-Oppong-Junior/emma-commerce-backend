@@ -20,10 +20,7 @@ export class CloudinaryHealthIndicator extends HealthIndicator {
       return this.getStatus(key, true);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new HealthCheckError(
-        'Cloudinary health check failed',
-        this.getStatus(key, false, { error: message }),
-      );
+      throw new HealthCheckError('Cloudinary health check failed', this.getStatus(key, false, { error: message }));
     }
   }
 }

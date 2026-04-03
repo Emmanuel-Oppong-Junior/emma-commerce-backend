@@ -95,7 +95,10 @@ export const extractRequestedFieldsFromQuery = (
   // } else {
   //   parseSelectionSet(info.fieldNodes[0]?.selectionSet, prismaSelect, options.excludedFields);
   // }
-  const parseSelectionSet = (selectionSet: { selections?: readonly unknown[] } | undefined, currentSelect: Record<string, unknown>) => {
+  const parseSelectionSet = (
+    selectionSet: { selections?: readonly unknown[] } | undefined,
+    currentSelect: Record<string, unknown>,
+  ) => {
     selectionSet?.selections?.forEach((selection) => {
       const sel = selection as { kind: string; name?: { value: string }; selectionSet?: { selections?: unknown[] } };
       if (sel.kind === 'Field') {

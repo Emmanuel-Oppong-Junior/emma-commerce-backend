@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { VariantRepository } from './variant.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, Variant } from '@prisma/client';
