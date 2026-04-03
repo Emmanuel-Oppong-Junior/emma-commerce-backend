@@ -133,6 +133,20 @@ export class DiscountRepository {
     return tx.orderItem.update({ where: { id }, data });
   }
 
+  async addItemsToDiscount(
+    id: string,
+    data: Pick<Prisma.DiscountUpdateInput, 'products' | 'variants' | 'categories'>,
+  ): Promise<Discount> {
+    return this.prisma.discount.update({ where: { id }, data });
+  }
+
+  async removeItemsFromDiscount(
+    id: string,
+    data: Pick<Prisma.DiscountUpdateInput, 'products' | 'variants' | 'categories'>,
+  ): Promise<Discount> {
+    return this.prisma.discount.update({ where: { id }, data });
+  }
+
   async updateOrderWithDiscount(
     orderId: string,
     totalAmount: number,

@@ -55,7 +55,7 @@ export class CreateDiscountInput {
   @IsBoolean({ message: 'isActive must be a boolean' })
   isActive: boolean;
 
-  @Transform((value) => value ?? [])
+  @Transform(({ value }) => value ?? [])
   @Field(() => [ID], {
     description: 'List of product IDs to which the discount applies',
     nullable: true,
@@ -65,7 +65,7 @@ export class CreateDiscountInput {
   @IsArray({ message: 'Products must be an array of IDs' })
   products: string[];
 
-  @Transform((value) => value ?? [])
+  @Transform(({ value }) => value ?? [])
   @Field(() => [ID], {
     description: 'List of variant IDs to which the discount applies',
     nullable: true,
@@ -75,7 +75,7 @@ export class CreateDiscountInput {
   @IsArray({ message: 'Variants must be an array of IDs' })
   variants: string[];
 
-  @Transform((value) => value ?? [])
+  @Transform(({ value }) => value ?? [])
   @Field(() => [ID], {
     description: 'List of category IDs to which the discount applies',
     nullable: true,

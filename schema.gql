@@ -27,6 +27,12 @@ type Address {
   zipCode: String!
 }
 
+input ApproveReturnInput {
+  adminNote: String
+  refundAmount: Float!
+  returnRequestId: ID!
+}
+
 type AuthEntity {
   """authentication access token"""
   accessToken: String!
@@ -137,6 +143,26 @@ input ChangeUserPasswordInput {
   oldPassword: String!
 }
 
+type Coupon {
+  code: String!
+  createdAt: DateTime!
+  discountType: DiscountTypeEnum!
+  expiresAt: DateTime
+  id: ID!
+  isActive: Boolean!
+  minimumOrderAmount: Float
+  updatedAt: DateTime!
+  usageLimit: Int
+  usedCount: Int!
+  value: Float!
+}
+
+type CouponValidation {
+  discountAmount: Float
+  message: String
+  valid: Boolean!
+}
+
 input CreateAddressInput {
   """City"""
   city: String!
@@ -169,6 +195,16 @@ input CreateCategoryInput {
 
   """The name of the category (e.g., "Electronics")"""
   name: String!
+}
+
+input CreateCouponInput {
+  code: String!
+  discountType: DiscountTypeEnum!
+  expiresAt: DateTime
+  isActive: Boolean! = true
+  minimumOrderAmount: Float
+  usageLimit: Int
+  value: Float!
 }
 
 input CreateDiscountInput {
@@ -207,6 +243,9 @@ input CreateDiscountInput {
 }
 
 input CreateOrderInput {
+  """Optional coupon code to apply to the order"""
+  couponCode: String
+
   """The ID of the shipping address for the order"""
   shippingAddressId: ID!
 }
@@ -245,6 +284,11 @@ input CreateProductInput {
   subcategoryId: String
 }
 
+input CreateReturnRequestInput {
+  orderId: ID!
+  reason: String!
+}
+
 input CreateReviewInput {
   comment: String
   productId: String!
@@ -265,6 +309,13 @@ input CreateSubCategoryInput {
 
   """The name of the subcategory (e.g., "Shirts")"""
   name: String!
+}
+
+input CreateTaxRateInput {
+  country: String!
+  isActive: Boolean! = true
+  rate: Float!
+  region: String
 }
 
 input CreateUserInput {
@@ -308,6 +359,14 @@ input CreateVariantInput {
 
   """Size of the variant"""
   size: String
+}
+
+type DashboardSummary {
+  lowStockProductCount: Int!
+  lowStockVariantCount: Int!
+  ordersToday: Int!
+  revenueToday: Float!
+  totalUsers: Int!
 }
 
 """
@@ -358,6 +417,53 @@ enum DiscountType {
   PERCENTAGE
 }
 
+enum DiscountTypeEnum {
+  FLAT
+  PERCENTAGE
+}
+
+input ForgotPasswordInput {
+  email: String!
+}
+
+enum InventoryActionEnum {
+  ADJUSTMENT
+  ORDER_DEDUCTION
+  RESTOCK
+  RETURN_RESTORE
+}
+
+type InventoryLogEntity {
+  action: InventoryActionEnum!
+  actorId: ID
+  createdAt: DateTime!
+  id: ID!
+  productId: ID!
+  quantityAfter: Int!
+  quantityChange: Int!
+  reason: String
+  variantId: ID
+}
+
+"""
+The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSON
+
+input ModifyDiscountItemsInput {
+  """Category IDs to add or remove"""
+  categories: [ID!] = []
+
+  """The ID of the discount to modify"""
+  discountId: ID!
+
+  """Product IDs to add or remove"""
+  products: [ID!] = []
+
+  """Variant IDs to add or remove"""
+  variants: [ID!] = []
+}
+
 type Mutation {
   """Add products to a tag"""
   addProductsToTag(tagId: String!, updateDiscountInput: AddProductsToTagDto!): Tag!
@@ -365,9 +471,13 @@ type Mutation {
 
   """Adds a product to the user’s cart"""
   addToCart(input: AddToCartInput!): Cart!
+  addToDiscount(modifyDiscountItemsInput: ModifyDiscountItemsInput!): Discount!
 
   """Adds a product to the user’s wishlist"""
   addToWishlist(productId: String!): Wishlist!
+
+  """Approve a return request (admin only)"""
+  approveReturn(input: ApproveReturnInput!): ReturnRequestEntity!
   archiveProduct(productId: String!): Product!
 
   """Archive (soft delete) a user"""
@@ -391,11 +501,17 @@ type Mutation {
 
   """Creates a new category (admin only)"""
   createCategory(input: CreateCategoryInput!): Category!
+
+  """Create a new coupon (admin only)"""
+  createCoupon(input: CreateCouponInput!): Coupon!
   createDiscount(createDiscountInput: CreateDiscountInput!): Discount!
 
-  """Creates an order from the user’s cart"""
+  """Creates an order from the cart"""
   createOrder(input: CreateOrderInput!): Order!
   createProduct(createProductInput: CreateProductInput!): Product!
+
+  """Create a return request for a delivered order"""
+  createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
 
   """Creates a review for a product"""
   createReview(input: CreateReviewInput!): Review!
@@ -408,6 +524,9 @@ type Mutation {
 
   """Creates a new tag"""
   createTag(name: String!): Tag!
+
+  """Create a tax rate (admin only)"""
+  createTaxRate(input: CreateTaxRateInput!): TaxRateEntity!
 
   """Create a new user with email and password"""
   createUser(createUserInput: CreateUserInput!): User!
@@ -422,6 +541,9 @@ type Mutation {
   deleteAddress(addressId: String!): Address!
   deleteBrand(id: String!): Brand!
 
+  """Delete a coupon (admin only)"""
+  deleteCoupon(id: ID!): Coupon!
+
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
 
@@ -431,13 +553,25 @@ type Mutation {
   """Deletes a tag"""
   deleteTag(tagId: String!): Tag!
 
+  """Delete a tax rate (admin only)"""
+  deleteTaxRate(id: ID!): TaxRateEntity!
+
   """Deletes a variant"""
   deleteVariant(variantId: String!): Variant!
   finalizeOrder(id: String!): Order!
+
+  """Request a password reset email"""
+  forgotPassword(input: ForgotPasswordInput!): Boolean!
   permanentlyDeleteProduct(productId: String!): Product!
+
+  """Process a refund for an approved return (admin only)"""
+  processRefund(returnRequestId: ID!): ReturnRequestEntity!
 
   """Refresh access and refresh tokens using a valid refresh token"""
   refreshToken(input: RefreshTokenInput!): AuthEntity!
+
+  """Reject a return request (admin only)"""
+  rejectReturn(input: RejectReturnInput!): ReturnRequestEntity!
 
   """Deletes a category by ID (admin only)"""
   removeCategory(
@@ -448,6 +582,7 @@ type Mutation {
 
   """Removes a specific item from the user’s cart"""
   removeFromCart(cartItemId: String!): Cart!
+  removeFromDiscount(modifyDiscountItemsInput: ModifyDiscountItemsInput!): Discount!
 
   """Removes a product from the user’s wishlist"""
   removeFromWishlist(productId: String!): Wishlist!
@@ -465,6 +600,15 @@ type Mutation {
 
   """Delete a user permanently"""
   removeUser(id: String!): User!
+
+  """Reset password using a valid reset token"""
+  resetPassword(input: ResetPasswordInput!): Boolean!
+
+  """Restock a product (admin only)"""
+  restockProduct(input: RestockProductInput!): InventoryLogEntity!
+
+  """Restock a product variant (admin only)"""
+  restockVariant(input: RestockVariantInput!): InventoryLogEntity!
   restorePayment(id: String!): Payment!
   restoreProduct(productId: String!): Product!
 
@@ -497,6 +641,9 @@ type Mutation {
     id: String!
     input: UpdateCategoryInput!
   ): Category!
+
+  """Update a coupon (admin only)"""
+  updateCoupon(id: ID!, input: UpdateCouponInput!): Coupon!
   updateDiscount(updateDiscountInput: UpdateDiscountInput!): Discount!
 
   """Update user profile"""
@@ -508,6 +655,9 @@ type Mutation {
 
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
+
+  """Update tracking number and carrier for an order (admin only)"""
+  updateShipping(input: UpdateShippingInput!): Order!
 
   """Updates an existing subcategory (admin only)"""
   updateSubCategory(
@@ -521,15 +671,26 @@ type Mutation {
   """Updates an existing tag"""
   updateTag(name: String!, tagId: String!): Tag!
 
+  """Update a tax rate (admin only)"""
+  updateTaxRate(id: ID!, input: UpdateTaxRateInput!): TaxRateEntity!
+
   """Update an existing user"""
   updateUser(id: String!, updateUserInput: UpdateUserInput!): User!
 
   """Updates an existing variant"""
   updateVariant(input: UpdateVariantInput!): Variant!
+
+  """Validate a coupon code before applying to order"""
+  validateCoupon(input: ValidateCouponInput!): CouponValidation!
   verifyPayment(verifyPaymentInput: VerifyPaymentInput!): Payment!
 }
 
 type Order {
+  """Carrier name"""
+  carrier: String
+
+  """Coupon discount amount"""
+  couponDiscount: Float
   createdAt: DateTime!
 
   """Total discount amount applied"""
@@ -540,8 +701,14 @@ type Order {
   id: ID!
   items: [OrderItem!]!
   shippingAddressId: ID!
+
+  """Address snapshot at time of order"""
+  shippingAddressSnapshot: JSON
   status: OrderStatus!
   totalAmount: Float!
+
+  """Shipment tracking number"""
+  trackingNumber: String
   updatedAt: DateTime!
   userId: ID!
 }
@@ -736,9 +903,21 @@ type Query {
     """The ID of the category"""
     id: String!
   ): Category
+
+  """Get a coupon by ID (admin only)"""
+  coupon(id: ID!): Coupon!
+
+  """Get all coupons (admin only)"""
+  coupons: [Coupon!]!
+
+  """Admin dashboard summary (admin only)"""
+  dashboardSummary: DashboardSummary!
   discount(id: Int!): Discount!
   getMyPayments: [Payment!]!
   getUserPayment(userId: String!): [Payment!]!
+
+  """Get return requests for the current user"""
+  myReturnRequests: [ReturnRequestEntity!]!
 
   """Retrieves a specific order by ID for the current user"""
   order(orderId: String!): Order!
@@ -748,6 +927,9 @@ type Query {
   payment(id: String!): Payment!
   product(productId: String!): Product
 
+  """Get inventory logs for a product (admin only)"""
+  productInventoryLogs(productId: ID!): [InventoryLogEntity!]!
+
   """Retrieves all reviews for a product"""
   productReviews(productId: String!): [Review!]!
 
@@ -755,8 +937,17 @@ type Query {
   productVariants(productId: String!): [Variant!]!
   products(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs): ProductConnection!
 
+  """Get all return requests (admin only)"""
+  returnRequests: [ReturnRequestEntity!]!
+
+  """Revenue grouped by category (admin only)"""
+  revenueByCategory: [RevenueByCategoryEntity!]!
+
   """Retrieves a specific review by ID"""
   review(reviewId: String!): Review!
+
+  """Sales report for a date range (admin only)"""
+  salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
 
   """Retrieves a list of all subcategories, sorted alphabetically by name"""
   subCategories: [SubCategory!]!
@@ -772,6 +963,15 @@ type Query {
 
   """Retrieves all tags"""
   tags: [Tag!]!
+
+  """Get a tax rate by ID (admin only)"""
+  taxRate(id: ID!): TaxRateEntity!
+
+  """Get all tax rates (admin only)"""
+  taxRates: [TaxRateEntity!]!
+
+  """Best-selling products by quantity (admin only)"""
+  topProducts(limit: Int! = 10): [TopProduct!]!
 
   """Retrieves all addresses for the current user"""
   userAddresses: [Address!]!
@@ -800,10 +1000,13 @@ type Query {
   """Retrieves a specific variant by ID"""
   variant(variantId: String!): Variant!
 
+  """Get inventory logs for a variant (admin only)"""
+  variantInventoryLogs(variantId: ID!): [InventoryLogEntity!]!
+
   """Retrieves all variants (admin only)"""
   variants: [Variant!]!
 
-  """Retrieves all orders (admin only)"""
+  """Retrieves a specific order by ID (admin only)"""
   viewOrder(id: String!): Order!
 
   """Retrieves the user’s wishlist"""
@@ -814,9 +1017,57 @@ input RefreshTokenInput {
   refreshToken: String!
 }
 
+input RejectReturnInput {
+  adminNote: String
+  returnRequestId: ID!
+}
+
 input RemoveProductsFromTagDto {
   """List of product IDs to be added to tag"""
   productIds: [ID!] = []
+}
+
+input ResetPasswordInput {
+  newPassword: String!
+  resetToken: String!
+}
+
+input RestockProductInput {
+  productId: ID!
+  quantity: Int!
+  reason: String
+}
+
+input RestockVariantInput {
+  quantity: Int!
+  reason: String
+  variantId: ID!
+}
+
+type ReturnRequestEntity {
+  adminNote: String
+  createdAt: DateTime!
+  id: ID!
+  orderId: ID!
+  reason: String!
+  refundAmount: Float
+  status: ReturnStatusEnum!
+  updatedAt: DateTime!
+  userId: ID!
+}
+
+enum ReturnStatusEnum {
+  APPROVED
+  PENDING
+  REFUNDED
+  REJECTED
+}
+
+type RevenueByCategoryEntity {
+  categoryId: ID
+  categoryName: String
+  orderCount: Int!
+  totalRevenue: Float!
 }
 
 type Review {
@@ -833,6 +1084,12 @@ enum Role {
   ADMIN
   SUPER_ADMIN
   USER
+}
+
+type SalesReport {
+  averageOrderValue: Float!
+  orderCount: Int!
+  totalRevenue: Float!
 }
 
 input SignInInput {
@@ -899,6 +1156,23 @@ type Tag {
   updatedAt: DateTime!
 }
 
+type TaxRateEntity {
+  country: String!
+  createdAt: DateTime!
+  id: ID!
+  isActive: Boolean!
+  rate: Float!
+  region: String
+  updatedAt: DateTime!
+}
+
+type TopProduct {
+  productId: ID!
+  productName: String!
+  totalQuantitySold: Int!
+  totalRevenue: Float!
+}
+
 input UpdateAddressInput {
   """City"""
   city: String
@@ -939,6 +1213,16 @@ input UpdateCategoryInput {
 
   """The name of the category (e.g., "Electronics")"""
   name: String
+}
+
+input UpdateCouponInput {
+  code: String
+  discountType: DiscountTypeEnum
+  expiresAt: DateTime
+  isActive: Boolean
+  minimumOrderAmount: Float
+  usageLimit: Int
+  value: Float
 }
 
 input UpdateDiscountInput {
@@ -1030,6 +1314,12 @@ input UpdateReviewInput {
   score: Int
 }
 
+input UpdateShippingInput {
+  carrier: String
+  orderId: ID!
+  trackingNumber: String
+}
+
 input UpdateSubCategoryInput {
   """The ID of the parent category"""
   categoryId: String
@@ -1042,6 +1332,13 @@ input UpdateSubCategoryInput {
 
   """The name of the subcategory (e.g., "Shirts")"""
   name: String
+}
+
+input UpdateTaxRateInput {
+  country: String
+  isActive: Boolean
+  rate: Float
+  region: String
 }
 
 input UpdateUserInput {
@@ -1166,6 +1463,11 @@ input UserPaginateArgs {
 
   """Filter by user role (USER or ADMIN)"""
   role: Role
+}
+
+input ValidateCouponInput {
+  code: String!
+  orderTotal: Float!
 }
 
 type Variant {

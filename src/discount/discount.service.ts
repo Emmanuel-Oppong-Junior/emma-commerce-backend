@@ -3,6 +3,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
+import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
 import { CartItem, Discount, Order, OrderItem, Product, Variant } from '@prisma/client';
 import {
   CartItemWithProduct,
@@ -108,6 +109,43 @@ export class DiscountService {
     const discount = await this.findDiscountOrThrow(id);
     await this.cacheManager.set(discountKey(id), discount);
     return discount;
+  }
+
+  /**
+   * Adds products, variants, or categories to an existing discount.
+   * @param input - The discount ID and IDs to add.
+   * @returns The updated discount.
+   */
+  async addToDiscount(input: ModifyDiscountItemsInput): Promise<Discount> {
+    await this.findDiscountOrThrow(input.discountId);
+    if (input.products?.length) await this.ensureProductsExist(input);
+    if (input.variants?.length) await this.ensureVariantsExist(input);
+    if (input.categories?.length) await this.ensureCategoriesExist(input);
+
+    const updated = await this.discountRepository.addItemsToDiscount(input.discountId, {
+      products: input.products?.length ? { connect: input.products.map((id) => ({ id })) } : undefined,
+      variants: input.variants?.length ? { connect: input.variants.map((id) => ({ id })) } : undefined,
+      categories: input.categories?.length ? { connect: input.categories.map((id) => ({ id })) } : undefined,
+    });
+    await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(input.discountId))]);
+    return updated;
+  }
+
+  /**
+   * Removes products, variants, or categories from an existing discount.
+   * @param input - The discount ID and IDs to remove.
+   * @returns The updated discount.
+   */
+  async removeFromDiscount(input: ModifyDiscountItemsInput): Promise<Discount> {
+    await this.findDiscountOrThrow(input.discountId);
+
+    const updated = await this.discountRepository.removeItemsFromDiscount(input.discountId, {
+      products: input.products?.length ? { disconnect: input.products.map((id) => ({ id })) } : undefined,
+      variants: input.variants?.length ? { disconnect: input.variants.map((id) => ({ id })) } : undefined,
+      categories: input.categories?.length ? { disconnect: input.categories.map((id) => ({ id })) } : undefined,
+    });
+    await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(input.discountId))]);
+    return updated;
   }
 
   /**
@@ -359,17 +397,17 @@ export class DiscountService {
     }
   }
 
-  private async ensureProductsExist(input: CreateOrUpdateDiscountInput) {
+  private async ensureProductsExist(input: { products?: string[] }) {
     const invalidIds = await this.discountRepository.getInvalidIds(input.products, 'product');
     if (invalidIds.length) throw new BadRequestException(`Invalid product IDs: ${invalidIds.join(', ')}`);
   }
 
-  private async ensureVariantsExist(input: CreateOrUpdateDiscountInput) {
+  private async ensureVariantsExist(input: { variants?: string[] }) {
     const invalidIds = await this.discountRepository.getInvalidIds(input.variants, 'variant');
     if (invalidIds.length) throw new BadRequestException(`Invalid variant IDs: ${invalidIds.join(', ')}`);
   }
 
-  private async ensureCategoriesExist(input: CreateOrUpdateDiscountInput) {
+  private async ensureCategoriesExist(input: { categories?: string[] }) {
     const invalidIds = await this.discountRepository.getInvalidIds(input.categories, 'category');
     if (invalidIds.length) throw new BadRequestException(`Invalid category IDs: ${invalidIds.join(', ')}`);
   }

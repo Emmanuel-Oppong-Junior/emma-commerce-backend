@@ -3,6 +3,7 @@ import { DiscountService } from './discount.service';
 import { Discount } from './entities/discount.entity';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
+import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
 
 @Resolver(() => Discount)
 export class DiscountResolver {
@@ -26,6 +27,16 @@ export class DiscountResolver {
   @Mutation(() => Discount)
   updateDiscount(@Args('updateDiscountInput') updateDiscountInput: UpdateDiscountInput) {
     return this.discountService.updateDiscount(updateDiscountInput.id, updateDiscountInput);
+  }
+
+  @Mutation(() => Discount)
+  addToDiscount(@Args('modifyDiscountItemsInput') input: ModifyDiscountItemsInput) {
+    return this.discountService.addToDiscount(input);
+  }
+
+  @Mutation(() => Discount)
+  removeFromDiscount(@Args('modifyDiscountItemsInput') input: ModifyDiscountItemsInput) {
+    return this.discountService.removeFromDiscount(input);
   }
 
   @Mutation(() => Discount)
