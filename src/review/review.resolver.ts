@@ -43,12 +43,11 @@ export class ReviewResolver {
   async getUserReviews(@ActiveUser('id') userId: string) {
     return this.reviewService.getUserReviews(userId);
   }
-
+  @Roles(Role.USER)
   @Mutation(() => Review, {
     name: 'createReview',
     description: 'Creates a review for a product',
   })
-  @Roles(Role.USER)
   async createReview(
     @ActiveUser('id') userId: string,
     @Args('input', { type: () => CreateReviewInput }) input: CreateReviewInput,
@@ -56,11 +55,11 @@ export class ReviewResolver {
     return this.reviewService.createReview(userId, input);
   }
 
+  @Roles(Role.USER)
   @Mutation(() => Review, {
     name: 'updateReview',
     description: "Updates a user's review",
   })
-  @Roles(Role.USER)
   async updateReview(
     @ActiveUser('id') userId: string,
     @Args('input', { type: () => UpdateReviewInput }) input: UpdateReviewInput,

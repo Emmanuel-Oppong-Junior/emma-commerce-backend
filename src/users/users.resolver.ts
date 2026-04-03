@@ -92,6 +92,7 @@ export class UsersResolver {
     return this.usersService.changePassword(id, input);
   }
 
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Delete a user permanently' })
   removeUser(@Args('id', { type: () => String }) id: string) {
     return this.usersService.remove(id);
