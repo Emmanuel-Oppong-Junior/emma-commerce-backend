@@ -886,8 +886,10 @@ type Query {
   """Retrieves a specific address by ID for the current user"""
   address(addressId: String!): Address!
 
-  """Retrieves all addresses (admin only)"""
-  addresses: [Address!]!
+  """
+  Admin: retrieves addresses. SUPER_ADMIN may omit userId to get all; ADMIN must supply userId.
+  """
+  addresses(userId: String): [Address!]!
   brand(id: String!): Brand
   brands: [Brand]
 

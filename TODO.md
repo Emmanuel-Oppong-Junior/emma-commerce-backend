@@ -51,30 +51,30 @@ Mark a phase as **done** only when every checkbox within it is ticked.
 ## Phase 4 — E2E Tests: Public & Authentication Flows
 
 ### Auth Flows (Public)
-- [ ] `POST signUp` — success with valid input
-- [ ] `POST signUp` — fails with duplicate email (conflict)
-- [ ] `POST signUp` — fails with invalid email format / weak password
-- [ ] `POST signIn` — success returns access + refresh tokens
-- [ ] `POST signIn` — fails with wrong password
-- [ ] `POST signIn` — fails with non-existent email
-- [ ] `POST refreshToken` — success returns new token pair
-- [ ] `POST refreshToken` — fails with invalid/expired/revoked token
-- [ ] `POST signOut` — invalidates refresh token; subsequent refresh fails
-- [ ] `POST forgotPassword` — returns true for both existing and non-existing emails (no enumeration)
-- [ ] `POST resetPassword` — success with valid token
-- [ ] `POST resetPassword` — fails with expired token
-- [ ] `POST resetPassword` — fails with already-used token
-- [ ] `POST signInWithGoogle` — success with valid Google credential
-- [ ] `POST signInWithFacebook` — success with valid Facebook token
+- [x] `POST signUp` — success with valid input
+- [x] `POST signUp` — fails with duplicate email (conflict)
+- [x] `POST signUp` — fails with invalid email format / weak password
+- [x] `POST signIn` — success returns access + refresh tokens
+- [x] `POST signIn` — fails with wrong password
+- [x] `POST signIn` — fails with non-existent email
+- [x] `POST refreshToken` — success returns new token pair
+- [x] `POST refreshToken` — fails with invalid/expired/revoked token
+- [x] `POST signOut` — invalidates refresh token; subsequent refresh fails
+- [x] `POST forgotPassword` — returns true for both existing and non-existing emails (no enumeration)
+- [x] `POST resetPassword` — success with valid token
+- [x] `POST resetPassword` — fails with expired token
+- [x] `POST resetPassword` — fails with already-used token
+- [x] `POST signInWithGoogle` — success with valid Google credential
+- [x] `POST signInWithFacebook` — success with valid Facebook token
 
 ### Public Catalogue Flows
-- [ ] `GET products` — returns paginated product list (no auth required)
-- [ ] `GET product` — returns single product by ID (no auth required)
-- [ ] `GET categories` — returns all categories (no auth required)
-- [ ] `GET brands` — returns all brands (no auth required)
-- [ ] `GET brand` — returns single brand by ID (no auth required)
+- [x] `GET products` — returns paginated product list (no auth required)
+- [x] `GET product` — returns single product by ID (no auth required)
+- [x] `GET categories` — returns all categories (no auth required)
+- [x] `GET brands` — returns all brands (no auth required)
+- [x] `GET brand` — returns single brand by ID (no auth required)
 
-**Phase 4 complete when:** All items above are ticked ✅
+**Phase 4 complete ✅**
 
 ---
 

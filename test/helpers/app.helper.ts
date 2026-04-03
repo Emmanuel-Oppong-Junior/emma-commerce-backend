@@ -4,6 +4,7 @@ import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { LoggerService } from '../../src/commons/logger.service';
 import { AllExceptionsFilter } from '../../src/commons/filters/all-exceptions.filter';
+import { GqlThrottlerGuard } from '../../src/commons/guards/gql-throttler.guard';
 
 /** The resolved shape returned by `createTestApp`. */
 export interface TestApp {
@@ -18,6 +19,9 @@ export interface TestApp {
  *
  * Mirrors the setup in `main.ts` (validation pipe, exception filter, logger)
  * while omitting HTTP-server concerns irrelevant to tests (Helmet, CORS).
+ *
+ * The throttle guard is replaced with a no-op so rate-limited mutations
+ * (forgotPassword, resetPassword, etc.) can be called freely within test suites.
  *
  * @example
  * ```ts
@@ -34,7 +38,13 @@ export interface TestApp {
 export async function createTestApp(): Promise<TestApp> {
   const moduleFixture: TestingModule = await Test.createTestingModule({
     imports: [AppModule],
-  }).compile();
+  })
+    // Disable rate limiting in e2e tests — throttle behaviour is tested at the
+    // unit level; having it active here would cause password-reset tests to fail
+    // after three consecutive calls within the same test run.
+    .overrideProvider(GqlThrottlerGuard)
+    .useValue({ canActivate: () => true })
+    .compile();
 
   const app = moduleFixture.createNestApplication();
   const prisma = moduleFixture.get<PrismaService>(PrismaService);
