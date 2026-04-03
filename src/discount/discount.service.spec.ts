@@ -31,6 +31,8 @@ const mockDiscountRepository = {
   findOrderById: jest.fn(),
   updateOrderItem: jest.fn(),
   updateOrderWithDiscount: jest.fn(),
+  addItemsToDiscount: jest.fn(),
+  removeItemsFromDiscount: jest.fn(),
 };
 
 const mockDiscount: Discount = {
@@ -436,6 +438,105 @@ describe('DiscountService', () => {
       });
 
       expect(result).toBe(15);
+    });
+  });
+
+  describe('addToDiscount', () => {
+    it('should add products to a discount successfully', async () => {
+      const updatedDiscount = { ...mockDiscount };
+      mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.getInvalidIds.mockResolvedValue([]);
+      mockDiscountRepository.addItemsToDiscount.mockResolvedValue(updatedDiscount);
+
+      const result = await service.addToDiscount({
+        discountId: 'discount1',
+        products: ['product1'],
+        variants: [],
+        categories: [],
+      });
+
+      expect(result).toEqual(updatedDiscount);
+      expect(mockDiscountRepository.addItemsToDiscount).toHaveBeenCalledWith(
+        'discount1',
+        expect.objectContaining({ products: { connect: [{ id: 'product1' }] } }),
+      );
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:discount1');
+    });
+
+    it('should throw NotFoundException if discount not found', async () => {
+      mockDiscountRepository.findById.mockResolvedValue(null);
+
+      await expect(service.addToDiscount({ discountId: 'nonexistent', products: ['p1'] })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should throw BadRequestException for invalid product IDs', async () => {
+      mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.getInvalidIds.mockResolvedValue(['invalid-id']);
+
+      await expect(service.addToDiscount({ discountId: 'discount1', products: ['invalid-id'] })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should not call addItemsToDiscount with empty products/variants/categories', async () => {
+      const updatedDiscount = { ...mockDiscount };
+      mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.addItemsToDiscount.mockResolvedValue(updatedDiscount);
+
+      await service.addToDiscount({ discountId: 'discount1' });
+
+      expect(mockDiscountRepository.addItemsToDiscount).toHaveBeenCalledWith('discount1', {
+        products: undefined,
+        variants: undefined,
+        categories: undefined,
+      });
+    });
+  });
+
+  describe('removeFromDiscount', () => {
+    it('should remove products from a discount successfully', async () => {
+      const updatedDiscount = { ...mockDiscount };
+      mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.removeItemsFromDiscount.mockResolvedValue(updatedDiscount);
+
+      const result = await service.removeFromDiscount({
+        discountId: 'discount1',
+        products: ['product1'],
+        variants: [],
+        categories: [],
+      });
+
+      expect(result).toEqual(updatedDiscount);
+      expect(mockDiscountRepository.removeItemsFromDiscount).toHaveBeenCalledWith(
+        'discount1',
+        expect.objectContaining({ products: { disconnect: [{ id: 'product1' }] } }),
+      );
+      expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
+    });
+
+    it('should throw NotFoundException if discount not found', async () => {
+      mockDiscountRepository.findById.mockResolvedValue(null);
+
+      await expect(service.removeFromDiscount({ discountId: 'nonexistent', products: ['p1'] })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should handle empty arrays by passing undefined to repository', async () => {
+      const updatedDiscount = { ...mockDiscount };
+      mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.removeItemsFromDiscount.mockResolvedValue(updatedDiscount);
+
+      await service.removeFromDiscount({ discountId: 'discount1' });
+
+      expect(mockDiscountRepository.removeItemsFromDiscount).toHaveBeenCalledWith('discount1', {
+        products: undefined,
+        variants: undefined,
+        categories: undefined,
+      });
     });
   });
 });
