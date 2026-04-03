@@ -153,7 +153,7 @@ describe('AuthenticationService', () => {
       mockHashingService.compare.mockResolvedValue(false);
       mockUsersService.recordFailedLoginAttempt.mockResolvedValue(undefined);
 
-      await expect(service.signIn({ email: baseUser.email, password: 'wrong' })).rejects.toThrow(
+      await expect(service.signIn({ email: baseUser.email!, password: 'wrong' })).rejects.toThrow(
         'Invalid email or password',
       );
 
@@ -164,7 +164,7 @@ describe('AuthenticationService', () => {
       const lockedUser = { ...baseUser, lockedUntil: new Date(Date.now() + 60_000) };
       mockUsersService.findUserByEmail.mockResolvedValue(lockedUser);
 
-      await expect(service.signIn({ email: baseUser.email, password: 'any' })).rejects.toThrow(UnauthorizedException);
+      await expect(service.signIn({ email: baseUser.email!, password: 'any' })).rejects.toThrow(UnauthorizedException);
     });
 
     it('should reset failed attempts after successful sign-in with prior failures', async () => {
@@ -177,7 +177,7 @@ describe('AuthenticationService', () => {
       mockUsersService.updateLastLogin.mockResolvedValue(undefined);
       mockUsersService.resetFailedLoginAttempts.mockResolvedValue(undefined);
 
-      await service.signIn({ email: baseUser.email, password: 'correct' });
+      await service.signIn({ email: baseUser.email!, password: 'correct' });
 
       expect(usersService.resetFailedLoginAttempts).toHaveBeenCalledWith(userWithAttempts.id);
     });

@@ -41,7 +41,7 @@ export class BrandResolver {
   @Auth(AuthType.None)
   @Query(() => [Brand], { nullable: 'itemsAndList' })
   async brands(@Info() requestInfo?: GraphQLResolveInfo) {
-    const requestedFields = extractRequestedFieldsFromQuery(requestInfo, {
+    const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
       excludedFields: [],
       level: 1,
     });

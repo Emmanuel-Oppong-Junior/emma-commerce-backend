@@ -28,7 +28,7 @@ export class FileUploadInterceptor {
   }
 
   static imageFilter() {
-    return (req: any, file: { mimetype: string }, callback: (arg0: Error, arg1: boolean) => void) => {
+    return (req: Express.Request, file: { mimetype: string }, callback: (arg0: Error | null, arg1: boolean) => void) => {
       if (!file.mimetype.match(/\/(jpg|jpeg|png)$/)) {
         return callback(new Error('Only image files are allowed!'), false);
       }

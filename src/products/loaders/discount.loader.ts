@@ -3,6 +3,9 @@ import * as DataLoader from 'dataloader';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DiscountCalculation } from '../../discount/types';
 
+type DiscountEntry = { id: string; type: string; value: unknown };
+type CategoryDiscount = DiscountEntry & { categories: { id: string }[] };
+
 @Injectable({ scope: Scope.REQUEST })
 export class DiscountLoader {
   constructor(private readonly prisma: PrismaService) {}
@@ -33,11 +36,11 @@ export class DiscountLoader {
       });
 
       // Collect all unique categoryIds to batch category-discount lookup
-      const categoryIds = [...new Set(products.map((p) => p.categoryId).filter(Boolean))];
+      const categoryIds = [...new Set(products.map((p) => p.categoryId).filter((id): id is string => id !== null && id !== undefined))];
 
-      const categoryDiscounts =
+      const categoryDiscounts: CategoryDiscount[] =
         categoryIds.length > 0
-          ? await this.prisma.discount.findMany({
+          ? (await this.prisma.discount.findMany({
               where: {
                 isActive: true,
                 startDate: { lte: new Date() },
@@ -45,15 +48,15 @@ export class DiscountLoader {
                 categories: { some: { id: { in: categoryIds } } },
               },
               include: { categories: { select: { id: true } } },
-            })
+            })) as unknown as CategoryDiscount[]
           : [];
 
       // Build a map: categoryId → discounts[]
-      const categoryDiscountMap = new Map<string, typeof categoryDiscounts>();
+      const categoryDiscountMap = new Map<string, CategoryDiscount[]>();
       for (const discount of categoryDiscounts) {
-        for (const cat of (discount as any).categories) {
+        for (const cat of discount.categories) {
           if (!categoryDiscountMap.has(cat.id)) categoryDiscountMap.set(cat.id, []);
-          categoryDiscountMap.get(cat.id).push(discount);
+          categoryDiscountMap.get(cat.id)!.push(discount);
         }
       }
 
@@ -63,8 +66,8 @@ export class DiscountLoader {
         if (!product) return { discountedPrice: 0, discountAmount: 0 };
 
         const price = Number(product.price ?? 0);
-        const allDiscounts = [
-          ...product.discounts,
+        const allDiscounts: DiscountEntry[] = [
+          ...product.discounts.map((d) => ({ id: d.id, type: d.type as string, value: d.value })),
           ...(product.categoryId ? (categoryDiscountMap.get(product.categoryId) ?? []) : []),
         ];
 
@@ -75,7 +78,7 @@ export class DiscountLoader {
     { cache: false }, // Per-request cache disabled — data can change between resolves
   );
 
-  private selectBestDiscount(discounts: { id: string; type: string; value: any }[]) {
+  private selectBestDiscount(discounts: DiscountEntry[]) {
     if (!discounts.length) return null;
     return discounts.reduce((best, current) => {
       const bestVal = Number(best.value);
@@ -88,7 +91,7 @@ export class DiscountLoader {
 
   private getBestDiscountDetails(
     price: number,
-    best: { id: string; type: string; value: any } | null,
+    best: DiscountEntry | null,
   ): DiscountCalculation {
     if (!best) return { discountedPrice: price, discountAmount: 0 };
     const amount = best.type === 'PERCENTAGE' ? (price * Number(best.value)) / 100 : Number(best.value);

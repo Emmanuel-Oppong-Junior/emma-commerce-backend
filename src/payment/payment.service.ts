@@ -203,6 +203,10 @@ export class PaymentService {
     email,
     amount,
     input,
+  }: {
+    email: string;
+    amount: number;
+    input: CreatePaymentDto;
   }): Promise<Paystack.Response<Paystack.Transaction.InitializeResponse>> {
     const { currency, orderId } = input;
     const amountInSubunit = this.convertToSubunit(amount);
@@ -307,9 +311,11 @@ export class PaymentService {
       await this.verifyPayment(reference);
       return true;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
       this.logger.error(
-        `Webhook verification failed | reference: ${reference} | ${error.message}`,
-        error.stack,
+        `Webhook verification failed | reference: ${reference} | ${message}`,
+        stack,
         'PaymentWebhook',
       );
       return false;
@@ -321,7 +327,9 @@ export class PaymentService {
       const hash = this.computeWebhookSignature(dto);
       return hash === signature;
     } catch (error) {
-      this.logger.error(`Signature validation error | ${error.message}`, error.stack, 'PaymentService');
+      const message = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? error.stack : undefined;
+      this.logger.error(`Signature validation error | ${message}`, stack, 'PaymentService');
       return false;
     }
   }

@@ -11,6 +11,13 @@ export class InventoryService {
     private readonly prisma: PrismaService,
   ) {}
 
+  /**
+   * Increments a product's stock quantity and records a restock inventory log entry.
+   * @param input - Restock data containing the product ID, quantity to add, and an optional reason.
+   * @param actorId - The ID of the admin or system user performing the restock.
+   * @returns The created inventory log entry.
+   * @throws NotFoundException if the product does not exist.
+   */
   async restockProduct(input: RestockProductInput, actorId: string): Promise<InventoryLog> {
     const product = await this.prisma.product.findUnique({
       where: { id: input.productId },
@@ -35,6 +42,13 @@ export class InventoryService {
     });
   }
 
+  /**
+   * Increments a variant's stock quantity and records a restock inventory log entry.
+   * @param input - Restock data containing the variant ID, quantity to add, and an optional reason.
+   * @param actorId - The ID of the admin or system user performing the restock.
+   * @returns The created inventory log entry.
+   * @throws NotFoundException if the variant does not exist.
+   */
   async restockVariant(input: RestockVariantInput, actorId: string): Promise<InventoryLog> {
     const variant = await this.prisma.variant.findUnique({
       where: { id: input.variantId },
@@ -60,14 +74,30 @@ export class InventoryService {
     });
   }
 
+  /**
+   * Writes a single inventory change log entry within an existing database transaction.
+   * Intended for use by order and return workflows that run inside their own transactions.
+   * @param tx - The active Prisma transaction client.
+   * @param data - Log entry data including product ID, action type, quantity change, and reason.
+   */
   async logInventoryChange(tx: Prisma.TransactionClient, data: CreateLogData): Promise<void> {
     await this.inventoryRepository.createLog(tx, data);
   }
 
+  /**
+   * Retrieves all inventory log entries for a product, ordered by most recent first.
+   * @param productId - The ID of the product.
+   * @returns List of inventory log entries for the product.
+   */
   async getProductLogs(productId: string): Promise<InventoryLog[]> {
     return this.inventoryRepository.findByProduct(productId);
   }
 
+  /**
+   * Retrieves all inventory log entries for a specific variant, ordered by most recent first.
+   * @param variantId - The ID of the variant.
+   * @returns List of inventory log entries for the variant.
+   */
   async getVariantLogs(variantId: string): Promise<InventoryLog[]> {
     return this.inventoryRepository.findByVariant(variantId);
   }

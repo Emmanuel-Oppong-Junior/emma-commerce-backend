@@ -8,7 +8,7 @@ import { sanitizeQuery, sanitizeVariables } from '../useful-functions';
 export class GraphqlLoggingInterceptor implements NestInterceptor {
   constructor(private readonly logger: LoggerService) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const start = Date.now();
     const gqlContext = GqlExecutionContext.create(context);
     const { req } = gqlContext.getContext();

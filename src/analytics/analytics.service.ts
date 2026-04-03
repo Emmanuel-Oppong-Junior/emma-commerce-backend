@@ -9,6 +9,12 @@ import { DashboardSummary } from './entities/dashboard-summary.entity';
 export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * Returns aggregated sales figures (revenue, order count, average order value) for the given date range.
+   * @param startDate - Start of the reporting period (inclusive).
+   * @param endDate - End of the reporting period (inclusive).
+   * @returns Aggregated sales report.
+   */
   async getSalesReport(startDate: Date, endDate: Date): Promise<SalesReport> {
     const result = await this.prisma.order.aggregate({
       where: {
@@ -28,6 +34,11 @@ export class AnalyticsService {
     };
   }
 
+  /**
+   * Returns the top-selling products ranked by total quantity sold.
+   * @param limit - Maximum number of products to return.
+   * @returns List of top products with quantity sold and revenue.
+   */
   async getTopProducts(limit: number): Promise<TopProduct[]> {
     type RawRow = { productId: string; productName: string; totalQuantitySold: bigint; totalRevenue: number };
     const rows = await this.prisma.$queryRaw<RawRow[]>`
@@ -53,6 +64,10 @@ export class AnalyticsService {
     }));
   }
 
+  /**
+   * Returns total revenue and order count grouped by product category.
+   * @returns List of category revenue breakdowns, ordered by revenue descending.
+   */
   async getRevenueByCategory(): Promise<RevenueByCategoryEntity[]> {
     type RawRow = { categoryId: string | null; categoryName: string | null; totalRevenue: number; orderCount: bigint };
     const rows = await this.prisma.$queryRaw<RawRow[]>`
@@ -78,6 +93,11 @@ export class AnalyticsService {
     }));
   }
 
+  /**
+   * Returns a real-time snapshot of key business metrics for the admin dashboard.
+   * Includes today's orders and revenue, active user count, and low-stock counts.
+   * @returns Dashboard summary with aggregated KPIs.
+   */
   async getDashboardSummary(): Promise<DashboardSummary> {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);

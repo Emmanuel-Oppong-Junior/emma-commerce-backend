@@ -35,7 +35,7 @@ export class BrandService {
    * @returns The brand if found.
    * @throws NotFoundException if the brand is not found.
    */
-  async getBrandById(id: string): Promise<Brand> {
+  async getBrandById(id: string): Promise<Brand | null> {
     return this.brandRepository.findById(id);
   }
 

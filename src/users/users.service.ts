@@ -14,22 +14,44 @@ export class UsersService {
     private readonly passwordService: HashingService,
   ) {}
 
+  /**
+   * Creates a new user account using email and password credentials.
+   * Hashes the password before persisting the record.
+   * @param createUserInput - Registration data including email, name, and plaintext password.
+   * @returns The created user record.
+   */
   async createUserByCredentials(createUserInput: CreateUserInput) {
     const { password } = createUserInput;
-    createUserInput.password = await this.passwordService.hash(password);
+    createUserInput.password = await this.passwordService.hash(password!);
     return this.usersRepository.create(createUserInput);
   }
 
+  /**
+   * Changes the password for a user after verifying the current password.
+   * @param id - The ID of the user.
+   * @param input - Object containing the old password and the desired new password.
+   * @returns The updated user record.
+   * @throws ForbiddenException if the old password is incorrect or the new password matches the old one.
+   */
   async changePassword(id: string, input: ChangeUserPasswordInput): Promise<User> {
     const { oldPassword, newPassword } = input;
     const user = await this.findUserByIdOrThrow(id);
-    const isOldPasswordValid = await this.passwordService.compare(oldPassword, user.password);
+    const isOldPasswordValid = await this.passwordService.compare(oldPassword, user.password ?? '');
     if (!isOldPasswordValid) throw new ForbiddenException('Old password is incorrect');
-    await this.compareNewPasswordToOld(newPassword, user.password);
+    await this.compareNewPasswordToOld(newPassword, user.password ?? '');
     const hashedNewPassword = await this.passwordService.hash(newPassword);
     return this.usersRepository.update(id, { password: hashedNewPassword });
   }
 
+  /**
+   * Creates a user via an OAuth provider, or links the provider to an existing account if the email already exists.
+   * @param providerId - The unique identifier assigned by the OAuth provider.
+   * @param provider - The OAuth provider name (e.g., "google", "facebook").
+   * @param email - Optional email address from the provider.
+   * @param name - Optional display name from the provider.
+   * @param profilePicture - Optional profile picture URL from the provider.
+   * @returns The created or existing user record.
+   */
   async createUserByAuthProvider(
     providerId: string,
     provider: string,
@@ -47,6 +69,11 @@ export class UsersService {
     return this.usersRepository.createWithAuthProvider(email, name, profilePicture, providerId, provider);
   }
 
+  /**
+   * Returns a paginated, filtered list of users.
+   * @param filter - Pagination and filter arguments including cursor, page size, role, and search fields.
+   * @returns Paginated user connection with edges and pageInfo.
+   */
   async findAll(filter: UserPaginateArgs) {
     const paginationOptions = this.buildPaginationOptions(filter);
     const whereClause = this.buildWhereClause(filter);
@@ -66,13 +93,13 @@ export class UsersService {
     return {
       take: pageSize,
       skip: hasCursor ? 1 : 0,
-      cursor: hasCursor ? { id: after } : undefined,
+      cursor: hasCursor ? { id: after! } : undefined,
       orderBy,
       orderInAsc,
     };
   }
 
-  private validatePaginationOrderingCriteria(orderBy: string) {
+  private validatePaginationOrderingCriteria(orderBy: string | undefined) {
     const validOrderByFields = [
       'id',
       'name',
@@ -124,18 +151,39 @@ export class UsersService {
     };
   }
 
+  /**
+   * Retrieves a user by their ID.
+   * @param id - The ID of the user.
+   * @returns The user record, or null if not found.
+   */
   findOne(id: string) {
     return this.usersRepository.findById(id);
   }
 
+  /**
+   * Retrieves a user by their email address.
+   * @param email - The email address to look up.
+   * @returns The user record, or null if not found.
+   */
   findUserByEmail(email: string) {
     return this.usersRepository.findByEmail(email);
   }
 
+  /**
+   * Retrieves a user linked to a specific OAuth provider ID.
+   * @param providerId - The provider-assigned unique identifier.
+   * @returns The user record, or null if not found.
+   */
   findUserByProviderId(providerId: string) {
     return this.usersRepository.findByProviderId(providerId);
   }
 
+  /**
+   * Updates profile fields for an existing user.
+   * @param id - The ID of the user to update.
+   * @param updateUserInput - Partial user data to apply.
+   * @returns The updated user record.
+   */
   async update(id: string, updateUserInput: UpdateUserInput) {
     return this.usersRepository.update(id, updateUserInput);
   }
@@ -147,25 +195,53 @@ export class UsersService {
     }
   }
 
+  /**
+   * Permanently deletes a user by ID.
+   * @param id - The ID of the user to delete.
+   * @returns The deleted user record.
+   * @throws NotFoundException if the user does not exist.
+   */
   async remove(id: string) {
     await this.findUserByIdOrThrow(id);
     return this.usersRepository.delete(id);
   }
 
+  /**
+   * Deactivates a user account by setting isActive to false.
+   * @param id - The ID of the user to archive.
+   * @returns The updated user record.
+   * @throws NotFoundException if the user does not exist.
+   */
   async archiveUser(id: string) {
     await this.findUserByIdOrThrow(id);
     return this.usersRepository.update(id, { isActive: false });
   }
 
+  /**
+   * Reactivates a previously archived user account by setting isActive to true.
+   * @param id - The ID of the user to restore.
+   * @returns The updated user record.
+   * @throws NotFoundException if the user does not exist.
+   */
   async deArchiveUser(id: string) {
     await this.findUserByIdOrThrow(id);
     return this.usersRepository.update(id, { isActive: true });
   }
 
+  /**
+   * Retrieves a user's full profile including related entities (addresses, orders, etc.).
+   * @param id - The ID of the user.
+   * @returns The user record with all loaded relations.
+   */
   async getUserProfile(id: string) {
     return this.usersRepository.findWithRelations(id);
   }
 
+  /**
+   * Updates the lastLoginAt timestamp for a user to the current time.
+   * @param id - The ID of the user.
+   * @returns The updated user record.
+   */
   async updateLastLogin(id: string) {
     return this.usersRepository.update(id, { lastLoginAt: new Date() });
   }

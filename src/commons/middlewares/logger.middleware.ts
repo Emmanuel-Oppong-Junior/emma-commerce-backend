@@ -1,4 +1,5 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
+import { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import { LoggerService } from '../logger.service';
 import { REQUEST_USER_KEY } from '../../iam/iam.constants';
@@ -9,7 +10,7 @@ const SLOW_REQUEST_THRESHOLD_MS = 2000;
 export class LoggerMiddleware implements NestMiddleware {
   constructor(private readonly logger: LoggerService) {}
 
-  use(req: any, res: any, next: () => void) {
+  use(req: Request & { correlationId?: string; [REQUEST_USER_KEY]?: { id: string } }, res: Response, next: NextFunction) {
     const start = Date.now();
     const requestId = (req.headers['x-request-id'] as string) ?? randomUUID();
     req.correlationId = requestId;

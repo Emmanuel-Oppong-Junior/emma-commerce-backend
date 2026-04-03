@@ -18,7 +18,7 @@ export class CartService {
    * @param userId - The ID of the user owning the cart.
    * @returns The user's cart with its items.
    */
-  async getCart(userId: string): Promise<Cart & { items: CartItem[] }> {
+  async getCart(userId: string): Promise<(Cart & { items: CartItem[] }) | null> {
     return this.cartRepository.findByUser(userId);
   }
 
@@ -35,7 +35,7 @@ export class CartService {
     const product = await this.validateProductAndStock(productId, quantity);
     const cart = await this.cartRepository.findOrCreate(userId);
     await this.upsertCartItem(cart.id, product, quantity);
-    return this.getCart(userId);
+    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
   }
 
   /**
@@ -52,7 +52,7 @@ export class CartService {
     const item = this.findCartItemOrThrow(cart, cartItemId);
 
     await this.handleCartItemUpdate(item, quantity);
-    return this.getCart(userId);
+    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
   }
 
   /**
@@ -67,7 +67,7 @@ export class CartService {
     const cartHasItem = cart.items.some((i) => i.id === cartItemId);
     if (!cartHasItem) throw new NotFoundException(`Cart item "${cartItemId}" not found in user's cart`);
     await this.cartRepository.deleteCartItem(cartItemId);
-    return this.getCart(userId);
+    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
   }
 
   /**
@@ -79,7 +79,7 @@ export class CartService {
   async clearCart(userId: string): Promise<Cart & { items: CartItem[] }> {
     const cart = await this.getCartOrThrow(userId);
     await this.cartRepository.deleteAllCartItems(cart.id);
-    return this.getCart(userId);
+    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
   }
 
   /**
@@ -123,7 +123,7 @@ export class CartService {
       existingItem?.id,
       cartId,
       product.id,
-      product.price,
+      product.price!,
       newQuantity,
       quantity,
     );

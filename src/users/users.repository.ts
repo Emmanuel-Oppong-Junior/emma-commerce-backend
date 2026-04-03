@@ -25,7 +25,12 @@ export class UsersRepository {
     provider: string,
   ): Promise<User> {
     return this.prisma.user.create({
-      data: { email, name, profilePicture, authProvider: { create: { providerId, provider } } },
+      data: {
+        email: email as string,
+        name,
+        profilePicture,
+        authProvider: { create: { providerId, provider } },
+      },
     });
   }
 

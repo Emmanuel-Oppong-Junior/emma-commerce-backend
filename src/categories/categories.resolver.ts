@@ -31,7 +31,7 @@ export class CategoriesResolver {
     description: 'Retrieves a list of all categories, sorted alphabetically by name',
   })
   findAll(@Info() requestInfo?: GraphQLResolveInfo) {
-    const requestedFields = extractRequestedFieldsFromQuery(requestInfo, {
+    const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
       excludedFields: [],
       level: 1,
     });

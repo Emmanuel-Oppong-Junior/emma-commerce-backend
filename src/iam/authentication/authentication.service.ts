@@ -134,7 +134,7 @@ export class AuthenticationService {
     const resetToken = await this.signToken(
       user.id,
       this.jwtConfiguration.resetTokenTtl,
-      this.jwtConfiguration.resetSecret,
+      this.jwtConfiguration.resetSecret!,
       { purpose: 'password-reset' },
     );
     const tokenHash = this.hashToken(resetToken);
@@ -176,8 +176,8 @@ export class AuthenticationService {
    */
   async generateTokens(user: User) {
     const [accessToken, refreshToken] = await Promise.all([
-      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret),
-      this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret),
+      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!),
+      this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret!),
     ]);
     await Promise.all([this.saveRefreshToken(user.id, refreshToken), this.userService.updateLastLogin(user.id)]);
     return { accessToken, refreshToken };

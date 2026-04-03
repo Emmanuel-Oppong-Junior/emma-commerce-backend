@@ -34,7 +34,10 @@ export class UploadController {
     );
     return {
       message: 'Product images uploaded successfully',
-      files: uploadedFiles.map((f) => ({ url: f['secure_url'], public_id: f['public_id'] })),
+      files: uploadedFiles.map((f) => {
+        const r = f as Record<string, unknown>;
+        return { url: r['secure_url'], public_id: r['public_id'] };
+      }),
     };
   }
 
@@ -46,6 +49,7 @@ export class UploadController {
       throw new InternalServerErrorException('File upload failed!');
     }
     const result = await this.cloudinaryService.uploadImage(image, 'ecommerce');
-    return { url: result['secure_url'], public_id: result['public_id'] };
+    const r = result as Record<string, unknown>;
+    return { url: r['secure_url'], public_id: r['public_id'] };
   }
 }

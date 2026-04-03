@@ -20,6 +20,15 @@ export class OrdersService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  /**
+   * Creates a new order from the user's active cart, applies taxes and any coupon, and clears the cart on success.
+   * @param userId - The ID of the user placing the order.
+   * @param shippingAddressId - The ID of the shipping address to use.
+   * @param couponCode - Optional coupon code to apply to the order.
+   * @returns The created order with its items.
+   * @throws NotFoundException if the cart is empty or the shipping address is not found.
+   * @throws BadRequestException if the user is ineligible or stock is insufficient.
+   */
   async createOrderFromCart(
     userId: string,
     shippingAddressId: string,
@@ -34,22 +43,51 @@ export class OrdersService {
     return order;
   }
 
+  /**
+   * Retrieves a specific order owned by the given user.
+   * @param userId - The ID of the user.
+   * @param orderId - The ID of the order.
+   * @returns The order with its items.
+   * @throws NotFoundException if the order does not exist or does not belong to the user.
+   */
   async getOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     return this.retrieveUserOrder(userId, orderId);
   }
 
+  /**
+   * Retrieves an order by ID without any ownership check (admin use).
+   * @param orderId - The ID of the order.
+   * @returns The order with its items, or null if not found.
+   */
   async viewOrder(orderId: string) {
     return this.ordersRepository.findById(orderId, { items: true });
   }
 
+  /**
+   * Retrieves all orders placed by a specific user.
+   * @param userId - The ID of the user.
+   * @returns List of orders with their items.
+   */
   async getUserOrders(userId: string): Promise<(Order & { items: OrderItem[] })[]> {
     return this.ordersRepository.findByUser(userId);
   }
 
+  /**
+   * Retrieves all orders in the system (admin only).
+   * @returns List of all orders.
+   */
   async getOrders(): Promise<Order[]> {
     return this.ordersRepository.findAll();
   }
 
+  /**
+   * Updates the status of an order and emits shipping notifications when appropriate.
+   * @param orderId - The ID of the order to update.
+   * @param status - The new order status to apply.
+   * @param adminUserId - Optional ID of the admin performing the update (for audit logging).
+   * @returns The updated order with its items.
+   * @throws NotFoundException if the order does not exist.
+   */
   async updateOrderStatus(
     orderId: string,
     status: OrderStatus,
@@ -65,23 +103,46 @@ export class OrdersService {
       details: { from: order.status as string, to: status as string },
     });
     if (status === 'SHIPPED' || status === 'DELIVERED') {
-      this.sendOrderStatusEmail(order.userId, orderId, status, (updated as any).trackingNumber);
+      this.sendOrderStatusEmail(order.userId, orderId, status, (updated as Order & { trackingNumber?: string | null }).trackingNumber ?? undefined);
     }
     return updated;
   }
 
+  /**
+   * Cancels an order owned by the user and restores the reserved stock.
+   * @param userId - The ID of the user requesting the cancellation.
+   * @param orderId - The ID of the order to cancel.
+   * @returns The cancelled order with its items.
+   * @throws NotFoundException if the order is not found for the user.
+   * @throws BadRequestException if the order has already shipped or been delivered.
+   */
   async cancelOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
     this.ensureOrderCanBeCancelled(order);
     return this.cancelOrderAndRestoreStock(order);
   }
 
+  /**
+   * Transitions a pending order to PROCESSING status after confirming the user owns it.
+   * @param userId - The ID of the user who owns the order.
+   * @param orderId - The ID of the order to mark as paid.
+   * @returns The updated order with its items.
+   * @throws NotFoundException if the order is not found for the user.
+   * @throws BadRequestException if the order is not in PENDING status.
+   */
   async markOrderAsPaid(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
     this.ensureOrderCanBePaid(order);
     return this.ordersRepository.updateStatus(orderId, 'PROCESSING');
   }
 
+  /**
+   * Soft-deletes an order and restores its reserved stock (admin only).
+   * @param orderId - The ID of the order to delete.
+   * @param adminUserId - Optional ID of the admin performing the deletion (for audit logging).
+   * @returns The soft-deleted order with its items.
+   * @throws NotFoundException if the order does not exist.
+   */
   async deleteOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
     const result = await this.softDeleteOrder(order);
@@ -94,6 +155,15 @@ export class OrdersService {
     return result;
   }
 
+  /**
+   * Updates the shipping carrier and tracking number for an order and notifies the customer.
+   * @param orderId - The ID of the order to update.
+   * @param trackingNumber - Optional shipment tracking number.
+   * @param carrier - Optional carrier name.
+   * @param adminUserId - Optional ID of the admin performing the update (for audit logging).
+   * @returns The updated order with its items.
+   * @throws NotFoundException if the order does not exist.
+   */
   async updateShipping(
     orderId: string,
     trackingNumber?: string,

@@ -84,9 +84,9 @@ export const extractRequestedFieldsFromQuery = (
   info: GraphQLResolveInfo,
   options: { excludedFields?: string[]; level?: 1 | 2 | 3 } = { excludedFields: [], level: 1 },
 ): object => {
-  if (!info) return undefined;
-  const prismaSelect = {};
-  options.excludedFields.push('__typename');
+  if (!info) return {};
+  const prismaSelect: Record<string, unknown> = {};
+  (options.excludedFields ?? []).push('__typename');
   // if (options.level === 2) {
   //   const item = info.fieldNodes[0]?.selectionSet?.selections.find((selection) =>
   //     Array.isArray((selection as FieldNode)?.selectionSet?.selections),
@@ -95,17 +95,18 @@ export const extractRequestedFieldsFromQuery = (
   // } else {
   //   parseSelectionSet(info.fieldNodes[0]?.selectionSet, prismaSelect, options.excludedFields);
   // }
-  const parseSelectionSet = (selectionSet, currentSelect) => {
+  const parseSelectionSet = (selectionSet: { selections?: readonly unknown[] } | undefined, currentSelect: Record<string, unknown>) => {
     selectionSet?.selections?.forEach((selection) => {
-      if (selection.kind === 'Field') {
+      const sel = selection as { kind: string; name?: { value: string }; selectionSet?: { selections?: unknown[] } };
+      if (sel.kind === 'Field') {
         // Check if the field should be excluded
-        if (!options.excludedFields.includes(selection?.name?.value)) {
-          if (selection.selectionSet) {
+        if (!(options.excludedFields ?? []).includes(sel?.name?.value ?? '')) {
+          if (sel.selectionSet) {
             // Include at least the id to prevent an error if the excluded field was the only child
-            currentSelect[selection.name.value] = { id: true };
-            parseSelectionSet(selection.selectionSet, currentSelect[selection.name.value]);
+            currentSelect[sel.name!.value] = { id: true };
+            parseSelectionSet(sel.selectionSet, currentSelect[sel.name!.value] as Record<string, unknown>);
           } else {
-            currentSelect[selection.name.value] = true;
+            currentSelect[sel.name!.value] = true;
           }
         }
       }
@@ -154,13 +155,13 @@ export const extractRequestedFieldsFromQuery = (
  * @param {object} obj - The object to transform.
  * @returns {object} The transformed Prisma select object.
  */
-const transformObjectToSelect = (obj: object): object => {
-  const result = {};
+const transformObjectToSelect = (obj: Record<string, unknown>): Record<string, unknown> => {
+  const result: Record<string, unknown> = {};
 
   for (const key in obj) {
     if (typeof obj[key] === 'object' && obj[key] !== null) {
       // If the value is an object, recursively transform it
-      result[key] = { select: transformObjectToSelect(obj[key]) };
+      result[key] = { select: transformObjectToSelect(obj[key] as Record<string, unknown>) };
     } else {
       result[key] = obj[key];
     }

@@ -15,19 +15,19 @@ datasource db {
 }
 
 model User {
-  id                  String         @id @default(cuid())
-  name                String?
-  email               String         @unique
-  password            String?
-  phoneNumber         String?        @unique
-  role                Role           @default(USER)
-  isActive            Boolean        @default(true)
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-  lastLoginAt         DateTime?
-  profilePicture      String?
-  failedLoginAttempts Int            @default(0)
-  lockedUntil         DateTime?
+  id                    String          @id @default(cuid())
+  name                  String?
+  email                 String          @unique
+  password              String?
+  phoneNumber           String?         @unique
+  role                  Role            @default(USER)
+  isActive              Boolean         @default(true)
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  lastLoginAt           DateTime?
+  profilePicture        String?
+  failedLoginAttempts   Int             @default(0)
+  lockedUntil           DateTime?
   addresses             Address[]
   reviews               Review[]
   cart                  Cart?
@@ -108,6 +108,8 @@ model SubCategory {
   products    Product[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  @@unique([name, categoryId])
 }
 
 model Brand {
@@ -179,12 +181,12 @@ model Product {
 
   expiryDate DateTime?
 
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   categoryId    String?
-  category      Category?    @relation(fields: [categoryId], references: [id])
+  category      Category?      @relation(fields: [categoryId], references: [id])
   subcategoryId String?
-  subcategory   SubCategory? @relation(fields: [subcategoryId], references: [id])
+  subcategory   SubCategory?   @relation(fields: [subcategoryId], references: [id])
   tags          Tag[]
   reviews       Review[]
   variants      Variant[]
@@ -330,7 +332,7 @@ model OrderItem {
   productId      String
   variantId      String?
   quantity       Int       @default(1)
-  priceAtOrder   Decimal  @db.Decimal(10, 2)
+  priceAtOrder   Decimal   @db.Decimal(10, 2)
   order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product        Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
   variant        Variant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
@@ -349,7 +351,7 @@ model Payment {
   id             String        @id @default(cuid())
   orderId        String        @unique
   order          Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  amount         Decimal  @db.Decimal(10, 2)
+  amount         Decimal       @db.Decimal(10, 2)
   currency       String        @default("GHS")
   paymentMethod  String
   status         PaymentStatus @default(PENDING)

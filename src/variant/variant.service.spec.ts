@@ -27,7 +27,7 @@ describe('VariantService', () => {
     quantity: 50,
     price: 29.99,
     productId: mockProductId,
-    discountId: null,
+    discountId: undefined,
   };
   const mockVariantWithProduct = {
     ...mockVariant,
@@ -39,7 +39,7 @@ describe('VariantService', () => {
     quantity: 50,
     price: 29.99,
     productId: mockProductId,
-    discountId: null,
+    discountId: undefined,
   };
   const mockUpdateVariantInput = {
     size: 'L',

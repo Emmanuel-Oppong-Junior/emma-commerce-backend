@@ -29,8 +29,8 @@ export class FacebookAuthenticationService {
     private readonly authService: AuthenticationService,
     private readonly userService: UsersService,
   ) {
-    this.appId = this.configService.get<string>('FACEBOOK_APP_ID');
-    this.appSecret = this.configService.get<string>('FACEBOOK_APP_SECRET');
+    this.appId = this.configService.getOrThrow<string>('FACEBOOK_APP_ID');
+    this.appSecret = this.configService.getOrThrow<string>('FACEBOOK_APP_SECRET');
   }
 
   async authenticate(token: string) {

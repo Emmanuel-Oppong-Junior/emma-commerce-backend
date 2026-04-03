@@ -191,14 +191,9 @@ The services currently call `PrismaService` directly, violating the Dependency I
 ## Phase 7 — Test Coverage
 
 ### Unit Tests
-- [ ] Write unit tests for `CartService` — cover add item, remove item, stock validation, clear cart
-- [ ] Write unit tests for `OrdersService` — cover create order, cancel order, status transitions
-- [ ] Write unit tests for `PaymentService` — cover initiate, verify, webhook processing
-- [ ] Write unit tests for `DiscountService` — cover percentage vs flat calculation, best-discount selection, expired discounts
-- [ ] Write unit tests for `ReviewService` — cover duplicate review prevention, ownership checks
-- [ ] Write unit tests for `AuthService` — cover sign-up, sign-in, refresh, account lockout
+- [ ] Ensure all services and providers have been covered with unit test.
 - [ ] Write unit tests for each Repository class once the repository layer is introduced (Phase 2)
-- [ ] Achieve ≥ 90% line coverage on all service files (`npm run test:cov`)
+- [ ] Achieve ≥ 90% line coverage on all service/providers files (`npm run test:cov`)
 
 ### E2E Tests
 - [ ] Add E2E test for the full happy-path order flow: auth → browse products → add to cart → create order → initiate payment → webhook → verify payment
@@ -210,14 +205,14 @@ The services currently call `PrismaService` directly, violating the Dependency I
 
 ## Phase 8 — Code Quality & Housekeeping
 
-- [ ] Enable TypeScript `strict` mode in `tsconfig.json` if not already on; resolve all resulting type errors
-- [ ] Remove all `any` type usages from the codebase
-- [ ] Remove all `console.log` / `console.error` calls; replace with injected `Logger`
-- [ ] Add JSDoc comments to all public service methods
-- [ ] Add `@Min(0)` constraint to all quantity and price fields in DTOs
-- [ ] Add `@IsUrl({ require_tld: true, protocols: ['https'] })` to all image URL fields consistently
-- [ ] Validate `SubCategory` uniqueness within the same parent category at the database level (`@@unique([name, categoryId])` in Prisma schema)
-- [ ] Add `@@index([discountId])` on `Variant` and `Category` models in Prisma schema for discount lookup performance
-- [ ] Review and document why `forwardRef` is used anywhere it appears; refactor away if possible
-- [ ] Audit all environment variables and ensure every one is declared in the config validation schema (no undeclared `process.env` reads)
-- [ ] Add `prisma/seed.ts` idempotency: ensure seed can be re-run without creating duplicates
+- [x] Enable TypeScript `strict` mode in `tsconfig.json` if not already on; resolve all resulting type errors — `strict: true` + `strictPropertyInitialization: false` (NestJS DI); all 26 affected files fixed
+- [x] Remove all `any` type usages from the codebase — replaced with `unknown`, proper Express types, typed params, and `DiscountEntry` local types
+- [x] Remove all `console.log` / `console.error` calls; replace with injected `Logger` — already clean; confirmed via grep
+- [x] Add JSDoc comments to all public service methods — added to all 23 services
+- [x] Add `@Min(0)` constraint to all quantity and price fields in DTOs — added to `CreateVariantInput.quantity` and `CreateVariantInput.price`
+- [x] Add `@IsUrl({ require_tld: true, protocols: ['https'] })` to all image URL fields consistently — added to `CreateBrandInput.logo`; category/subcategory/product image fields already had it
+- [x] Validate `SubCategory` uniqueness within the same parent category at the database level — `@@unique([name, categoryId])` added; migration `20260403120000_subcategory_unique_name_per_category` created
+- [x] Add `@@index([discountId])` on `Variant` and `Category` models in Prisma schema for discount lookup performance — already present from prior phases; confirmed in audit
+- [x] Review and document why `forwardRef` is used anywhere it appears; refactor away if possible — no `forwardRef` usage found in codebase; nothing to do
+- [x] Audit all environment variables and ensure every one is declared in the config validation schema (no undeclared `process.env` reads) — `cloudinary.service.ts` migrated from direct `process.env.CLOUD_*` to `ConfigService.getOrThrow('CLOUDINARY_*')`; `NODE_ENV` already in schema; jwt.config.ts and main.ts are config-layer files where direct reads are acceptable
+- [x] Add `prisma/seed.ts` idempotency: ensure seed can be re-run without creating duplicates — already implemented with `createMany({ skipDuplicates: true })` throughout; confirmed in audit

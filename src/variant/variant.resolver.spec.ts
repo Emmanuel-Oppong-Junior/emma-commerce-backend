@@ -24,7 +24,7 @@ describe('VariantResolver', () => {
     price: 29.99,
     productId: 'prod1',
     product: { id: 'prod1', name: 'T-Shirt' },
-    discountId: null,
+    discountId: undefined,
   };
 
   const mockCreateVariantInput = {
@@ -33,7 +33,7 @@ describe('VariantResolver', () => {
     quantity: 50,
     price: 29.99,
     productId: 'prod1',
-    discountId: null,
+    discountId: undefined,
   };
 
   const mockUpdateVariantInput: UpdateVariantInput = {

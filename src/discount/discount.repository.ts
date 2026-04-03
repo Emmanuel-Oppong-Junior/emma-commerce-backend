@@ -44,7 +44,7 @@ export class DiscountRepository {
     return this.prisma.product.findUnique({ where: { id }, select: select ?? undefined });
   }
 
-  async findProductWithDiscounts(productId: string): Promise<{ categoryId: string; discounts: Discount[] } | null> {
+  async findProductWithDiscounts(productId: string): Promise<{ categoryId: string | null; discounts: Discount[] } | null> {
     return this.prisma.product.findUnique({
       where: { id: productId },
       select: {

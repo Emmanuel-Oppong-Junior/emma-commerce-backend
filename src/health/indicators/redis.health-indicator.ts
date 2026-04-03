@@ -28,7 +28,8 @@ export class RedisHealthIndicator extends HealthIndicator {
       if (value !== 1) throw new Error('Cache probe returned unexpected value');
       return this.getStatus(key, true);
     } catch (error) {
-      throw new HealthCheckError('Redis health check failed', this.getStatus(key, false, { error: error.message }));
+      const message = error instanceof Error ? error.message : String(error);
+      throw new HealthCheckError('Redis health check failed', this.getStatus(key, false, { error: message }));
     }
   }
 }

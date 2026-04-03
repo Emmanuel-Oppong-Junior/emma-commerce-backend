@@ -19,9 +19,10 @@ export class CloudinaryHealthIndicator extends HealthIndicator {
       await cloudinary.api.ping();
       return this.getStatus(key, true);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new HealthCheckError(
         'Cloudinary health check failed',
-        this.getStatus(key, false, { error: error.message }),
+        this.getStatus(key, false, { error: message }),
       );
     }
   }

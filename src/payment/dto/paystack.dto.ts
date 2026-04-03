@@ -18,14 +18,14 @@ type Data = {
   channel?: string;
   currency?: string;
   ip_address?: string;
-  metadata?: any;
+  metadata?: unknown;
 
-  message?: any;
-  fees: any;
-  log: any;
-  customer: any;
-  authorization: any;
-  plan: any;
+  message?: unknown;
+  fees: unknown;
+  log: unknown;
+  customer: unknown;
+  authorization: unknown;
+  plan: unknown;
 };
 
 export class PaystackCallbackDto {

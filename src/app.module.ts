@@ -85,7 +85,7 @@ import { ScheduleModule } from '@nestjs/schedule';
         plugins: [ApolloServerPluginLandingPageLocalDefault()],
         sortSchema: true,
         autoSchemaFile: 'schema.gql',
-        context: ({ req, res }) => ({ req, res }),
+        context: ({ req, res }: { req: unknown; res: unknown }) => ({ req, res }),
       }),
       inject: [LoggerService],
     }),
@@ -132,7 +132,7 @@ import { ScheduleModule } from '@nestjs/schedule';
   ],
 })
 export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer): any {
+  configure(consumer: MiddlewareConsumer): void {
     consumer.apply(LoggerMiddleware).forRoutes('*');
   }
 }

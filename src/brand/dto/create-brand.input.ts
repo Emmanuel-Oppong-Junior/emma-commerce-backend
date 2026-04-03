@@ -1,5 +1,5 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
 
 @InputType()
 export class CreateBrandInput {
@@ -16,6 +16,6 @@ export class CreateBrandInput {
 
   @Field({ nullable: true })
   @IsOptional()
-  @IsString()
+  @IsUrl({ require_tld: true, protocols: ['https'] })
   logo?: string;
 }

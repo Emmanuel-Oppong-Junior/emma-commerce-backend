@@ -10,6 +10,13 @@ const RATES: Record<string, number> = {
 
 @Injectable()
 export class CurrencyService {
+  /**
+   * Converts an amount from one supported currency to another using fixed exchange rates.
+   * @param amount - The monetary amount to convert.
+   * @param fromCurrency - The ISO currency code of the source currency (e.g., "GHS").
+   * @param toCurrency - The ISO currency code of the target currency (e.g., "USD").
+   * @returns The converted amount rounded to two decimal places.
+   */
   convert(amount: number, fromCurrency: string, toCurrency: string): number {
     const fromRate = RATES[fromCurrency] ?? 1;
     const toRate = RATES[toCurrency] ?? 1;
@@ -17,6 +24,10 @@ export class CurrencyService {
     return Math.round(amountInBase * toRate * 100) / 100;
   }
 
+  /**
+   * Returns the list of currency codes supported by this service.
+   * @returns Array of ISO currency code strings.
+   */
   getSupportedCurrencies(): string[] {
     return Object.keys(RATES);
   }

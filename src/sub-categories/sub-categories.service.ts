@@ -57,7 +57,7 @@ export class SubCategoriesService {
 
     if (updateSubCategoryInput.name) {
       const current = await this.findOne(id);
-      const categoryId = updateSubCategoryInput.categoryId || current.categoryId;
+      const categoryId = updateSubCategoryInput.categoryId || current!.categoryId;
       const existing = await this.findSubCategoryByNameAndCategory(updateSubCategoryInput.name, categoryId);
       if (existing && existing.id !== id) {
         throw new ConflictException(

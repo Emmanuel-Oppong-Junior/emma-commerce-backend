@@ -3,9 +3,9 @@ import { CreateDiscountInput } from '../dto/create-discount.input';
 import { UpdateDiscountInput } from '../dto/update-discount.input';
 
 export interface DiscountConnectInput {
-  products: { connect?: { id: string }[] };
-  variants: { connect?: { id: string }[] };
-  categories: { connect?: { id: string }[] };
+  products?: { connect?: { id: string }[] };
+  variants?: { connect?: { id: string }[] };
+  categories?: { connect?: { id: string }[] };
 }
 
 export interface DiscountCalculation {
@@ -15,9 +15,9 @@ export interface DiscountCalculation {
 }
 
 export interface DiscountSetInput {
-  products: { set?: { id: string }[] };
-  variants: { set?: { id: string }[] };
-  categories: { set?: { id: string }[] };
+  products?: { set?: { id: string }[] };
+  variants?: { set?: { id: string }[] };
+  categories?: { set?: { id: string }[] };
 }
 
 export interface CartItemWithProduct extends CartItem {

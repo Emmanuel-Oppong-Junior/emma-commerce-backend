@@ -239,7 +239,9 @@ export class DiscountService {
   private async getApplicableDiscounts(productId: string, variantId?: string): Promise<Discount[]> {
     const product = await this.discountRepository.findProductWithDiscounts(productId);
     const discounts: Discount[] = product ? [...product.discounts] : [];
-    const categoryDiscounts = await this.discountRepository.findCategoryDiscounts(product.categoryId);
+    const categoryDiscounts = product?.categoryId
+      ? await this.discountRepository.findCategoryDiscounts(product.categoryId)
+      : [];
     discounts.push(...categoryDiscounts);
 
     if (variantId) {
@@ -282,7 +284,7 @@ export class DiscountService {
     return variant as { price: unknown };
   }
 
-  private getBestDiscountDetails(originalPrice: number, bestDiscount: Discount): DiscountCalculation {
+  private getBestDiscountDetails(originalPrice: number, bestDiscount: Discount | null): DiscountCalculation {
     if (!bestDiscount) return { discountedPrice: originalPrice, discountAmount: 0 };
     const discountAmount = this.calculateDiscountAmount(originalPrice, bestDiscount);
     const discountedPrice = Math.max(0, originalPrice - discountAmount);
@@ -303,7 +305,7 @@ export class DiscountService {
     for (const cartItem of cartItems) {
       const { discountedPrice, discountAmount, discountId } = await this.getDiscountedPriceForProduct(
         cartItem.productId,
-        cartItem.variantId,
+        cartItem.variantId ?? undefined,
       );
       total += Number(cartItem.product.price) * cartItem.quantity;
       discountTotal += discountAmount * cartItem.quantity;
@@ -329,7 +331,7 @@ export class DiscountService {
     const discounts: Discount[] = [];
 
     for (const item of cartItem) {
-      const itemDiscounts = await this.getApplicableDiscounts(item.productId, item.variantId);
+      const itemDiscounts = await this.getApplicableDiscounts(item.productId, item.variantId ?? undefined);
       for (const discount of itemDiscounts) {
         if (!discountIds.has(discount.id)) {
           discountIds.add(discount.id);
@@ -365,7 +367,7 @@ export class DiscountService {
     for (const orderItem of orderItems) {
       const { discountAmount, discountId } = await this.getDiscountedPriceForProduct(
         orderItem.productId,
-        orderItem.variantId,
+        orderItem.variantId ?? undefined,
       );
       total += Number(orderItem.product.price) * orderItem.quantity;
       discountTotal += discountAmount * orderItem.quantity;
@@ -398,24 +400,25 @@ export class DiscountService {
   }
 
   private async ensureProductsExist(input: { products?: string[] }) {
-    const invalidIds = await this.discountRepository.getInvalidIds(input.products, 'product');
+    const invalidIds = await this.discountRepository.getInvalidIds(input.products ?? [], 'product');
     if (invalidIds.length) throw new BadRequestException(`Invalid product IDs: ${invalidIds.join(', ')}`);
   }
 
   private async ensureVariantsExist(input: { variants?: string[] }) {
-    const invalidIds = await this.discountRepository.getInvalidIds(input.variants, 'variant');
+    const invalidIds = await this.discountRepository.getInvalidIds(input.variants ?? [], 'variant');
     if (invalidIds.length) throw new BadRequestException(`Invalid variant IDs: ${invalidIds.join(', ')}`);
   }
 
   private async ensureCategoriesExist(input: { categories?: string[] }) {
-    const invalidIds = await this.discountRepository.getInvalidIds(input.categories, 'category');
+    const invalidIds = await this.discountRepository.getInvalidIds(input.categories ?? [], 'category');
     if (invalidIds.length) throw new BadRequestException(`Invalid category IDs: ${invalidIds.join(', ')}`);
   }
 
   private ensureUpdateInputNotEmpty(input: UpdateDiscountInput) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { id, ...updateFields } = input;
-    if (Object.keys(updateFields).every((key) => updateFields[key] === undefined)) {
+    const fields = updateFields as Record<string, unknown>;
+    if (Object.keys(fields).every((key) => fields[key] === undefined)) {
       throw new BadRequestException('At least one field must be provided for update');
     }
   }

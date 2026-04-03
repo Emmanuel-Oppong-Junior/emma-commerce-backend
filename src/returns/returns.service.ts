@@ -17,6 +17,14 @@ export class ReturnsService {
     private readonly logger: LoggerService,
   ) {}
 
+  /**
+   * Submits a return request for a delivered order owned by the user.
+   * @param userId - The ID of the user making the request.
+   * @param input - Return request data including the order ID and reason.
+   * @returns The created return request.
+   * @throws NotFoundException if the order is not found or does not belong to the user.
+   * @throws BadRequestException if the order is not delivered or an active return request already exists.
+   */
   async createReturnRequest(userId: string, input: CreateReturnRequestInput): Promise<ReturnRequest> {
     const order = await this.prisma.order.findUnique({
       where: { id: input.orderId },
@@ -40,6 +48,13 @@ export class ReturnsService {
     });
   }
 
+  /**
+   * Approves a pending return request and sets the refund amount (admin only).
+   * @param input - Approval data including the return request ID, refund amount, and optional admin note.
+   * @returns The updated return request with APPROVED status.
+   * @throws NotFoundException if the return request does not exist.
+   * @throws BadRequestException if the request is not in PENDING status.
+   */
   async approveReturn(input: ApproveReturnInput): Promise<ReturnRequest> {
     const returnRequest = await this.findReturnOrThrow(input.returnRequestId);
     if (returnRequest.status !== 'PENDING') {
@@ -48,6 +63,13 @@ export class ReturnsService {
     return this.returnsRepository.updateStatus(input.returnRequestId, 'APPROVED', input.refundAmount, input.adminNote);
   }
 
+  /**
+   * Rejects a pending return request with an admin note (admin only).
+   * @param input - Rejection data including the return request ID and an admin note.
+   * @returns The updated return request with REJECTED status.
+   * @throws NotFoundException if the return request does not exist.
+   * @throws BadRequestException if the request is not in PENDING status.
+   */
   async rejectReturn(input: RejectReturnInput): Promise<ReturnRequest> {
     const returnRequest = await this.findReturnOrThrow(input.returnRequestId);
     if (returnRequest.status !== 'PENDING') {
@@ -56,6 +78,13 @@ export class ReturnsService {
     return this.returnsRepository.updateStatus(input.returnRequestId, 'REJECTED', undefined, input.adminNote);
   }
 
+  /**
+   * Initiates a Paystack refund for an approved return request and restores the product stock.
+   * @param returnRequestId - The ID of the approved return request to refund.
+   * @returns The updated return request with REFUNDED status.
+   * @throws NotFoundException if the return request or associated payment is not found.
+   * @throws BadRequestException if the request is not approved, refund amount is missing, or the Paystack call fails.
+   */
   async processRefund(returnRequestId: string): Promise<ReturnRequest> {
     const returnRequest = await this.findReturnOrThrow(returnRequestId);
     if (returnRequest.status !== 'APPROVED') {
@@ -80,10 +109,19 @@ export class ReturnsService {
     });
   }
 
+  /**
+   * Retrieves all return requests submitted by a specific user.
+   * @param userId - The ID of the user.
+   * @returns List of return requests for the user.
+   */
   async findByUser(userId: string): Promise<ReturnRequest[]> {
     return this.returnsRepository.findByUser(userId);
   }
 
+  /**
+   * Retrieves all return requests in the system (admin only).
+   * @returns List of all return requests.
+   */
   async findAll(): Promise<ReturnRequest[]> {
     return this.returnsRepository.findAll();
   }
@@ -104,7 +142,7 @@ export class ReturnsService {
     } catch (error) {
       this.logger.error(
         `Paystack refund failed | reference: ${transactionReference}`,
-        error?.message,
+        error instanceof Error ? error.message : String(error),
         'ReturnsService',
       );
       throw new BadRequestException('Refund processing failed. Please try again.');

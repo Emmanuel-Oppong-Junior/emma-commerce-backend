@@ -90,7 +90,7 @@ describe('UsersRepository', () => {
     it('should create a user with auth provider', async () => {
       mockPrismaUser.create.mockResolvedValue(mockUser);
 
-      const result = await repository.createWithAuthProvider('test@example.com', 'John', null, 'google123', 'google');
+      const result = await repository.createWithAuthProvider('test@example.com', 'John', undefined, 'google123', 'google');
 
       expect(mockPrismaUser.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ email: 'test@example.com' }) }),

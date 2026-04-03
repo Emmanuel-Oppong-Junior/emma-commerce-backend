@@ -27,7 +27,7 @@ export class PaymentController {
   @Auth(AuthType.None)
   @Post('/webhook')
   @HttpCode(HttpStatus.OK)
-  async paymentWebhookHandler(@Body() dto: PaystackWebhookDto, @Headers() headers = {}) {
+  async paymentWebhookHandler(@Body() dto: PaystackWebhookDto, @Headers() headers: Record<string, string> = {}) {
     const result = await this.paymentService.handlePaystackWebhook(dto, `${headers[PAYSTACK_WEBHOOK_SIGNATURE_KEY]}`);
     if (!result) throw new BadRequestException();
   }

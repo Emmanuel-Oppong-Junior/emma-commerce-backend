@@ -56,10 +56,24 @@ export class ProductsService {
     return this.productsRepository.delete(id);
   }
 
+  /**
+   * Associates an existing tag with a product.
+   * @param productId - The ID of the product.
+   * @param tagId - The ID of the tag to add.
+   * @returns The updated product.
+   * @throws NotFoundException if the product or tag does not exist.
+   */
   async addTagToProduct(productId: string, tagId: string): Promise<Product> {
     return this.updateProductTag(productId, tagId, 'connect');
   }
 
+  /**
+   * Removes an existing tag association from a product.
+   * @param productId - The ID of the product.
+   * @param tagId - The ID of the tag to remove.
+   * @returns The updated product.
+   * @throws NotFoundException if the product or tag does not exist.
+   */
   async removeTagFromProduct(productId: string, tagId: string): Promise<Product> {
     return this.updateProductTag(productId, tagId, 'disconnect');
   }
@@ -133,7 +147,7 @@ export class ProductsService {
   }
 
   private async validateProductInput(input: CreateProductInput | (UpdateProductInput & { id: string })) {
-    await this.validateCategoryAndSubcategory(input.categoryId, input.subcategoryId);
+    await this.validateCategoryAndSubcategory(input.categoryId ?? '', input.subcategoryId);
     await this.validateSkuUniqueness(input);
   }
 
@@ -231,10 +245,10 @@ export class ProductsService {
       edges: items.map((product) => ({
         cursor: product.id,
         node: product,
-      })),
+      })) as ProductConnection['edges'],
       pageInfo: {
         pageSize,
-        hasPreviousPage: skip > 0,
+        hasPreviousPage: (skip ?? 0) > 0,
         hasNextPage,
       },
     };

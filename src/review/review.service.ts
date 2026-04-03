@@ -63,7 +63,10 @@ export class ReviewService {
   async updateReview(userId: string, input: UpdateReviewInput): Promise<Review> {
     const review = await this.fetchReview(input.id);
     await this.ensureUserOwnsReview(userId, review);
-    return this.reviewRepository.update(input.id, { score: input.score, comment: input.comment });
+    return this.reviewRepository.update(input.id, {
+      score: input.score ?? review.score,
+      comment: input.comment ?? review.comment,
+    });
   }
 
   /**

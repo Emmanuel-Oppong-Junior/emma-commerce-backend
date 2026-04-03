@@ -94,7 +94,7 @@ export class ProductsResolver {
     filterArgs: ProductFilterArgs = {},
     @Info() requestInfo?: GraphQLResolveInfo,
   ) {
-    const requestedFields = extractRequestedFieldsFromQuery(requestInfo, {
+    const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
       excludedFields: ['edges', 'cursor', 'node', 'discountedPrice', 'appliedDiscount', 'variants', 'reviews'],
       level: 3,
     });
@@ -104,7 +104,7 @@ export class ProductsResolver {
   @Auth(AuthType.None)
   @Query(() => Product, { name: 'product', nullable: true })
   findOne(@Args('productId', { type: () => String }) productId: string, @Info() requestInfo?: GraphQLResolveInfo) {
-    const requestedFields = extractRequestedFieldsFromQuery(requestInfo, {
+    const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
       excludedFields: ['discountedPrice', 'appliedDiscount', 'variants', 'reviews'],
     });
     return this.productsService.findOne(productId, requestedFields);
