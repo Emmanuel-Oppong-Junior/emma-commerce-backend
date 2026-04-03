@@ -122,10 +122,30 @@ export class PaymentService {
    * @returns True if processed successfully, false otherwise.
    */
   async handlePaystackWebhook(dto: PaystackWebhookDto, signature: string): Promise<boolean> {
+    const { event } = dto;
+    const reference = dto.data?.reference ?? 'unknown';
+    const amount = dto.data?.amount ?? 0;
+    const currency = dto.data?.currency ?? '';
+
+    this.logger.log(
+      `Webhook received | event: ${event} | reference: ${reference} | amount: ${amount} ${currency}`,
+      'PaymentWebhook',
+    );
+
     if (!this.canProcessWebhook(dto, signature)) {
+      this.logger.warn(
+        `Webhook rejected | event: ${event} | reference: ${reference} | reason: invalid signature or irrelevant event`,
+        'PaymentWebhook',
+      );
       return false;
     }
-    return this.processWebhookPayment(dto.data.reference);
+
+    const success = await this.processWebhookPayment(reference);
+    this.logger.log(
+      `Webhook processed | event: ${event} | reference: ${reference} | status: ${success ? 'success' : 'failed'}`,
+      'PaymentWebhook',
+    );
+    return success;
   }
 
   /**
@@ -288,9 +308,9 @@ export class PaymentService {
       return true;
     } catch (error) {
       this.logger.error(
-        `Webhook processing failed | reference: ${reference} | ${error.message}`,
+        `Webhook verification failed | reference: ${reference} | ${error.message}`,
         error.stack,
-        'PaymentService',
+        'PaymentWebhook',
       );
       return false;
     }

@@ -16,7 +16,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const gqlHost = GqlArgumentsHost.create(host);
       const info = gqlHost.getInfo();
       const originalMessage = exception instanceof Error ? exception.message : String(exception);
-      console.log('originalMessage', originalMessage);
       this.logger.error(
         `GraphQL Error: ${originalMessage} | Path: ${info?.path?.key}`,
         exception instanceof Error ? exception.stack : undefined,

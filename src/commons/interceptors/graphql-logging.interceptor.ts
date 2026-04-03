@@ -22,7 +22,7 @@ export class GraphqlLoggingInterceptor implements NestInterceptor {
     const sanitizedVariables = sanitizeVariables(rawVariables);
     const variables = JSON.stringify(sanitizedVariables);
 
-    const correlationId = req?.correlationId ?? req?.headers?.['x-correlation-id'] ?? '-';
+    const correlationId = req?.correlationId ?? req?.headers?.['x-request-id'] ?? '-';
     const userId = req?.user?.id ?? 'anonymous';
 
     return next.handle().pipe(

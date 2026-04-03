@@ -1,4 +1,5 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { LoggerService } from '../logger.service';
 import { REQUEST_USER_KEY } from '../../iam/iam.constants';
 
@@ -10,9 +11,9 @@ export class LoggerMiddleware implements NestMiddleware {
 
   use(req: any, res: any, next: () => void) {
     const start = Date.now();
-    const correlationId = req.headers['x-correlation-id'] ?? this.generateId();
-    req.correlationId = correlationId;
-    res.setHeader('x-correlation-id', correlationId);
+    const requestId = (req.headers['x-request-id'] as string) ?? randomUUID();
+    req.correlationId = requestId;
+    res.setHeader('X-Request-ID', requestId);
 
     res.on('finish', () => {
       const duration = Date.now() - start;
@@ -21,7 +22,7 @@ export class LoggerMiddleware implements NestMiddleware {
       const userId = req[REQUEST_USER_KEY]?.id ?? 'anonymous';
       const contentLength = res.getHeader('content-length') ?? '-';
 
-      const msg = `${method} ${originalUrl} ${status} ${duration}ms | user:${userId} | size:${contentLength} | cid:${correlationId}`;
+      const msg = `${method} ${originalUrl} ${status} ${duration}ms | user:${userId} | size:${contentLength} | rid:${requestId}`;
 
       if (duration > SLOW_REQUEST_THRESHOLD_MS) {
         this.logger.warn(`SLOW REQUEST ${msg}`, 'HTTP');
@@ -30,9 +31,5 @@ export class LoggerMiddleware implements NestMiddleware {
       }
     });
     next();
-  }
-
-  private generateId(): string {
-    return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   }
 }

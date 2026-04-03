@@ -349,9 +349,9 @@ describe('PaymentService', () => {
 
       expect(result).toBe(false);
       expect(mockLoggerService.error).toHaveBeenCalledWith(
-        expect.stringContaining('Webhook processing failed'),
+        expect.stringContaining('Webhook verification failed'),
         expect.any(String),
-        'PaymentService',
+        'PaymentWebhook',
       );
     });
   });

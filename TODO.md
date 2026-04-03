@@ -121,18 +121,18 @@ The services currently call `PrismaService` directly, violating the Dependency I
 ## Phase 5 — Observability & Operations
 
 ### Request Correlation
-- [ ] Add a request-ID middleware (using `uuid`) that attaches `X-Request-ID` to every incoming request
-- [ ] Propagate the request ID through the Winston logger context so all log lines for a single request share the same ID
-- [ ] Return `X-Request-ID` in response headers for client-side correlation
+- [x] Add a request-ID middleware (using `uuid`) that attaches `X-Request-ID` to every incoming request — `LoggerMiddleware` uses `crypto.randomUUID()` (Node built-in, no ESM dependency); reads `X-Request-ID` from incoming header or generates a new one
+- [x] Propagate the request ID through the Winston logger context so all log lines for a single request share the same ID — `req.correlationId` set in middleware; `GraphqlLoggingInterceptor` and `LoggerMiddleware` both include `rid:` in every log line
+- [x] Return `X-Request-ID` in response headers for client-side correlation — `res.setHeader('X-Request-ID', requestId)` in `LoggerMiddleware`
 
 ### Logging
-- [ ] Ensure no `console.log` statements remain anywhere in the codebase (`npm run lint` or grep)
-- [ ] Add structured logging to the payment webhook handler (log reference, amount, status on every event)
-- [ ] Redact sensitive fields (`paymentDetails`, raw token values) from all log outputs
+- [x] Ensure no `console.log` statements remain anywhere in the codebase (`npm run lint` or grep) — removed `console.log('originalMessage', ...)` from `AllExceptionsFilter`
+- [x] Add structured logging to the payment webhook handler (log reference, amount, status on every event) — `handlePaystackWebhook` logs received/rejected/processed with event, reference, amount, currency, status
+- [x] Redact sensitive fields (`paymentDetails`, raw token values) from all log outputs — `sanitizeInitializeDetails` / `sanitizeVerifyDetails` strip PII before persisting; `sanitizeVariables` in `GraphqlLoggingInterceptor` redacts GraphQL input variables; no raw payment details are logged
 
 ### Health Checks
-- [ ] Verify `HealthModule` covers: database connectivity, Redis connectivity, Cloudinary reachability
-- [ ] Add a `/health/ready` vs `/health/live` distinction (readiness vs liveness probes)
+- [x] Verify `HealthModule` covers: database connectivity, Redis connectivity, Cloudinary reachability — `RedisHealthIndicator` (skips gracefully when `REDIS_HOST` unset) and `CloudinaryHealthIndicator` added; included in `/health/ready`
+- [x] Add a `/health/ready` vs `/health/live` distinction (readiness vs liveness probes) — `/health/live` returns `{ status: 'ok' }` immediately; `/health/ready` checks database + Redis + Cloudinary
 
 ---
 
