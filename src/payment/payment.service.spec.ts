@@ -267,16 +267,16 @@ describe('PaymentService', () => {
       data: { reference: 'ref1', status: 'success' },
     } as PaystackWebhookDto;
 
-    it('should return false for invalid signature', async () => {
+    it('should throw UnauthorizedException for invalid signature', async () => {
       jest.spyOn(service as any, 'isValidWebhookSignature').mockReturnValue(false);
 
-      const result = await service.handlePaystackWebhook(webhookDto, 'invalid_signature');
-
-      expect(result).toBe(false);
+      await expect(service.handlePaystackWebhook(webhookDto, 'invalid_signature')).rejects.toThrow(
+        UnauthorizedException,
+      );
       expect(paymentRepository.findByReference).not.toHaveBeenCalled();
     });
 
-    it('should return false for irrelevant event', async () => {
+    it('should return true (acknowledge) for irrelevant event without processing', async () => {
       jest.spyOn(service as any, 'isValidWebhookSignature').mockReturnValue(true);
       jest.spyOn(service as any, 'isRelevantEvent').mockReturnValue(false);
 
@@ -285,7 +285,7 @@ describe('PaymentService', () => {
         'valid_signature',
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe(true);
       expect(paymentRepository.findByReference).not.toHaveBeenCalled();
     });
 
@@ -301,16 +301,14 @@ describe('PaymentService', () => {
   });
 
   describe('handlePaystackWebhook — signature validation', () => {
-    it('should reject webhook with invalid HMAC signature', async () => {
+    it('should throw UnauthorizedException for invalid HMAC signature', async () => {
       const dto: PaystackWebhookDto = {
         event: PaystackEvent.CHARGE_SUCCESS,
         data: { reference: 'ref-sig-test', status: 'success' },
       } as PaystackWebhookDto;
       mockConfigService.get.mockReturnValue('real-secret');
 
-      const result = await service.handlePaystackWebhook(dto, 'invalid-sig');
-
-      expect(result).toBe(false);
+      await expect(service.handlePaystackWebhook(dto, 'invalid-sig')).rejects.toThrow(UnauthorizedException);
     });
 
     it('should accept webhook with valid HMAC signature', async () => {

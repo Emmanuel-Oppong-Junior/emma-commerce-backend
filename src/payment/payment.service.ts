@@ -132,12 +132,22 @@ export class PaymentService {
       'PaymentWebhook',
     );
 
-    if (!this.canProcessWebhook(dto, signature)) {
+    // [CRITICAL-1] Invalid signature must yield 401, not 200/400
+    if (!this.isValidWebhookSignature(dto, signature)) {
       this.logger.warn(
-        `Webhook rejected | event: ${event} | reference: ${reference} | reason: invalid signature or irrelevant event`,
+        `Webhook rejected | event: ${event} | reference: ${reference} | reason: invalid signature`,
         'PaymentWebhook',
       );
-      return false;
+      throw new UnauthorizedException('Invalid webhook signature');
+    }
+
+    if (!this.isRelevantEvent(dto.event)) {
+      this.logger.log(
+        `Webhook ignored | event: ${event} | reference: ${reference} | reason: unhandled event type`,
+        'PaymentWebhook',
+      );
+      // Acknowledge receipt to Paystack without processing
+      return true;
     }
 
     const success = await this.processWebhookPayment(reference);
@@ -300,10 +310,6 @@ export class PaymentService {
     }
 
     return payment;
-  }
-
-  private canProcessWebhook(dto: PaystackWebhookDto, signature: string): boolean {
-    return this.isValidWebhookSignature(dto, signature) && this.isRelevantEvent(dto.event);
   }
 
   private async processWebhookPayment(reference: string): Promise<boolean> {

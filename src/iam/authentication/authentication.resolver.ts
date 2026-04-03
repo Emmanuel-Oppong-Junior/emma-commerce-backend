@@ -63,11 +63,14 @@ export class AuthenticationResolver {
     return this.facebookAuthService.authenticate(input.token);
   }
 
+  // [HIGH-1] Password reset mutations are heavily rate-limited (3 per hour) to prevent abuse
+  @Throttle({ passwordReset: { ttl: 3600000, limit: 3 } })
   @Mutation(() => Boolean, { description: 'Request a password reset email' })
   forgotPassword(@Args('input', { type: () => ForgotPasswordInput }) input: ForgotPasswordInput) {
     return this.authService.forgotPassword(input.email);
   }
 
+  @Throttle({ passwordReset: { ttl: 3600000, limit: 3 } })
   @Mutation(() => Boolean, { description: 'Reset password using a valid reset token' })
   resetPassword(@Args('input', { type: () => ResetPasswordInput }) input: ResetPasswordInput) {
     return this.authService.resetPassword(input.resetToken, input.newPassword);

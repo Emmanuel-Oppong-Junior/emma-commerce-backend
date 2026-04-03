@@ -46,6 +46,7 @@ const mockPrisma = {
   user: mockPrismaUser,
   authProvider: mockPrismaAuthProvider,
   refreshToken: mockPrismaRefreshToken,
+  $transaction: jest.fn(),
 };
 
 describe('UsersRepository', () => {
@@ -290,6 +291,17 @@ describe('UsersRepository', () => {
       await repository.createRefreshToken('user1', 'hash123', new Date());
 
       expect(mockPrismaRefreshToken.create).toHaveBeenCalled();
+    });
+
+    it('should atomically rotate refresh token via $transaction', async () => {
+      mockPrisma.$transaction.mockResolvedValue(undefined);
+
+      const expiresAt = new Date(Date.now() + 86400_000);
+      await repository.rotateRefreshToken('old-hash', 'user1', 'new-hash', expiresAt);
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.anything(), expect.anything(), expect.anything()]),
+      );
     });
   });
 

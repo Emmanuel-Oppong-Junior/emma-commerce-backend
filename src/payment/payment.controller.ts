@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { PaystackCallbackDto, PaystackWebhookDto } from './dto/paystack.dto';
 import { PaymentService } from './payment.service';
@@ -28,7 +28,9 @@ export class PaymentController {
   @Post('/webhook')
   @HttpCode(HttpStatus.OK)
   async paymentWebhookHandler(@Body() dto: PaystackWebhookDto, @Headers() headers: Record<string, string> = {}) {
-    const result = await this.paymentService.handlePaystackWebhook(dto, `${headers[PAYSTACK_WEBHOOK_SIGNATURE_KEY]}`);
-    if (!result) throw new BadRequestException();
+    // Express lowercases all headers; PAYSTACK_WEBHOOK_SIGNATURE_KEY is 'x-paystack-signature'
+    // [CRITICAL-2] Header key is already lowercase — matches Express header normalisation
+    const signature = headers[PAYSTACK_WEBHOOK_SIGNATURE_KEY] ?? '';
+    await this.paymentService.handlePaystackWebhook(dto, signature);
   }
 }

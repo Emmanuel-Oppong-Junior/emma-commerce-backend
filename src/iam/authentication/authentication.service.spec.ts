@@ -29,6 +29,7 @@ const mockUsersRepository = {
   revokeRefreshTokensByHash: jest.fn(),
   deleteExpiredRefreshTokens: jest.fn(),
   createRefreshToken: jest.fn(),
+  rotateRefreshToken: jest.fn(),
 };
 
 const mockHashingService = {
@@ -184,7 +185,7 @@ describe('AuthenticationService', () => {
   });
 
   describe('refreshToken', () => {
-    it('should issue new tokens and revoke the old one (rotation)', async () => {
+    it('should atomically rotate refresh token and return new token pair', async () => {
       const rawToken = 'valid-refresh-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
       const storedToken = { tokenHash, revoked: false };
@@ -192,15 +193,20 @@ describe('AuthenticationService', () => {
       mockJwtService.verifyAsync.mockResolvedValue({ sub: '1' });
       mockUsersRepository.findRefreshToken.mockResolvedValue(storedToken);
       mockUsersService.findOne.mockResolvedValue(baseUser);
-      mockUsersRepository.revokeRefreshToken.mockResolvedValue(undefined);
       mockJwtService.signAsync.mockResolvedValueOnce('new-access').mockResolvedValueOnce('new-refresh');
-      mockUsersRepository.deleteExpiredRefreshTokens.mockResolvedValue(undefined);
-      mockUsersRepository.createRefreshToken.mockResolvedValue(undefined);
+      mockUsersRepository.rotateRefreshToken.mockResolvedValue(undefined);
       mockUsersService.updateLastLogin.mockResolvedValue(undefined);
 
       const result = await service.refreshToken({ refreshToken: rawToken });
 
-      expect(usersRepository.revokeRefreshToken).toHaveBeenCalledWith(tokenHash);
+      // Should use atomic rotation, not separate revoke + create calls
+      expect(usersRepository.rotateRefreshToken).toHaveBeenCalledWith(
+        tokenHash,
+        baseUser.id,
+        expect.any(String), // new token hash
+        expect.any(Date),
+      );
+      expect(usersRepository.revokeRefreshToken).not.toHaveBeenCalled();
       expect(result).toEqual({ accessToken: 'new-access', refreshToken: 'new-refresh' });
     });
 

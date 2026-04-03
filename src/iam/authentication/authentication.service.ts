@@ -80,6 +80,7 @@ export class AuthenticationService {
    * Issues new tokens using a valid refresh token (rotation).
    * The supplied refresh token is revoked immediately and replaced with a new one.
    * Re-validates that the user's account is still active.
+   * [HIGH-2] Revoke + create are now atomic via a Prisma $transaction.
    *
    * @throws UnauthorizedException - If the token is invalid, revoked, or the user is inactive.
    */
@@ -101,10 +102,19 @@ export class AuthenticationService {
       if (!user) throw new UnauthorizedException('User not found');
       if (!user.isActive) throw new UnauthorizedException('Account is inactive');
 
-      // Revoke the used token (rotation — each token can only be used once)
-      await this.usersRepository.revokeRefreshToken(tokenHash);
+      // Sign new tokens before touching the DB (pure CPU, no side-effects)
+      const [accessToken, newRefreshToken] = await Promise.all([
+        this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!),
+        this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret!),
+      ]);
+      const newTokenHash = this.hashToken(newRefreshToken);
+      const expiresAt = new Date(Date.now() + this.jwtConfiguration.refreshTokenTtl * 1000);
 
-      return this.generateTokens(user);
+      // Atomic: revoke old token + persist new one in one transaction
+      await this.usersRepository.rotateRefreshToken(tokenHash, user.id, newTokenHash, expiresAt);
+      await this.userService.updateLastLogin(user.id);
+
+      return { accessToken, refreshToken: newRefreshToken };
     } catch (error) {
       if (error instanceof UnauthorizedException) throw error;
       throw new UnauthorizedException('Invalid or expired refresh token');

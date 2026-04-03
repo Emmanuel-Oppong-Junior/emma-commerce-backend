@@ -1,218 +1,323 @@
-# Production Readiness & Feature Completeness TODO
+# E2E Tests & Security Hardening — Task Tracker
 
-Generated from the full codebase audit. Work through phases in order — each phase builds on the previous.
-Mark tasks as complete by changing `- [ ]` to `- [x]`.
-
----
-
-## Phase 0 — Critical Security Fixes (Block all other work until done)
-
-These are exploitable vulnerabilities or data-integrity failures that must be resolved before any further development or deployment.
-
-### Payment Security
-- [x] Add `@Roles(Role.USER)` guard to `PaymentResolver.verifyPayment` — currently any request can verify any payment
-- [x] Add ownership check in `verifyPayment` so a user can only verify their own payment reference — introduced `verifyPaymentAsUser(reference, userId)` in `PaymentService`
-- [ ] Add authorization check to REST `PaymentController.verifyTransaction` endpoint — kept `@Auth(AuthType.None)` (required for Paystack browser redirect); webhook security via HMAC signature already in place
-- [x] Validate Paystack webhook signature on the REST webhook handler before processing any payload — already implemented via `isValidWebhookSignature`; confirmed in audit
-- [x] Sanitize and filter `Payment.paymentDetails` before persisting — `sanitizeInitializeDetails` and `sanitizeVerifyDetails` strip PII, raw tokens, and authorization objects
-
-### Cart Security
-- [x] Add `@UseGuards(AuthenticationGuard)` to `CartResolver.cartWithDiscount` query — changed to use `@ActiveUser('id')` so users can only access their own cart
-
-### Financial Data Integrity
-- [x] Change `Order.totalAmount` from `Float` to `Decimal` in `prisma/schema.prisma`
-- [x] Change `Payment.amount` from `Float` to `Decimal` in `prisma/schema.prisma`
-- [x] Change `OrderItem.priceAtOrder` from `Float` to `Decimal` in `prisma/schema.prisma` (additional field found during implementation)
-- [x] Run and name the migration: migration `20260402000000_fix_monetary_fields_to_decimal` applied successfully
-
-### Order Atomicity
-- [x] Wrap the entire order-creation flow (stock deduction + cart clear + order record insert) in a Prisma `$transaction` to prevent partial writes — already implemented in `saveOrderAndUpdateInventory`; confirmed in audit
-- [x] Wrap order cancellation (status update + stock restoration) in a Prisma `$transaction` — already implemented in `cancelOrderAndRestoreStock`; confirmed in audit
+Mark a phase as **done** only when every checkbox within it is ticked.
 
 ---
 
-## Phase 1 — High-Priority Security Hardening
+## Phase 1 — Critical Security Fixes
+> Fix all CRITICAL and HIGH severity findings before writing any e2e tests. A compromised baseline invalidates test results.
 
-### Authentication
-- [x] Implement account lockout: `failedLoginAttempts` and `lockedUntil` added to User; locks after 5 failures for 15 min; resets on success. `UsersService.recordFailedLoginAttempt` / `resetFailedLoginAttempts` added
-- [x] Implement refresh token revocation: `RefreshToken` table with `tokenHash` (SHA-256) + `revoked` flag; `signOut` mutation revokes by hash. `AuthenticationService.signOut` added
-- [x] Implement refresh token rotation: `refreshToken` revokes the incoming token before issuing new pair — each token is single-use
-- [x] Re-check `user.isActive` inside the refresh token flow — throws `UnauthorizedException('Account is inactive')` if false
-- [x] Fix social login null-email edge case: both `GoogleAuthenticationService` and `FacebookAuthenticationService` now throw `UnauthorizedException` if no email is returned
+- [x] **[CRITICAL-1]** Fix Paystack webhook returning HTTP 200 on invalid signature — throw `UnauthorizedException` instead (`payment.service.ts`)
+- [x] **[CRITICAL-2]** Fix Paystack webhook header key case-sensitivity — use lowercase `x-paystack-signature` lookup (`payment.controller.ts`)
+- [x] **[CRITICAL-3]** Implement proper CSP headers in production helmet config — replace `undefined` with explicit directives (`main.ts`)
+- [x] **[CRITICAL-4]** Guard stack traces in exception filter — only log `exception.stack` when `NODE_ENV === 'development'` (`all-exceptions.filter.ts`)
+- [x] **[HIGH-1]** Apply rate limiting to `forgotPassword` and `resetPassword` mutations — max 3 per hour (`authentication.resolver.ts`)
+- [x] **[HIGH-2]** Wrap refresh token rotation (revoke + re-issue) in a Prisma `$transaction` to prevent race-condition double-issuance (`authentication.service.ts`)
+- [x] **[HIGH-3]** Add startup validation for `JWT_SECRET` length (≥ 32 chars) and `JWT_TOKEN_AUDIENCE` / `JWT_TOKEN_ISSUER` non-empty (`main.ts` or `env.validation.ts`)
+- [x] **[HIGH-4]** Explicitly set bcrypt rounds to 12 (`bcrypt.service.ts`)
+- [x] **[HIGH-5]** Disable GraphQL introspection in production (`app.module.ts`)
 
-### Authorization
-- [x] `BrandResolver.deleteBrand` — already had `@Roles(Role.SUPER_ADMIN, Role.ADMIN)` at method level; confirmed in audit re-review
-- [x] `TagResolver.deleteTag` — already protected by class-level `@Roles(Role.ADMIN, Role.SUPER_ADMIN)`; confirmed in audit re-review
-- [x] Audited all resolvers — no unguarded mutations found beyond what was fixed in Phase 0
-
-### Input Validation
-- [x] `CreateDiscountInput.endDate` — added `@IsEndDateAfterStartDate('startDate')` custom validator; works on partial `UpdateDiscountInput` too (skips if `startDate` absent)
-- [x] `CreateReviewInput.score` — already had `@Min(1) @Max(5)`; confirmed in audit re-review
-- [x] `CreateAddressInput` — added `@MaxLength` to all 5 fields (street: 255, city/state/country: 100, zipCode: 20)
-- [x] Max addresses per user — `AddressesService.createAddress` now enforces limit of 10 via `enforceAddressLimit`
-- [x] Max wishlist size — `WishlistService.addToWishlist` now enforces limit of 100 via `enforceWishlistLimit`
-- [x] Upload file size limit — `UploadController` uses `multerOptions` with `limits: { fileSize: 5 MB }` on both endpoints
+**Phase 1 complete ✅**
 
 ---
 
-## Phase 2 — Architecture: Repository Pattern
+## Phase 2 — Medium & Low Security Fixes
 
-The services currently call `PrismaService` directly, violating the Dependency Inversion Principle and making unit testing fragile.
+- [ ] **[MED-1]** Add HSTS header to helmet config — `maxAge: 31536000, includeSubDomains: true, preload: true` (`main.ts`)
+- [ ] **[MED-2]** Lower auth throttle limit from 10/min to 3–5/min (`app.module.ts`)
+- [ ] **[MED-3]** Add constant-time delay on `forgotPassword` when user is not found to prevent timing-based user enumeration (`authentication.service.ts`)
+- [ ] **[MED-4]** Restrict `addresses` query — `USER` role should only return own addresses; `ADMIN` access should require explicit `userId` param or be `SUPER_ADMIN` only (`addresses.resolver.ts` + `addresses.service.ts`)
+- [ ] **[MED-5]** Require `ALLOWED_ORIGINS` env var to be set; remove insecure `http://localhost` defaults from production fallback (`main.ts`)
+- [ ] **[MED-6]** Verify `changeUserPassword` service requires and validates `currentPassword` before allowing the change (`users.service.ts`)
+- [ ] **[LOW-1]** Add null checks to `sanitizeInitializeDetails` to avoid storing `undefined` payment fields (`payment.service.ts`)
 
-- [x] Create `UsersRepository` — extract all `prisma.user.*` calls from `UsersService`
-- [x] Create `ProductsRepository` — extract all `prisma.product.*` calls from `ProductsService`
-- [x] Create `CategoriesRepository` — extract all `prisma.category.*` calls from `CategoriesService`
-- [x] Create `SubCategoriesRepository` — extract all `prisma.subCategory.*` calls
-- [x] Create `BrandRepository` — extract all `prisma.brand.*` calls
-- [x] Create `TagRepository` — extract all `prisma.tag.*` calls
-- [x] Create `VariantRepository` — extract all `prisma.variant.*` calls
-- [x] Create `CartRepository` — extract all `prisma.cart.*` and `prisma.cartItem.*` calls
-- [x] Create `OrdersRepository` — extract all `prisma.order.*` and `prisma.orderItem.*` calls
-- [x] Create `PaymentRepository` — extract all `prisma.payment.*` calls
-- [x] Create `DiscountRepository` — extract all `prisma.discount.*` calls
-- [x] Create `AddressesRepository` — extract all `prisma.address.*` calls
-- [x] Create `WishlistRepository` — extract all `prisma.wishlist.*` and `prisma.wishlistItem.*` calls
-- [x] Create `ReviewRepository` — extract all `prisma.review.*` calls
-- [x] Map Prisma error `P2002` (unique constraint) to `ConflictException` inside each repository (not service)
-- [x] Map Prisma error `P2025` (record not found) to `NotFoundException` inside each repository
-- [x] Remove all direct `PrismaService` imports from every service file after repositories are wired
+**Phase 2 complete when:** All 7 items above are ticked ✅
 
 ---
 
-## Phase 3 — Performance: N+1 & Query Optimization
+## Phase 3 — E2E Test Infrastructure Setup
 
-### DataLoaders (critical for production query performance)
-- [x] Create `UsersLoader` — batch-load users by ID for use in `ReviewResolver`, `OrderResolver`, and `WishlistResolver` resolved fields
-- [x] Create `ProductsLoader` — batch-load products by ID for use in `CartItemResolver`, `OrderItemResolver`, `WishlistItemResolver`
-- [x] Create `VariantsLoader` — batch-load variants by product ID for use in `ProductResolver.variants` resolved field
-- [x] Create `ReviewsLoader` — batch-load reviews by product ID for use in `ProductResolver.reviews` resolved field
-- [x] Create `AddressesLoader` — batch-load addresses by user ID for use in `UserResolver.addresses` resolved field
-- [x] Create `OrdersLoader` — batch-load orders by user ID for use in `UserResolver.orders` resolved field
-- [x] Register all DataLoaders with `REQUEST` scope in their respective modules
-- [x] Replace direct service calls in all `@ResolveField()` methods with the appropriate DataLoader
+- [ ] Create a dedicated `.env.test` file (or verify it exists) with a separate test database URL(use SQLite database) and test JWT secrets.
+- [ ] Verify `test/jest-e2e.json` is configured correctly and the test database can be seeded/reset between test runs
+- [ ] Create `test/helpers/app.helper.ts` — bootstraps the NestJS app with `supertest` for e2e tests
+- [ ] Create `test/helpers/auth.helper.ts` — utility functions: `signUpUser()`, `signInUser()`, `signInAdmin()`, `signInSuperAdmin()`, `getAuthHeader(token)`
+- [ ] Create `test/helpers/db.helper.ts` — utility functions: `resetDb()`, `seedMinimal()` (creates base users, categories, products needed across tests)
+- [ ] Create `test/helpers/graphql.helper.ts` — utility: `gqlRequest(query, variables, token?)` wrapping supertest
 
-### Pagination Fix
-- [x] Fix cursor pagination in `ProductsService` — replaced take+1 approach; `hasNextPage` determined by extra item without COUNT query
-- [x] Apply the same corrected cursor pattern to all other paginated list queries (users)
-- [x] Defer or cache the total-count query in paginated responses — eliminated COUNT query entirely via take+1 pattern
-
-### Query Optimization
-- [x] Break `getUserProfile` into a parent query + `@ResolveField()` resolvers (addresses, orders) so clients only fetch what they request
-- [ ] Extend `extractRequestedFieldsFromQuery` usage (or a simpler field-selection utility) consistently across all list resolvers, not just products
-- [x] Add null-check to the level-3 field extraction in `extractRequestedFieldsFromQuery` (line 118 type cast without guard)
-- [ ] Add `select` to all `findMany` calls on large tables to prevent over-fetching
+**Phase 3 complete when:** All 6 items above are ticked ✅
 
 ---
 
-## Phase 4 — Infrastructure: Caching & Rate Limiting
+## Phase 4 — E2E Tests: Public & Authentication Flows
 
-### Redis Integration
-- [x] Add `ioredis` or `@nestjs/cache-manager` Redis store to dependencies — `@keyv/redis` + `@nestjs/cache-manager` already installed
-- [x] Configure `CacheModule.registerAsync` with Redis connection via `ConfigService` — `cacheConfig` uses `createKeyv` from `@keyv/redis`; falls back to in-memory when `REDIS_HOST` is absent
-- [x] Migrate category caching from in-memory to Redis so cache is shared across instances — `CategoriesService` already uses `CACHE_MANAGER`; automatically uses Redis when `REDIS_HOST` is set
-- [x] Cache frequently read, rarely written data: active discounts, product detail pages — `DiscountService.findAllDiscounts` and `findOneDiscount` cached with `CACHE_MANAGER`; invalidated on create/update/delete
+### Auth Flows (Public)
+- [ ] `POST signUp` — success with valid input
+- [ ] `POST signUp` — fails with duplicate email (conflict)
+- [ ] `POST signUp` — fails with invalid email format / weak password
+- [ ] `POST signIn` — success returns access + refresh tokens
+- [ ] `POST signIn` — fails with wrong password
+- [ ] `POST signIn` — fails with non-existent email
+- [ ] `POST refreshToken` — success returns new token pair
+- [ ] `POST refreshToken` — fails with invalid/expired/revoked token
+- [ ] `POST signOut` — invalidates refresh token; subsequent refresh fails
+- [ ] `POST forgotPassword` — returns true for both existing and non-existing emails (no enumeration)
+- [ ] `POST resetPassword` — success with valid token
+- [ ] `POST resetPassword` — fails with expired token
+- [ ] `POST resetPassword` — fails with already-used token
+- [ ] `POST signInWithGoogle` — success with valid Google credential
+- [ ] `POST signInWithFacebook` — success with valid Facebook token
 
-### Rate Limiting
-- [x] Add specific rate limit to payment initiation endpoint (e.g., 5 per minute per user) — `@Throttle({ payment: { limit: 5, ttl: 60000 } })` on `PaymentController.initializeTransaction`
-- [x] Add specific rate limit to file upload endpoint — `@Throttle({ upload: { limit: 10, ttl: 60000 } })` on both `UploadController` endpoints
+### Public Catalogue Flows
+- [ ] `GET products` — returns paginated product list (no auth required)
+- [ ] `GET product` — returns single product by ID (no auth required)
+- [ ] `GET categories` — returns all categories (no auth required)
+- [ ] `GET brands` — returns all brands (no auth required)
+- [ ] `GET brand` — returns single brand by ID (no auth required)
 
----
-
-## Phase 5 — Observability & Operations
-
-### Request Correlation
-- [x] Add a request-ID middleware (using `uuid`) that attaches `X-Request-ID` to every incoming request — `LoggerMiddleware` uses `crypto.randomUUID()` (Node built-in, no ESM dependency); reads `X-Request-ID` from incoming header or generates a new one
-- [x] Propagate the request ID through the Winston logger context so all log lines for a single request share the same ID — `req.correlationId` set in middleware; `GraphqlLoggingInterceptor` and `LoggerMiddleware` both include `rid:` in every log line
-- [x] Return `X-Request-ID` in response headers for client-side correlation — `res.setHeader('X-Request-ID', requestId)` in `LoggerMiddleware`
-
-### Logging
-- [x] Ensure no `console.log` statements remain anywhere in the codebase (`npm run lint` or grep) — removed `console.log('originalMessage', ...)` from `AllExceptionsFilter`
-- [x] Add structured logging to the payment webhook handler (log reference, amount, status on every event) — `handlePaystackWebhook` logs received/rejected/processed with event, reference, amount, currency, status
-- [x] Redact sensitive fields (`paymentDetails`, raw token values) from all log outputs — `sanitizeInitializeDetails` / `sanitizeVerifyDetails` strip PII before persisting; `sanitizeVariables` in `GraphqlLoggingInterceptor` redacts GraphQL input variables; no raw payment details are logged
-
-### Health Checks
-- [x] Verify `HealthModule` covers: database connectivity, Redis connectivity, Cloudinary reachability — `RedisHealthIndicator` (skips gracefully when `REDIS_HOST` unset) and `CloudinaryHealthIndicator` added; included in `/health/ready`
-- [x] Add a `/health/ready` vs `/health/live` distinction (readiness vs liveness probes) — `/health/live` returns `{ status: 'ok' }` immediately; `/health/ready` checks database + Redis + Cloudinary
+**Phase 4 complete when:** All items above are ticked ✅
 
 ---
 
-## Phase 6 — Missing Ecommerce Features
+## Phase 5 — E2E Tests: Authenticated User Flows
 
-### Notification / Email System
-- [x] Integrate a transactional email provider (SendGrid, Resend, or AWS SES) via a dedicated `NotificationsModule`
-- [x] Send order confirmation email on successful order creation
-- [x] Send order status update email when order status changes (SHIPPED, DELIVERED)
-- [x] Send payment confirmation email on successful payment
-- [x] Implement password reset flow: generate a signed token, send reset email, verify token, update password
-- [x] Send welcome email on new user registration
+### Profile & Account
+- [ ] `GET userProfile` — returns authenticated user's profile with relations
+- [ ] `PATCH updateMyProfile` — success with valid input
+- [ ] `PATCH changeUserPassword` — success with correct `currentPassword`
+- [ ] `PATCH changeUserPassword` — fails with wrong `currentPassword`
 
-### Coupon / Promo Code Redemption
-- [x] Add `Coupon` model to Prisma schema (`code`, `discountType`, `value`, `usageLimit`, `usedCount`, `expiresAt`, `isActive`)
-- [x] Create `CouponsModule` with full CRUD (admin) and a `applyCoupon(code)` mutation (user)
-- [x] Enforce single-use-per-user coupons via a `CouponUsage` join table
-- [x] Apply coupon discount during order creation and reflect in `Order.discountAmount`
+### Address Management
+- [ ] `POST createAddress` — success
+- [ ] `GET userAddresses` — returns only own addresses
+- [ ] `PATCH updateAddress` — success on own address
+- [ ] `PATCH updateAddress` — fails on another user's address
+- [ ] `DELETE deleteAddress` — success on own address
 
-### Return & Refund Flow
-- [x] Add `ReturnRequest` model to Prisma schema (`orderId`, `userId`, `reason`, `status`, `refundAmount`, `createdAt`)
-- [x] Create `ReturnsModule` with: create return request (user), approve/reject return (admin), process refund (admin)
-- [x] Integrate Paystack refund API call on return approval
-- [x] Restore stock on approved return
+### Wishlist
+- [ ] `GET wishlist` — auto-creates wishlist if none exists
+- [ ] `POST addToWishlist` — success with valid productId
+- [ ] `POST addToWishlist` — fails with non-existent productId
+- [ ] `DELETE removeFromWishlist` — removes product from wishlist
+- [ ] `DELETE clearWishlist` — empties wishlist
 
-### Inventory Management
-- [x] Add `lowStockThreshold` field to `Product` and `Variant` models
-- [x] Add a scheduled task (or database trigger) that emits a low-stock event when `stockQuantity <= lowStockThreshold`
-- [x] Add an admin `restockProduct` mutation to increment stock
-- [x] Add an `InventoryLog` model to track all stock changes with reason and actor
+### Cart & Shopping
+- [ ] `GET cart` — returns user's cart (empty on first access)
+- [ ] `POST addToCart` — success with valid productId + quantity
+- [ ] `POST addToCart` — fails when product is out of stock
+- [ ] `POST addToCart` — fails with non-existent productId
+- [ ] `PATCH updateCartItem` — success changing quantity
+- [ ] `DELETE removeFromCart` — removes item
+- [ ] `DELETE clearCart` — empties cart
+- [ ] `GET cartWithDiscount` — applies active discount to cart items
 
-### Order Fulfillment / Shipping
-- [x] Add `ShippingAddress` snapshot to `Order` (copy from user address at time of order, not a FK)
-- [x] Add `trackingNumber` and `carrier` fields to `Order`
-- [x] Add `updateShipping` mutation for admin to set tracking info
-- [x] Expose shipping status in the order GraphQL type
+### Reviews
+- [ ] `POST createReview` — success on a product
+- [ ] `POST createReview` — fails if user already reviewed the same product
+- [ ] `GET productReviews` — returns all reviews for a product
+- [ ] `GET userReviews` — returns own reviews
+- [ ] `PATCH updateReview` — success on own review
+- [ ] `PATCH updateReview` — fails on another user's review
+- [ ] `DELETE deleteReview` — success on own review
 
-### Admin Analytics & Reporting
-- [x] Add `getSalesReport(startDate, endDate)` query returning total revenue, order count, average order value
-- [x] Add `getTopProducts(limit)` query returning best-selling products by order count and revenue
-- [x] Add `getRevenueByCategory` query
-- [x] Add `getDashboardSummary` query: total users, orders today, revenue today, low-stock items
+### Coupons
+- [ ] `POST validateCoupon` — success with valid, active coupon
+- [ ] `POST validateCoupon` — fails with expired coupon
+- [ ] `POST validateCoupon` — fails with inactive coupon
+- [ ] `POST validateCoupon` — fails when usage limit reached
+- [ ] `POST validateCoupon` — fails when order total below minimum
+- [ ] `POST validateCoupon` — fails if user already used coupon
 
-### Search
-- [x] Implement Postgres full-text search on `Product` (`name`, `description`) using `@@fulltext` index
-- [x] Add `search: String` argument to `products` query
-- [ ] (Optional / future) Evaluate Elasticsearch or Typesense for advanced search with faceting
+### Orders
+- [ ] `POST createOrder` — success from populated cart with valid address
+- [ ] `POST createOrder` — fails with empty cart
+- [ ] `POST createOrder` — fails with invalid address
+- [ ] `POST createOrder` — decrements product stock on success
+- [ ] `POST createOrder` — applies coupon discount when provided
+- [ ] `GET userOrders` — returns own orders
+- [ ] `GET order` — returns single own order
+- [ ] `GET order` — fails when trying to access another user's order
+- [ ] `POST cancelOrder` — success on PENDING order; restores stock
+- [ ] `POST cancelOrder` — fails on DELIVERED order
+- [ ] `POST finalizeOrder` — applies discount pricing to order items
 
-### Multi-Currency & Tax
-- [x] Implement a `CurrencyConversionService` that fetches exchange rates (or uses static config)
-- [ ] Add optional `currency` argument to product price queries
-- [x] Add `TaxRate` model (`country`, `region`, `rate`) and apply during order totalling
+### Payments
+- [ ] `POST /payment/initialize` — success returns Paystack checkout URL
+- [ ] `POST verifyPayment` — success with valid Paystack reference
+- [ ] `GET getMyPayments` — returns own payment records
+- [ ] `GET payment` — returns own payment by ID
+- [ ] `GET payment` — fails on another user's payment
+- [ ] `GET /payment/webhook` — Paystack callback with valid signature updates order status
+- [ ] `GET /payment/webhook` — fails silently / returns 401 on invalid signature
+
+### Returns
+- [ ] `POST createReturnRequest` — success on DELIVERED order
+- [ ] `POST createReturnRequest` — fails on PENDING order
+- [ ] `POST createReturnRequest` — fails if active request already exists
+- [ ] `GET myReturnRequests` — returns own return requests
+
+**Phase 5 complete when:** All items above are ticked ✅
 
 ---
 
-## Phase 7 — Test Coverage
+## Phase 6 — E2E Tests: Admin Flows
 
-### Unit Tests
-- [ ] Ensure all services and providers have been covered with unit test.
-- [ ] Write unit tests for each Repository class once the repository layer is introduced (Phase 2)
-- [ ] Achieve ≥ 90% line coverage on all service/providers files (`npm run test:cov`)
+### User Management
+- [ ] `GET users` — admin can list all users (paginated)
+- [ ] `GET userById` — admin can lookup any user
+- [ ] `PATCH updateUser` — admin can update any user's profile
+- [ ] `DELETE archiveUser` — admin can soft-delete a user
+- [ ] `POST deArchiveUser` — admin can restore archived user
+- [ ] `DELETE removeUser` — admin can hard delete a user
 
-### E2E Tests
-- [ ] Add E2E test for the full happy-path order flow: auth → browse products → add to cart → create order → initiate payment → webhook → verify payment
-- [ ] Add E2E test for the Paystack webhook handler with a valid and an invalid signature
-- [ ] Add E2E test for the auth flow: sign-up → sign-in → refresh → logout (token revocation)
-- [ ] Add E2E test for the discount flow: create discount → apply to product → verify discounted price in cart
+### Product & Catalogue Management
+- [ ] `POST createProduct` — success with valid input and images
+- [ ] `POST createProduct` — fails with duplicate SKU
+- [ ] `PATCH updateProduct` — success
+- [ ] `POST archiveProduct` — soft-deletes product
+- [ ] `POST restoreProduct` — restores archived product
+- [ ] `DELETE permanentlyDeleteProduct` — hard deletes
+- [ ] `POST addTagToProduct` — success
+- [ ] `DELETE removeTagFromProduct` — success
+- [ ] `POST createCategory` — success
+- [ ] `PATCH updateCategory` — success
+- [ ] `DELETE removeCategory` — success
+- [ ] `POST createSubCategory` — success
+- [ ] `PATCH updateSubCategory` — success
+- [ ] `DELETE removeSubCategory` — success
+- [ ] `POST createBrand` — success
+- [ ] `PATCH updateBrand` — success
+- [ ] `DELETE deleteBrand` — success
+- [ ] `POST createTag` — success
+- [ ] `PATCH updateTag` — success
+- [ ] `DELETE deleteTag` — success
+- [ ] `POST createVariant` — success for a product
+- [ ] `PATCH updateVariant` — success
+- [ ] `DELETE deleteVariant` — success
+
+### Discount Management
+- [ ] `POST createDiscount` — success with valid date range and type
+- [ ] `POST createDiscount` — fails with invalid product/variant/category IDs
+- [ ] `PATCH updateDiscount` — success
+- [ ] `POST addToDiscount` — adds products/variants/categories to discount
+- [ ] `POST removeFromDiscount` — removes items from discount
+- [ ] `DELETE removeDiscount` — success
+
+### Coupon Management
+- [ ] `POST createCoupon` — success, code auto-uppercased
+- [ ] `POST createCoupon` — fails with duplicate code
+- [ ] `PATCH updateCoupon` — success
+- [ ] `DELETE deleteCoupon` — success
+- [ ] `GET coupons` — returns all coupons
+- [ ] `GET coupon` — returns single coupon
+
+### Order & Payment Admin
+- [ ] `GET orders` — admin can list all orders
+- [ ] `GET viewOrder` — admin can view any order by ID
+- [ ] `POST updateShipping` — admin updates tracking number and carrier
+- [ ] `POST updateOrderStatus` — admin changes order status
+- [ ] `DELETE deleteOrder` — admin soft deletes order
+- [ ] `GET getUserPayment` — admin can view any user's payments
+- [ ] `DELETE softDeletePayment` — admin soft deletes payment
+- [ ] `POST restorePayment` — admin restores payment
+- [ ] `DELETE removePayment` — admin hard deletes payment
+
+### Returns Admin
+- [ ] `POST approveReturn` — admin approves PENDING return request
+- [ ] `POST approveReturn` — fails on already-approved request
+- [ ] `POST rejectReturn` — admin rejects PENDING return request
+- [ ] `POST processRefund` — admin processes refund for APPROVED return (mocked Paystack call)
+- [ ] `GET returnRequests` — admin lists all return requests
+
+### Inventory Admin
+- [ ] `POST restockProduct` — increments product stock and logs change
+- [ ] `POST restockProduct` — fails for non-existent product
+- [ ] `POST restockVariant` — increments variant stock and logs change
+- [ ] `GET productInventoryLogs` — returns logs for product
+- [ ] `GET variantInventoryLogs` — returns logs for variant
+
+### Tax Admin
+- [ ] `POST createTaxRate` — success
+- [ ] `POST createTaxRate` — fails with duplicate country+region
+- [ ] `PATCH updateTaxRate` — success
+- [ ] `DELETE deleteTaxRate` — success
+- [ ] `GET taxRates` — returns all tax rates
+
+### Analytics Admin
+- [ ] `GET salesReport` — returns sales totals for date range
+- [ ] `GET topProducts` — returns top N selling products
+- [ ] `GET revenueByCategory` — returns revenue grouped by category
+- [ ] `GET dashboardSummary` — returns today's metrics
+
+**Phase 6 complete when:** All items above are ticked ✅
 
 ---
 
-## Phase 8 — Code Quality & Housekeeping
+## Phase 7 — E2E Tests: Super Admin Flows
 
-- [x] Enable TypeScript `strict` mode in `tsconfig.json` if not already on; resolve all resulting type errors — `strict: true` + `strictPropertyInitialization: false` (NestJS DI); all 26 affected files fixed
-- [x] Remove all `any` type usages from the codebase — replaced with `unknown`, proper Express types, typed params, and `DiscountEntry` local types
-- [x] Remove all `console.log` / `console.error` calls; replace with injected `Logger` — already clean; confirmed via grep
-- [x] Add JSDoc comments to all public service methods — added to all 23 services
-- [x] Add `@Min(0)` constraint to all quantity and price fields in DTOs — added to `CreateVariantInput.quantity` and `CreateVariantInput.price`
-- [x] Add `@IsUrl({ require_tld: true, protocols: ['https'] })` to all image URL fields consistently — added to `CreateBrandInput.logo`; category/subcategory/product image fields already had it
-- [x] Validate `SubCategory` uniqueness within the same parent category at the database level — `@@unique([name, categoryId])` added; migration `20260403120000_subcategory_unique_name_per_category` created
-- [x] Add `@@index([discountId])` on `Variant` and `Category` models in Prisma schema for discount lookup performance — already present from prior phases; confirmed in audit
-- [x] Review and document why `forwardRef` is used anywhere it appears; refactor away if possible — no `forwardRef` usage found in codebase; nothing to do
-- [x] Audit all environment variables and ensure every one is declared in the config validation schema (no undeclared `process.env` reads) — `cloudinary.service.ts` migrated from direct `process.env.CLOUD_*` to `ConfigService.getOrThrow('CLOUDINARY_*')`; `NODE_ENV` already in schema; jwt.config.ts and main.ts are config-layer files where direct reads are acceptable
-- [x] Add `prisma/seed.ts` idempotency: ensure seed can be re-run without creating duplicates — already implemented with `createMany({ skipDuplicates: true })` throughout; confirmed in audit
+- [ ] `POST createUser` — super admin can create a user directly with a role
+- [ ] `GET userByEmail` — super admin lookup by email
+- [ ] `GET userByProviderId` — super admin lookup by OAuth provider ID
+- [ ] Verify all ADMIN-level operations above are also accessible to super admin
+- [ ] Verify USER-level operations (`updateMyProfile`, `changeUserPassword`) are accessible to super admin acting as themselves
+- [ ] Verify a super admin **cannot** be deleted by a regular admin (role hierarchy enforcement)
+
+**Phase 7 complete when:** All items above are ticked ✅
+
+---
+
+## Phase 8 — E2E Tests: Authorization Boundary Tests
+
+> These tests verify that roles are **enforced** — no privilege escalation.
+
+- [ ] Unauthenticated request to `cart` returns 401
+- [ ] Unauthenticated request to `createOrder` returns 401
+- [ ] USER role attempting `createProduct` returns 403
+- [ ] USER role attempting `orders` (admin list) returns 403
+- [ ] USER role attempting `updateOrderStatus` returns 403
+- [ ] USER role attempting `createDiscount` returns 403
+- [ ] USER role attempting `approveReturn` returns 403
+- [ ] USER role attempting `restockProduct` returns 403
+- [ ] USER role attempting `dashboardSummary` returns 403
+- [ ] ADMIN role attempting `createUser` (super admin only) returns 403
+- [ ] ADMIN role attempting to access another user's `payment` returns 403
+- [ ] Attempting to `updateReview` on another user's review returns 403
+- [ ] Attempting `deleteAddress` on another user's address returns 403
+- [ ] Expired JWT token returns 401 on any protected query
+- [ ] Tampered JWT signature returns 401
+
+**Phase 8 complete when:** All items above are ticked ✅
+
+---
+
+## Phase 9 — CI Integration & Coverage Gate
+
+- [ ] Add e2e test script to `package.json` using the `.env.test` database
+- [ ] Ensure unit test coverage stays ≥ 90% (`npm run test:cov` passes gate)
+- [ ] Ensure e2e tests run against a clean database on each CI run (reset before suite)
+- [ ] Add GitHub Actions (or equivalent CI) workflow step that runs both unit and e2e tests on every PR
+- [ ] Document e2e setup steps in `README.md` (env vars needed, how to run locally)
+
+**Phase 9 complete when:** All items above are ticked ✅
+
+---
+
+## Quick Reference: Severity Index
+
+| ID | Finding | Severity | Phase |
+|----|---------|----------|-------|
+| CRITICAL-1 | Webhook returns 200 on bad signature | CRITICAL | 1 |
+| CRITICAL-2 | Webhook header case mismatch | CRITICAL | 1 |
+| CRITICAL-3 | CSP disabled in production | CRITICAL | 1 |
+| CRITICAL-4 | Stack traces exposed in logs | CRITICAL | 1 |
+| HIGH-1 | No rate limit on password reset | HIGH | 1 |
+| HIGH-2 | Refresh token rotation not atomic | HIGH | 1 |
+| HIGH-3 | No JWT secret startup validation | HIGH | 1 |
+| HIGH-4 | Bcrypt rounds not explicit | HIGH | 1 |
+| HIGH-5 | GraphQL introspection enabled in prod | HIGH | 1 |
+| MED-1 | No HSTS header | MEDIUM | 2 |
+| MED-2 | Auth throttle too permissive | MEDIUM | 2 |
+| MED-3 | Timing attack on forgotPassword | MEDIUM | 2 |
+| MED-4 | Users can query all addresses | MEDIUM | 2 |
+| MED-5 | Unsafe CORS defaults | MEDIUM | 2 |
+| MED-6 | Password change skips old password check | MEDIUM | 2 |
+| LOW-1 | Payment details missing null checks | LOW | 2 |

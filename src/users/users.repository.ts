@@ -114,6 +114,29 @@ export class UsersRepository {
     await this.prisma.refreshToken.update({ where: { tokenHash }, data: { revoked: true } });
   }
 
+  /**
+   * [HIGH-2] Atomically revoke the old refresh token and persist the new one in a single
+   * Prisma transaction to eliminate the race-condition window where two concurrent requests
+   * could both pass the "not yet revoked" check and each receive a valid new token pair.
+   */
+  async rotateRefreshToken(oldTokenHash: string, userId: string, newTokenHash: string, expiresAt: Date): Promise<void> {
+    await this.prisma.$transaction([
+      // Purge stale tokens first to keep the table lean
+      this.prisma.refreshToken.deleteMany({
+        where: { userId, expiresAt: { lt: new Date() } },
+      }),
+      // Revoke the consumed token
+      this.prisma.refreshToken.update({
+        where: { tokenHash: oldTokenHash },
+        data: { revoked: true },
+      }),
+      // Persist the replacement token
+      this.prisma.refreshToken.create({
+        data: { userId, tokenHash: newTokenHash, expiresAt },
+      }),
+    ]);
+  }
+
   async revokeRefreshTokensByHash(tokenHash: string): Promise<void> {
     await this.prisma.refreshToken.updateMany({ where: { tokenHash }, data: { revoked: true } });
   }

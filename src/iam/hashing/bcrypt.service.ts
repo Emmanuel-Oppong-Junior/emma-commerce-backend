@@ -16,7 +16,8 @@ export class BcryptService extends HashingService {
   }
 
   async hash(data: string | Buffer): Promise<string> {
-    const salt = await genSalt();
+    // [HIGH-4] Explicitly use 12 rounds — default (10) is below current best-practice minimum
+    const salt = await genSalt(12);
     return hash(data, salt);
   }
 }
