@@ -122,9 +122,9 @@ describe('Variant E2E Test', () => {
     const category = await createCategory(prisma);
     await createProducts(prisma, category.id); // Assuming this creates products with IDs 'prod1' and 'prod2'
     const product1 = await prisma.product.findUnique({ where: { id: 'prod1' } });
-    product1Id = product1.id;
+    product1Id = product1!.id;
     const product2 = await prisma.product.findUnique({ where: { id: 'prod2' } });
-    product2Id = product2.id;
+    product2Id = product2!.id;
   });
 
   afterAll(async () => {
@@ -270,7 +270,7 @@ describe('Variant E2E Test', () => {
       const variantInDb = await prisma.variant.findUnique({
         where: { id: variant.id },
       });
-      expect(variantInDb.quantity).toBe(20);
+      expect(variantInDb!.quantity).toBe(20);
     });
 
     it('should not allow deleting a variant', async () => {

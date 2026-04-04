@@ -8,7 +8,6 @@ import {
   IsUrl,
   Length,
   Matches,
-  Min,
   IsNumberString,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
@@ -51,7 +50,6 @@ export class CreateProductInput {
   })
   @IsNotEmpty({ message: 'Price is required' })
   @IsNumberString({}, { message: 'Price must be a valid decimal string (e.g., "29.99")' })
-  @Min(0, { message: 'Price must be non-negative' })
   price: string;
 
   @Field(() => String, {

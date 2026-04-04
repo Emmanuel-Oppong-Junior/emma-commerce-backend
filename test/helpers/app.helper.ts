@@ -4,7 +4,20 @@ import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { LoggerService } from '../../src/commons/logger.service';
 import { AllExceptionsFilter } from '../../src/commons/filters/all-exceptions.filter';
-import { GqlThrottlerGuard } from '../../src/commons/guards/gql-throttler.guard';
+import { ThrottlerStorage } from '@nestjs/throttler';
+
+/**
+ * A no-op ThrottlerStorage implementation.
+ * Always reports `totalHits: 1, isBlocked: false`, which means the real
+ * ThrottlerGuard will process every request without ever blocking it.
+ * This is the most reliable way to disable rate-limiting in e2e tests because
+ * it operates below the guard layer and does not require overriding an
+ * APP_GUARD multi-provider slot.
+ */
+const noopThrottlerStorage = {
+  increment: async () => ({ totalHits: 1, timeToExpire: 0, isBlocked: false, timeToBlockExpire: 0 }),
+  storage: {},
+};
 
 /** The resolved shape returned by `createTestApp`. */
 export interface TestApp {
@@ -20,8 +33,9 @@ export interface TestApp {
  * Mirrors the setup in `main.ts` (validation pipe, exception filter, logger)
  * while omitting HTTP-server concerns irrelevant to tests (Helmet, CORS).
  *
- * The throttle guard is replaced with a no-op so rate-limited mutations
- * (forgotPassword, resetPassword, etc.) can be called freely within test suites.
+ * Rate limiting is disabled by replacing the ThrottlerStorage with a no-op
+ * implementation that always reports zero hits, so no request is ever blocked
+ * regardless of how many times a given operation is called.
  *
  * @example
  * ```ts
@@ -39,11 +53,8 @@ export async function createTestApp(): Promise<TestApp> {
   const moduleFixture: TestingModule = await Test.createTestingModule({
     imports: [AppModule],
   })
-    // Disable rate limiting in e2e tests — throttle behaviour is tested at the
-    // unit level; having it active here would cause password-reset tests to fail
-    // after three consecutive calls within the same test run.
-    .overrideProvider(GqlThrottlerGuard)
-    .useValue({ canActivate: () => true })
+    .overrideProvider(ThrottlerStorage)
+    .useValue(noopThrottlerStorage)
     .compile();
 
   const app = moduleFixture.createNestApplication();

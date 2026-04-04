@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -6,6 +6,12 @@ import * as request from 'supertest';
 import { ConfigModule } from '@nestjs/config';
 import { genSalt, hash } from 'bcrypt';
 import { Role, User } from '@prisma/client';
+import { ThrottlerStorage } from '@nestjs/throttler';
+
+const noopThrottlerStorage = {
+  increment: async () => ({ totalHits: 1, timeToExpire: 0, isBlocked: false, timeToBlockExpire: 0 }),
+  storage: {},
+};
 
 export async function createTestApp(): Promise<{
   app: INestApplication;
@@ -19,10 +25,22 @@ export async function createTestApp(): Promise<{
         isGlobal: true,
       }),
     ],
-  }).compile();
+  })
+    .overrideProvider(ThrottlerStorage)
+    .useValue(noopThrottlerStorage)
+    .compile();
 
   const app = moduleFixture.createNestApplication();
   const prisma = moduleFixture.get<PrismaService>(PrismaService);
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
 
   await app.init();
 
@@ -51,7 +69,7 @@ export async function clearDatabase(prisma: PrismaService) {
 
 export async function insertUserIntoDatabase(userData: User, prisma: PrismaService) {
   const salt = await genSalt();
-  const hashPassword = await hash(userData.password, salt);
+  const hashPassword = (await hash(userData.password!, salt)) as string;
   return prisma.user.create({
     data: { ...userData, password: hashPassword },
   });

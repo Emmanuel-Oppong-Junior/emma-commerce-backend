@@ -1,5 +1,5 @@
 import { Field, Float, ID, InputType } from '@nestjs/graphql';
-import { IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 @InputType()
 export class CreateVariantInput {
@@ -27,7 +27,6 @@ export class CreateVariantInput {
 
   @Field(() => ID, { description: 'ID of the associated product' })
   @IsNotEmpty({ message: 'Product ID must not be empty' })
-  @IsUUID('4', { message: 'Product ID must be a valid UUID' })
   productId: string;
 
   @Field(() => ID, {
@@ -35,6 +34,5 @@ export class CreateVariantInput {
     description: 'ID of the associated discount',
   })
   @IsOptional()
-  @IsUUID('4', { message: 'Discount ID must be a valid UUID' })
   discountId?: string;
 }

@@ -16,7 +16,12 @@
       "Bash(sed -i 's/discountId: null,/discountId: undefined,/g' src/variant/variant.service.spec.ts src/variant/variant.resolver.spec.ts)",
       "Bash(sed -i \"s/null, 'google123'/undefined, 'google123'/\" src/users/users.repository.spec.ts)",
       "Bash(sed:*)",
-      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.jest,null,2\\)\\)\")"
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.jest,null,2\\)\\)\")",
+      "Bash(npx dotenv:*)",
+      "Bash(set DATABASE_URL=postgresql://postgres:14031998@localhost:5432/nest_ecommerce_backend_test?schema=public)",
+      "Bash(node -e \"const m = require\\('@nestjs/throttler'\\); console.log\\(Object.keys\\(m\\)\\)\")",
+      "Bash(find \"C:\\\\Users\\\\EmmanuelOppong\\\\Videos\\\\Projects\\\\Personal\\\\franko\\\\franko-backend\\\\src\\\\iam\" -name \"refresh-token.input.ts\" -exec cat {} \\\\;)",
+      "Bash(git -C /c/Users/EmmanuelOppong/Videos/Projects/Personal/franko/franko-backend status test/e2e/)"
     ]
   }
 }

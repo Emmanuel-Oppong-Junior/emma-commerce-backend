@@ -176,7 +176,7 @@ describe('Tag E2E Test', () => {
       const tagInDb = await prisma.tag.findUnique({
         where: { id: tag.id },
       });
-      expect(tagInDb.name).toBe('Books');
+      expect(tagInDb!.name).toBe('Books');
     });
 
     it('should not allow deleting a tag', async () => {
@@ -283,7 +283,7 @@ describe('Tag E2E Test', () => {
       const tagInDb = await prisma.tag.findUnique({
         where: { id: tag.id },
       });
-      expect(tagInDb.name).toBe('UpdatedAccessories');
+      expect(tagInDb!.name).toBe('UpdatedAccessories');
     });
 
     it('should delete a tag', async () => {
@@ -331,7 +331,7 @@ describe('Tag E2E Test', () => {
 
       const tag = await prisma.tag.findUnique({ where: { name: 'Tech' } });
 
-      const response = await graphqlRequest(app, UPDATE_TAG, { tagId: tag.id, name: 'Jogging' })
+      const response = await graphqlRequest(app, UPDATE_TAG, { tagId: tag!.id, name: 'Jogging' })
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
 
@@ -340,9 +340,9 @@ describe('Tag E2E Test', () => {
 
       // Verify in database
       const tagInDb = await prisma.tag.findUnique({
-        where: { id: tag.id },
+        where: { id: tag!.id },
       });
-      expect(tagInDb.name).toBe('Tech');
+      expect(tagInDb!.name).toBe('Tech');
     });
 
     it('should not allow deleting a non-existent tag', async () => {
@@ -439,7 +439,7 @@ describe('Tag E2E Test', () => {
       const tagInDb = await prisma.tag.findUnique({
         where: { id: tag.id },
       });
-      expect(tagInDb.name).toBe('UpdatedJewelry');
+      expect(tagInDb!.name).toBe('UpdatedJewelry');
     });
 
     it('should delete a tag', async () => {
@@ -488,7 +488,7 @@ describe('Tag E2E Test', () => {
       });
 
       const tag = await prisma.tag.findUnique({ where: { name: 'Pets' } });
-      const response = await graphqlRequest(app, UPDATE_TAG, { tagId: tag.id, name: 'Toys' })
+      const response = await graphqlRequest(app, UPDATE_TAG, { tagId: tag!.id, name: 'Toys' })
         .set('Authorization', `Bearer ${superAdminToken}`)
         .expect(200);
 
@@ -497,9 +497,9 @@ describe('Tag E2E Test', () => {
 
       // Verify in database
       const tagInDb = await prisma.tag.findUnique({
-        where: { id: tag.id },
+        where: { id: tag!.id },
       });
-      expect(tagInDb.name).toBe('Pets');
+      expect(tagInDb!.name).toBe('Pets');
     });
 
     it('should not allow deleting a non-existent tag', async () => {

@@ -96,7 +96,7 @@ describe('Category E2E Test', () => {
       const categoryInput = {
         name: 'Electronics',
         description: 'Devices and gadgets',
-        image: 'electronics.jpg',
+        image: 'https://example.com/electronics.jpg',
       };
       const response = await graphqlRequest(app, CREATE_CATEGORY, { input: categoryInput })
         .set('Authorization', `Bearer ${superAdminToken}`)
@@ -120,7 +120,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Books',
           description: 'All kinds of books',
-          image: 'books.jpg',
+          image: 'https://example.com/books.jpg',
         },
       });
 
@@ -135,7 +135,7 @@ describe('Category E2E Test', () => {
           expect.objectContaining({
             name: 'Books',
             description: 'All kinds of books',
-            image: 'books.jpg',
+            image: 'https://example.com/books.jpg',
           }),
         ]),
       );
@@ -145,7 +145,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Clothing',
           description: 'Apparel and accessories',
-          image: 'clothing.jpg',
+          image: 'https://example.com/clothing.jpg',
         },
       });
 
@@ -156,7 +156,7 @@ describe('Category E2E Test', () => {
         id: category.id,
         name: 'Clothing',
         description: 'Apparel and accessories',
-        image: 'clothing.jpg',
+        image: 'https://example.com/clothing.jpg',
       });
     });
     it('should update an existing category', async () => {
@@ -164,14 +164,14 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Furniture',
           description: 'Home furnishings',
-          image: 'furniture.jpg',
+          image: 'https://example.com/furniture.jpg',
         },
       });
 
       const updateInput = {
         name: 'Updated Furniture',
         description: 'Updated home furnishings',
-        image: 'updated-furniture.jpg',
+        image: 'https://example.com/updated-furniture.jpg',
       };
 
       const response = await graphqlRequest(app, UPDATE_CATEGORY, { id: category.id, input: updateInput })
@@ -193,7 +193,7 @@ describe('Category E2E Test', () => {
     });
   });
   describe('Admin Category Actions', () => {
-    let adminToken;
+    let adminToken: string;
     beforeAll(async () => {
       await createAdmin(prisma);
       adminToken = await getAdminToken(app);
@@ -203,7 +203,7 @@ describe('Category E2E Test', () => {
       const categoryInput = {
         name: 'Appliances',
         description: 'Home appliances',
-        image: 'appliances.jpg',
+        image: 'https://example.com/appliances.jpg',
       };
 
       const response = await graphqlRequest(app, CREATE_CATEGORY, { input: categoryInput })
@@ -228,7 +228,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Sports',
           description: 'Sporting goods',
-          image: 'sports.jpg',
+          image: 'https://example.com/sports.jpg',
         },
       });
 
@@ -243,7 +243,7 @@ describe('Category E2E Test', () => {
           expect.objectContaining({
             name: 'Sports',
             description: 'Sporting goods',
-            image: 'sports.jpg',
+            image: 'https://example.com/sports.jpg',
           }),
         ]),
       );
@@ -253,7 +253,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Jewelry',
           description: 'Fashion jewelry',
-          image: 'jewelry.jpg',
+          image: 'https://example.com/jewelry.jpg',
         },
       });
       const response = await graphqlRequest(app, FIND_ONE_CATEGORY, { id: category.id })
@@ -264,7 +264,7 @@ describe('Category E2E Test', () => {
         id: category.id,
         name: 'Jewelry',
         description: 'Fashion jewelry',
-        image: 'jewelry.jpg',
+        image: 'https://example.com/jewelry.jpg',
       });
     });
     it('should update an existing category', async () => {
@@ -272,14 +272,14 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Gadgets',
           description: 'Tech gadgets',
-          image: 'gadgets.jpg',
+          image: 'https://example.com/gadgets.jpg',
         },
       });
 
       const updateInput = {
         name: 'Updated Gadgets',
         description: 'Updated tech gadgets',
-        image: 'updated-gadgets.jpg',
+        image: 'https://example.com/updated-gadgets.jpg',
       };
 
       const response = await graphqlRequest(app, UPDATE_CATEGORY, { id: category.id, input: updateInput })
@@ -305,7 +305,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Tools',
           description: 'Hardware tools',
-          image: 'tools.jpg',
+          image: 'https://example.com/tools.jpg',
         },
       });
 
@@ -326,7 +326,7 @@ describe('Category E2E Test', () => {
     });
   });
   describe('User Category Actions', () => {
-    let userToken;
+    let userToken: string;
     beforeAll(async () => {
       await createUser(prisma);
       userToken = await getUserToken(app);
@@ -336,7 +336,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Games',
           description: 'Video games',
-          image: 'games.jpg',
+          image: 'https://example.com/games.jpg',
         },
       });
 
@@ -351,7 +351,7 @@ describe('Category E2E Test', () => {
           expect.objectContaining({
             name: 'Games',
             description: 'Video games',
-            image: 'games.jpg',
+            image: 'https://example.com/games.jpg',
           }),
         ]),
       );
@@ -362,7 +362,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Accessories',
           description: 'Fashion accessories',
-          image: 'accessories.jpg',
+          image: 'https://example.com/accessories.jpg',
         },
       });
 
@@ -374,7 +374,7 @@ describe('Category E2E Test', () => {
         id: category.id,
         name: 'Accessories',
         description: 'Fashion accessories',
-        image: 'accessories.jpg',
+        image: 'https://example.com/accessories.jpg',
       });
     });
 
@@ -382,7 +382,7 @@ describe('Category E2E Test', () => {
       const categoryInput = {
         name: 'Forbidden Category',
         description: 'Should not be created',
-        image: 'forbidden.jpg',
+        image: 'https://example.com/forbidden.jpg',
       };
 
       const response = await graphqlRequest(app, CREATE_CATEGORY, { input: categoryInput })
@@ -404,14 +404,14 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Stationery',
           description: 'Office supplies',
-          image: 'stationery.jpg',
+          image: 'https://example.com/stationery.jpg',
         },
       });
 
       const updateInput = {
         name: 'Updated Stationery',
         description: 'Updated office supplies',
-        image: 'updated-stationery.jpg',
+        image: 'https://example.com/updated-stationery.jpg',
       };
 
       const response = await graphqlRequest(app, UPDATE_CATEGORY, { id: category.id, input: updateInput })
@@ -425,7 +425,7 @@ describe('Category E2E Test', () => {
       const categoryInDb = await prisma.category.findUnique({
         where: { id: category.id },
       });
-      expect(categoryInDb.name).toBe('Stationery');
+      expect(categoryInDb!.name).toBe('Stationery');
     });
 
     it('should not allow deleting a category', async () => {
@@ -433,7 +433,7 @@ describe('Category E2E Test', () => {
         data: {
           name: 'Cosmetics',
           description: 'Beauty products',
-          image: 'cosmetics.jpg',
+          image: 'https://example.com/cosmetics.jpg',
         },
       });
 

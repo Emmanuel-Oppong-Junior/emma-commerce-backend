@@ -12,6 +12,8 @@ export class SubCategoriesRepository {
       return await this.prisma.subCategory.create({
         data: {
           name: data.name,
+          description: data.description,
+          image: data.image,
           category: { connect: { id: data.categoryId } },
         },
       });

@@ -112,7 +112,7 @@ describe('SubCategory E2E Test', () => {
       const subCategoryInput = {
         name: 'Smartphones',
         description: 'Mobile phones and accessories',
-        image: 'smartphones.jpg',
+        image: 'https://example.com/smartphones.jpg',
         categoryId: category.id,
       };
 
@@ -226,7 +226,7 @@ describe('SubCategory E2E Test', () => {
       const updateInput = {
         name: 'Updated Chairs',
         description: 'Updated chair collection',
-        image: 'updated-chairs.jpg',
+        image: 'https://example.com/updated-chairs.jpg',
         categoryId: category.id,
       };
 
@@ -425,7 +425,7 @@ describe('SubCategory E2E Test', () => {
       const subCategoryInDb = await prisma.subCategory.findUnique({
         where: { id: subCategory.id },
       });
-      expect(subCategoryInDb.name).toBe('Pens');
+      expect(subCategoryInDb!.name).toBe('Pens');
     });
 
     it('should not allow deleting a subcategory', async () => {

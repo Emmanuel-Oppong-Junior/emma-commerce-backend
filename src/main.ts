@@ -34,9 +34,7 @@ async function bootstrap() {
           : false,
       // [MED-1] HSTS — tell browsers to always use HTTPS for this domain
       strictTransportSecurity:
-        process.env.NODE_ENV === 'production'
-          ? { maxAge: 31536000, includeSubDomains: true, preload: true }
-          : false,
+        process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
     }),
   );
 
@@ -52,7 +50,7 @@ async function bootstrap() {
               'Set it to a comma-separated list of allowed origins (e.g. https://yourdomain.com).',
           );
         })()
-      : ['http://localhost:3000', 'http://localhost:4000'];
+      : ['http://localhost:3000', 'http://localhost:4000', 'http://localhost:5173'];
 
   app.enableCors({
     origin: allowedOrigins,

@@ -81,81 +81,81 @@ Mark a phase as **done** only when every checkbox within it is ticked.
 ## Phase 5 — E2E Tests: Authenticated User Flows
 
 ### Profile & Account
-- [ ] `GET userProfile` — returns authenticated user's profile with relations
-- [ ] `PATCH updateMyProfile` — success with valid input
-- [ ] `PATCH changeUserPassword` — success with correct `currentPassword`
-- [ ] `PATCH changeUserPassword` — fails with wrong `currentPassword`
+- [x] `GET userProfile` — returns authenticated user's profile with relations
+- [x] `PATCH updateMyProfile` — success with valid input
+- [x] `PATCH changeUserPassword` — success with correct `currentPassword`
+- [x] `PATCH changeUserPassword` — fails with wrong `currentPassword`
 
 ### Address Management
-- [ ] `POST createAddress` — success
-- [ ] `GET userAddresses` — returns only own addresses
-- [ ] `PATCH updateAddress` — success on own address
-- [ ] `PATCH updateAddress` — fails on another user's address
-- [ ] `DELETE deleteAddress` — success on own address
+- [x] `POST createAddress` — success
+- [x] `GET userAddresses` — returns only own addresses
+- [x] `PATCH updateAddress` — success on own address
+- [x] `PATCH updateAddress` — fails on another user's address
+- [x] `DELETE deleteAddress` — success on own address
 
 ### Wishlist
-- [ ] `GET wishlist` — auto-creates wishlist if none exists
-- [ ] `POST addToWishlist` — success with valid productId
-- [ ] `POST addToWishlist` — fails with non-existent productId
-- [ ] `DELETE removeFromWishlist` — removes product from wishlist
-- [ ] `DELETE clearWishlist` — empties wishlist
+- [x] `GET wishlist` — auto-creates wishlist if none exists
+- [x] `POST addToWishlist` — success with valid productId
+- [x] `POST addToWishlist` — fails with non-existent productId
+- [x] `DELETE removeFromWishlist` — removes product from wishlist
+- [x] `DELETE clearWishlist` — empties wishlist
 
 ### Cart & Shopping
-- [ ] `GET cart` — returns user's cart (empty on first access)
-- [ ] `POST addToCart` — success with valid productId + quantity
-- [ ] `POST addToCart` — fails when product is out of stock
-- [ ] `POST addToCart` — fails with non-existent productId
-- [ ] `PATCH updateCartItem` — success changing quantity
-- [ ] `DELETE removeFromCart` — removes item
-- [ ] `DELETE clearCart` — empties cart
-- [ ] `GET cartWithDiscount` — applies active discount to cart items
+- [x] `GET cart` — returns user's cart (empty on first access)
+- [x] `POST addToCart` — success with valid productId + quantity
+- [x] `POST addToCart` — fails when product is out of stock
+- [x] `POST addToCart` — fails with non-existent productId
+- [x] `PATCH updateCartItem` — success changing quantity
+- [x] `DELETE removeFromCart` — removes item
+- [x] `DELETE clearCart` — empties cart
+- [x] `GET cartWithDiscount` — applies active discount to cart items
 
 ### Reviews
-- [ ] `POST createReview` — success on a product
-- [ ] `POST createReview` — fails if user already reviewed the same product
-- [ ] `GET productReviews` — returns all reviews for a product
-- [ ] `GET userReviews` — returns own reviews
-- [ ] `PATCH updateReview` — success on own review
-- [ ] `PATCH updateReview` — fails on another user's review
-- [ ] `DELETE deleteReview` — success on own review
+- [x] `POST createReview` — success on a product
+- [x] `POST createReview` — fails if user already reviewed the same product
+- [x] `GET productReviews` — returns all reviews for a product
+- [x] `GET userReviews` — returns own reviews
+- [x] `PATCH updateReview` — success on own review
+- [x] `PATCH updateReview` — fails on another user's review
+- [x] `DELETE deleteReview` — success on own review
 
 ### Coupons
-- [ ] `POST validateCoupon` — success with valid, active coupon
-- [ ] `POST validateCoupon` — fails with expired coupon
-- [ ] `POST validateCoupon` — fails with inactive coupon
-- [ ] `POST validateCoupon` — fails when usage limit reached
-- [ ] `POST validateCoupon` — fails when order total below minimum
-- [ ] `POST validateCoupon` — fails if user already used coupon
+- [x] `POST validateCoupon` — success with valid, active coupon
+- [x] `POST validateCoupon` — fails with expired coupon
+- [x] `POST validateCoupon` — fails with inactive coupon
+- [x] `POST validateCoupon` — fails when usage limit reached
+- [x] `POST validateCoupon` — fails when order total below minimum
+- [x] `POST validateCoupon` — fails if user already used coupon
 
 ### Orders
-- [ ] `POST createOrder` — success from populated cart with valid address
-- [ ] `POST createOrder` — fails with empty cart
-- [ ] `POST createOrder` — fails with invalid address
-- [ ] `POST createOrder` — decrements product stock on success
-- [ ] `POST createOrder` — applies coupon discount when provided
-- [ ] `GET userOrders` — returns own orders
-- [ ] `GET order` — returns single own order
-- [ ] `GET order` — fails when trying to access another user's order
-- [ ] `POST cancelOrder` — success on PENDING order; restores stock
-- [ ] `POST cancelOrder` — fails on DELIVERED order
-- [ ] `POST finalizeOrder` — applies discount pricing to order items
+- [x] `POST createOrder` — success from populated cart with valid address
+- [x] `POST createOrder` — fails with empty cart
+- [x] `POST createOrder` — fails with invalid address
+- [x] `POST createOrder` — decrements product stock on success
+- [x] `POST createOrder` — applies coupon discount when provided
+- [x] `GET userOrders` — returns own orders
+- [x] `GET order` — returns single own order
+- [x] `GET order` — fails when trying to access another user's order
+- [x] `POST cancelOrder` — success on PENDING order; restores stock
+- [x] `POST cancelOrder` — fails on DELIVERED order
+- [x] `POST finalizeOrder` — applies discount pricing to order items
 
 ### Payments
-- [ ] `POST /payment/initialize` — success returns Paystack checkout URL
-- [ ] `POST verifyPayment` — success with valid Paystack reference
-- [ ] `GET getMyPayments` — returns own payment records
-- [ ] `GET payment` — returns own payment by ID
-- [ ] `GET payment` — fails on another user's payment
-- [ ] `GET /payment/webhook` — Paystack callback with valid signature updates order status
-- [ ] `GET /payment/webhook` — fails silently / returns 401 on invalid signature
+- [x] `POST /payment/initialize` — success returns Paystack checkout URL
+- [x] `POST verifyPayment` — success with valid Paystack reference
+- [x] `GET getMyPayments` — returns own payment records
+- [x] `GET payment` — returns own payment by ID
+- [x] `GET payment` — fails on another user's payment
+- [x] `GET /payment/webhook` — Paystack callback with valid signature updates order status
+- [x] `GET /payment/webhook` — fails silently / returns 401 on invalid signature
 
 ### Returns
-- [ ] `POST createReturnRequest` — success on DELIVERED order
-- [ ] `POST createReturnRequest` — fails on PENDING order
-- [ ] `POST createReturnRequest` — fails if active request already exists
-- [ ] `GET myReturnRequests` — returns own return requests
+- [x] `POST createReturnRequest` — success on DELIVERED order
+- [x] `POST createReturnRequest` — fails on PENDING order
+- [x] `POST createReturnRequest` — fails if active request already exists
+- [x] `GET myReturnRequests` — returns own return requests
 
-**Phase 5 complete when:** All items above are ticked ✅
+**Phase 5 complete ✅**
 
 ---
 
