@@ -61,12 +61,15 @@ import { ScheduleModule } from '@nestjs/schedule';
       {
         name: 'auth',
         ttl: 60000, // 1 minute
-        // [MED-2] Reduced from 10 to 5 — tighter limit to slow brute-force / credential-stuffing
         limit: 5,
       },
       {
-        // [HIGH-1] Strict rate limit for password-reset endpoints: 3 per hour
         name: 'passwordReset',
+        ttl: 3600000, // 1 hour
+        limit: 3,
+      },
+      {
+        name: 'forgotPassword',
         ttl: 3600000, // 1 hour
         limit: 3,
       },
@@ -88,7 +91,6 @@ import { ScheduleModule } from '@nestjs/schedule';
       imports: [CommonsModule],
       useFactory: (logger: LoggerService) => ({
         playground: false,
-        // [HIGH-5] Disable introspection in production to prevent schema enumeration
         introspection: process.env.NODE_ENV !== 'production',
         formatError: formatError(logger),
         plugins: [ApolloServerPluginLandingPageLocalDefault()],

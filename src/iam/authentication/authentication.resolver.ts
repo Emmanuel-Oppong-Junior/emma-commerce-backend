@@ -12,10 +12,9 @@ import { AuthType } from './enums/auth-type.enum';
 import { Auth } from './decorators/auth.decorator';
 import { GoogleAuthenticationService } from './social/google-authentication.service';
 import { FacebookAuthenticationService } from './social/facebook-authentication.service';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 
 @Auth(AuthType.None)
-@Throttle({ auth: { ttl: 60000, limit: 10 } })
 @Resolver(() => AuthEntity)
 export class AuthenticationResolver {
   constructor(
@@ -24,6 +23,7 @@ export class AuthenticationResolver {
     private readonly facebookAuthService: FacebookAuthenticationService,
   ) {}
 
+  @Throttle({ auth: { ttl: 60000, limit: 5 } })
   @Mutation(() => AuthEntity, {
     description: 'Register a new user with email and password',
   })
@@ -31,6 +31,7 @@ export class AuthenticationResolver {
     return this.authService.signUp(input);
   }
 
+  @Throttle({ auth: { ttl: 60000, limit: 5 } })
   @Mutation(() => AuthEntity, {
     description: 'Sign in an existing user with email and password',
   })
@@ -38,6 +39,7 @@ export class AuthenticationResolver {
     return this.authService.signIn(input);
   }
 
+  @SkipThrottle() //already gated by refresh token validity, no need for additional throttling
   @Mutation(() => AuthEntity, {
     description: 'Refresh access and refresh tokens using a valid refresh token',
   })
@@ -45,6 +47,7 @@ export class AuthenticationResolver {
     return this.authService.refreshToken(input);
   }
 
+  @SkipThrottle()
   @Auth(AuthType.Bearer)
   @Mutation(() => Boolean, {
     description: 'Revoke the provided refresh token, signing the user out',
@@ -53,18 +56,20 @@ export class AuthenticationResolver {
     return this.authService.signOut(input.refreshToken);
   }
 
+  @Throttle({ auth: { ttl: 60000, limit: 5 } })
   @Mutation(() => AuthEntity, { description: 'Sign in or register with a Google ID token' })
   signInWithGoogle(@Args('input', { type: () => SocialLoginInput }) input: SocialLoginInput) {
     return this.googleAuthService.authenticate(input.token);
   }
 
+  @Throttle({ auth: { ttl: 60000, limit: 5 } })
   @Mutation(() => AuthEntity, { description: 'Sign in or register with a Facebook access token' })
   signInWithFacebook(@Args('input', { type: () => SocialLoginInput }) input: SocialLoginInput) {
     return this.facebookAuthService.authenticate(input.token);
   }
 
-  // [HIGH-1] Password reset mutations are heavily rate-limited (3 per hour) to prevent abuse
-  @Throttle({ passwordReset: { ttl: 3600000, limit: 3 } })
+  //1 hour to prevent abuse while allowing reasonable time for users to act on password reset emails
+  @Throttle({ forgotPassword: { ttl: 3600000, limit: 3 } })
   @Mutation(() => Boolean, { description: 'Request a password reset email' })
   forgotPassword(@Args('input', { type: () => ForgotPasswordInput }) input: ForgotPasswordInput) {
     return this.authService.forgotPassword(input.email);

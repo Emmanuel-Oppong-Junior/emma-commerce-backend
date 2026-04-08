@@ -4,13 +4,11 @@ import { ValidationPipe } from '@nestjs/common';
 import { LoggerService } from './commons/logger.service';
 import { AllExceptionsFilter } from './commons/filters/all-exceptions.filter';
 import helmet from 'helmet';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
-    // logger: false,
-  });
-
-  // Security headers
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.set('trust proxy', 1); // Trust requests from the loopback address
   app.use(
     helmet({
       crossOriginEmbedderPolicy: false,
