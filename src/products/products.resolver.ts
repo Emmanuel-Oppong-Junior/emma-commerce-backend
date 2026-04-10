@@ -4,6 +4,7 @@ import { Product } from './entities/product.entity';
 import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
+import { ProductSortArgs } from './dto/product-sort.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { Role } from '@prisma/client';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
@@ -92,13 +93,15 @@ export class ProductsResolver {
     paginationArgs: PaginationArgs = { first: 10 },
     @Args('filterArgs', { type: () => ProductFilterArgs, nullable: true })
     filterArgs: ProductFilterArgs = {},
+    @Args('sortArgs', { type: () => ProductSortArgs, nullable: true })
+    sortArgs: ProductSortArgs = {},
     @Info() requestInfo?: GraphQLResolveInfo,
   ) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
       excludedFields: ['edges', 'cursor', 'node', 'discountedPrice', 'appliedDiscount', 'variants', 'reviews'],
       level: 3,
     });
-    return this.productsService.findAll(paginationArgs, filterArgs, requestedFields);
+    return this.productsService.findAll(paginationArgs, filterArgs, sortArgs, requestedFields);
   }
 
   @Auth(AuthType.None)

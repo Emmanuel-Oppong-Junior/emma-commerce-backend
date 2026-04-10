@@ -2,6 +2,9 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
+import { ProductSortArgs } from './dto/product-sort.args';
+import { ProductSortField } from './enums/product-sort-field.enum';
+import { SortOrder } from '../commons/enums/sort-order.enum';
 import { Prisma, Product } from '@prisma/client';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
@@ -88,18 +91,24 @@ export class ProductsService {
   async findAll(
     paginate: PaginationArgs,
     filter: ProductFilterArgs = {},
+    sort: ProductSortArgs = {},
     requestedData?: Prisma.ProductSelect,
   ): Promise<ProductConnection> {
     const paginationOptions = this.buildPaginationOptions(paginate);
     const whereClause = this.buildWhereClause(filter);
+    const orderBy = this.buildOrderByClause(sort);
 
-    // Fetch one extra item to determine if there is a next page without a COUNT query
-    const products = await this.productsRepository.findMany(
-      { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
-      whereClause,
-      requestedData,
-    );
-    return this.formatPaginatedResponse(products, paginationOptions);
+    // Fetch one extra item to determine if there is a next page, and total count in parallel
+    const [products, totalCount] = await Promise.all([
+      this.productsRepository.findMany(
+        { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
+        whereClause,
+        orderBy,
+        requestedData,
+      ),
+      this.productsRepository.count(whereClause),
+    ]);
+    return this.formatPaginatedResponse(products, paginationOptions, totalCount);
   }
 
   /**
@@ -234,9 +243,14 @@ export class ProductsService {
     };
   }
 
+  private buildOrderByClause({ sortBy = ProductSortField.CREATED_AT, sortOrder = SortOrder.DESC }: ProductSortArgs): Prisma.ProductOrderByWithRelationInput {
+    return { [sortBy]: sortOrder };
+  }
+
   private formatPaginatedResponse(
     products: Product[],
     { skip, take }: { take?: number; skip?: number },
+    totalCount: number,
   ): ProductConnection {
     const pageSize = take ?? 10;
     const hasNextPage = products.length > pageSize;
@@ -250,6 +264,7 @@ export class ProductsService {
         pageSize,
         hasPreviousPage: (skip ?? 0) > 0,
         hasNextPage,
+        totalCount,
       },
     };
   }

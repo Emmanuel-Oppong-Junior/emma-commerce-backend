@@ -1,4 +1,4 @@
-import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Field, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
 import { User } from '../../users/entities/user.entity';
 import { Product } from '../../products/entities/product.entity';
 
@@ -24,4 +24,10 @@ export class Review {
 
   @Field(() => Product)
   product: Product;
+
+  @Field(() => GraphQLISODateTime)
+  createdAt: Date;
+
+  @Field(() => GraphQLISODateTime)
+  updatedAt: Date;
 }

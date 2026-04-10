@@ -52,12 +52,13 @@ export class ProductsRepository {
   async findMany(
     options: { take?: number; skip?: number; cursor?: { id: string } },
     where: Prisma.ProductWhereInput,
+    orderBy: Prisma.ProductOrderByWithRelationInput,
     select?: Prisma.ProductSelect,
   ): Promise<Product[]> {
     const queryOptions: Prisma.ProductFindManyArgs = {
       ...options,
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy,
     };
     if (select && Object.keys(select).length) queryOptions.select = { ...select, id: true };
     return this.prisma.product.findMany(queryOptions);

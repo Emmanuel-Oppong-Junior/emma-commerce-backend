@@ -44,4 +44,10 @@ export class Discount {
 
   @Field(() => Float, { description: 'Minimum purchase amount to qualify for the discount', nullable: true })
   minimumPurchase?: number;
+
+  @Field(() => GraphQLISODateTime, { description: 'Timestamp when the discount was created' })
+  createdAt: Date;
+
+  @Field(() => GraphQLISODateTime, { description: 'Timestamp when the discount was last updated' })
+  updatedAt: Date;
 }

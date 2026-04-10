@@ -378,6 +378,9 @@ type Discount {
   """Categories to which the discount applies"""
   categories: [Category!]
 
+  """Timestamp when the discount was created"""
+  createdAt: DateTime!
+
   """Detailed description of the discount"""
   description: String
 
@@ -404,6 +407,9 @@ type Discount {
 
   """Type of discount (e.g., PERCENTAGE or FIXED_AMOUNT)"""
   type: DiscountType!
+
+  """Timestamp when the discount was last updated"""
+  updatedAt: DateTime!
 
   """Discount value (e.g., 20 for 20% or 10.00 for $10 off)"""
   value: Float!
@@ -745,6 +751,7 @@ type PageInfo {
   hasNextPage: Boolean!
   hasPreviousPage: Boolean!
   pageSize: Int!
+  totalCount: Int!
 }
 
 input PaginationArgs {
@@ -882,6 +889,32 @@ input ProductFilterArgs {
   tagName: String
 }
 
+input ProductSortArgs {
+  """Field to sort products by"""
+  sortBy: ProductSortField = CREATED_AT
+
+  """Sort direction"""
+  sortOrder: SortOrder = DESC
+}
+
+"""Fields by which products can be sorted"""
+enum ProductSortField {
+  """Sort by creation date"""
+  CREATED_AT
+
+  """Sort by product name"""
+  NAME
+
+  """Sort by price"""
+  PRICE
+
+  """Sort by stock quantity"""
+  QUANTITY
+
+  """Sort by last update date"""
+  UPDATED_AT
+}
+
 type Query {
   """Retrieves a specific address by ID for the current user"""
   address(addressId: String!): Address!
@@ -937,7 +970,7 @@ type Query {
 
   """Retrieves all variants for a product"""
   productVariants(productId: String!): [Variant!]!
-  products(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs): ProductConnection!
+  products(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs, sortArgs: ProductSortArgs): ProductConnection!
 
   """Get all return requests (admin only)"""
   returnRequests: [ReturnRequestEntity!]!
@@ -1074,10 +1107,12 @@ type RevenueByCategoryEntity {
 
 type Review {
   comment: String
+  createdAt: DateTime!
   id: ID!
   product: Product!
   productId: ID!
   score: Int!
+  updatedAt: DateTime!
   user: User!
   userId: ID!
 }
@@ -1123,6 +1158,12 @@ input SignUpInput {
 input SocialLoginInput {
   """token"""
   token: String!
+}
+
+"""Sort direction: ascending or descending"""
+enum SortOrder {
+  ASC
+  DESC
 }
 
 type SubCategory {
