@@ -319,6 +319,7 @@ model Order {
   couponId                String?
   coupon                  Coupon?         @relation(fields: [couponId], references: [id])
   couponDiscount          Decimal?        @db.Decimal(10, 2)
+  paymentMethod           PaymentMethod   @default(ONLINE)
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
   deleted                 Boolean         @default(false)
@@ -403,6 +404,11 @@ enum PaymentStatus {
   PENDING
   COMPLETED
   FAILED
+}
+
+enum PaymentMethod {
+  ONLINE
+  CASH_ON_DELIVERY
 }
 
 enum OrderStatus {

@@ -74,6 +74,13 @@ export class PaymentRepository {
     });
   }
 
+  async forceUpdateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status },
+    });
+  }
+
   async updatePaymentWithStatus(
     paymentId: string,
     status: PaymentStatus,

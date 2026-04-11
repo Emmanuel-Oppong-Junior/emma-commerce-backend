@@ -9,3 +9,10 @@ export enum OrderStatusEnum {
 }
 
 registerEnumType(OrderStatusEnum, { name: 'OrderStatus' });
+
+export enum OrderPaymentMethodEnum {
+  ONLINE = 'ONLINE',
+  CASH_ON_DELIVERY = 'CASH_ON_DELIVERY',
+}
+
+registerEnumType(OrderPaymentMethodEnum, { name: 'OrderPaymentMethod' });

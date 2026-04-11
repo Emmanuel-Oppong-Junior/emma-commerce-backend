@@ -38,6 +38,17 @@ export class PaymentResolver {
     return this.paymentService.getPayment(id, userId, userRole);
   }
 
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Mutation(() => Payment, {
+    description: 'Record cash collection for a cash-on-delivery order. Marks payment as complete and order as DELIVERED.',
+  })
+  recordCodPayment(
+    @Args('orderId', { type: () => String }) orderId: string,
+    @ActiveUser('id') adminId: string,
+  ) {
+    return this.paymentService.recordCodPayment(orderId, adminId);
+  }
+
   @Roles(Role.ADMIN)
   @Mutation(() => Payment)
   softDeletePayment(@Args('id', { type: () => String }) id: string) {

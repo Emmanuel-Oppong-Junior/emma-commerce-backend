@@ -1,6 +1,6 @@
 import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
-import { OrderStatusEnum } from '../enums/order.enum';
-import { OrderStatus } from '@prisma/client';
+import { OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
+import { OrderStatus, PaymentMethod } from '@prisma/client';
 import { OrderItem } from './order-item.entity';
 import { Decimal } from '@prisma/client/runtime/library';
 import GraphQLJSON from 'graphql-type-json';
@@ -27,6 +27,9 @@ export class Order {
 
   @Field(() => OrderStatusEnum)
   status: OrderStatus;
+
+  @Field(() => OrderPaymentMethodEnum, { description: 'Payment method chosen at order creation' })
+  paymentMethod: PaymentMethod;
 
   @Field(() => ID)
   shippingAddressId: string;

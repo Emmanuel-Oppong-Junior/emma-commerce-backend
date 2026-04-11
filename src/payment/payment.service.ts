@@ -8,7 +8,7 @@ import {
 import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
-import { Payment, PaymentStatus, Prisma } from '@prisma/client';
+import { Payment, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
@@ -44,6 +44,9 @@ export class PaymentService {
   ): Promise<Payment & { authorizationUrl?: string }> {
     const { orderId } = createPaymentDto;
     const order = await this.validateOrderOwnership(userId, orderId);
+    if ((order as unknown as { paymentMethod: PaymentMethod }).paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
+      throw new BadRequestException('This order uses cash on delivery. Online payment is not available.');
+    }
     const { totalAmount } = order;
     const email = (order as unknown as { user: { email: string } }).user.email;
     await this.ensurePaymentNotInitiated(orderId);
@@ -113,6 +116,39 @@ export class PaymentService {
    */
   async getUserPayments(userId: string): Promise<Payment[]> {
     return this.paymentRepository.findByUser(userId);
+  }
+
+  /**
+   * Records cash collection for a cash-on-delivery order (admin only).
+   * Creates a COMPLETED payment record and advances the order to DELIVERED.
+   * @param orderId - The ID of the COD order.
+   * @param adminId - The ID of the admin recording the collection.
+   * @returns The created payment record.
+   */
+  async recordCodPayment(orderId: string, adminId: string): Promise<Payment> {
+    const order = await this.paymentRepository.findOrderById(orderId);
+    if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
+
+    if ((order as unknown as { paymentMethod: PaymentMethod }).paymentMethod !== PaymentMethod.CASH_ON_DELIVERY) {
+      throw new BadRequestException(`Order "${orderId}" is not a cash-on-delivery order`);
+    }
+
+    const existing = await this.paymentRepository.findByOrderId(orderId);
+    if (existing) throw new BadRequestException(`Payment for order "${orderId}" has already been recorded`);
+
+    this.logger.log(`COD payment recorded | orderId: ${orderId} | adminId: ${adminId}`, 'PaymentService');
+
+    const payment = await this.paymentRepository.create({
+      order: { connect: { id: orderId } },
+      amount: order.totalAmount as unknown as number,
+      currency: 'GHS',
+      paymentMethod: 'CASH_ON_DELIVERY',
+      status: PaymentStatus.COMPLETED,
+    });
+
+    await this.paymentRepository.forceUpdateOrderStatus(orderId, 'DELIVERED');
+
+    return payment;
   }
 
   /**

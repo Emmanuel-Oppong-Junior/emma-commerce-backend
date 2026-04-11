@@ -3,7 +3,7 @@ import DataLoader = require('dataloader');
 import { Order, OrderItem } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
-type OrderWithItems = Order & { items: OrderItem[] };
+type OrderWithItems = Order & { items: (OrderItem & { product: unknown })[] };
 
 @Injectable({ scope: Scope.REQUEST })
 export class OrdersLoader {
@@ -19,7 +19,7 @@ export class OrdersLoader {
 
       const orders = (await this.prisma.order.findMany({
         where: { userId: { in: ids }, deleted: false },
-        include: { items: true },
+        include: { items: { include: { product: true } } },
         orderBy: { createdAt: 'desc' },
       })) as unknown as OrderWithItems[];
 

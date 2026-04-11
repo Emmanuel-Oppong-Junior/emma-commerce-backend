@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Address, Order, OrderItem, OrderStatus, Prisma, Product, User } from '@prisma/client';
+import { Address, Order, OrderItem, OrderStatus, PaymentMethod, Prisma, Product, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type OrderWithItems = Order & { items: OrderItem[] };
@@ -40,6 +40,8 @@ export class OrdersRepository {
       shippingAddressSnapshot?: Record<string, unknown>;
       couponId?: string;
       couponDiscount?: number;
+      paymentMethod?: PaymentMethod;
+      initialStatus?: OrderStatus;
     },
   ): Promise<OrderWithItems> {
     return tx.order.create({
@@ -50,6 +52,8 @@ export class OrdersRepository {
         shippingAddressSnapshot: (orderDetails.shippingAddressSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
         couponId: orderDetails.couponId,
         couponDiscount: orderDetails.couponDiscount,
+        paymentMethod: orderDetails.paymentMethod ?? PaymentMethod.ONLINE,
+        status: orderDetails.initialStatus ?? OrderStatus.PENDING,
         items: { create: orderDetails.orderItems },
       },
       include: { items: { include: { product: true } } },

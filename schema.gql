@@ -246,6 +246,11 @@ input CreateOrderInput {
   """Optional coupon code to apply to the order"""
   couponCode: String
 
+  """
+  Payment method for this order. Defaults to ONLINE (Paystack). Use CASH_ON_DELIVERY to pay on delivery.
+  """
+  paymentMethod: OrderPaymentMethod = ONLINE
+
   """The ID of the shipping address for the order"""
   shippingAddressId: ID!
 }
@@ -573,6 +578,11 @@ type Mutation {
   """Process a refund for an approved return (admin only)"""
   processRefund(returnRequestId: ID!): ReturnRequestEntity!
 
+  """
+  Record cash collection for a cash-on-delivery order. Marks payment as complete and order as DELIVERED.
+  """
+  recordCodPayment(orderId: String!): Payment!
+
   """Refresh access and refresh tokens using a valid refresh token"""
   refreshToken(input: RefreshTokenInput!): AuthEntity!
 
@@ -706,6 +716,9 @@ type Order {
   finalTotal: Float
   id: ID!
   items: [OrderItem!]!
+
+  """Payment method chosen at order creation"""
+  paymentMethod: OrderPaymentMethod!
   shippingAddressId: ID!
 
   """Address snapshot at time of order"""
@@ -737,6 +750,11 @@ type OrderItem {
   quantity: Float!
   updatedAt: DateTime!
   variantId: ID
+}
+
+enum OrderPaymentMethod {
+  CASH_ON_DELIVERY
+  ONLINE
 }
 
 enum OrderStatus {

@@ -8,6 +8,7 @@ import { UpdateOrderStatusInput } from './dto/update-order-status.input';
 import { UpdateShippingInput } from './dto/update-shipping.input';
 import { OrdersService } from './order.service';
 import { DiscountService } from '../discount/discount.service';
+import { PaymentMethod } from '@prisma/client';
 
 @Resolver(() => Order)
 export class OrdersResolver {
@@ -58,7 +59,7 @@ export class OrdersResolver {
     description: 'Creates an order from the cart',
   })
   async createOrder(@ActiveUser('id') userId: string, @Args('input') input: CreateOrderInput) {
-    return this.ordersService.createOrderFromCart(userId, input.shippingAddressId, input.couponCode);
+    return this.ordersService.createOrderFromCart(userId, input.shippingAddressId, input.couponCode, input.paymentMethod as PaymentMethod);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)

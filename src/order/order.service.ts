@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CartService } from '../cart/cart.service';
-import { Cart, CartItem, Order, OrderItem, OrderStatus, Prisma, Product } from '@prisma/client';
+import { Cart, CartItem, Order, OrderItem, OrderStatus, PaymentMethod, Prisma, Product } from '@prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { OrdersRepository } from './order.repository';
 import { CouponsService } from '../coupons/coupons.service';
@@ -33,12 +33,13 @@ export class OrdersService {
     userId: string,
     shippingAddressId: string,
     couponCode?: string,
+    paymentMethod: PaymentMethod = PaymentMethod.ONLINE,
   ): Promise<Order & { items: OrderItem[] }> {
     const cart = await this.ensureValidCart(userId);
     const address = await this.ensureValidShippingAddress(userId, shippingAddressId);
     await this.ensureUserCanOrder(userId, cart);
     const orderDetails = await this.buildOrderDetails(cart.items, address.country, userId, couponCode);
-    const order = await this.saveOrderAndUpdateInventory(userId, shippingAddressId, orderDetails, cart.id, address);
+    const order = await this.saveOrderAndUpdateInventory(userId, shippingAddressId, { ...orderDetails, paymentMethod }, cart.id, address);
     this.sendOrderConfirmationEmail(userId, order);
     return order;
   }
@@ -137,6 +138,9 @@ export class OrdersService {
    */
   async markOrderAsPaid(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
+    if ((order as Order & { paymentMethod: PaymentMethod }).paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
+      throw new BadRequestException(`Order "${orderId}" uses cash on delivery and cannot be marked as paid online`);
+    }
     this.ensureOrderCanBePaid(order);
     return this.ordersRepository.updateStatus(orderId, 'PROCESSING');
   }
@@ -276,6 +280,7 @@ export class OrdersService {
       totalAmount: Prisma.Decimal;
       couponId?: string;
       couponDiscount?: number;
+      paymentMethod?: PaymentMethod;
     },
     cartId: string,
     address: { id: string; street: string; city: string; state: string; zipCode: string; country: string },
@@ -304,9 +309,11 @@ export class OrdersService {
         country: address.country,
       };
 
+      const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
       const newOrder = await this.ordersRepository.create(tx, userId, shippingAddressId, {
         ...orderDetails,
         shippingAddressSnapshot,
+        initialStatus: isCod ? OrderStatus.PROCESSING : OrderStatus.PENDING,
       });
 
       if (orderDetails.couponId) {
