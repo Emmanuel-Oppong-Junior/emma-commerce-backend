@@ -59,7 +59,7 @@ export class OrdersResolver {
     description: 'Creates an order from the cart',
   })
   async createOrder(@ActiveUser('id') userId: string, @Args('input') input: CreateOrderInput) {
-    return this.ordersService.createOrderFromCart(userId, input.shippingAddressId, input.couponCode, input.paymentMethod as PaymentMethod);
+    return this.ordersService.createOrderFromCart(userId, input.shippingAddressId, input.contactEmail, input.contactPhone, input.couponCode, input.paymentMethod as PaymentMethod);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)

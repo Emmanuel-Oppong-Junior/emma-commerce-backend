@@ -320,6 +320,8 @@ model Order {
   coupon                  Coupon?         @relation(fields: [couponId], references: [id])
   couponDiscount          Decimal?        @db.Decimal(10, 2)
   paymentMethod           PaymentMethod   @default(ONLINE)
+  contactEmail            String
+  contactPhone            String
   createdAt               DateTime        @default(now())
   updatedAt               DateTime        @updatedAt
   deleted                 Boolean         @default(false)

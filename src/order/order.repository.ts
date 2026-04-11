@@ -42,6 +42,8 @@ export class OrdersRepository {
       couponDiscount?: number;
       paymentMethod?: PaymentMethod;
       initialStatus?: OrderStatus;
+      contactEmail: string;
+      contactPhone: string;
     },
   ): Promise<OrderWithItems> {
     return tx.order.create({
@@ -54,6 +56,8 @@ export class OrdersRepository {
         couponDiscount: orderDetails.couponDiscount,
         paymentMethod: orderDetails.paymentMethod ?? PaymentMethod.ONLINE,
         status: orderDetails.initialStatus ?? OrderStatus.PENDING,
+        contactEmail: orderDetails.contactEmail,
+        contactPhone: orderDetails.contactPhone,
         items: { create: orderDetails.orderItems },
       },
       include: { items: { include: { product: true } } },

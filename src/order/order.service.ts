@@ -32,6 +32,8 @@ export class OrdersService {
   async createOrderFromCart(
     userId: string,
     shippingAddressId: string,
+    contactEmail: string,
+    contactPhone: string,
     couponCode?: string,
     paymentMethod: PaymentMethod = PaymentMethod.ONLINE,
   ): Promise<Order & { items: OrderItem[] }> {
@@ -39,7 +41,7 @@ export class OrdersService {
     const address = await this.ensureValidShippingAddress(userId, shippingAddressId);
     await this.ensureUserCanOrder(userId, cart);
     const orderDetails = await this.buildOrderDetails(cart.items, address.country, userId, couponCode);
-    const order = await this.saveOrderAndUpdateInventory(userId, shippingAddressId, { ...orderDetails, paymentMethod }, cart.id, address);
+    const order = await this.saveOrderAndUpdateInventory(userId, shippingAddressId, { ...orderDetails, paymentMethod, contactEmail, contactPhone }, cart.id, address);
     this.sendOrderConfirmationEmail(userId, order);
     return order;
   }
@@ -281,6 +283,8 @@ export class OrdersService {
       couponId?: string;
       couponDiscount?: number;
       paymentMethod?: PaymentMethod;
+      contactEmail: string;
+      contactPhone: string;
     },
     cartId: string,
     address: { id: string; street: string; city: string; state: string; zipCode: string; country: string },

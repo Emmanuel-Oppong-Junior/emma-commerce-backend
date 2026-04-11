@@ -31,6 +31,12 @@ export class Order {
   @Field(() => OrderPaymentMethodEnum, { description: 'Payment method chosen at order creation' })
   paymentMethod: PaymentMethod;
 
+  @Field({ description: 'Contact email for order notifications' })
+  contactEmail: string;
+
+  @Field({ description: 'Contact phone number for delivery coordination' })
+  contactPhone: string;
+
   @Field(() => ID)
   shippingAddressId: string;
 

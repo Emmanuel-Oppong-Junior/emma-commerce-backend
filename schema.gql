@@ -243,6 +243,12 @@ input CreateDiscountInput {
 }
 
 input CreateOrderInput {
+  """Contact email for order notifications"""
+  contactEmail: String!
+
+  """Contact phone number for delivery coordination"""
+  contactPhone: String!
+
   """Optional coupon code to apply to the order"""
   couponCode: String
 
@@ -704,6 +710,12 @@ type Mutation {
 type Order {
   """Carrier name"""
   carrier: String
+
+  """Contact email for order notifications"""
+  contactEmail: String!
+
+  """Contact phone number for delivery coordination"""
+  contactPhone: String!
 
   """Coupon discount amount"""
   couponDiscount: Float
