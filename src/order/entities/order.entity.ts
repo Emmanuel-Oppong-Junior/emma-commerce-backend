@@ -1,4 +1,4 @@
-import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
+import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
 import { OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
 import { OrderStatus, PaymentMethod } from '@prisma/client';
 import { OrderItem } from './order-item.entity';
@@ -9,6 +9,9 @@ import GraphQLJSON from 'graphql-type-json';
 export class Order {
   @Field(() => ID)
   id: string;
+
+  @Field(() => Int, { description: 'Auto-generated sequential order reference number' })
+  orderNumber: number;
 
   @Field(() => ID)
   userId: string;

@@ -305,6 +305,7 @@ model CartItem {
 
 model Order {
   id                      String          @id @default(cuid())
+  orderNumber             Int             @unique @default(dbgenerated("nextval('order_number_seq'::regclass)"))
   userId                  String
   user                    User            @relation(fields: [userId], references: [id], onDelete: Restrict)
   discountTotal           Decimal?

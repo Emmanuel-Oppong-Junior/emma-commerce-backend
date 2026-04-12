@@ -729,6 +729,9 @@ type Order {
   id: ID!
   items: [OrderItem!]!
 
+  """Auto-generated sequential order reference number"""
+  orderNumber: Int!
+
   """Payment method chosen at order creation"""
   paymentMethod: OrderPaymentMethod!
   shippingAddressId: ID!
