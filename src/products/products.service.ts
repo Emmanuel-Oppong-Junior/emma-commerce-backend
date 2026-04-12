@@ -243,7 +243,10 @@ export class ProductsService {
     };
   }
 
-  private buildOrderByClause({ sortBy = ProductSortField.CREATED_AT, sortOrder = SortOrder.DESC }: ProductSortArgs): Prisma.ProductOrderByWithRelationInput {
+  private buildOrderByClause({
+    sortBy = ProductSortField.CREATED_AT,
+    sortOrder = SortOrder.DESC,
+  }: ProductSortArgs): Prisma.ProductOrderByWithRelationInput {
     return { [sortBy]: sortOrder };
   }
 

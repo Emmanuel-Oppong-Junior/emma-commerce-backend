@@ -14,10 +14,7 @@ export class ExpiredOrdersTask {
 
   @Cron(CronExpression.EVERY_HOUR)
   async cancelAbandonedOrders(): Promise<void> {
-    this.logger.log(
-      `Running expired orders cleanup | threshold: ${ORDER_EXPIRY_HOURS}h`,
-      'ExpiredOrdersTask',
-    );
+    this.logger.log(`Running expired orders cleanup | threshold: ${ORDER_EXPIRY_HOURS}h`, 'ExpiredOrdersTask');
 
     const cancelled = await this.ordersService.expireAbandonedOrders(ORDER_EXPIRY_HOURS);
 

@@ -14,7 +14,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const message =
       typeof rawResponse === 'string'
         ? rawResponse
-        : ((rawResponse as Record<string, unknown>).message as string) ?? 'Internal server error';
+        : (((rawResponse as Record<string, unknown>).message as string) ?? 'Internal server error');
     // [CRITICAL-4] Never expose stack traces outside development
     const isDev = process.env.NODE_ENV === 'development';
     const stack = isDev && exception instanceof Error ? exception.stack : undefined;

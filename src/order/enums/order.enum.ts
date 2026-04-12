@@ -16,3 +16,10 @@ export enum OrderPaymentMethodEnum {
 }
 
 registerEnumType(OrderPaymentMethodEnum, { name: 'OrderPaymentMethod' });
+
+export enum FulfillmentTypeEnum {
+  DELIVERY = 'DELIVERY',
+  PICKUP = 'PICKUP',
+}
+
+registerEnumType(FulfillmentTypeEnum, { name: 'FulfillmentType' });

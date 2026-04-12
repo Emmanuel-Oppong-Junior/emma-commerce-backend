@@ -212,7 +212,7 @@ describe('Orders (e2e)', () => {
   // ─── order (by ID) ────────────────────────────────────────────────────────────
 
   describe('order', () => {
-    it("returns a single order owned by the authenticated user", async () => {
+    it('returns a single order owned by the authenticated user', async () => {
       // Arrange
       const query = `
         query {

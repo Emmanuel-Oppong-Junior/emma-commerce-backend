@@ -1,6 +1,6 @@
 import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
-import { OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
-import { OrderStatus, PaymentMethod } from '@prisma/client';
+import { FulfillmentTypeEnum, OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
+import { FulfillmentType, OrderStatus, PaymentMethod } from '@prisma/client';
 import { OrderItem } from './order-item.entity';
 import { Decimal } from '@prisma/client/runtime/library';
 import GraphQLJSON from 'graphql-type-json';
@@ -34,14 +34,20 @@ export class Order {
   @Field(() => OrderPaymentMethodEnum, { description: 'Payment method chosen at order creation' })
   paymentMethod: PaymentMethod;
 
+  @Field(() => FulfillmentTypeEnum, { description: 'Whether the order is for delivery or pickup' })
+  fulfillmentType: FulfillmentType;
+
   @Field({ description: 'Contact email for order notifications' })
   contactEmail: string;
 
   @Field({ description: 'Contact phone number for delivery coordination' })
   contactPhone: string;
 
-  @Field(() => ID)
-  shippingAddressId: string;
+  @Field(() => ID, { nullable: true, description: 'Set when fulfillmentType is DELIVERY' })
+  shippingAddressId?: string;
+
+  @Field(() => ID, { nullable: true, description: 'Set when fulfillmentType is PICKUP' })
+  pickupLocationId?: string;
 
   @Field(() => GraphQLJSON, { nullable: true, description: 'Address snapshot at time of order' })
   shippingAddressSnapshot?: Record<string, unknown>;

@@ -1,14 +1,30 @@
 import { InputType, Field, ID } from '@nestjs/graphql';
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsPhoneNumber, IsString } from 'class-validator';
-import { OrderPaymentMethodEnum } from '../enums/order.enum';
+import { IsEmail, IsEnum, IsOptional, IsPhoneNumber, IsString } from 'class-validator';
+import { FulfillmentTypeEnum, OrderPaymentMethodEnum } from '../enums/order.enum';
 
 @InputType()
 export class CreateOrderInput {
-  @Field(() => ID, {
-    description: 'The ID of the shipping address for the order',
+  @Field(() => FulfillmentTypeEnum, {
+    description: 'Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)',
   })
-  @IsNotEmpty({ message: 'Shipping address ID must not be empty' })
-  shippingAddressId: string;
+  @IsEnum(FulfillmentTypeEnum)
+  fulfillmentType: FulfillmentTypeEnum;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'Required when fulfillmentType is DELIVERY — the ID of the shipping address',
+  })
+  @IsOptional()
+  @IsString()
+  shippingAddressId?: string;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'Required when fulfillmentType is PICKUP — the ID of the chosen pickup location',
+  })
+  @IsOptional()
+  @IsString()
+  pickupLocationId?: string;
 
   @Field({ description: 'Contact email for order notifications' })
   @IsEmail({}, { message: 'contactEmail must be a valid email address' })
@@ -26,7 +42,8 @@ export class CreateOrderInput {
   @Field(() => OrderPaymentMethodEnum, {
     nullable: true,
     defaultValue: OrderPaymentMethodEnum.ONLINE,
-    description: 'Payment method for this order. Defaults to ONLINE (Paystack). Use CASH_ON_DELIVERY to pay on delivery.',
+    description:
+      'Payment method for this order. Defaults to ONLINE (Paystack). Use CASH_ON_DELIVERY to pay on delivery.',
   })
   @IsOptional()
   @IsEnum(OrderPaymentMethodEnum)

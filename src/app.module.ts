@@ -43,6 +43,8 @@ import { InventoryModule } from './inventory/inventory.module';
 import { ReturnsModule } from './returns/returns.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { PickupLocationsModule } from './pickup-locations/pickup-locations.module';
+import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
 
 @Module({
   imports: [
@@ -126,6 +128,8 @@ import { ScheduleModule } from '@nestjs/schedule';
     InventoryModule,
     ReturnsModule,
     AnalyticsModule,
+    PickupLocationsModule,
+    ShippingZonesModule,
     ScheduleModule.forRoot(),
   ],
   controllers: [AppController],

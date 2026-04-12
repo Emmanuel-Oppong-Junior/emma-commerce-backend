@@ -160,7 +160,7 @@ describe('User Account (e2e)', () => {
   // ─── userAddresses ────────────────────────────────────────────────────────────
 
   describe('userAddresses', () => {
-    it('returns only the authenticated user\'s own addresses', async () => {
+    it("returns only the authenticated user's own addresses", async () => {
       // Arrange — also create an address for the admin to confirm isolation
       const adminAddressMutation = `
         mutation {
@@ -247,7 +247,7 @@ describe('User Account (e2e)', () => {
       expect(res.body.data.updateAddress.city).toBe('Tema');
     });
 
-    it('fails when a user tries to update another user\'s address', async () => {
+    it("fails when a user tries to update another user's address", async () => {
       // Arrange — user1 (seed_user) tries to update admin's address
       const mutation = `
         mutation {
@@ -272,7 +272,7 @@ describe('User Account (e2e)', () => {
   // ─── deleteAddress ────────────────────────────────────────────────────────────
 
   describe('deleteAddress', () => {
-    it('deletes the user\'s own address successfully', async () => {
+    it("deletes the user's own address successfully", async () => {
       // Arrange — create a throwaway address to delete
       const createMutation = `
         mutation {

@@ -253,12 +253,36 @@ input CreateOrderInput {
   couponCode: String
 
   """
+  Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
+  """
+  fulfillmentType: FulfillmentType!
+
+  """
   Payment method for this order. Defaults to ONLINE (Paystack). Use CASH_ON_DELIVERY to pay on delivery.
   """
   paymentMethod: OrderPaymentMethod = ONLINE
 
-  """The ID of the shipping address for the order"""
-  shippingAddressId: ID!
+  """
+  Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
+  """
+  pickupLocationId: ID
+
+  """
+  Required when fulfillmentType is DELIVERY — the ID of the shipping address
+  """
+  shippingAddressId: ID
+}
+
+input CreatePickupLocationInput {
+  """Street address"""
+  address: String!
+  city: String!
+  country: String!
+  isActive: Boolean = true
+
+  """Display name of the pickup location"""
+  name: String!
+  state: String!
 }
 
 input CreateProductInput {
@@ -306,6 +330,18 @@ input CreateReviewInput {
 
   """Rate number 1 - 5"""
   score: Int!
+}
+
+input CreateShippingZoneInput {
+  """Cities covered by this zone"""
+  cities: [String!]!
+
+  """Shipping fee for this zone"""
+  fee: Float!
+  isActive: Boolean = true
+
+  """Unique name for this shipping zone"""
+  name: String!
 }
 
 input CreateSubCategoryInput {
@@ -443,6 +479,11 @@ input ForgotPasswordInput {
   email: String!
 }
 
+enum FulfillmentType {
+  DELIVERY
+  PICKUP
+}
+
 enum InventoryActionEnum {
   ADJUSTMENT
   ORDER_DEDUCTION
@@ -525,6 +566,9 @@ type Mutation {
 
   """Creates an order from the cart"""
   createOrder(input: CreateOrderInput!): Order!
+
+  """Create a pickup location (admin only)"""
+  createPickupLocation(input: CreatePickupLocationInput!): PickupLocationEntity!
   createProduct(createProductInput: CreateProductInput!): Product!
 
   """Create a return request for a delivered order"""
@@ -532,6 +576,9 @@ type Mutation {
 
   """Creates a review for a product"""
   createReview(input: CreateReviewInput!): Review!
+
+  """Create a shipping zone (admin only)"""
+  createShippingZone(input: CreateShippingZoneInput!): ShippingZoneEntity!
 
   """Creates a new subcategory (admin only)"""
   createSubCategory(
@@ -564,8 +611,14 @@ type Mutation {
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
 
+  """Delete a pickup location (admin only)"""
+  deletePickupLocation(id: ID!): PickupLocationEntity!
+
   """Deletes a user's review"""
   deleteReview(reviewId: String!): Review!
+
+  """Delete a shipping zone (admin only)"""
+  deleteShippingZone(id: ID!): ShippingZoneEntity!
 
   """Deletes a tag"""
   deleteTag(tagId: String!): Tag!
@@ -673,6 +726,9 @@ type Mutation {
 
   """Updates the status of an order"""
   updateOrderStatus(input: UpdateOrderStatusInput!): Order!
+
+  """Update a pickup location (admin only)"""
+  updatePickupLocation(id: ID!, input: UpdatePickupLocationInput!): PickupLocationEntity!
   updateProduct(productId: String!, updateProductInput: UpdateProductInput!): Product!
 
   """Updates a user's review"""
@@ -680,6 +736,9 @@ type Mutation {
 
   """Update tracking number and carrier for an order (admin only)"""
   updateShipping(input: UpdateShippingInput!): Order!
+
+  """Update a shipping zone (admin only)"""
+  updateShippingZone(id: ID!, input: UpdateShippingZoneInput!): ShippingZoneEntity!
 
   """Updates an existing subcategory (admin only)"""
   updateSubCategory(
@@ -726,6 +785,9 @@ type Order {
 
   """Final total after discounts"""
   finalTotal: Float
+
+  """Whether the order is for delivery or pickup"""
+  fulfillmentType: FulfillmentType!
   id: ID!
   items: [OrderItem!]!
 
@@ -734,7 +796,12 @@ type Order {
 
   """Payment method chosen at order creation"""
   paymentMethod: OrderPaymentMethod!
-  shippingAddressId: ID!
+
+  """Set when fulfillmentType is PICKUP"""
+  pickupLocationId: ID
+
+  """Set when fulfillmentType is DELIVERY"""
+  shippingAddressId: ID
 
   """Address snapshot at time of order"""
   shippingAddressSnapshot: JSON
@@ -819,6 +886,23 @@ enum PaymentStatus {
   COMPLETED
   FAILED
   PENDING
+}
+
+type PickupLocationEntity {
+  """Street address of the pickup location"""
+  address: String!
+  city: String!
+  country: String!
+  createdAt: DateTime!
+  id: ID!
+
+  """Whether this pickup location accepts orders"""
+  isActive: Boolean!
+
+  """Display name of the pickup location"""
+  name: String!
+  state: String!
+  updatedAt: DateTime!
 }
 
 type Product {
@@ -949,6 +1033,9 @@ enum ProductSortField {
 }
 
 type Query {
+  """Get all active pickup locations (public)"""
+  activePickupLocations: [PickupLocationEntity!]!
+
   """Retrieves a specific address by ID for the current user"""
   address(addressId: String!): Address!
 
@@ -993,6 +1080,9 @@ type Query {
   """Retrieves all orders (admin only)"""
   orders: [Order!]!
   payment(id: String!): Payment!
+
+  """Get all pickup locations (admin only)"""
+  pickupLocations: [PickupLocationEntity!]!
   product(productId: String!): Product
 
   """Get inventory logs for a product (admin only)"""
@@ -1016,6 +1106,12 @@ type Query {
 
   """Sales report for a date range (admin only)"""
   salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
+
+  """Get a shipping zone by ID (admin only)"""
+  shippingZone(id: ID!): ShippingZoneEntity!
+
+  """Get all shipping zones (admin only)"""
+  shippingZones: [ShippingZoneEntity!]!
 
   """Retrieves a list of all subcategories, sorted alphabetically by name"""
   subCategories: [SubCategory!]!
@@ -1160,6 +1256,23 @@ type SalesReport {
   averageOrderValue: Float!
   orderCount: Int!
   totalRevenue: Float!
+}
+
+type ShippingZoneEntity {
+  """List of cities covered by this zone (case-insensitive)"""
+  cities: [String!]!
+  createdAt: DateTime!
+
+  """Shipping fee applied for orders delivered to cities in this zone"""
+  fee: Float!
+  id: ID!
+
+  """Whether this zone is currently active"""
+  isActive: Boolean!
+
+  """Unique name for this shipping zone"""
+  name: String!
+  updatedAt: DateTime!
 }
 
 input SignInInput {
@@ -1347,6 +1460,15 @@ input UpdateOrderStatusInput {
   status: OrderStatus!
 }
 
+input UpdatePickupLocationInput {
+  address: String
+  city: String
+  country: String
+  isActive: Boolean
+  name: String
+  state: String
+}
+
 input UpdateProductInput {
   """Optional brand name (e.g., "Nike")"""
   brandId: String
@@ -1394,6 +1516,14 @@ input UpdateShippingInput {
   carrier: String
   orderId: ID!
   trackingNumber: String
+}
+
+input UpdateShippingZoneInput {
+  """Replaces the entire cities list"""
+  cities: [String!]
+  fee: Float
+  isActive: Boolean
+  name: String
 }
 
 input UpdateSubCategoryInput {

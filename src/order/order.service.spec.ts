@@ -10,12 +10,17 @@ import { TaxService } from '../tax/tax.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Decimal } from '@prisma/client/runtime/library';
+import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
+import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
+import { FulfillmentType } from '@prisma/client';
 
 const mockAuditService = { log: jest.fn() };
 const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn() };
 const mockTaxService = { getRateForCountry: jest.fn().mockResolvedValue(new Decimal('0.1')) };
 const mockInventoryService = { logInventoryChange: jest.fn().mockResolvedValue(undefined) };
 const mockNotificationsService = { sendOrderConfirmation: jest.fn(), sendOrderStatusUpdate: jest.fn() };
+const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
+const mockPickupLocationsService = { findActiveById: jest.fn() };
 
 const mockOrdersRepository = {
   findById: jest.fn(),
@@ -115,6 +120,8 @@ describe('OrdersService', () => {
         { provide: TaxService, useValue: mockTaxService },
         { provide: InventoryService, useValue: mockInventoryService },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: ShippingZonesService, useValue: mockShippingZonesService },
+        { provide: PickupLocationsService, useValue: mockPickupLocationsService },
       ],
     }).compile();
 
@@ -150,7 +157,12 @@ describe('OrdersService', () => {
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
 
-      const result = await ordersService.createOrderFromCart(mockUserId, mockAddressId);
+      const result = await ordersService.createOrderFromCart(mockUserId, {
+        fulfillmentType: FulfillmentType.DELIVERY,
+        shippingAddressId: mockAddressId,
+        contactEmail: 'test@example.com',
+        contactPhone: '+233244000000',
+      });
 
       expect(cartService.getCartOrThrow).toHaveBeenCalledWith(mockUserId);
       expect(ordersRepository.create).toHaveBeenCalled();
@@ -160,16 +172,28 @@ describe('OrdersService', () => {
     it('should throw NotFoundException if cart is empty', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue({ ...mockCart, items: [] });
 
-      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(
-        new NotFoundException(`Cart for user "${mockUserId}" is empty`),
-      );
+      await expect(
+        ordersService.createOrderFromCart(mockUserId, {
+          fulfillmentType: FulfillmentType.DELIVERY,
+          shippingAddressId: mockAddressId,
+          contactEmail: 'test@example.com',
+          contactPhone: '+233244000000',
+        }),
+      ).rejects.toThrow(new NotFoundException(`Cart for user "${mockUserId}" is empty`));
     });
 
     it('should throw NotFoundException if shipping address is invalid', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(null);
 
-      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(
+      await expect(
+        ordersService.createOrderFromCart(mockUserId, {
+          fulfillmentType: FulfillmentType.DELIVERY,
+          shippingAddressId: mockAddressId,
+          contactEmail: 'test@example.com',
+          contactPhone: '+233244000000',
+        }),
+      ).rejects.toThrow(
         new NotFoundException(`Shipping address "${mockAddressId}" not found for user "${mockUserId}"`),
       );
     });
@@ -187,9 +211,14 @@ describe('OrdersService', () => {
       });
       mockOrdersRepository.findUserById.mockResolvedValue({ ...mockUser, isActive: false });
 
-      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(
-        new BadRequestException(`User "${mockUserId}" is not eligible to place an order`),
-      );
+      await expect(
+        ordersService.createOrderFromCart(mockUserId, {
+          fulfillmentType: FulfillmentType.DELIVERY,
+          shippingAddressId: mockAddressId,
+          contactEmail: 'test@example.com',
+          contactPhone: '+233244000000',
+        }),
+      ).rejects.toThrow(new BadRequestException(`User "${mockUserId}" is not eligible to place an order`));
     });
 
     it('should throw BadRequestException if stock is insufficient (pre-validation)', async () => {
@@ -209,7 +238,14 @@ describe('OrdersService', () => {
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
 
-      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(BadRequestException);
+      await expect(
+        ordersService.createOrderFromCart(mockUserId, {
+          fulfillmentType: FulfillmentType.DELIVERY,
+          shippingAddressId: mockAddressId,
+          contactEmail: 'test@example.com',
+          contactPhone: '+233244000000',
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should roll back if stock goes negative inside transaction (oversell prevention)', async () => {
@@ -227,7 +263,14 @@ describe('OrdersService', () => {
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
       mockOrdersRepository.decrementProductStock.mockResolvedValue({ ...mockProduct, quantity: -1 });
 
-      await expect(ordersService.createOrderFromCart(mockUserId, mockAddressId)).rejects.toThrow(BadRequestException);
+      await expect(
+        ordersService.createOrderFromCart(mockUserId, {
+          fulfillmentType: FulfillmentType.DELIVERY,
+          shippingAddressId: mockAddressId,
+          contactEmail: 'test@example.com',
+          contactPhone: '+233244000000',
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 

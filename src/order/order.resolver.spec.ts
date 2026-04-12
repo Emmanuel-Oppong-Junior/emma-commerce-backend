@@ -4,7 +4,7 @@ import { OrdersService } from './order.service';
 import { DiscountService } from '../discount/discount.service';
 import { CreateOrderInput } from './dto/create-order.input';
 import { UpdateOrderStatusInput } from './dto/update-order-status.input';
-import { OrderStatusEnum } from './enums/order.enum';
+import { FulfillmentTypeEnum, OrderStatusEnum } from './enums/order.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 
 describe('OrdersResolver', () => {
@@ -56,7 +56,12 @@ describe('OrdersResolver', () => {
     ],
   };
 
-  const mockCreateOrderInput: CreateOrderInput = { shippingAddressId: 'addr1' };
+  const mockCreateOrderInput: CreateOrderInput = {
+    fulfillmentType: FulfillmentTypeEnum.DELIVERY,
+    shippingAddressId: 'addr1',
+    contactEmail: 'test@example.com',
+    contactPhone: '+233244000000',
+  };
   const mockUpdateOrderStatusInput: UpdateOrderStatusInput = {
     orderId: 'order1',
     status: OrderStatusEnum.SHIPPED,

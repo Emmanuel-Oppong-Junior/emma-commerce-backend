@@ -1,12 +1,34 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { CartService } from '../cart/cart.service';
-import { Cart, CartItem, Order, OrderItem, OrderStatus, PaymentMethod, Prisma, Product } from '@prisma/client';
+import {
+  Cart,
+  CartItem,
+  FulfillmentType,
+  Order,
+  OrderItem,
+  OrderStatus,
+  PaymentMethod,
+  Prisma,
+  Product,
+} from '@prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { OrdersRepository } from './order.repository';
 import { CouponsService } from '../coupons/coupons.service';
 import { TaxService } from '../tax/tax.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
+import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
+
+interface CreateOrderParams {
+  fulfillmentType: FulfillmentType;
+  shippingAddressId?: string;
+  pickupLocationId?: string;
+  contactEmail: string;
+  contactPhone: string;
+  couponCode?: string;
+  paymentMethod?: PaymentMethod;
+}
 
 @Injectable()
 export class OrdersService {
@@ -18,46 +40,89 @@ export class OrdersService {
     private readonly taxService: TaxService,
     private readonly inventoryService: InventoryService,
     private readonly notificationsService: NotificationsService,
+    private readonly shippingZonesService: ShippingZonesService,
+    private readonly pickupLocationsService: PickupLocationsService,
   ) {}
 
   /**
-   * Creates a new order from the user's active cart, applies taxes and any coupon, and clears the cart on success.
-   * @param userId - The ID of the user placing the order.
-   * @param shippingAddressId - The ID of the shipping address to use.
-   * @param couponCode - Optional coupon code to apply to the order.
-   * @returns The created order with its items.
-   * @throws NotFoundException if the cart is empty or the shipping address is not found.
-   * @throws BadRequestException if the user is ineligible or stock is insufficient.
+   * Creates a new order from the user's active cart.
+   * Supports DELIVERY (requires shippingAddressId, calculates shipping fee by city)
+   * and PICKUP (requires pickupLocationId, no shipping fee).
    */
-  async createOrderFromCart(
-    userId: string,
-    shippingAddressId: string,
-    contactEmail: string,
-    contactPhone: string,
-    couponCode?: string,
-    paymentMethod: PaymentMethod = PaymentMethod.ONLINE,
-  ): Promise<Order & { items: OrderItem[] }> {
+  async createOrderFromCart(userId: string, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
     const cart = await this.ensureValidCart(userId);
-    const address = await this.ensureValidShippingAddress(userId, shippingAddressId);
     await this.ensureUserCanOrder(userId, cart);
-    const orderDetails = await this.buildOrderDetails(cart.items, address.country, userId, couponCode);
-    const order = await this.saveOrderAndUpdateInventory(
+
+    if (params.fulfillmentType === FulfillmentType.DELIVERY) {
+      return this.createDeliveryOrder(userId, cart, params);
+    }
+    return this.createPickupOrder(userId, cart, params);
+  }
+
+  private async createDeliveryOrder(
+    userId: string,
+    cart: Cart & { items: CartItem[] },
+    params: CreateOrderParams,
+  ): Promise<Order & { items: OrderItem[] }> {
+    if (!params.shippingAddressId) {
+      throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
+    }
+    const address = await this.ensureValidShippingAddress(userId, params.shippingAddressId);
+    const shippingFee = await this.shippingZonesService.getFeeForCity(address.city);
+    const orderDetails = await this.buildOrderDetails(
+      cart.items,
+      address.country,
       userId,
-      shippingAddressId,
-      { ...orderDetails, paymentMethod, contactEmail, contactPhone },
-      cart.id,
-      address,
+      Number(shippingFee),
+      params.couponCode,
     );
+
+    const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
+      ...orderDetails,
+      paymentMethod: params.paymentMethod ?? PaymentMethod.ONLINE,
+      contactEmail: params.contactEmail,
+      contactPhone: params.contactPhone,
+      fulfillmentType: FulfillmentType.DELIVERY,
+      shippingAddressId: params.shippingAddressId,
+      shippingAddressSnapshot: {
+        street: address.street,
+        city: address.city,
+        state: address.state,
+        zipCode: address.zipCode,
+        country: address.country,
+      },
+    });
+
+    this.sendOrderConfirmationEmail(userId, order);
+    return order;
+  }
+
+  private async createPickupOrder(
+    userId: string,
+    cart: Cart & { items: CartItem[] },
+    params: CreateOrderParams,
+  ): Promise<Order & { items: OrderItem[] }> {
+    if (!params.pickupLocationId) {
+      throw new BadRequestException('pickupLocationId is required for PICKUP orders');
+    }
+    const pickupLocation = await this.pickupLocationsService.findActiveById(params.pickupLocationId);
+    const orderDetails = await this.buildOrderDetails(cart.items, pickupLocation.country, userId, 0, params.couponCode);
+
+    const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
+      ...orderDetails,
+      paymentMethod: params.paymentMethod ?? PaymentMethod.ONLINE,
+      contactEmail: params.contactEmail,
+      contactPhone: params.contactPhone,
+      fulfillmentType: FulfillmentType.PICKUP,
+      pickupLocationId: params.pickupLocationId,
+    });
+
     this.sendOrderConfirmationEmail(userId, order);
     return order;
   }
 
   /**
    * Retrieves a specific order owned by the given user.
-   * @param userId - The ID of the user.
-   * @param orderId - The ID of the order.
-   * @returns The order with its items.
-   * @throws NotFoundException if the order does not exist or does not belong to the user.
    */
   async getOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     return this.retrieveUserOrder(userId, orderId);
@@ -65,8 +130,6 @@ export class OrdersService {
 
   /**
    * Retrieves an order by ID without any ownership check (admin use).
-   * @param orderId - The ID of the order.
-   * @returns The order with its items, or null if not found.
    */
   async viewOrder(orderId: string) {
     return this.ordersRepository.findById(orderId, { items: true });
@@ -74,8 +137,6 @@ export class OrdersService {
 
   /**
    * Retrieves all orders placed by a specific user.
-   * @param userId - The ID of the user.
-   * @returns List of orders with their items.
    */
   async getUserOrders(userId: string): Promise<(Order & { items: OrderItem[] })[]> {
     return this.ordersRepository.findByUser(userId);
@@ -83,7 +144,6 @@ export class OrdersService {
 
   /**
    * Retrieves all orders in the system (admin only).
-   * @returns List of all orders.
    */
   async getOrders(): Promise<Order[]> {
     return this.ordersRepository.findAll();
@@ -91,9 +151,6 @@ export class OrdersService {
 
   /**
    * Cancels all PENDING online orders that have had no payment initiated within the given window.
-   * Restores stock for each expired order. Called by the scheduled expiry task.
-   * @param expiryHours - Number of hours after which an unpaid order is considered abandoned.
-   * @returns The number of orders cancelled.
    */
   async expireAbandonedOrders(expiryHours: number): Promise<number> {
     const cutoff = new Date(Date.now() - expiryHours * 60 * 60 * 1000);
@@ -106,11 +163,6 @@ export class OrdersService {
 
   /**
    * Updates the status of an order and emits shipping notifications when appropriate.
-   * @param orderId - The ID of the order to update.
-   * @param status - The new order status to apply.
-   * @param adminUserId - Optional ID of the admin performing the update (for audit logging).
-   * @returns The updated order with its items.
-   * @throws NotFoundException if the order does not exist.
    */
   async updateOrderStatus(
     orderId: string,
@@ -139,11 +191,6 @@ export class OrdersService {
 
   /**
    * Cancels an order owned by the user and restores the reserved stock.
-   * @param userId - The ID of the user requesting the cancellation.
-   * @param orderId - The ID of the order to cancel.
-   * @returns The cancelled order with its items.
-   * @throws NotFoundException if the order is not found for the user.
-   * @throws BadRequestException if the order has already shipped or been delivered.
    */
   async cancelOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
@@ -153,11 +200,6 @@ export class OrdersService {
 
   /**
    * Transitions a pending order to PROCESSING status after confirming the user owns it.
-   * @param userId - The ID of the user who owns the order.
-   * @param orderId - The ID of the order to mark as paid.
-   * @returns The updated order with its items.
-   * @throws NotFoundException if the order is not found for the user.
-   * @throws BadRequestException if the order is not in PENDING status.
    */
   async markOrderAsPaid(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
@@ -170,10 +212,6 @@ export class OrdersService {
 
   /**
    * Soft-deletes an order and restores its reserved stock (admin only).
-   * @param orderId - The ID of the order to delete.
-   * @param adminUserId - Optional ID of the admin performing the deletion (for audit logging).
-   * @returns The soft-deleted order with its items.
-   * @throws NotFoundException if the order does not exist.
    */
   async deleteOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
@@ -189,12 +227,6 @@ export class OrdersService {
 
   /**
    * Updates the shipping carrier and tracking number for an order and notifies the customer.
-   * @param orderId - The ID of the order to update.
-   * @param trackingNumber - Optional shipment tracking number.
-   * @param carrier - Optional carrier name.
-   * @param adminUserId - Optional ID of the admin performing the update (for audit logging).
-   * @returns The updated order with its items.
-   * @throws NotFoundException if the order does not exist.
    */
   async updateShipping(
     orderId: string,
@@ -241,6 +273,7 @@ export class OrdersService {
     cartItems: CartItem[],
     country: string,
     userId: string,
+    shippingFee: number,
     couponCode?: string,
   ): Promise<{
     orderItems: OrderItem[];
@@ -252,7 +285,6 @@ export class OrdersService {
     const subtotal = this.computeSubtotal(orderItems);
     const taxRate = await this.taxService.getRateForCountry(country);
     const tax = subtotal * Number(taxRate);
-    const shippingFee = 5.0;
 
     let couponId: string | undefined;
     let couponDiscount = 0;
@@ -297,7 +329,7 @@ export class OrdersService {
 
   private async saveOrderAndUpdateInventory(
     userId: string,
-    shippingAddressId: string,
+    cartId: string,
     orderDetails: {
       orderItems: OrderItem[];
       totalAmount: Prisma.Decimal;
@@ -306,9 +338,11 @@ export class OrdersService {
       paymentMethod?: PaymentMethod;
       contactEmail: string;
       contactPhone: string;
+      fulfillmentType: FulfillmentType;
+      shippingAddressId?: string;
+      pickupLocationId?: string;
+      shippingAddressSnapshot?: Record<string, unknown>;
     },
-    cartId: string,
-    address: { id: string; street: string; city: string; state: string; zipCode: string; country: string },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
       for (const item of orderDetails.orderItems) {
@@ -326,18 +360,9 @@ export class OrdersService {
         });
       }
 
-      const shippingAddressSnapshot = {
-        street: address.street,
-        city: address.city,
-        state: address.state,
-        zipCode: address.zipCode,
-        country: address.country,
-      };
-
       const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
-      const newOrder = await this.ordersRepository.create(tx, userId, shippingAddressId, {
+      const newOrder = await this.ordersRepository.create(tx, userId, {
         ...orderDetails,
-        shippingAddressSnapshot,
         initialStatus: isCod ? OrderStatus.PROCESSING : OrderStatus.PENDING,
       });
 

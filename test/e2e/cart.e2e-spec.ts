@@ -157,9 +157,7 @@ describe('Cart (e2e)', () => {
       // Arrange — retrieve the cart item ID from the current cart
       const cartQuery = `query { cart { items { id productId quantity } } }`;
       const cartRes = await gqlRequest(app, cartQuery, undefined, userToken).expect(200);
-      const item = cartRes.body.data.cart.items.find(
-        (i: { productId: string }) => i.productId === 'seed_prod1',
-      );
+      const item = cartRes.body.data.cart.items.find((i: { productId: string }) => i.productId === 'seed_prod1');
       const cartItemId = item.id;
 
       const mutation = `
@@ -179,9 +177,7 @@ describe('Cart (e2e)', () => {
 
       // Assert
       expect(res.body.errors).toBeUndefined();
-      const updated = res.body.data.updateCartItem.items.find(
-        (i: { id: string }) => i.id === cartItemId,
-      );
+      const updated = res.body.data.updateCartItem.items.find((i: { id: string }) => i.id === cartItemId);
       expect(updated.quantity).toBe(5);
     });
   });
@@ -261,9 +257,7 @@ describe('Cart (e2e)', () => {
       expect(res.body.errors).toBeUndefined();
       const cart = res.body.data.cartWithDiscount;
       expect(cart).not.toBeNull();
-      const discountedItem = cart.items.find(
-        (i: { productId: string }) => i.productId === 'seed_prod1',
-      );
+      const discountedItem = cart.items.find((i: { productId: string }) => i.productId === 'seed_prod1');
       expect(discountedItem).toBeDefined();
       // The discounted price should be less than the original price
       if (discountedItem.discountedPrice !== null) {

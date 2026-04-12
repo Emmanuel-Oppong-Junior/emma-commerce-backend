@@ -148,7 +148,7 @@ describe('Reviews & Coupons (e2e)', () => {
       userReviewId = res.body.data.userReviews[0].id;
     });
 
-    it("succeeds when the user updates their own review", async () => {
+    it('succeeds when the user updates their own review', async () => {
       // Arrange
       const mutation = `
         mutation {
@@ -223,16 +223,18 @@ describe('Reviews & Coupons (e2e)', () => {
   // ─── validateCoupon ───────────────────────────────────────────────────────────
 
   describe('validateCoupon', () => {
-    const createCoupon = (overrides: Partial<{
-      code: string;
-      discountType: DiscountType;
-      value: number;
-      usageLimit: number | null;
-      usedCount: number;
-      expiresAt: Date | null;
-      isActive: boolean;
-      minimumOrderAmount: number | null;
-    }> = {}) =>
+    const createCoupon = (
+      overrides: Partial<{
+        code: string;
+        discountType: DiscountType;
+        value: number;
+        usageLimit: number | null;
+        usedCount: number;
+        expiresAt: Date | null;
+        isActive: boolean;
+        minimumOrderAmount: number | null;
+      }> = {},
+    ) =>
       prisma.coupon.create({
         data: {
           code: `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
@@ -378,7 +380,10 @@ describe('Reviews & Coupons (e2e)', () => {
         data: {
           userId: 'seed_user',
           totalAmount: 200,
+          fulfillmentType: 'DELIVERY',
           shippingAddressId: address.id,
+          contactEmail: 'test@example.com',
+          contactPhone: '+233244000000',
         },
       });
       await prisma.couponUsage.create({

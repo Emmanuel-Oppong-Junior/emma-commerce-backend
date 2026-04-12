@@ -40,12 +40,10 @@ export class PaymentResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Payment, {
-    description: 'Record cash collection for a cash-on-delivery order. Marks payment as complete and order as DELIVERED.',
+    description:
+      'Record cash collection for a cash-on-delivery order. Marks payment as complete and order as DELIVERED.',
   })
-  recordCodPayment(
-    @Args('orderId', { type: () => String }) orderId: string,
-    @ActiveUser('id') adminId: string,
-  ) {
+  recordCodPayment(@Args('orderId', { type: () => String }) orderId: string, @ActiveUser('id') adminId: string) {
     return this.paymentService.recordCodPayment(orderId, adminId);
   }
 

@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Address, Order, OrderItem, Prisma, Product, User } from '@prisma/client';
+import { Address, FulfillmentType, Order, OrderItem, Prisma, Product, User } from '@prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -111,9 +111,13 @@ describe('OrdersRepository', () => {
     it('should create an order via transaction', async () => {
       const mockTx = { order: { create: jest.fn().mockResolvedValue(mockOrder) } };
 
-      const result = await repository.create(mockTx as any, 'user1', 'addr1', {
+      const result = await repository.create(mockTx as any, 'user1', {
         orderItems: [] as any,
         totalAmount: new Prisma.Decimal(100),
+        fulfillmentType: FulfillmentType.DELIVERY,
+        shippingAddressId: 'addr1',
+        contactEmail: 'test@example.com',
+        contactPhone: '+233244000000',
       });
 
       expect(result).toEqual(mockOrder);

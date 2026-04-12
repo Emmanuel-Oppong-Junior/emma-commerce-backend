@@ -1,5 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Address, Order, OrderItem, OrderStatus, PaymentMethod, Prisma, Product, User } from '@prisma/client';
+import {
+  Address,
+  FulfillmentType,
+  Order,
+  OrderItem,
+  OrderStatus,
+  PaymentMethod,
+  Prisma,
+  Product,
+  User,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type OrderWithItems = Order & { items: OrderItem[] };
@@ -33,10 +43,12 @@ export class OrdersRepository {
   async create(
     tx: Prisma.TransactionClient,
     userId: string,
-    shippingAddressId: string,
     orderDetails: {
       orderItems: OrderItem[];
       totalAmount: Prisma.Decimal;
+      fulfillmentType: FulfillmentType;
+      shippingAddressId?: string;
+      pickupLocationId?: string;
       shippingAddressSnapshot?: Record<string, unknown>;
       couponId?: string;
       couponDiscount?: number;
@@ -49,7 +61,9 @@ export class OrdersRepository {
     return tx.order.create({
       data: {
         userId,
-        shippingAddressId,
+        fulfillmentType: orderDetails.fulfillmentType,
+        shippingAddressId: orderDetails.shippingAddressId,
+        pickupLocationId: orderDetails.pickupLocationId,
         totalAmount: orderDetails.totalAmount,
         shippingAddressSnapshot: (orderDetails.shippingAddressSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
         couponId: orderDetails.couponId,

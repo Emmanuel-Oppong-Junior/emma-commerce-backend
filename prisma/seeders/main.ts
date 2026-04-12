@@ -1,5 +1,6 @@
 import { faker, prisma } from './seed-context';
 import { Prisma } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 
 const categories = [
   { name: 'Accessories', subcategories: ['Phone Accessories', 'Computer Accessories', 'Home Appliances Accessories'] },
@@ -145,9 +146,36 @@ async function createProducts() {
   });
 }
 
+async function createSuperAdmin() {
+  const email = process.env.SUPER_ADMIN_EMAIL;
+  const password = process.env.SUPER_ADMIN_PASSWORD;
+
+  if (!email || !password) {
+    console.warn('SUPER_ADMIN_EMAIL or SUPER_ADMIN_PASSWORD not set — skipping super admin seed');
+    return;
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  await prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: {
+      email,
+      password: hashedPassword,
+      name: 'Super Admin',
+      role: 'SUPER_ADMIN',
+      isActive: true,
+    },
+  });
+}
+
 async function main() {
   try {
     console.log('Starting database seeding...');
+
+    await createSuperAdmin();
+    console.log('Super admin seeded');
 
     const brands = await createBrands();
     console.log(`Created ${brands.count} brands`);
