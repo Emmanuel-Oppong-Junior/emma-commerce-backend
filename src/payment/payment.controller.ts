@@ -19,12 +19,6 @@ export class PaymentController {
   }
 
   @Auth(AuthType.None)
-  @Get('/callback')
-  async verifyTransaction(@Query() query: PaystackCallbackDto) {
-    return await this.paymentService.verifyPayment(query.reference);
-  }
-
-  @Auth(AuthType.None)
   @Post('/webhook')
   @HttpCode(HttpStatus.OK)
   async paymentWebhookHandler(@Body() dto: PaystackWebhookDto, @Headers() headers: Record<string, string> = {}) {

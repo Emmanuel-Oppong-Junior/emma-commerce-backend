@@ -25,7 +25,8 @@
       "Bash(node -e \"const t = require\\('@nestjs/throttler'\\); console.log\\(Object.keys\\(t\\).filter\\(k => k.includes\\('THROTTLER'\\)\\)\\)\")",
       "Bash(node -e \"const src = require\\('fs'\\).readFileSync\\('node_modules/@nestjs/throttler/dist/throttler.guard.js', 'utf8'\\); const start = src.indexOf\\('async canActivate'\\); const end = src.indexOf\\('\\\\n    async shouldSkip'\\); console.log\\(src.substring\\(start, end\\)\\);\")",
       "Bash(node -e \"const src = require\\('fs'\\).readFileSync\\('node_modules/@nestjs/throttler/dist/throttler.guard.js', 'utf8'\\); const start = src.indexOf\\('async getTracker'\\); const end = src.indexOf\\('\\\\n    async generate', start\\); console.log\\(src.substring\\(start, end + 200\\)\\);\")",
-      "Bash(node -e \"const src = require\\('fs'\\).readFileSync\\('node_modules/@nestjs/throttler/dist/throttler.guard.js', 'utf8'\\); const start = src.indexOf\\('async getTracker\\(req'\\); const end = src.indexOf\\('\\\\n    async', start\\); console.log\\(src.substring\\(start, end + 300\\)\\);\")"
+      "Bash(node -e \"const src = require\\('fs'\\).readFileSync\\('node_modules/@nestjs/throttler/dist/throttler.guard.js', 'utf8'\\); const start = src.indexOf\\('async getTracker\\(req'\\); const end = src.indexOf\\('\\\\n    async', start\\); console.log\\(src.substring\\(start, end + 300\\)\\);\")",
+      "Bash(xargs grep:*)"
     ]
   }
 }

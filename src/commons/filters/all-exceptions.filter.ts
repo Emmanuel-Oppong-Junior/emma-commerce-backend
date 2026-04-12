@@ -10,7 +10,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost) {
     const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
-    const message = exception instanceof HttpException ? exception.getResponse() : 'Internal server error';
+    const rawResponse = exception instanceof HttpException ? exception.getResponse() : 'Internal server error';
+    const message =
+      typeof rawResponse === 'string'
+        ? rawResponse
+        : ((rawResponse as Record<string, unknown>).message as string) ?? 'Internal server error';
     // [CRITICAL-4] Never expose stack traces outside development
     const isDev = process.env.NODE_ENV === 'development';
     const stack = isDev && exception instanceof Error ? exception.stack : undefined;
@@ -20,7 +24,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const info = gqlHost.getInfo();
       const originalMessage = exception instanceof Error ? exception.message : String(exception);
       this.logger.error(`GraphQL Error: ${originalMessage} | Path: ${info?.path?.key}`, stack, 'ExceptionFilter');
-      throw new GraphQLError(typeof message === 'string' ? message : JSON.stringify(message), {
+      throw new GraphQLError(message, {
         extensions: { code: status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_USER_INPUT', status },
       });
     }
@@ -29,11 +33,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    this.logger.error(
-      `Error: ${JSON.stringify(message)} | Status: ${status} | URL: ${request?.url}`,
-      stack,
-      'ExceptionFilter',
-    );
+    this.logger.error(`Error: ${message} | Status: ${status} | URL: ${request?.url}`, stack, 'ExceptionFilter');
 
     response.status(status).json({
       statusCode: status,
