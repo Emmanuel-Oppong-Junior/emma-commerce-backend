@@ -7,7 +7,7 @@ export class PaymentRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(data: Prisma.PaymentCreateInput): Promise<Payment> {
-    return this.prisma.payment.create({ data });
+    return this.prisma.payment.create({ data, include: { order: true } });
   }
 
   async findById(id: string): Promise<Payment | null> {
@@ -36,7 +36,7 @@ export class PaymentRepository {
 
   async update(id: string, data: Prisma.PaymentUpdateInput): Promise<Payment> {
     try {
-      return await this.prisma.payment.update({ where: { id }, data });
+      return await this.prisma.payment.update({ where: { id }, data, include: { order: true } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException('Payment not found');
@@ -69,7 +69,7 @@ export class PaymentRepository {
 
   async updateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {
     await this.prisma.order.update({
-      where: { id: orderId, status: OrderStatus.PENDING },
+      where: { id: orderId },
       data: { status },
     });
   }
@@ -89,6 +89,7 @@ export class PaymentRepository {
     return this.prisma.payment.update({
       where: { id: paymentId },
       data: { status, paymentDetails },
+      include: { order: true },
     });
   }
 }

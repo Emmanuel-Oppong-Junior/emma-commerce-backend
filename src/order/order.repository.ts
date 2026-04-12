@@ -143,4 +143,17 @@ export class OrdersRepository {
   async runTransaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(fn);
   }
+
+  async findExpiredPendingOrders(cutoff: Date): Promise<OrderWithItems[]> {
+    return this.prisma.order.findMany({
+      where: {
+        status: OrderStatus.PENDING,
+        paymentMethod: PaymentMethod.ONLINE,
+        createdAt: { lt: cutoff },
+        payment: { is: null },
+        deleted: false,
+      },
+      include: { items: true },
+    }) as unknown as OrderWithItems[];
+  }
 }

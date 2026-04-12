@@ -41,7 +41,13 @@ export class OrdersService {
     const address = await this.ensureValidShippingAddress(userId, shippingAddressId);
     await this.ensureUserCanOrder(userId, cart);
     const orderDetails = await this.buildOrderDetails(cart.items, address.country, userId, couponCode);
-    const order = await this.saveOrderAndUpdateInventory(userId, shippingAddressId, { ...orderDetails, paymentMethod, contactEmail, contactPhone }, cart.id, address);
+    const order = await this.saveOrderAndUpdateInventory(
+      userId,
+      shippingAddressId,
+      { ...orderDetails, paymentMethod, contactEmail, contactPhone },
+      cart.id,
+      address,
+    );
     this.sendOrderConfirmationEmail(userId, order);
     return order;
   }
@@ -81,6 +87,21 @@ export class OrdersService {
    */
   async getOrders(): Promise<Order[]> {
     return this.ordersRepository.findAll();
+  }
+
+  /**
+   * Cancels all PENDING online orders that have had no payment initiated within the given window.
+   * Restores stock for each expired order. Called by the scheduled expiry task.
+   * @param expiryHours - Number of hours after which an unpaid order is considered abandoned.
+   * @returns The number of orders cancelled.
+   */
+  async expireAbandonedOrders(expiryHours: number): Promise<number> {
+    const cutoff = new Date(Date.now() - expiryHours * 60 * 60 * 1000);
+    const orders = await this.ordersRepository.findExpiredPendingOrders(cutoff);
+    for (const order of orders) {
+      await this.cancelOrderAndRestoreStock(order);
+    }
+    return orders.length;
   }
 
   /**

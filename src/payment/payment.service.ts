@@ -66,6 +66,7 @@ export class PaymentService {
    * @returns Updated payment record.
    */
   async verifyPayment(reference: string): Promise<Payment> {
+    this.logger.log(`Verifying payment | reference: ${reference}`, 'PaymentService');
     const payment = await this.fetchPaymentByReference(reference);
     const verification = await this.verifyPaystackTransaction(reference);
     return this.updatePaymentStatus(payment.id, verification);
