@@ -9,49 +9,44 @@ import { Prisma, Product } from '@prisma/client';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { ProductsRepository } from './products.repository';
+import { TaxService } from '../tax/tax.service';
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly productsRepository: ProductsRepository) {}
+  constructor(
+    private readonly productsRepository: ProductsRepository,
+    private readonly taxService: TaxService,
+  ) {}
 
   /**
-   * Creates a new product in the database.
-   * Validates the category, subcategory, and SKU for uniqueness before creation.
-   *
-   * @param createProductInput - The input data for creating a new product.
-   * @returns The created product with its associated category and subcategory.
-   * @throws NotFoundException if the category or subcategory does not exist.
-   * @throws ConflictException if the SKU is already in use.
+   * Creates a new product.
+   * If isTaxable is true, price is computed as basePrice × (1 + total active tax rate).
+   * Otherwise price equals basePrice.
    */
   async create(createProductInput: CreateProductInput): Promise<Product> {
     await this.validateProductInput(createProductInput);
-    return this.productsRepository.create(createProductInput, { category: true, subcategory: true });
+    const { basePrice, isTaxable, ...rest } = createProductInput;
+    const price = await this.computePrice(Number(basePrice), isTaxable);
+    return this.productsRepository.create(
+      { ...rest, basePrice, price: price.toFixed(2), isTaxable: isTaxable ?? false },
+      { category: true, subcategory: true },
+    );
   }
 
   /**
-   * Updates an existing product in the database.
-   * Validates the product's existence and the update input before proceeding.
-   *
-   * @param id - The unique identifier of the product to update.
-   * @param updateProductInput - The input data for updating the product.
-   * @returns The updated product with its associated category and subcategory.
-   * @throws NotFoundException if the product does not exist.
-   * @throws ConflictException if the SKU is already in use by another product.
+   * Updates an existing product.
+   * Recomputes price whenever basePrice or isTaxable changes.
    */
   async update(id: string, updateProductInput: UpdateProductInput): Promise<Product> {
-    await this.ensureProductExist(id);
+    const existing = await this.productsRepository.findById(id);
+    if (!existing) throw new NotFoundException('Product not found');
     await this.validateProductInput({ ...updateProductInput, id });
-    return this.productsRepository.update(id, updateProductInput, { category: true, subcategory: true });
+    const updateData = await this.buildUpdateData(existing, updateProductInput);
+    return this.productsRepository.update(id, updateData, { category: true, subcategory: true });
   }
 
   /**
    * Removes a product from the database by its ID.
-   * Validates the product's existence and checks for dependencies before deletion.
-   *
-   * @param id - The unique identifier of the product to remove.
-   * @returns The deleted product with its associated category and subcategory.
-   * @throws NotFoundException if the product does not exist.
-   * @throws ConflictException if the product is referenced in active carts or orders.
    */
   async remove(id: string): Promise<Product> {
     await this.ensureProductExist(id);
@@ -59,35 +54,14 @@ export class ProductsService {
     return this.productsRepository.delete(id);
   }
 
-  /**
-   * Associates an existing tag with a product.
-   * @param productId - The ID of the product.
-   * @param tagId - The ID of the tag to add.
-   * @returns The updated product.
-   * @throws NotFoundException if the product or tag does not exist.
-   */
   async addTagToProduct(productId: string, tagId: string): Promise<Product> {
     return this.updateProductTag(productId, tagId, 'connect');
   }
 
-  /**
-   * Removes an existing tag association from a product.
-   * @param productId - The ID of the product.
-   * @param tagId - The ID of the tag to remove.
-   * @returns The updated product.
-   * @throws NotFoundException if the product or tag does not exist.
-   */
   async removeTagFromProduct(productId: string, tagId: string): Promise<Product> {
     return this.updateProductTag(productId, tagId, 'disconnect');
   }
 
-  /**
-   * Retrieves a paginated list of products with filtering.
-   * @param paginate
-   * @param filter - Pagination and filter arguments (first, after, categoryId, etc.).
-   * @param requestedData
-   * @returns A paginated response with edges and pageInfo.
-   */
   async findAll(
     paginate: PaginationArgs,
     filter: ProductFilterArgs = {},
@@ -98,7 +72,6 @@ export class ProductsService {
     const whereClause = this.buildWhereClause(filter);
     const orderBy = this.buildOrderByClause(sort);
 
-    // Fetch one extra item to determine if there is a next page, and total count in parallel
     const [products, totalCount] = await Promise.all([
       this.productsRepository.findMany(
         { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
@@ -111,37 +84,40 @@ export class ProductsService {
     return this.formatPaginatedResponse(products, paginationOptions, totalCount);
   }
 
-  /**
-   * Retrieves a single product by its ID.
-   *
-   * @param id - The unique identifier of the product to retrieve.
-   * @param requestedFields
-   * @returns The product with its associated category and subcategory, or null if not found.
-   */
   async findOne(id: string, requestedFields: Prisma.ProductSelect = {}): Promise<Product | null> {
     return this.productsRepository.findById(id, requestedFields);
   }
 
-  /**
-   * Archives a product by setting its isActive status to false.
-   * @param id - The unique identifier of the product to archive.
-   * @returns The updated product.
-   * @throws NotFoundException if the product does not exist.
-   */
   async archiveProduct(id: string): Promise<Product> {
     await this.ensureProductExist(id);
     return this.productsRepository.update(id, { isActive: false });
   }
 
-  /**
-   * Restores a previously archived product by setting its isActive status to true.
-   * @param id - The unique identifier of the product to restore.
-   * @returns The updated product.
-   * @throws NotFoundException if the product does not exist.
-   */
   async restoreProduct(id: string): Promise<Product> {
     await this.ensureProductExist(id);
     return this.productsRepository.update(id, { isActive: true });
+  }
+
+  private async computePrice(basePrice: number, isTaxable: boolean): Promise<number> {
+    if (!isTaxable) return basePrice;
+    const totalRate = await this.taxService.getTotalActiveRate();
+    return basePrice * (1 + totalRate);
+  }
+
+  private async buildUpdateData(existing: Product, input: UpdateProductInput): Promise<Prisma.ProductUpdateInput> {
+    const { basePrice, isTaxable, ...rest } = input;
+    const updateData: Prisma.ProductUpdateInput = { ...rest };
+
+    if (basePrice !== undefined || isTaxable !== undefined) {
+      const effectiveBase = basePrice !== undefined ? Number(basePrice) : Number(existing.basePrice);
+      const effectiveTaxable = isTaxable !== undefined ? isTaxable : existing.isTaxable;
+      const price = await this.computePrice(effectiveBase, effectiveTaxable);
+      updateData.price = price.toFixed(2);
+      if (basePrice !== undefined) updateData.basePrice = basePrice;
+      if (isTaxable !== undefined) updateData.isTaxable = isTaxable;
+    }
+
+    return updateData;
   }
 
   private buildPaginationOptions({ first, after }: PaginationArgs) {

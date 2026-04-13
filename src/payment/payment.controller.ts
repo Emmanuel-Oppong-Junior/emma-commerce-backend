@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Post, Query } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { PaystackCallbackDto, PaystackWebhookDto } from './dto/paystack.dto';
+import { PaystackWebhookDto } from './dto/paystack.dto';
 import { PaymentService } from './payment.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';

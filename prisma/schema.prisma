@@ -162,7 +162,7 @@ model Product {
   price        Decimal?  @db.Decimal(10, 2)
   currentPrice Decimal?  @db.Decimal(10, 2)
   currency     Currency? @default(GHS)
-  taxRate      Decimal?  @default(0.00) @db.Decimal(5, 2)
+  basePrice    Decimal?  @db.Decimal(10, 2)
   isTaxable    Boolean   @default(false)
 
   sku     String? @unique
@@ -546,15 +546,11 @@ model ShippingZone {
   @@index([isActive])
 }
 
-model TaxRate {
+model Tax {
   id        String   @id @default(cuid())
-  country   String
-  region    String?
+  name      String   @unique
   rate      Decimal  @db.Decimal(5, 4)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@unique([country, region])
-  @@index([country])
 }

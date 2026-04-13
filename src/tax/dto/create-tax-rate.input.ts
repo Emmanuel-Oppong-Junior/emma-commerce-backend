@@ -2,17 +2,12 @@ import { Field, Float, InputType } from '@nestjs/graphql';
 import { IsBoolean, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 @InputType()
-export class CreateTaxRateInput {
-  @Field()
+export class CreateTaxInput {
+  @Field({ description: 'Name of the tax (e.g., "VAT", "NHIS Levy")' })
   @IsString()
-  country: string;
+  name: string;
 
-  @Field({ nullable: true })
-  @IsOptional()
-  @IsString()
-  region?: string;
-
-  @Field(() => Float)
+  @Field(() => Float, { description: 'Tax rate as a decimal between 0 and 1 (e.g., 0.15 for 15%)' })
   @IsNumber()
   @Min(0)
   @Max(1)

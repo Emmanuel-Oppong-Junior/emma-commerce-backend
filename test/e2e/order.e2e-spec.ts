@@ -10,6 +10,7 @@ describe('Orders (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let userToken: string;
+  // @typescript-eslint/no-unused-vars
   let adminToken: string;
   let addressId: string;
   /** Set once the first createOrder test succeeds; reused in query/cancel tests. */

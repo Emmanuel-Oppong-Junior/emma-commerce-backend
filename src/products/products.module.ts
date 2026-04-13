@@ -9,6 +9,7 @@ import { ReviewsLoader } from './loaders/reviews.loader';
 import { ProductsLoader } from './loaders/products.loader';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ProductsRepository } from './products.repository';
+import { TaxModule } from '../tax/tax.module';
 
 @Module({
   providers: [
@@ -20,7 +21,7 @@ import { ProductsRepository } from './products.repository';
     ReviewsLoader,
     ProductsLoader,
   ],
-  imports: [TagModule, DiscountModule, PrismaModule],
+  imports: [TagModule, DiscountModule, PrismaModule, TaxModule],
   exports: [ProductsLoader],
 })
 export class ProductsModule {}

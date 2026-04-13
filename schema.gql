@@ -286,13 +286,18 @@ input CreatePickupLocationInput {
 }
 
 input CreateProductInput {
+  """
+  Base price before taxes — pass as a decimal string (e.g., "29.99"). The stored display price will include applicable taxes if the product is taxable.
+  """
+  basePrice: String!
+
   """Optional brand name (e.g., "Nike")"""
   brandId: String
 
   """ID of the parent category (e.g., "cat_clothing")"""
   categoryId: String!
 
-  """Optional description of the product (max 1000 characters)"""
+  """Optional description of the product (max 5000 characters)"""
   description: String
 
   """Array of HTTPS URLs to product images (max 10)"""
@@ -301,13 +306,11 @@ input CreateProductInput {
   """Whether the product is active and visible (defaults to false)"""
   isActive: Boolean! = false
 
+  """Whether taxes apply to this product (defaults to false)"""
+  isTaxable: Boolean! = false
+
   """Name of the product (e.g., "Cotton T-Shirt")"""
   name: String!
-
-  """
-  Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors
-  """
-  price: String!
 
   """Available stock quantity (e.g., 100)"""
   quantity: Int!
@@ -358,11 +361,14 @@ input CreateSubCategoryInput {
   name: String!
 }
 
-input CreateTaxRateInput {
-  country: String!
+input CreateTaxInput {
   isActive: Boolean! = true
+
+  """Name of the tax (e.g., "VAT", "NHIS Levy")"""
+  name: String!
+
+  """Tax rate as a decimal between 0 and 1 (e.g., 0.15 for 15%)"""
   rate: Float!
-  region: String
 }
 
 input CreateUserInput {
@@ -589,8 +595,8 @@ type Mutation {
   """Creates a new tag"""
   createTag(name: String!): Tag!
 
-  """Create a tax rate (admin only)"""
-  createTaxRate(input: CreateTaxRateInput!): TaxRateEntity!
+  """Create a tax (admin only)"""
+  createTax(input: CreateTaxInput!): TaxEntity!
 
   """Create a new user with email and password"""
   createUser(createUserInput: CreateUserInput!): User!
@@ -623,8 +629,8 @@ type Mutation {
   """Deletes a tag"""
   deleteTag(tagId: String!): Tag!
 
-  """Delete a tax rate (admin only)"""
-  deleteTaxRate(id: ID!): TaxRateEntity!
+  """Delete a tax (admin only)"""
+  deleteTax(id: ID!): TaxEntity!
 
   """Deletes a variant"""
   deleteVariant(variantId: String!): Variant!
@@ -752,8 +758,8 @@ type Mutation {
   """Updates an existing tag"""
   updateTag(name: String!, tagId: String!): Tag!
 
-  """Update a tax rate (admin only)"""
-  updateTaxRate(id: ID!, input: UpdateTaxRateInput!): TaxRateEntity!
+  """Update a tax (admin only)"""
+  updateTax(id: ID!, input: UpdateTaxInput!): TaxEntity!
 
   """Update an existing user"""
   updateUser(id: String!, updateUserInput: UpdateUserInput!): User!
@@ -908,6 +914,9 @@ type PickupLocationEntity {
 type Product {
   """Discount applied to the product, if any"""
   appliedDiscount: Discount
+
+  """Base price before taxes (admin-entered)"""
+  basePrice: Float
   brand: Brand
   category: Category
   categoryId: String!
@@ -931,10 +940,13 @@ type Product {
   images: [String!]
   isActive: Boolean!
 
+  """Whether taxes are applied to this product"""
+  isTaxable: Boolean!
+
   """Name of the product"""
   name: String!
 
-  """price of the product"""
+  """Tax-inclusive display price of the product"""
   price: Float!
 
   """description of the product"""
@@ -1134,11 +1146,11 @@ type Query {
   """Retrieves all tags"""
   tags: [Tag!]!
 
-  """Get a tax rate by ID (admin only)"""
-  taxRate(id: ID!): TaxRateEntity!
+  """Get a tax by ID (admin only)"""
+  tax(id: ID!): TaxEntity!
 
-  """Get all tax rates (admin only)"""
-  taxRates: [TaxRateEntity!]!
+  """Get all taxes (admin only)"""
+  taxes: [TaxEntity!]!
 
   """Best-selling products by quantity (admin only)"""
   topProducts(limit: Int! = 10): [TopProduct!]!
@@ -1351,13 +1363,16 @@ type Tag {
   updatedAt: DateTime!
 }
 
-type TaxRateEntity {
-  country: String!
+type TaxEntity {
   createdAt: DateTime!
   id: ID!
   isActive: Boolean!
+
+  """Name of the tax (e.g., "VAT", "NHIS Levy")"""
+  name: String!
+
+  """Tax rate as a decimal (e.g., 0.15 for 15%)"""
   rate: Float!
-  region: String
   updatedAt: DateTime!
 }
 
@@ -1476,13 +1491,18 @@ input UpdatePickupLocationInput {
 }
 
 input UpdateProductInput {
+  """
+  Base price before taxes — pass as a decimal string (e.g., "29.99"). The stored display price will include applicable taxes if the product is taxable.
+  """
+  basePrice: String
+
   """Optional brand name (e.g., "Nike")"""
   brandId: String
 
   """ID of the parent category (e.g., "cat_clothing")"""
   categoryId: String
 
-  """Optional description of the product (max 1000 characters)"""
+  """Optional description of the product (max 5000 characters)"""
   description: String
 
   """Array of HTTPS URLs to product images (max 10)"""
@@ -1491,13 +1511,11 @@ input UpdateProductInput {
   """Whether the product is active and visible (defaults to false)"""
   isActive: Boolean = false
 
+  """Whether taxes apply to this product (defaults to false)"""
+  isTaxable: Boolean = false
+
   """Name of the product (e.g., "Cotton T-Shirt")"""
   name: String
-
-  """
-  Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors
-  """
-  price: String
 
   """Available stock quantity (e.g., 100)"""
   quantity: Int
@@ -1546,11 +1564,10 @@ input UpdateSubCategoryInput {
   name: String
 }
 
-input UpdateTaxRateInput {
-  country: String
+input UpdateTaxInput {
   isActive: Boolean
+  name: String
   rate: Float
-  region: String
 }
 
 input UpdateUserInput {

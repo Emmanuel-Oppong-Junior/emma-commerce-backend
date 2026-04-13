@@ -6,7 +6,6 @@ import { DiscountModule } from '../discount/discount.module';
 import { CommonsModule } from '../commons/commons.module';
 import { OrdersRepository } from './order.repository';
 import { CouponsModule } from '../coupons/coupons.module';
-import { TaxModule } from '../tax/tax.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ExpiredOrdersTask } from './tasks/expired-orders.task';
@@ -20,7 +19,6 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
     DiscountModule,
     CommonsModule,
     CouponsModule,
-    TaxModule,
     InventoryModule,
     NotificationsModule,
     ShippingZonesModule,

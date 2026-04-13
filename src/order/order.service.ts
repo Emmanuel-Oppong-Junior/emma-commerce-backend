@@ -14,7 +14,6 @@ import {
 import { AuditService } from '../commons/audit.service';
 import { OrdersRepository } from './order.repository';
 import { CouponsService } from '../coupons/coupons.service';
-import { TaxService } from '../tax/tax.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
@@ -37,7 +36,6 @@ export class OrdersService {
     private readonly cartService: CartService,
     private readonly auditService: AuditService,
     private readonly couponsService: CouponsService,
-    private readonly taxService: TaxService,
     private readonly inventoryService: InventoryService,
     private readonly notificationsService: NotificationsService,
     private readonly shippingZonesService: ShippingZonesService,
@@ -69,13 +67,7 @@ export class OrdersService {
     }
     const address = await this.ensureValidShippingAddress(userId, params.shippingAddressId);
     const shippingFee = await this.shippingZonesService.getFeeForCity(address.city);
-    const orderDetails = await this.buildOrderDetails(
-      cart.items,
-      address.country,
-      userId,
-      Number(shippingFee),
-      params.couponCode,
-    );
+    const orderDetails = await this.buildOrderDetails(cart.items, userId, Number(shippingFee), params.couponCode);
 
     const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
       ...orderDetails,
@@ -105,8 +97,8 @@ export class OrdersService {
     if (!params.pickupLocationId) {
       throw new BadRequestException('pickupLocationId is required for PICKUP orders');
     }
-    const pickupLocation = await this.pickupLocationsService.findActiveById(params.pickupLocationId);
-    const orderDetails = await this.buildOrderDetails(cart.items, pickupLocation.country, userId, 0, params.couponCode);
+
+    const orderDetails = await this.buildOrderDetails(cart.items, userId, 0, params.couponCode);
 
     const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
       ...orderDetails,
@@ -271,7 +263,6 @@ export class OrdersService {
 
   private async buildOrderDetails(
     cartItems: CartItem[],
-    country: string,
     userId: string,
     shippingFee: number,
     couponCode?: string,
@@ -283,8 +274,6 @@ export class OrdersService {
   }> {
     const orderItems = await this.createOrderItems(cartItems);
     const subtotal = this.computeSubtotal(orderItems);
-    const taxRate = await this.taxService.getRateForCountry(country);
-    const tax = subtotal * Number(taxRate);
 
     let couponId: string | undefined;
     let couponDiscount = 0;
@@ -294,7 +283,7 @@ export class OrdersService {
       couponDiscount = discountAmount;
     }
 
-    const totalAmount = new Prisma.Decimal(Math.max(0, subtotal + tax + shippingFee - couponDiscount).toFixed(2));
+    const totalAmount = new Prisma.Decimal(Math.max(0, subtotal + shippingFee - couponDiscount).toFixed(2));
     return { orderItems, totalAmount, couponId, couponDiscount: couponDiscount || undefined };
   }
 

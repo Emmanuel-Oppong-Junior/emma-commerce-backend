@@ -38,7 +38,7 @@ export class CreateProductInput {
 
   @Field(() => String, {
     nullable: true,
-    description: 'Optional description of the product (max 1000 characters)',
+    description: 'Optional description of the product (max 5000 characters)',
   })
   @IsOptional()
   @Length(0, 5000, { message: 'Description must not exceed 5000 characters' })
@@ -46,11 +46,18 @@ export class CreateProductInput {
 
   @Field(() => String, {
     description:
-      'Price of the product in default currency — pass as a decimal string (e.g., "29.99") to avoid floating-point rounding errors',
+      'Base price before taxes — pass as a decimal string (e.g., "29.99"). The stored display price will include applicable taxes if the product is taxable.',
   })
-  @IsNotEmpty({ message: 'Price is required' })
-  @IsNumberString({}, { message: 'Price must be a valid decimal string (e.g., "29.99")' })
-  price: string;
+  @IsNotEmpty({ message: 'Base price is required' })
+  @IsNumberString({}, { message: 'Base price must be a valid decimal string (e.g., "29.99")' })
+  basePrice: string;
+
+  @Field(() => Boolean, {
+    description: 'Whether taxes apply to this product (defaults to false)',
+    defaultValue: false,
+  })
+  @IsBoolean()
+  isTaxable: boolean = false;
 
   @Field(() => String, {
     nullable: true,

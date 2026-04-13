@@ -1,25 +1,22 @@
-import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
+import { Field, Float, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
 
 @ObjectType()
-export class TaxRateEntity {
+export class TaxEntity {
   @Field(() => ID)
   id: string;
 
-  @Field()
-  country: string;
+  @Field({ description: 'Name of the tax (e.g., "VAT", "NHIS Levy")' })
+  name: string;
 
-  @Field({ nullable: true })
-  region?: string;
-
-  @Field(() => Float)
+  @Field(() => Float, { description: 'Tax rate as a decimal (e.g., 0.15 for 15%)' })
   rate: number;
 
   @Field()
   isActive: boolean;
 
-  @Field()
+  @Field(() => GraphQLISODateTime)
   createdAt: Date;
 
-  @Field()
+  @Field(() => GraphQLISODateTime)
   updatedAt: Date;
 }

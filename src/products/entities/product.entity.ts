@@ -28,8 +28,14 @@ export class Product {
   })
   description?: string;
 
-  @Field(() => Float, { description: 'price of the product' })
+  @Field(() => Float, { description: 'Tax-inclusive display price of the product' })
   price: Prisma.Decimal;
+
+  @Field(() => Float, { description: 'Base price before taxes (admin-entered)', nullable: true })
+  basePrice?: Prisma.Decimal;
+
+  @Field(() => Boolean, { description: 'Whether taxes are applied to this product' })
+  isTaxable: boolean;
 
   @Field(() => Float, { description: 'current price of the product', nullable: true })
   currentPrice?: Prisma.Decimal;

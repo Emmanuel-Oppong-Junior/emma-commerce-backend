@@ -1,78 +1,64 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { TaxRate } from '@prisma/client';
+import { Tax } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 import { TaxRepository } from './tax.repository';
-import { CreateTaxRateInput } from './dto/create-tax-rate.input';
-import { UpdateTaxRateInput } from './dto/update-tax-rate.input';
-import { Decimal } from '@prisma/client/runtime/library';
-
-const DEFAULT_TAX_RATE = new Decimal('0.1');
+import { CreateTaxInput } from './dto/create-tax-rate.input';
+import { UpdateTaxInput } from './dto/update-tax-rate.input';
 
 @Injectable()
 export class TaxService {
-  constructor(private readonly taxRepository: TaxRepository) {}
+  constructor(
+    private readonly taxRepository: TaxRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  /**
-   * Creates a new tax rate for a country or region.
-   * @param input - Tax rate creation data including country, optional region, and rate.
-   * @returns The created tax rate.
-   */
-  async createTaxRate(input: CreateTaxRateInput): Promise<TaxRate> {
-    return this.taxRepository.create({
-      country: input.country,
-      region: input.region,
+  async create(input: CreateTaxInput): Promise<Tax> {
+    const tax = await this.taxRepository.create({
+      name: input.name,
       rate: input.rate,
       isActive: input.isActive ?? true,
     });
+    await this.recomputeAllTaxableProductPrices();
+    return tax;
   }
 
-  /**
-   * Updates an existing tax rate by ID.
-   * @param id - The ID of the tax rate to update.
-   * @param input - Partial tax rate data to apply.
-   * @returns The updated tax rate.
-   */
-  async updateTaxRate(id: string, input: UpdateTaxRateInput): Promise<TaxRate> {
-    return this.taxRepository.update(id, input);
+  async update(id: string, input: UpdateTaxInput): Promise<Tax> {
+    const tax = await this.taxRepository.update(id, input);
+    await this.recomputeAllTaxableProductPrices();
+    return tax;
   }
 
-  /**
-   * Deletes a tax rate by ID.
-   * @param id - The ID of the tax rate to delete.
-   * @returns The deleted tax rate.
-   */
-  async deleteTaxRate(id: string): Promise<TaxRate> {
-    return this.taxRepository.delete(id);
+  async delete(id: string): Promise<Tax> {
+    const tax = await this.taxRepository.delete(id);
+    await this.recomputeAllTaxableProductPrices();
+    return tax;
   }
 
-  /**
-   * Retrieves all configured tax rates.
-   * @returns List of all tax rates.
-   */
-  async findAll(): Promise<TaxRate[]> {
+  async findAll(): Promise<Tax[]> {
     return this.taxRepository.findAll();
   }
 
-  /**
-   * Retrieves a single tax rate by ID.
-   * @param id - The ID of the tax rate.
-   * @returns The tax rate.
-   * @throws NotFoundException if the tax rate does not exist.
-   */
-  async findOne(id: string): Promise<TaxRate> {
-    const rate = await this.taxRepository.findById(id);
-    if (!rate) throw new NotFoundException(`Tax rate "${id}" not found`);
-    return rate;
+  async findOne(id: string): Promise<Tax> {
+    const tax = await this.taxRepository.findById(id);
+    if (!tax) throw new NotFoundException(`Tax "${id}" not found`);
+    return tax;
+  }
+
+  async getTotalActiveRate(): Promise<number> {
+    return this.taxRepository.getTotalActiveRate();
   }
 
   /**
-   * Returns the applicable tax rate for a given country and optional region.
-   * Falls back to the default rate (10%) if no matching rule is found.
-   * @param country - The country code or name to look up.
-   * @param region - Optional region or state to narrow the lookup.
-   * @returns The applicable tax rate as a Decimal.
+   * Recalculates price for all taxable products using current active tax rates.
+   * price = basePrice * (1 + sum of all active tax rates)
    */
-  async getRateForCountry(country: string, region?: string): Promise<Decimal> {
-    const taxRate = await this.taxRepository.findByCountry(country, region);
-    return taxRate ? (taxRate.rate as unknown as Decimal) : DEFAULT_TAX_RATE;
+  private async recomputeAllTaxableProductPrices(): Promise<void> {
+    const totalRate = await this.taxRepository.getTotalActiveRate();
+    const multiplier = 1 + totalRate;
+    await this.prisma.$executeRaw`
+      UPDATE "Product"
+      SET "price" = ROUND(CAST("basePrice" AS NUMERIC) * ${multiplier}, 2)
+      WHERE "isTaxable" = true AND "basePrice" IS NOT NULL
+    `;
   }
 }
