@@ -1036,6 +1036,9 @@ type Query {
   """Get all active pickup locations (public)"""
   activePickupLocations: [PickupLocationEntity!]!
 
+  """Get all active shipping zones (public)"""
+  activeShippingZones: [ShippingZoneEntity!]!
+
   """Retrieves a specific address by ID for the current user"""
   address(addressId: String!): Address!
 
@@ -1069,6 +1072,9 @@ type Query {
   dashboardSummary: DashboardSummary!
   discount(id: Int!): Discount!
   getMyPayments: [Payment!]!
+
+  """Get the shipping fee for a saved address"""
+  getShippingFee(addressId: ID!): Float!
   getUserPayment(userId: String!): [Payment!]!
 
   """Get return requests for the current user"""

@@ -25,6 +25,10 @@ export class ShippingZonesRepository {
     return this.prisma.shippingZone.findMany({ orderBy: { name: 'asc' } });
   }
 
+  async findActive(): Promise<ShippingZone[]> {
+    return this.prisma.shippingZone.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
+  }
+
   async findByCity(city: string): Promise<ShippingZone | null> {
     const normalised = city.trim().toLowerCase();
     return this.prisma.shippingZone.findFirst({

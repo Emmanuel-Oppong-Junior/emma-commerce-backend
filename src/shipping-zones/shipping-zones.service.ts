@@ -4,12 +4,16 @@ import { ShippingZonesRepository } from './shipping-zones.repository';
 import { CreateShippingZoneInput } from './dto/create-shipping-zone.input';
 import { UpdateShippingZoneInput } from './dto/update-shipping-zone.input';
 import { Decimal } from '@prisma/client/runtime/library';
+import { AddressesService } from '../addresses/addresses.service';
 
 const DEFAULT_SHIPPING_FEE = new Decimal('0');
 
 @Injectable()
 export class ShippingZonesService {
-  constructor(private readonly repository: ShippingZonesRepository) {}
+  constructor(
+    private readonly repository: ShippingZonesRepository,
+    private readonly addressesService: AddressesService,
+  ) {}
 
   async create(input: CreateShippingZoneInput): Promise<ShippingZone> {
     return this.repository.create({
@@ -36,6 +40,10 @@ export class ShippingZonesService {
     return this.repository.findAll();
   }
 
+  async findActive(): Promise<ShippingZone[]> {
+    return this.repository.findActive();
+  }
+
   async findOne(id: string): Promise<ShippingZone> {
     const zone = await this.repository.findById(id);
     if (!zone) throw new NotFoundException(`Shipping zone "${id}" not found`);
@@ -49,5 +57,15 @@ export class ShippingZonesService {
   async getFeeForCity(city: string): Promise<Decimal> {
     const zone = await this.repository.findByCity(city);
     return zone ? (zone.fee as unknown as Decimal) : DEFAULT_SHIPPING_FEE;
+  }
+
+  /**
+   * Returns the shipping fee for a user's saved address.
+   * Verifies the address belongs to the requesting user before looking up the fee.
+   */
+  async getFeeForAddress(addressId: string, userId: string): Promise<number> {
+    const address = await this.addressesService.getAddress(userId, addressId);
+    const fee = await this.getFeeForCity(address.city);
+    return Number(fee);
   }
 }
