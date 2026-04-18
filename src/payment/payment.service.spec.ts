@@ -6,7 +6,7 @@ import { BadRequestException, ForbiddenException, NotFoundException, Unauthorize
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
 import { PaystackEvent } from './enums/paystack-event.enum';
-import { createHmac } from 'crypto';
+import { createHmac } from 'node:crypto';
 import { PaymentStatus } from '@prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { Role } from '../users/enums/role.enum';

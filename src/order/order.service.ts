@@ -366,7 +366,7 @@ export class OrdersService {
 
   private async retrieveUserOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.ordersRepository.findById(orderId, { items: { include: { product: true } } });
-    if (!order || order.userId !== userId) {
+    if (order?.userId !== userId) {
       throw new NotFoundException(`Order "${orderId}" not found`);
     }
     return order;

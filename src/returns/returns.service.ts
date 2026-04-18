@@ -30,7 +30,7 @@ export class ReturnsService {
       where: { id: input.orderId },
       include: { payment: true },
     });
-    if (!order || order.userId !== userId) {
+    if (order?.userId !== userId) {
       throw new NotFoundException(`Order "${input.orderId}" not found`);
     }
     if (order.status !== 'DELIVERED') {

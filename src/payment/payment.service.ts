@@ -11,7 +11,7 @@ import { PaystackWebhookDto } from './dto/paystack.dto';
 import { Payment, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
-import { createHmac } from 'crypto';
+import { createHmac } from 'node:crypto';
 import { PaystackEvent } from './enums/paystack-event.enum';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRepository } from './payment.repository';
@@ -49,7 +49,7 @@ export class PaymentService {
     }
     const { totalAmount } = order;
     const email = (order as unknown as { user: { email: string } }).user.email;
-    await this.ensurePaymentNotInitiated(orderId);
+    await this.ensurePaymentNotCompleted(orderId);
     const totalAmountNumber = Number(totalAmount);
     const transaction = await this.initializePaystackTransaction({
       email,
@@ -82,7 +82,7 @@ export class PaymentService {
   async verifyPaymentAsUser(reference: string, userId: string): Promise<Payment> {
     const payment = await this.fetchPaymentByReference(reference);
     const order = await this.paymentRepository.findOrderById(payment.orderId);
-    if (!order || order.userId !== userId) {
+    if (order?.userId !== userId) {
       throw new ForbiddenException('You do not have access to this payment');
     }
     const verification = await this.verifyPaystackTransaction(reference);
@@ -103,7 +103,7 @@ export class PaymentService {
     const isAdmin = requestingUserRole === Role.ADMIN || requestingUserRole === Role.SUPER_ADMIN;
     if (!isAdmin) {
       const order = await this.paymentRepository.findOrderById(payment.orderId);
-      if (!order || order.userId !== requestingUserId) {
+      if (order?.userId !== requestingUserId) {
         throw new UnauthorizedException('You do not have access to this payment');
       }
     }
@@ -241,9 +241,17 @@ export class PaymentService {
     return order;
   }
 
-  private async ensurePaymentNotInitiated(orderId: string): Promise<void> {
+  private async ensurePaymentNotCompleted(orderId: string): Promise<void> {
     const existingPayment = await this.paymentRepository.findByOrderId(orderId);
-    if (existingPayment) throw new BadRequestException('Payment already initiated for this order');
+    if (existingPayment) {
+      if (existingPayment.status === PaymentStatus.COMPLETED) {
+        throw new BadRequestException('Payment for this order has already been completed');
+      }
+      if (existingPayment.status === PaymentStatus.PENDING) {
+        //delete the pending payment to allow re-initiation
+        await this.paymentRepository.delete(existingPayment.id);
+      }
+    }
   }
 
   private async initializePaystackTransaction({
