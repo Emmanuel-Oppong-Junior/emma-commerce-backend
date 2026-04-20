@@ -1,4 +1,4 @@
-import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { Order } from './entities/order.entity';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '../users/enums/role.enum';
@@ -8,6 +8,8 @@ import { UpdateOrderStatusInput } from './dto/update-order-status.input';
 import { UpdateShippingInput } from './dto/update-shipping.input';
 import { OrdersService } from './order.service';
 import { DiscountService } from '../discount/discount.service';
+import { UsersLoader } from '../users/loaders/users.loader';
+import { User } from '../users/entities/user.entity';
 import { FulfillmentType, PaymentMethod } from '@prisma/client';
 
 @Resolver(() => Order)
@@ -15,6 +17,7 @@ export class OrdersResolver {
   constructor(
     private readonly ordersService: OrdersService,
     private readonly discountService: DiscountService,
+    private readonly usersLoader: UsersLoader,
   ) {}
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
@@ -88,13 +91,25 @@ export class OrdersResolver {
     return this.ordersService.updateOrderStatus(input.orderId, input.status, adminId);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.USER)
   @Mutation(() => Order, {
     name: 'cancelOrder',
-    description: 'Cancels an order and restores stock',
+    description: 'Cancels the authenticated user\'s own order and restores stock',
   })
   async cancelOrder(@ActiveUser('id') userId: string, @Args('orderId', { type: () => String }) orderId: string) {
     return this.ordersService.cancelOrder(userId, orderId);
+  }
+
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Mutation(() => Order, {
+    name: 'adminCancelOrder',
+    description: 'Admin: cancel any order by ID and restore its stock',
+  })
+  async adminCancelOrder(
+    @ActiveUser('id') adminId: string,
+    @Args('orderId', { type: () => String }) orderId: string,
+  ) {
+    return this.ordersService.adminCancelOrder(orderId, adminId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
@@ -111,5 +126,10 @@ export class OrdersResolver {
   async finalizeOrder(@ActiveUser('id') userId: string, @Args('id', { type: () => String }) id: string) {
     await this.ordersService.getOrder(userId, id);
     return this.discountService.finalizeDiscountsForOrder(id);
+  }
+
+  @ResolveField(() => User, { nullable: true })
+  async user(@Parent() order: Order) {
+    return this.usersLoader.loader.load(order.userId);
   }
 }

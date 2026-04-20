@@ -48,7 +48,7 @@ async function bootstrap() {
               'Set it to a comma-separated list of allowed origins (e.g. https://yourdomain.com).',
           );
         })()
-      : ['http://localhost:3000', 'http://localhost:4000', 'http://localhost:5173'];
+      : ['http://localhost:3000', 'http://localhost:4000', 'http://localhost:5173', 'http://localhost:3001'];
 
   app.enableCors({
     origin: allowedOrigins,

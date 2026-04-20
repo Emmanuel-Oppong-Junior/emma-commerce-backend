@@ -16,6 +16,12 @@ export class PaymentResolver {
     return this.paymentService.verifyPaymentAsUser(verifyPaymentInput.reference, userId);
   }
 
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Query(() => [Payment], { name: 'payments' })
+  getPayments() {
+    return this.paymentService.getAllPayments();
+  }
+
   @Roles(Role.USER)
   @Query(() => [Payment], { name: 'getMyPayments' })
   getMyPayments(@ActiveUser('id') userId: string) {

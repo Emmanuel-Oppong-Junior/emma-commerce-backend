@@ -110,6 +110,10 @@ export class PaymentService {
     return payment;
   }
 
+  async getAllPayments(): Promise<Payment[]> {
+    return this.paymentRepository.findAll();
+  }
+
   /**
    * Retrieves all payments for a user.
    * @param userId - The ID of the user.

@@ -21,6 +21,11 @@ export class InventoryResolver {
     return this.inventoryService.restockVariant(input, actorId);
   }
 
+  @Query(() => [InventoryLogEntity], { description: 'Get all inventory logs (admin only)' })
+  inventoryLogs() {
+    return this.inventoryService.getAllLogs();
+  }
+
   @Query(() => [InventoryLogEntity], { description: 'Get inventory logs for a product (admin only)' })
   productInventoryLogs(@Args('productId', { type: () => ID }) productId: string) {
     return this.inventoryService.getProductLogs(productId);

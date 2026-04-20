@@ -8,6 +8,7 @@ import {
   OrderItem,
   OrderStatus,
   PaymentMethod,
+  PaymentStatus,
   Prisma,
   Product,
 } from '@prisma/client';
@@ -18,6 +19,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
+import { ReturnsService } from '../returns/returns.service';
 
 interface CreateOrderParams {
   fulfillmentType: FulfillmentType;
@@ -40,6 +42,7 @@ export class OrdersService {
     private readonly notificationsService: NotificationsService,
     private readonly shippingZonesService: ShippingZonesService,
     private readonly pickupLocationsService: PickupLocationsService,
+    private readonly returnsService: ReturnsService,
   ) {}
 
   /**
@@ -124,7 +127,7 @@ export class OrdersService {
    * Retrieves an order by ID without any ownership check (admin use).
    */
   async viewOrder(orderId: string) {
-    return this.ordersRepository.findById(orderId, { items: true });
+    return this.ordersRepository.findById(orderId, { items: { include: { product: true } } });
   }
 
   /**
@@ -178,16 +181,39 @@ export class OrdersService {
         (updated as Order & { trackingNumber?: string | null }).trackingNumber ?? undefined,
       );
     }
+    if (status === OrderStatus.CANCELLED) {
+      await this.requestReturnIfPaidOnline(order);
+    }
     return updated;
   }
 
   /**
-   * Cancels an order owned by the user and restores the reserved stock.
+   * Cancels an order owned by the requesting user and restores the reserved stock.
    */
   async cancelOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
     this.ensureOrderCanBeCancelled(order);
-    return this.cancelOrderAndRestoreStock(order);
+    const cancelled = await this.cancelOrderAndRestoreStock(order);
+    await this.requestReturnIfPaidOnline(order);
+    return cancelled;
+  }
+
+  /**
+   * Cancels any order without an ownership check (admin only) and restores the reserved stock.
+   */
+  async adminCancelOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
+    const order = await this.retrieveOrder(orderId);
+    this.ensureOrderCanBeCancelled(order);
+    const cancelled = await this.cancelOrderAndRestoreStock(order);
+    await this.auditService.log({
+      entity: 'Order',
+      entityId: orderId,
+      action: 'STATUS_CHANGE',
+      details: { to: 'CANCELLED' },
+      userId: adminUserId,
+    });
+    await this.requestReturnIfPaidOnline(order);
+    return cancelled;
   }
 
   /**
@@ -415,6 +441,17 @@ export class OrdersService {
       }
       return this.ordersRepository.softDelete(order.id);
     });
+  }
+
+  private async requestReturnIfPaidOnline(order: Order & { items: OrderItem[] }): Promise<void> {
+    if (order.paymentMethod !== PaymentMethod.ONLINE) return;
+    const payment = await this.ordersRepository.findPaymentByOrderId(order.id);
+    if (payment?.status !== PaymentStatus.COMPLETED) return;
+    await this.returnsService.createSystemReturnRequest(
+      order.id,
+      order.userId,
+      'Automatic refund request for cancelled paid order',
+    );
   }
 
   private sendOrderConfirmationEmail(userId: string, order: Order): void {

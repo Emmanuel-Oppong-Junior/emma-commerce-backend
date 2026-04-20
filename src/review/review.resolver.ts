@@ -67,12 +67,22 @@ export class ReviewResolver {
     return this.reviewService.updateReview(userId, input);
   }
 
+  @Roles(Role.USER)
   @Mutation(() => Review, {
     name: 'deleteReview',
-    description: "Deletes a user's review",
+    description: "Deletes the authenticated user's own review",
   })
   async deleteReview(@ActiveUser('id') userId: string, @Args('reviewId', { type: () => String }) reviewId: string) {
     return this.reviewService.deleteReview(userId, reviewId);
+  }
+
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Mutation(() => Review, {
+    name: 'adminDeleteReview',
+    description: 'Admin: permanently delete any review for moderation purposes',
+  })
+  async adminDeleteReview(@Args('reviewId', { type: () => String }) reviewId: string) {
+    return this.reviewService.adminDeleteReview(reviewId);
   }
 
   @ResolveField(() => User)

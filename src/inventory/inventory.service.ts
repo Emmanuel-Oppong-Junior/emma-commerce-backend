@@ -89,6 +89,10 @@ export class InventoryService {
    * @param productId - The ID of the product.
    * @returns List of inventory log entries for the product.
    */
+  async getAllLogs(): Promise<InventoryLog[]> {
+    return this.inventoryRepository.findAll();
+  }
+
   async getProductLogs(productId: string): Promise<InventoryLog[]> {
     return this.inventoryRepository.findByProduct(productId);
   }

@@ -27,6 +27,14 @@ export class PaymentRepository {
     return this.prisma.payment.findUnique({ where: { orderId } });
   }
 
+  async findAll(): Promise<Payment[]> {
+    return this.prisma.payment.findMany({
+      where: { deleted: false },
+      include: { order: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async findByUser(userId: string): Promise<Payment[]> {
     return this.prisma.payment.findMany({
       where: { order: { userId }, deleted: false },

@@ -66,12 +66,12 @@ export class UsersResolver {
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Mutation(() => User, { description: 'Update an existing user' })
+  @Mutation(() => User, { description: 'Update an existing user (super admin accounts cannot be modified)' })
   updateUser(
     @Args('id', { type: () => String }) id: string,
     @Args('updateUserInput') updateUserInput: UpdateUserInput,
   ) {
-    return this.usersService.update(id, updateUserInput);
+    return this.usersService.adminUpdateUser(id, updateUserInput);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)

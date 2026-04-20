@@ -20,6 +20,12 @@ export class InventoryRepository {
     return (tx as PrismaService).inventoryLog.create({ data });
   }
 
+  async findAll(): Promise<InventoryLog[]> {
+    return this.prisma.inventoryLog.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   async findByProduct(productId: string): Promise<InventoryLog[]> {
     return this.prisma.inventoryLog.findMany({
       where: { productId },

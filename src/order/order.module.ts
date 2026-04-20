@@ -11,6 +11,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { ExpiredOrdersTask } from './tasks/expired-orders.task';
 import { ShippingZonesModule } from '../shipping-zones/shipping-zones.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
+import { ReturnsModule } from '../returns/returns.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   providers: [OrdersService, OrdersResolver, OrdersRepository, ExpiredOrdersTask],
@@ -23,6 +25,8 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
     NotificationsModule,
     ShippingZonesModule,
     PickupLocationsModule,
+    ReturnsModule,
+    UsersModule,
   ],
   exports: [OrdersService, OrdersRepository],
 })

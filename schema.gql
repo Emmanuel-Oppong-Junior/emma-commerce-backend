@@ -286,39 +286,67 @@ input CreatePickupLocationInput {
 }
 
 input CreateProductInput {
-  """
-  Base price before taxes — pass as a decimal string (e.g., "29.99"). The stored display price will include applicable taxes if the product is taxable.
-  """
+  """URLs to downloadable attachments or spec sheets"""
+  attachments: [String!]
+
+  """Barcode (EAN, UPC, GTIN, etc.)"""
+  barcode: String
+
+  """Base price before taxes — decimal string (e.g., "29.99")"""
   basePrice: String!
 
-  """Optional brand name (e.g., "Nike")"""
+  """ID of the brand"""
   brandId: String
 
-  """ID of the parent category (e.g., "cat_clothing")"""
-  categoryId: String!
+  """ID of the parent category"""
+  categoryId: String
 
-  """Optional description of the product (max 5000 characters)"""
+  """Currency for the product price (defaults to GHS)"""
+  currency: Currency
+
+  """Delivery methods available for this product"""
+  deliveryOptions: [DeliveryOptions!]
+
+  """Full product description (max 5000 characters)"""
   description: String
 
-  """Array of HTTPS URLs to product images (max 10)"""
+  """Expiry or best-before date for perishable products"""
+  expiryDate: DateTime
+
+  """HTTPS URLs to product images (max 10)"""
   images: [String!]
 
-  """Whether the product is active and visible (defaults to false)"""
+  """Whether the product is visible to customers"""
   isActive: Boolean! = false
 
-  """Whether taxes apply to this product (defaults to false)"""
+  """Whether taxes apply to this product"""
   isTaxable: Boolean! = false
 
-  """Name of the product (e.g., "Cotton T-Shirt")"""
+  """Quantity threshold that triggers a low-stock alert (defaults to 5)"""
+  lowStockAlert: Int
+
+  """Product name (e.g., "Cotton T-Shirt")"""
   name: String!
 
-  """Available stock quantity (e.g., 100)"""
+  """Initial stock quantity (0 or more)"""
   quantity: Int!
 
-  """Optional Stock Keeping Unit (SKU) code (e.g., "TSHIRT-XL")"""
+  """Region names when deliveryOptions includes SELECTED_REGIONS"""
+  selectedDeliveryRegions: [String!]
+
+  """Short marketing description (max 500 characters)"""
+  shortDescription: String
+
+  """SKU code (e.g., "TSHIRT-XL")"""
   sku: String
 
-  """Optional ID of the subcategory (e.g., "sub_shirts")"""
+  """Publishing lifecycle status (defaults to DRAFT)"""
+  status: ProductStatus
+
+  """Stock availability status (defaults to IN_STOCK)"""
+  stockStatus: StockStatus
+
+  """ID of the subcategory"""
   subcategoryId: String
 }
 
@@ -414,6 +442,14 @@ input CreateVariantInput {
   size: String
 }
 
+enum Currency {
+  EUR
+  GBP
+  GHS
+  NGN
+  USD
+}
+
 type DashboardSummary {
   lowStockProductCount: Int!
   lowStockVariantCount: Int!
@@ -426,6 +462,12 @@ type DashboardSummary {
 A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
 """
 scalar DateTime
+
+enum DeliveryOptions {
+  INTERNATIONAL_DELIVERY
+  LOCAL_DELIVERY
+  SELECTED_REGIONS
+}
 
 type Discount {
   """Categories to which the discount applies"""
@@ -540,6 +582,12 @@ type Mutation {
   """Adds a product to the user’s wishlist"""
   addToWishlist(productId: String!): Wishlist!
 
+  """Admin: cancel any order by ID and restore its stock"""
+  adminCancelOrder(orderId: String!): Order!
+
+  """Admin: permanently delete any review for moderation purposes"""
+  adminDeleteReview(reviewId: String!): Review!
+
   """Approve a return request (admin only)"""
   approveReturn(input: ApproveReturnInput!): ReturnRequestEntity!
   archiveProduct(productId: String!): Product!
@@ -547,7 +595,7 @@ type Mutation {
   """Archive (soft delete) a user"""
   archiveUser(id: String!): User!
 
-  """Cancels an order and restores stock"""
+  """Cancels the authenticated user's own order and restores stock"""
   cancelOrder(orderId: String!): Order!
 
   """Change the password of the active user"""
@@ -620,7 +668,7 @@ type Mutation {
   """Delete a pickup location (admin only)"""
   deletePickupLocation(id: ID!): PickupLocationEntity!
 
-  """Deletes a user's review"""
+  """Deletes the authenticated user's own review"""
   deleteReview(reviewId: String!): Review!
 
   """Delete a shipping zone (admin only)"""
@@ -659,7 +707,7 @@ type Mutation {
     """The ID of the category to delete"""
     id: String!
   ): Category!
-  removeDiscount(id: Int!): Discount!
+  removeDiscount(id: ID!): Discount!
 
   """Removes a specific item from the user’s cart"""
   removeFromCart(cartItemId: String!): Cart!
@@ -761,7 +809,7 @@ type Mutation {
   """Update a tax (admin only)"""
   updateTax(id: ID!, input: UpdateTaxInput!): TaxEntity!
 
-  """Update an existing user"""
+  """Update an existing user (super admin accounts cannot be modified)"""
   updateUser(id: String!, updateUserInput: UpdateUserInput!): User!
 
   """Updates an existing variant"""
@@ -817,6 +865,7 @@ type Order {
   """Shipment tracking number"""
   trackingNumber: String
   updatedAt: DateTime!
+  user: User
   userId: ID!
 }
 
@@ -880,8 +929,8 @@ type Payment {
   order: Order!
   orderId: ID!
 
-  """JSON string representing the transaction details"""
-  paymentDetails: String
+  """Transaction audit data from the payment provider"""
+  paymentDetails: JSON
   paymentMethod: String!
   status: PaymentStatus!
   transactionId: String
@@ -912,52 +961,87 @@ type PickupLocationEntity {
 }
 
 type Product {
-  """Discount applied to the product, if any"""
+  """Active discount applied to the product"""
   appliedDiscount: Discount
+
+  """Downloadable or supplementary file URLs"""
+  attachments: [String!]
+
+  """Barcode (EAN, UPC, etc.)"""
+  barcode: String
 
   """Base price before taxes (admin-entered)"""
   basePrice: Float
   brand: Brand
+  brandId: String
   category: Category
-  categoryId: String!
+  categoryId: String
   createdAt: DateTime!
-  currency: String
 
-  """current price of the product"""
+  """Currency of the product price"""
+  currency: Currency
+
+  """Current selling price after any adjustments"""
   currentPrice: Float
 
-  """description of the product"""
+  """Available delivery methods for this product"""
+  deliveryOptions: [DeliveryOptions!]
+
+  """Full description of the product"""
   description: String
 
-  """Discounted price of the product, if applicable"""
+  """Discounted price, if a discount is active"""
   discountedPrice: Float
   discounts: [Discount!]
 
-  """Id of product"""
-  id: String!
+  """Expiry or best-before date"""
+  expiryDate: DateTime
 
-  """links to url of product images"""
+  """Unique identifier of the product"""
+  id: ID!
+
+  """Array of image URLs"""
   images: [String!]
+
+  """Whether the product is visible to customers"""
   isActive: Boolean!
 
   """Whether taxes are applied to this product"""
   isTaxable: Boolean!
 
+  """Quantity threshold that triggers a low-stock alert"""
+  lowStockAlert: Int
+
   """Name of the product"""
   name: String!
 
-  """Tax-inclusive display price of the product"""
-  price: Float!
+  """Tax-inclusive display price"""
+  price: Float
 
-  """description of the product"""
+  """When the product was published"""
+  publishedAt: DateTime
+
+  """Available stock quantity"""
   quantity: Int!
   reviews: [Review!]
 
-  """unique id for product"""
+  """Region names when deliveryOptions includes SELECTED_REGIONS"""
+  selectedDeliveryRegions: [String!]
+
+  """Short marketing description (max 500 chars)"""
+  shortDescription: String
+
+  """Stock Keeping Unit code"""
   sku: String
+
+  """Publishing lifecycle status"""
+  status: ProductStatus
+
+  """Current stock availability status"""
+  stockStatus: StockStatus
   subcategory: SubCategory
   subcategoryId: String
-  tags: [Tag!]!
+  tags: [Tag!]
   updatedAt: DateTime!
   variants: [Variant!]
 }
@@ -1044,6 +1128,12 @@ enum ProductSortField {
   UPDATED_AT
 }
 
+enum ProductStatus {
+  ARCHIVED
+  DRAFT
+  PUBLISHED
+}
+
 type Query {
   """Get all active pickup locations (public)"""
   activePickupLocations: [PickupLocationEntity!]!
@@ -1082,12 +1172,16 @@ type Query {
 
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
-  discount(id: Int!): Discount!
+  discount(id: ID!): Discount!
+  discounts: [Discount!]!
   getMyPayments: [Payment!]!
 
   """Get the shipping fee for a saved address"""
   getShippingFee(addressId: ID!): Float!
   getUserPayment(userId: String!): [Payment!]!
+
+  """Get all inventory logs (admin only)"""
+  inventoryLogs: [InventoryLogEntity!]!
 
   """Get return requests for the current user"""
   myReturnRequests: [ReturnRequestEntity!]!
@@ -1098,6 +1192,7 @@ type Query {
   """Retrieves all orders (admin only)"""
   orders: [Order!]!
   payment(id: String!): Payment!
+  payments: [Payment!]!
 
   """Get all pickup locations (admin only)"""
   pickupLocations: [PickupLocationEntity!]!
@@ -1330,6 +1425,13 @@ enum SortOrder {
   DESC
 }
 
+enum StockStatus {
+  BACKORDER
+  IN_STOCK
+  OUT_OF_STOCK
+  PREORDER
+}
+
 type SubCategory {
   category: SubCategory
 
@@ -1491,39 +1593,67 @@ input UpdatePickupLocationInput {
 }
 
 input UpdateProductInput {
-  """
-  Base price before taxes — pass as a decimal string (e.g., "29.99"). The stored display price will include applicable taxes if the product is taxable.
-  """
+  """URLs to downloadable attachments or spec sheets"""
+  attachments: [String!]
+
+  """Barcode (EAN, UPC, GTIN, etc.)"""
+  barcode: String
+
+  """Base price before taxes — decimal string (e.g., "29.99")"""
   basePrice: String
 
-  """Optional brand name (e.g., "Nike")"""
+  """ID of the brand"""
   brandId: String
 
-  """ID of the parent category (e.g., "cat_clothing")"""
+  """ID of the parent category"""
   categoryId: String
 
-  """Optional description of the product (max 5000 characters)"""
+  """Currency for the product price (defaults to GHS)"""
+  currency: Currency
+
+  """Delivery methods available for this product"""
+  deliveryOptions: [DeliveryOptions!]
+
+  """Full product description (max 5000 characters)"""
   description: String
 
-  """Array of HTTPS URLs to product images (max 10)"""
+  """Expiry or best-before date for perishable products"""
+  expiryDate: DateTime
+
+  """HTTPS URLs to product images (max 10)"""
   images: [String!]
 
-  """Whether the product is active and visible (defaults to false)"""
+  """Whether the product is visible to customers"""
   isActive: Boolean = false
 
-  """Whether taxes apply to this product (defaults to false)"""
+  """Whether taxes apply to this product"""
   isTaxable: Boolean = false
 
-  """Name of the product (e.g., "Cotton T-Shirt")"""
+  """Quantity threshold that triggers a low-stock alert (defaults to 5)"""
+  lowStockAlert: Int
+
+  """Product name (e.g., "Cotton T-Shirt")"""
   name: String
 
-  """Available stock quantity (e.g., 100)"""
+  """Initial stock quantity (0 or more)"""
   quantity: Int
 
-  """Optional Stock Keeping Unit (SKU) code (e.g., "TSHIRT-XL")"""
+  """Region names when deliveryOptions includes SELECTED_REGIONS"""
+  selectedDeliveryRegions: [String!]
+
+  """Short marketing description (max 500 characters)"""
+  shortDescription: String
+
+  """SKU code (e.g., "TSHIRT-XL")"""
   sku: String
 
-  """Optional ID of the subcategory (e.g., "sub_shirts")"""
+  """Publishing lifecycle status (defaults to DRAFT)"""
+  status: ProductStatus
+
+  """Stock availability status (defaults to IN_STOCK)"""
+  stockStatus: StockStatus
+
+  """ID of the subcategory"""
   subcategoryId: String
 }
 

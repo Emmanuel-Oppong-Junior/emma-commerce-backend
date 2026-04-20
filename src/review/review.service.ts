@@ -81,6 +81,11 @@ export class ReviewService {
     return this.reviewRepository.delete(reviewId);
   }
 
+  async adminDeleteReview(reviewId: string): Promise<Review> {
+    await this.fetchReview(reviewId);
+    return this.reviewRepository.delete(reviewId);
+  }
+
   private async validateProductExists(productId: string): Promise<void> {
     const product = await this.reviewRepository.findProductById(productId);
     if (!product) {

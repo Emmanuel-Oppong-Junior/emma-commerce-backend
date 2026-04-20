@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { CreateUserInput } from './dto/create-user.input';
 import { UpdateUserInput } from './dto/update-user.input';
 import { HashingService } from '../iam/hashing/hashing.service';
-import { Prisma, User } from '@prisma/client';
+import { Prisma, Role, User } from '@prisma/client';
 import { UserPaginateArgs } from './dto/user-paginate.args';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { UsersRepository } from './users.repository';
@@ -21,6 +21,9 @@ export class UsersService {
    * @returns The created user record.
    */
   async createUserByCredentials(createUserInput: CreateUserInput) {
+    if (createUserInput.role === Role.SUPER_ADMIN) {
+      throw new ForbiddenException('Super admin accounts cannot be created through the API');
+    }
     const { password } = createUserInput;
     createUserInput.password = await this.passwordService.hash(password!);
     return this.usersRepository.create(createUserInput);
@@ -78,12 +81,15 @@ export class UsersService {
     const paginationOptions = this.buildPaginationOptions(filter);
     const whereClause = this.buildWhereClause(filter);
 
-    // Fetch one extra item to determine hasNextPage without a COUNT query
-    const users = await this.usersRepository.findMany(
-      { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
-      whereClause,
-    );
-    return this.formatPaginatedResponse(users, paginationOptions);
+    const [users, totalCount] = await Promise.all([
+      this.usersRepository.findMany(
+        { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
+        whereClause,
+      ),
+      this.usersRepository.count(whereClause),
+    ]);
+
+    return this.formatPaginatedResponse(users, paginationOptions, totalCount);
   }
 
   private buildPaginationOptions({ first, after, orderBy, orderInAsc }: UserPaginateArgs) {
@@ -123,18 +129,16 @@ export class UsersService {
   private buildWhereClause(filter: UserPaginateArgs): Prisma.UserWhereInput {
     const { email, phoneNumber, role, isActive, name, createdAfter } = filter;
     return {
-      ...(email && {
-        email: { contains: email, mode: 'insensitive' as const },
-      }),
+      role: { not: Role.SUPER_ADMIN, ...(role && { equals: role }) },
+      ...(email && { email: { contains: email, mode: 'insensitive' as const } }),
       ...(phoneNumber && { phoneNumber }),
-      ...(role && { role }),
       ...(isActive !== undefined && { isActive }),
       ...(name && { name: { contains: name, mode: 'insensitive' as const } }),
       ...(createdAfter && { createdAt: { gte: createdAfter } }),
     };
   }
 
-  private formatPaginatedResponse(users: User[], { skip, take }: { take: number; skip: number }) {
+  private formatPaginatedResponse(users: User[], { skip, take }: { take: number; skip: number }, totalCount: number) {
     const pageSize = take;
     const hasNextPage = users.length > pageSize;
     const items = hasNextPage ? users.slice(0, pageSize) : users;
@@ -147,6 +151,7 @@ export class UsersService {
         pageSize,
         hasPreviousPage: skip > 0,
         hasNextPage,
+        totalCount,
       },
     };
   }
@@ -188,6 +193,12 @@ export class UsersService {
     return this.usersRepository.update(id, updateUserInput);
   }
 
+  async adminUpdateUser(id: string, updateUserInput: UpdateUserInput) {
+    const user = await this.findUserByIdOrThrow(id);
+    this.ensureNotSuperAdmin(user, 'updated');
+    return this.usersRepository.update(id, updateUserInput);
+  }
+
   private async compareNewPasswordToOld(newPassword: string, oldEncryptedPassword: string) {
     const result = await this.passwordService.compare(newPassword, oldEncryptedPassword);
     if (result) {
@@ -202,7 +213,8 @@ export class UsersService {
    * @throws NotFoundException if the user does not exist.
    */
   async remove(id: string) {
-    await this.findUserByIdOrThrow(id);
+    const user = await this.findUserByIdOrThrow(id);
+    this.ensureNotSuperAdmin(user, 'deleted');
     return this.usersRepository.delete(id);
   }
 
@@ -213,7 +225,8 @@ export class UsersService {
    * @throws NotFoundException if the user does not exist.
    */
   async archiveUser(id: string) {
-    await this.findUserByIdOrThrow(id);
+    const user = await this.findUserByIdOrThrow(id);
+    this.ensureNotSuperAdmin(user, 'archived');
     return this.usersRepository.update(id, { isActive: false });
   }
 
@@ -224,7 +237,8 @@ export class UsersService {
    * @throws NotFoundException if the user does not exist.
    */
   async deArchiveUser(id: string) {
-    await this.findUserByIdOrThrow(id);
+    const user = await this.findUserByIdOrThrow(id);
+    this.ensureNotSuperAdmin(user, 'restored');
     return this.usersRepository.update(id, { isActive: true });
   }
 
@@ -273,5 +287,11 @@ export class UsersService {
     const user = await this.usersRepository.findById(id);
     if (!user) throw new NotFoundException('User not found');
     return user;
+  }
+
+  private ensureNotSuperAdmin(user: User, action: string): void {
+    if (user.role === Role.SUPER_ADMIN) {
+      throw new ForbiddenException(`Super admin accounts cannot be ${action}`);
+    }
   }
 }

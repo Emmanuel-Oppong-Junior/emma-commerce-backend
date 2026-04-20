@@ -4,6 +4,7 @@ import { FulfillmentType, OrderStatus, PaymentMethod } from '@prisma/client';
 import { OrderItem } from './order-item.entity';
 import { Decimal } from '@prisma/client/runtime/library';
 import GraphQLJSON from 'graphql-type-json';
+import { User } from '../../users/entities/user.entity';
 
 @ObjectType()
 export class Order {
@@ -63,6 +64,9 @@ export class Order {
 
   @Field()
   updatedAt: Date;
+
+  @Field(() => User, { nullable: true })
+  user?: User;
 
   @Field(() => [OrderItem])
   items: OrderItem[];

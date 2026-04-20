@@ -1,4 +1,4 @@
-import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { DiscountService } from './discount.service';
 import { Discount } from './entities/discount.entity';
 import { CreateDiscountInput } from './dto/create-discount.input';
@@ -18,14 +18,14 @@ export class DiscountResolver {
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Query(() => [Discount], { name: 'discount' })
+  @Query(() => [Discount], { name: 'discounts' })
   findAll() {
     return this.discountService.findAllDiscounts();
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => Discount, { name: 'discount' })
-  findOne(@Args('id', { type: () => Int }) id: string) {
+  findOne(@Args('id', { type: () => ID }) id: string) {
     return this.discountService.findOneDiscount(id);
   }
 
@@ -49,7 +49,7 @@ export class DiscountResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Discount)
-  removeDiscount(@Args('id', { type: () => Int }) id: string) {
+  removeDiscount(@Args('id', { type: () => ID }) id: string) {
     return this.discountService.deleteDiscount(id);
   }
 }

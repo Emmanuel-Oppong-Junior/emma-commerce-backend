@@ -114,6 +114,12 @@ export class ReturnsService {
    * @param userId - The ID of the user.
    * @returns List of return requests for the user.
    */
+  async createSystemReturnRequest(orderId: string, userId: string, reason: string): Promise<void> {
+    const existing = await this.returnsRepository.findByOrder(orderId);
+    if (existing.some((r) => r.status !== 'REJECTED')) return;
+    await this.returnsRepository.create({ orderId, userId, reason });
+  }
+
   async findByUser(userId: string): Promise<ReturnRequest[]> {
     return this.returnsRepository.findByUser(userId);
   }

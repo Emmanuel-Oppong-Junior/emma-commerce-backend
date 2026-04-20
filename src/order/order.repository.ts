@@ -36,7 +36,7 @@ export class OrdersRepository {
   async findAll(): Promise<Order[]> {
     return this.prisma.order.findMany({
       where: { deleted: false },
-      include: { items: true },
+      include: { items: { include: { product: true } } },
     }) as unknown as Promise<Order[]>;
   }
 
@@ -156,6 +156,10 @@ export class OrdersRepository {
 
   async runTransaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(fn);
+  }
+
+  async findPaymentByOrderId(orderId: string) {
+    return this.prisma.payment.findUnique({ where: { orderId } });
   }
 
   async findExpiredPendingOrders(cutoff: Date): Promise<OrderWithItems[]> {
