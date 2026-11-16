@@ -5,18 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P0-F.1 — Line endings (`.gitattributes`, Prettier `endOfLine: lf`, renormalise)
-- **Branch:** `chore/P0-F.1-gitattributes` · **State:** in progress
-- **Steps:**
-  - [x] Branch created from `main` (`bbbc503`)
-  - [x] Added `.gitattributes` (`* text=auto eol=lf`, `*.sh text eol=lf`) and `"endOfLine": "lf"` in `.prettierrc` (staged)
-  - [x] Renormalised; working tree rewritten as LF (413 files `i/lf w/lf`). Staged diff: only `.gitattributes`, `.prettierrc`, `STATUS.md`
-  - [x] `npx prettier --write` on `src/order/order.resolver.ts`, `src/products/dto/create-product.input.ts`, `src/users/users.service.ts` (Emmanuel OK'd)
-  - [x] Verify: eslint shows only real issues; prettier passes
-  - [ ] Commit (only when Emmanuel asks) ← **Next step**
-- **Uncommitted work:** staged `.gitattributes`, `.prettierrc`; unstaged formatting of the 3 files above; `docs/roadmap/STATUS.md`
-- **Last test run:** 2026-11-16 `npx eslint "{src,test}/**/*.ts"` → 1 error (was 29,611): `test/e2e/order.e2e-spec.ts:14` unused `adminToken` (left for P0-F.7). `npx prettier --check "src/**/*.ts" "test/**/*.ts"` → pass. `npx tsc --noEmit -p tsconfig.json` → 15 pre-existing errors in specs/`db.helper.ts` (P0-F.2/F.5 scope), none in the formatted files.
-- **Gotchas:** `git checkout-index -f -a` skips files whose index stat is fresh; it only rewrote them as LF after `touch`-ing every tracked file, then `git add --renormalize .` cleared the stale stat entries. `.gitattributes` must be staged before the checkout. `.editorconfig` not in scope unless asked.
+_None._ P0-F.1 done (`f2b323a`), fast-forward merged into `main`, not pushed. Take the first unblocked item in **Up next**.
+
+**Last completed:** P0-F.1. eslint 29,611 → 1 error (unused `adminToken`, left for P0-F.7); `prettier --check` passes. Gotcha for other Windows clones: after pulling, run `git ls-files -z | xargs -0 touch && git checkout-index -f -a && git add --renormalize .` to get an LF working tree (`checkout-index` skips entries whose stat is fresh).
 
 <!-- Shape while a task is active (keep it current):
 - **Task:** P0-X.n — <title>
@@ -33,18 +24,17 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-F.1 Line endings: `.gitattributes`, Prettier `endOfLine: lf`, renormalise | first | — (branch from `main`) |
-| 2 | P0-F.2 E2E safety guard + `.env.test.example` + fix `db.helper.ts` | ∥ with 1 | — |
-| 3 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ with 1 | Emmanuel rotates the DB password |
-| 4 | P0-F.5 Repair the 14 failing unit suites | after 1 | — |
-| 5 | P0-F.6 Minimal CI | after 4 | — |
-| 6 | P0-A.1 Context-aware guards and interceptor (fixes all REST routes) | after 5 | — |
-| 7 | P0-A.2 Field-level authorization (Critical PII leak) | after 5, ∥ with 6 | — |
+| 1 | P0-F.2 E2E safety guard + `.env.test.example` + fix `db.helper.ts` | now | — |
+| 2 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ with 1 | Emmanuel rotates the DB password |
+| 3 | P0-F.5 Repair the 14 failing unit suites | ∥ with 1 | — |
+| 4 | P0-F.6 Minimal CI | after 3 | — |
+| 5 | P0-A.1 Context-aware guards and interceptor (fixes all REST routes) | after 4 | — |
+| 6 | P0-A.2 Field-level authorization (Critical PII leak) | after 4, ∥ with 5 | — |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
-| P0-F Safety rails | 0 / 7 | (`TODO.md` retirement, part of F.4, done 2026-11-16) |
+| P0-F Safety rails | 1 / 7 | F.1 (`f2b323a`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
 | P0-A Request pipeline & access | 0 / 5 | |
 | P0-B Orders & stock | 0 / 11 | |
 | P0-C Payments | 0 / 7 | |
