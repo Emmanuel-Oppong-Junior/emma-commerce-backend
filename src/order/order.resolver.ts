@@ -94,7 +94,7 @@ export class OrdersResolver {
   @Roles(Role.USER)
   @Mutation(() => Order, {
     name: 'cancelOrder',
-    description: 'Cancels the authenticated user\'s own order and restores stock',
+    description: "Cancels the authenticated user's own order and restores stock",
   })
   async cancelOrder(@ActiveUser('id') userId: string, @Args('orderId', { type: () => String }) orderId: string) {
     return this.ordersService.cancelOrder(userId, orderId);
@@ -105,10 +105,7 @@ export class OrdersResolver {
     name: 'adminCancelOrder',
     description: 'Admin: cancel any order by ID and restore its stock',
   })
-  async adminCancelOrder(
-    @ActiveUser('id') adminId: string,
-    @Args('orderId', { type: () => String }) orderId: string,
-  ) {
+  async adminCancelOrder(@ActiveUser('id') adminId: string, @Args('orderId', { type: () => String }) orderId: string) {
     return this.ordersService.adminCancelOrder(orderId, adminId);
   }
 

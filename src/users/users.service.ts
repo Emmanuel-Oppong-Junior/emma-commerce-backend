@@ -82,10 +82,7 @@ export class UsersService {
     const whereClause = this.buildWhereClause(filter);
 
     const [users, totalCount] = await Promise.all([
-      this.usersRepository.findMany(
-        { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
-        whereClause,
-      ),
+      this.usersRepository.findMany({ ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 }, whereClause),
       this.usersRepository.count(whereClause),
     ]);
 

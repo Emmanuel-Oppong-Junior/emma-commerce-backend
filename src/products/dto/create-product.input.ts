@@ -39,13 +39,19 @@ export class CreateProductInput {
 
   @Field(() => [String], { nullable: true, description: 'HTTPS URLs to product images (max 10)' })
   @IsOptional()
-  @IsUrl({ protocols: ['https'], require_protocol: true }, { each: true, message: 'Each image must be a valid HTTPS URL' })
+  @IsUrl(
+    { protocols: ['https'], require_protocol: true },
+    { each: true, message: 'Each image must be a valid HTTPS URL' },
+  )
   @ArrayMaxSize(10, { message: 'Product cannot have more than 10 images' })
   images?: string[];
 
   @Field(() => [String], { nullable: true, description: 'URLs to downloadable attachments or spec sheets' })
   @IsOptional()
-  @IsUrl({ protocols: ['https'], require_protocol: true }, { each: true, message: 'Each attachment must be a valid HTTPS URL' })
+  @IsUrl(
+    { protocols: ['https'], require_protocol: true },
+    { each: true, message: 'Each attachment must be a valid HTTPS URL' },
+  )
   attachments?: string[];
 
   @Field(() => String, {
@@ -87,7 +93,10 @@ export class CreateProductInput {
   @IsEnum(StockStatusEnum, { message: 'stockStatus must be a valid StockStatus value' })
   stockStatus?: StockStatusEnum;
 
-  @Field(() => Int, { nullable: true, description: 'Quantity threshold that triggers a low-stock alert (defaults to 5)' })
+  @Field(() => Int, {
+    nullable: true,
+    description: 'Quantity threshold that triggers a low-stock alert (defaults to 5)',
+  })
   @IsOptional()
   @IsInt({ message: 'Low stock alert must be an integer' })
   @Min(0, { message: 'Low stock alert cannot be negative' })
@@ -113,7 +122,10 @@ export class CreateProductInput {
   @IsString({ each: true })
   selectedDeliveryRegions?: string[];
 
-  @Field(() => GraphQLISODateTime, { nullable: true, description: 'Expiry or best-before date for perishable products' })
+  @Field(() => GraphQLISODateTime, {
+    nullable: true,
+    description: 'Expiry or best-before date for perishable products',
+  })
   @IsOptional()
   @Type(() => Date)
   @IsDate({ message: 'expiryDate must be a valid date' })
