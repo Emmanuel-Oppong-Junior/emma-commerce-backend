@@ -1,0 +1,211 @@
+# 05 - Dependencies and Ops
+
+> **Orchestrator note (final):** I verified OPS-01 (no `USER` in `Dockerfile`), OPS-03 (no `.dockerignore` in `git ls-files`), OPS-11/OBS-02 (`tracing.ts` is never imported; grep finds no reference) and PERF-18 (the image `CMD` points at a file the build does not produce). EOL dates for Node 20 and Apollo Server 4 come from web sources cited in §3; re-check them before planning the upgrade. OPS-18 / SEC-05: the tracked `.claude/settings.local.json` holds a database connection string with a password. Rotate that password and untrack the file.
+
+Reviewed by: Dependencies & Ops reviewer, Sonnet 5.5. Date: 2026-11-16. Read-only audit.
+Evidence: `tmp/audit/baseline/{audit,outdated}.txt`, `package.json`, `Dockerfile`, `prisma/schema.prisma`, `src/config/env.validation.ts`, `.env.example`, `src/main.ts`, `src/tracing.ts`, `src/commons/logger.service.ts`, `src/health/health.controller.ts`, `src/config/cache.config.ts`, `npm ls`, grep of `src/`.
+Confirmation labels: **CR** = Confirmed by reading, **CC** = Confirmed by command output (npm audit / npm ls / git), **S** = Suspected (needs verification).
+Not read: `.env`. `.claude/settings.local.json` was NOT opened in detail (only its tracked status and the presence of a `DATABASE_URL` key inside a Bash permission entry on line 21 were noted).
+
+## 1. Executive summary
+
+- `npm audit` exits 1 with roughly 60 vulnerable packages, 5 flagged Critical (form-data, protobufjs, proxy-addr, sha.js, tar) and a long High list. Most are transitive and either dev-only (jest/eslint/webpack/babel toolchain) or reachable only via the OpenTelemetry/gRPC chain. The directly reachable runtime ones that matter are: `@apollo/server`, `@nestjs/core|common|platform-express`, `express`/`body-parser`/`path-to-regexp`/`qs`/`proxy-addr`, `multer`, `axios`, `joi`, `cloudinary`, `sharp`, `jws`.
+- Several fixes are plain `npm audit fix` (patch/minor within semver range). Most of the Express/Nest runtime ones are cleared by bumping inside 10.x (`@nestjs/*` 10.4.22) - no major upgrade needed for those.
+- Three platform end-of-life facts: **Node 20 (Dockerfile) EOL 2026-04-30**, **Apollo Server 4 EOL 2026-01-26**, **ESLint 8 EOL**. The production image is therefore on an unsupported runtime today.
+- There is no CI, no `.dockerignore`, no `.gitattributes`, no migration deploy step and no HEALTHCHECK. The image runs as root and cannot run `prisma migrate deploy` (CLI is a devDependency).
+- `.claude/settings.local.json` is tracked in git (6 commits) and contains a `DATABASE_URL` assignment in a permission entry. Treat that DB credential as leaked.
+
+## 2. Vulnerable packages
+
+Counts from `tmp/audit/baseline/audit.txt`. "Reachable" means the vulnerable code path is plausibly exercised by this app at runtime. Fix column: "in-range" = `npm audit fix` without `--force`; "MAJOR" = needs a breaking upgrade.
+
+### 2.1 Runtime packages that matter
+
+| Package (installed) | Sev | Direct / transitive | Advisory summary | Reachable in this app? | Fix | Major? |
+|---|---|---|---|---|---|---|
+| `@apollo/server` 4.11.3 (<=5.4.0) | High | Direct | GHSA-mp6q-xf9x-fwf7 DoS in `startStandaloneServer`; GHSA-9q82-xgwf-vj6h XS-Search/CSRF-prevention bypass | Standalone DoS: no (app uses `@nestjs/apollo` + Express, not `startStandaloneServer`, `app.module.ts:95-96`). CSRF-prevention bypass: yes, applies to the Express integration. Plus the EOL status itself | 4.13.0 is "wanted"; full fix only in 5.x. audit marks "npm audit fix" but see 3.3 | 4.13 in-range, 5.x MAJOR |
+| `@nestjs/common` 10.4.15 (<10.4.16) | Mod | Direct | GHSA-cj7v-w2c7-cp7c RCE via Content-Type header (file-type related) | Plausible: any body/multipart request path (upload controller, webhook) | 10.4.22 | In-range |
+| `@nestjs/core` 10.4.15 (<=11.1.17), `@nestjs/platform-express` | Mod | Direct | GHSA-36xv-jgw5-4q75 injection to downstream component | Plausible (request handling) | audit says `--force` (to Nest 11+); check whether a 10.4.x backport exists before deciding | Possibly MAJOR |
+| `express` / `body-parser` (<=1.20.8) | High | Transitive (platform-express) | DoS: invalid `limit` disables size enforcement; DoS via trailing bytes after compressed body | Yes, every HTTP request | Needs newer platform-express; audit says `--force` | MAJOR (Nest 11) or overrides |
+| `path-to-regexp` <0.1.13 (under express) | High | Transitive | ReDoS in multi-parameter routes | Low: routes are few, fixed (`/health`, `/graphql`, webhook, upload) | with Express bump | MAJOR |
+| `qs` <=6.16.0 | Mod | Transitive | arrayLimit bypass DoS, other parse DoS | Yes (Express query parsing) | in-range | No |
+| `proxy-addr` 1.1.0-2.0.7 | **Critical** | Transitive (express) | IP spoofing via IPv4-mapped IPv6 trust subnet | Plausible: `app.set('trust proxy', 1)` at `main.ts:11` and throttling by IP. Only matters if the throttler keys on `req.ip` behind a proxy | in-range | No |
+| `multer` 1.4.4-lts.1 - 2.0.1 | High | Transitive (platform-express) | 3 DoS advisories (malformed multipart) | Yes if `upload.controller.ts` is publicly reachable; check it is auth-gated | `--force` | MAJOR (multer 2.0.2+) |
+| `axios` 1.14.0 (1.0.0-1.19.0) | High | Direct | ~35 advisories (SSRF via NO_PROXY, prototype-pollution gadgets, maxBodyLength bypass). Used in `returns.service.ts:139` | Limited: one outbound POST with fixed URL; prototype-pollution gadgets need an attacker-controlled pollution source. Still bump | 1.21.1 ("wanted") | In-range |
+| `joi` 18.1.2 (18.0-18.3.0) | High | Direct | prototype pollution / ReDoS in messages, `link()`, `isoDate`, `email multiple` | Low: Joi only validates env at startup (`env.validation.ts`) - attacker cannot feed it input | 18.3.2 | In-range |
+| `cloudinary` 1.41.3 (<2.7.0) | High | Direct | GHSA-g4mf-96x5-5m2c argument injection via `&` in params | Plausible: `cloudinary.service.ts` and `upload.controller.ts` pass user-influenced values (folder/public_id/tags); verify | 2.7.0+ | **MAJOR** (1->2) |
+| `sharp` 0.34.3 (<=0.35.5-rc.1) | High | Direct | Bundled libvips/libheif/librsvg CVEs | Yes: `cloudinary.service.ts:4` processes user-uploaded images. Image-parsing CVEs on untrusted uploads are the classic exploit path | 0.34.5 "wanted" (check it carries the libvips fixes); 0.35.x | In-range or minor |
+| `jws` (=4.0.0, <3.2.3) | High | Transitive (google-auth-library, gtoken) | Improper HMAC verification | No: `google-auth-library` is not imported anywhere in `src/` (Google login uses `fetch` to googleapis, `google-authentication.service.ts:44-45`). Remove the package (DEP-08). `@nestjs/jwt` uses `jsonwebtoken`, separate | in-range | No |
+| `@graphql-tools/utils` <=12.0.0, `/merge`, `/schema` | High | Transitive (`@nestjs/graphql`, apollo) | prototype pollution in `mergeDeep` | Low: used at schema-build time on developer-authored SDL | audit: `@nestjs/graphql@14` | MAJOR |
+| `uuid` <11.1.1 | Mod | Transitive | buffer bounds check in v3/v5/v6 when `buf` provided | Very low | with graphql/apollo upgrades | MAJOR-ish |
+| `@opentelemetry/*` (auto-instrumentations-node <=0.79.0, core <2.8.0, instrumentation-http, instrumentation-pg <0.73.0 etc.) | High/Mod | Direct (auto-instr, sdk) | Prometheus exporter crash via malformed HTTP; unbounded memory in W3C Baggage; `db.user` span attribute leak (pg) | Only when `OTEL_ENABLED=true` (`tracing.ts:15`). If enabled in prod: baggage memory DoS reachable via inbound headers; `db.user` goes to the trace backend. Prometheus exporter is not configured, so not reachable | auto-instr 0.83.1, sdk 0.301.x | MAJOR (0.x minor bumps are breaking) |
+| `@grpc/grpc-js` 1.14.0-1.14.4, `protobufjs` <=7.6.4 (**Critical**), `@protobufjs/utf8` | High/Crit | Transitive (OTel OTLP gRPC exporters) | crash/DoS, codegen gadgets, RCE class issues in protobuf.js | The app uses the OTLP **HTTP** exporter (`tracing.ts:11`), but the gRPC/protobuf packages are installed. Exposure limited to attacker-controlled `.proto` or descriptors, which this app never loads | in-range | No |
+| `@nestjs/config` 3.3.0 (via `lodash`) | High | Direct | lodash prototype pollution / `_.template` injection | Low: lodash is not invoked with request data by `@nestjs/config` | audit: `@nestjs/config@4.0.3+` | MAJOR |
+| `form-data` 4.0.5 and 2.3.3 (under `request`) | **Critical** | Transitive (axios, `paystack-api` -> `request`) | weak boundary randomness, CRLF in multipart names | `paystack-api` -> `request` (deprecated, no fix ever) -> form-data 2.3.3. Real exposure is low (fixed Paystack calls) but `request` is abandoned | in-range for 4.x; `request` chain has no fix: replace `paystack-api` | No / n.a. |
+| `request` 2.88.2, `tough-cookie` <4.1.3, `uuid` (old) | Mod-High | Transitive (`paystack-api`) | unmaintained; known prototype pollution | The Paystack client is on the payment path | Replace `paystack-api` with direct `fetch`/axios calls | n.a. |
+| `validator` <=13.15.20 | High | Transitive (class-validator) | `isURL` bypass | Yes if DTOs use `@IsUrl` on user input (SSRF/redirect filters). Grep before dismissing | in-range | No |
+| `follow-redirects` <=1.15.11 | Mod | Transitive (axios) | custom auth headers leak on cross-domain redirect | Low: `returns.service.ts` posts to fixed URL | in-range | No |
+| `moment` 2.29.2-2.30.1 | Mod | Transitive | path traversal via locale name | No (not used by src; check which dep pulls it) | in-range | No |
+| `bcrypt` 5.1.1 -> `@mapbox/node-pre-gyp` -> `tar` (**Critical**) | Crit | Transitive, **install-time** | node-tar arbitrary file write/overwrite | Install-time only (extracting prebuilt binary); not runtime | in-range for tar, or bcrypt 6.0.0 removes the whole chain | bcrypt 6 is a MAJOR but trivial |
+| `ws` 7.x/8.x <=8.20.1 | High | Transitive (`subscriptions-transport-ws`, apollo) | memory exhaustion DoS, uninit memory disclosure | Only if GraphQL subscriptions are enabled. `subscriptions-transport-ws` appears installed via `@nestjs/graphql`; check `app.module.ts` for `subscriptions` config | `--force` | MAJOR |
+
+### 2.2 Dev/build/test-only packages (not shipped if the image used `--omit=dev` properly)
+
+`@babel/core`, `@babel/helpers`, `@faker-js/faker` (High: arbitrary code exec in `helpers.fake`; fix is v10, a major - dev only, seeds/tests), `@angular-devkit/core`/`ajv`, `brace-expansion`, `browserslist`, `deepmerge`, `deepmerge-ts`/`@prisma/config` (CLI-side; fixed by Prisma bump), `defu`, `diff`, `effect` (Prisma CLI dep), `flatted`, `glob`, `js-yaml`, `lodash.omit`, `minimatch`, `picomatch`, `serialize-javascript`, `sha.js` (Critical, dev chain via webpack/ts-loader), `tar` (Critical, CLI/pkg chain), `tmp`, `webpack` (build-time SSRF in `HttpUriPlugin`, not used).
+Reachability: none at runtime in production. They matter for developer machines and CI. An `npm audit --omit=dev` gate in CI will separate noise from real findings (see DEP-02, OPS-02).
+
+Evidence for all rows: CC (`tmp/audit/baseline/audit.txt`); "reachable" judgements are CR from grep/reading unless marked "verify".
+
+## 3. Outdated packages and upgrade plan
+
+### 3.1 Findings
+
+| ID | Severity | Finding | Evidence | Confirmation |
+|---|---|---|---|---|
+| DEP-01 | High | Production runtime is Node 20 (`node:20-alpine`) which reached end of life on 2026-04-30; no more security patches. Local dev is Node 24 (baseline). Dev/prod parity gap hides runtime-specific bugs. Cloud Run also lists Node 20 decommissioning for 2026-10-30. | `Dockerfile:2,18`; baseline.md env line. Dates per [HeroDevs](https://www.herodevs.com/blog-posts/node-js-v20-goes-eol-april-30----and-your-cloud-provider-is-pulling-the-plug-the-next-day) and [endoflife.ai](https://endoflife.ai/nodejs/20) (secondary sources; confirm on nodejs.org/en/about/previous-releases) | CR (Dockerfile) + external (EOL date) |
+| DEP-02 | High | `npm audit` fails (exit 1) with 5 Critical and many High advisories; several runtime-reachable and fixable in-range (`@nestjs/*` 10.4.22, axios 1.21.1, joi 18.3.2, qs, proxy-addr, jws, sharp 0.34.5, follow-redirects, validator). No gate prevents regressions. | `tmp/audit/baseline/audit.txt`, `outdated.txt` | CC |
+| DEP-03 | High | `@apollo/server` 4.x is end-of-life since 2026-01-26; two advisories need >=5.x. Apollo says v5 upgrade is quick on a supported Node ([Apollo docs, previous versions](https://apollographql.com/docs/apollo-server/previous-versions)). `@nestjs/apollo` 12 targets AS4; v13+ (14.2.1 latest) targets AS5. | `package.json` `@apollo/server ^4.11.3`; `outdated.txt` latest 5.5.2 | CC + external |
+| DEP-04 | Medium | ESLint 8.57 (EOL) + typescript-eslint 6 + `.eslintrc.js` legacy config. Upgrade means flat config (`eslint.config.mjs`); typescript-eslint 8 needs TS >=4.8 (ok at 5.7). | `.eslintrc.js`, `package.json` | CR |
+| DEP-05 | Medium | Prisma config in `package.json#prisma` (seed) is deprecated and removed in Prisma 7; Prisma 7 also moves datasource URL to `prisma.config.ts`, changes generator (`prisma-client` provider, explicit output) and expects driver adapters. Latest is 7.10.1 (8.0 RC exists). `prisma validate` already warns. | `package.json` `prisma` block; `prisma/schema.prisma:8-11`; baseline Prisma row | CR + CC |
+| DEP-06 | Medium | `@nestjs/*` pinned at 10 while latest is 12.x (11 and 12 both released). Nest 11 moves to Express 5 (path-to-regexp 8, query parser/`*` wildcard changes), cache-manager v6/Keyv (already on `cache-manager` 7 / `@nestjs/cache-manager` 3, i.e. already Nest-11-era packages mixed with Nest 10 core). `@nestjs/jwt 11`, `@nestjs/schedule 6`, `@nestjs/terminus 11`, `@nestjs/cache-manager 3` are already ahead of core: peer-range drift. Check `npm ls` for peer warnings. | `package.json`; `outdated.txt` | CR |
+| DEP-07 | Low | Version-range hygiene: `@nestjs/common|core|platform-express ^10.0.0`, `@types/node ^20` (matches EOL runtime), `reflect-metadata 0.1.14` (0.2.x is current; Nest 11 requires 0.2), `typescript 5.7.3`. | `package.json` | CR |
+| DEP-08 | Low | Unused/questionable dependencies (section 4). | grep results | CR |
+| DEP-09 | Low | Jest 29 -> 30, ts-jest, `@types/jest` 30, supertest 7: low risk, dev-only. Jest worker leak ("failed to exit") already seen in baseline; Jest 30 may surface open handles more clearly. | `outdated.txt`, baseline | CR |
+
+### 3.2 Effort / risk matrix
+
+| Upgrade | Effort | Risk | Notes |
+|---|---|---|---|
+| `npm audit fix` in-range (`@nestjs/* 10.4.22`, axios, joi, qs, proxy-addr, sharp 0.34.5, jws, validator...) | 0.5 day | Low | Do first; run unit+e2e. Test count is low-coverage (40%), so add smoke tests |
+| Node 20 -> 24 in Dockerfile (+ `@types/node 24`) | 0.5 day | Low | Local already runs Node 24. Pin the same major in `.nvmrc` and `engines`. Node 22 is the conservative alternative (maintenance until 2027-04-30) |
+| bcrypt 5 -> 6 | 0.25 day | Low | API identical (`hash/compare/genSalt`); drops node-pre-gyp/tar chain; prebuilt for musl. Test hash compatibility (hashes remain valid) |
+| Jest 29 -> 30, supertest 7 | 0.5-1 day | Low | dev only |
+| ESLint 8 -> 9 flat config, typescript-eslint 6 -> 8 | 1 day | Low-Med | Do together with `.gitattributes`/`endOfLine` fix (section 7). Stay on ESLint 9 (not 10) until plugins catch up |
+| cloudinary 1 -> 2 | 0.5 day | Low-Med | v2 is mostly drop-in (`import { v2 }`); breaking: Node >=14, promise/streams API cleanup. Check `cloudinary.service.ts` and `upload.controller.ts`; `multer-storage-cloudinary 4` pins cloudinary 1 so remove it first (unused) |
+| Apollo Server 4 -> 5 with `@nestjs/apollo`/`@nestjs/graphql` 12 -> 13/14 | 1-2 days | Medium | `@nestjs/graphql` 13+ requires Nest 11+. AS5 removes Express-4 body-parser bundling; needs `@as-integrations/express5` (verify package name in current Nest docs before use). Regenerated `schema.gql` must be diffed for unintended changes |
+| NestJS 10 -> 11 (then 12) | 2-3 days | Medium | Express 5 route-syntax and query-parser behaviour changes, `reflect-metadata 0.2`, Nest CLI 11, config/jwt/throttler major alignment. Do 11 first, evaluate 12 after (12.x is latest; confirm its migration guide) |
+| Prisma 6 -> 7 | 2-3 days | Medium-High | Needs `prisma.config.ts` (datasource URL, seed, migrations path), new generator/`prisma-client` output and driver adapter (`@prisma/adapter-pg`), `$on`/middleware removals, no auto `.env` loading by the CLI. Touches every service import path if the generated client moves. Do last, on a branch, behind e2e coverage |
+| OpenTelemetry 0.214 -> 0.30x / SDK 2.x -> 3.x | 1 day | Medium | 0.x packages break per minor; only affects tracing bootstrap (`tracing.ts`). Resources v3 changes API |
+| `@faker-js/faker` 9 -> 10 | 0.25 day | Low | dev only, seeding |
+
+### 3.3 Recommended order
+
+1. Node 24 in Dockerfile, `.nvmrc`, `engines` (DEP-01) and `npm audit fix` in-range (DEP-02). Re-run suite.
+2. Remove unused deps (DEP-08) - shrinks the audit surface (`multer-storage-cloudinary`, `google-auth-library`, passport trio).
+3. `.gitattributes` + ESLint 9 flat config + typescript-eslint 8 (DEP-04); fix typecheck on specs first (baseline: 5 TS errors).
+4. bcrypt 6, cloudinary 2, Jest 30, faker 10 (independent, low risk).
+5. NestJS 11 together with `@nestjs/apollo|graphql` 13 and `@apollo/server` 5 as one branch (these are coupled by peer ranges); then Nest 12 if desired.
+6. OpenTelemetry bump (only needed before enabling `OTEL_ENABLED` in prod).
+7. Prisma 7 last, once CI + e2e are green (DEP-05). Until then pin `prisma` and `@prisma/client` to the same exact 6.19.x (`6.19.3`).
+8. Replace `paystack-api` with a thin typed client (drops `request`, `tough-cookie`, form-data 2.x chain).
+
+## 4. Unused or questionable dependencies
+
+Grep of `src/`, `prisma/`, `test/` for `from '<pkg>'` / `require('<pkg>')`.
+
+| Package | Used? | Finding |
+|---|---|---|
+| `passport`, `passport-local`, `@nestjs/passport`, `@types/passport-local` | **No imports anywhere** (IAM is hand-rolled JWT guards) | Remove. Drops attack surface and peer pins (`@nestjs/passport` is on 10.x peer ranges) |
+| `multer-storage-cloudinary` 4.0.0 | **No imports** | Remove; it also pins cloudinary 1 (blocks the cloudinary 2 upgrade) |
+| `google-auth-library` 9.15 | **No imports** (Google login calls `oauth2.googleapis.com/tokeninfo` and `userinfo` via `fetch`, `google-authentication.service.ts:44-45`) | Remove; it is the sole source of the vulnerable `jws`/`gtoken`/`gaxios`/`uuid` chain |
+| `@nestjs/mapped-types` `"*"` | **No direct import in `src/`** (only used internally by `@nestjs/graphql`, which dedupes to 2.0.6) | Either remove or pin `^2.0.6` to match `@nestjs/graphql`; `"*"` means a future `npm update` can pull 12.x. Note `outdated.txt` shows Wanted=12.0.1 because of `*` |
+| `sharp` 0.34.3 | Used (`cloudinary.service.ts:4`) | Keep; high-severity libvips advisories, update (section 2). Needs musl prebuilt on Alpine (OPS-08) |
+| `graphql-type-json` 0.3.2 | Used (`order.entity.ts:6`, `payment.entity.ts:5`) | Keep. Old and unmaintained; the JSON scalar exposes untyped blobs in the API. Low priority; consider `graphql-scalars` |
+| `paystack-api` 2.0.6 | Used (`payment.service.ts:12,32`) | Unmaintained (last release years ago), depends on deprecated `request`/`request-promise`; payment path. Replace with direct HTTPS calls to Paystack API (initialize, verify) using axios/fetch. Also it ships no types matching `Paystack.Client` usage (check `src` type shim) |
+| `axios` | Used once (`returns.service.ts:9,139`) | Node 24 has global `fetch`; could drop axios entirely, removing ~35 advisories at the root. Otherwise keep updated |
+| `winston-daily-rotate-file` | Used (`logger.service.ts:3`) | Keep for now but see OPS-06 |
+| `@nestjs/schedule` | Used (expired-orders, low-stock tasks) | Keep; see OPS-09 about multi-replica double-run |
+| `graphql-parse-resolve-info`, `dataloader`, `@keyv/redis`, `cache-manager`, `keyv`, `class-transformer`, `@nestjs/terminus` | Used | Keep. `keyv` has no direct import (transitive via `@keyv/redis`/`cache-manager`); declared dependency is harmless but unnecessary |
+
+## 5. Dockerfile review
+
+`Dockerfile` (28 lines, two-stage).
+
+| ID | Severity | Finding | Evidence | Confirmation |
+|---|---|---|---|---|
+| OPS-01 | High | Container runs as **root** (no `USER`). An RCE (cf. the Nest/multer/sharp advisories) lands as root in the container. Use `USER node` and `chown` the `logs/` directory. | `Dockerfile:17-34` (no `USER`) | CR |
+| OPS-02 | High | **No CI**, so no gate on typecheck/lint/tests/audit/build; baseline currently fails typecheck (5 errors), lint (29k), 32 unit tests, and the build excludes specs. See section 6. | no `.github/`, no pipeline file in `git ls-files` | CR |
+| OPS-03 | High | **No `.dockerignore`**. `COPY . .` (`Dockerfile:10`) sends `.env`, `.git`, `node_modules`, `dist`, `logs/`, `coverage`, `docs/`, `.claude/` into the builder stage build context and layers. The builder layers are not shipped in the final image, but `.env` ends up in the builder image cache and, if someone builds with `docker build --target builder` or pushes build cache, secrets leak. Host `node_modules` (Windows-built, with Windows native binaries) overwrites the `npm ci` result in the builder stage unless excluded. | no `.dockerignore` in repo root (`ls -a`) | CR |
+| OPS-04 | High | **Migrations cannot run from this image.** Runner does `npm ci --omit=dev` and `prisma` is a devDependency (`package.json`), so there is no `prisma` CLI in the image although `prisma/` is copied (`Dockerfile:30`). Running `npx prisma migrate deploy` in the container would download the **latest** CLI (now 7.x/8 RC), which rejects the legacy `package.json#prisma`/schema `url` setup, i.e. unpinned and likely to break. No release step exists in repo. | `Dockerfile:22-30`, `package.json` | CR (prisma moved to devDependencies) / S (npx behaviour with Prisma 7) |
+| OPS-05 | Medium | No `HEALTHCHECK`, though `/health/live` and `/health/ready` exist (`health.controller.ts:22-37`). Orchestrator liveness/readiness must be configured externally; for plain `docker run`/compose nothing restarts a wedged container. Alpine has `wget` (busybox) for a probe. Note `/health` and `/health/ready` are public and `ready` calls Cloudinary on each probe (external dependency in readiness: a Cloudinary outage would take all pods out of rotation; also an unauthenticated amplifier). | `Dockerfile` (absent), `health.controller.ts` | CR |
+| OPS-06 | Medium | Logs go to local disk (`logs/combined-%DATE%.log`, `logs/error-%DATE%.log`, 14 days, 20 MB, zipped) **plus** console (`logger.service.ts:12-35`). In a container the writable layer fills/is lost on restart, the directory must exist and be writable by a non-root user, and nothing ships the files. Console output uses `colorize()`+`simple()` (not JSON), so stdout is unparseable by log aggregators. Recommend: JSON to stdout only in production, drop DailyRotateFile in containers (or gate by env). `logs/` is git-ignored (`.gitignore`) but would still be copied into the builder via `COPY . .` (OPS-03); it is not copied to the runner. The runner image will create `logs/` on first write at `/app/logs`. | `logger.service.ts:12-35`; `ls logs`: `combined-2026-11-16.log`, `error-2026-11-16.log` present locally | CR |
+| OPS-07 | Medium | Runtime base image `node:20-alpine` is floating-tag and EOL (DEP-01). No digest pin, no OS patch cadence. Also no `tini`/`--init`: Node as PID 1 does not forward signals well; the app installs its own SIGTERM/SIGINT handlers (`main.ts:84-88`), which helps, but zombie reaping and signal edge cases remain. `app.enableShutdownHooks()` is not used; `app.close()` is called manually, and `tracing.ts` installs a second SIGTERM handler that calls `sdk.shutdown()` without awaiting ordering relative to `app.close()`. | `Dockerfile:2,18`; `main.ts:80-91`; `tracing.ts:36-38` | CR |
+| OPS-08 | Medium | **Native modules on Alpine/musl.** (a) Prisma: `schema.prisma` generator has no `binaryTargets` (lines 8-11). Because builder and runner are both Alpine, auto-detect generates the musl engine in the builder and it is copied via `node_modules/.prisma` (`Dockerfile:29`), so the match works **only** because both stages share the same base. Prisma on Alpine also needs `openssl` installed (`apk add --no-cache openssl`); `node:20-alpine` does not include it by default in all versions, causing the "failed to detect libssl" warning/engine load failure - **Suspected**, verify by running the image. (b) The runner copies only `node_modules/.prisma`, not `node_modules/@prisma/engines`; fine at runtime for the library engine, but `@prisma/client` from `npm ci --omit=dev` must be the same version as the generated client (it is, same lockfile). (c) `sharp`: lockfile contains `sharp-linuxmusl` optional deps (6 matches in `package-lock.json`), so `npm ci` on Alpine should fetch the musl prebuilt; Suspected OK. (d) `bcrypt` 5.1.1 downloads a prebuilt binary through `node-pre-gyp` from GitHub at install time; if the download fails (corporate proxy, rate limit) it falls back to compiling, which fails on Alpine without `python3 make g++`. bcrypt 6 uses bundled prebuilds and avoids this. | `schema.prisma:8-11`; `Dockerfile:12,22,29`; `package-lock.json` | CR for binaryTargets absence; S for runtime behaviour |
+| OPS-10 | Low | Builder stage runs `npm ci` including devDependencies, then `COPY . .` - layer caching is fine, but `RUN npx prisma generate` + `npm run build` use the CLI at the lockfile version (good). `COPY prisma ./prisma` in runner ships the seed script TS and migrations but no way to run them (OPS-04). No `ENV NODE_OPTIONS=--max-old-space-size` and no memory limit guidance. | `Dockerfile` | CR |
+| OPS-11 | Low | Dockerfile ends `CMD ["node","dist/main"]`; `tracing.ts` must be imported before app modules to instrument (its header says so). Check whether `main.ts` imports it: the top of `main.ts` imports only Nest/app modules and **does not import `./tracing`** (`main.ts:1-7`). If nothing else imports it, `OTEL_ENABLED=true` does nothing. `grep -rn tracing src package.json nest-cli.json Dockerfile` finds no reference outside `tracing.ts` itself, so tracing is dead code and OTEL is never started. | `main.ts:1-7`, `tracing.ts` | CR (grep, no importer, no `-r` preload in Dockerfile CMD) |
+
+## 6. CI/CD (none exists)
+
+| ID | Severity | Finding | Evidence | Confirmation |
+|---|---|---|---|---|
+| OPS-12 | High | No `.github/workflows`, no CI config, no CD. All release, migration and verification steps are manual. Baseline shows the project currently fails typecheck, lint, format and 14 suites, so a pipeline would be red on day one; the plan below orders gates so that it can be introduced incrementally. | `git ls-files` (no pipeline file) | CR |
+
+Proposed pipeline (GitHub Actions or equivalent; Postgres service container; Node 24):
+
+1. **Install**: `npm ci` (cache `~/.npm`). Fail if lockfile changes.
+2. **Typecheck incl. specs**: `npx tsc --noEmit -p tsconfig.json` (the build config excludes specs, so `nest build` alone misses spec/test errors; baseline has 5).
+3. **Lint + format check**: `eslint` **without `--fix`** (rename script: `lint` -> check, `lint:fix` -> fix) and `prettier --check`. Needs `.gitattributes` first (section 7).
+4. **Unit tests** with coverage threshold ratcheting from current (stmts 40%) upward; fail on failing suites. Use `--detectOpenHandles` in a nightly job to chase the leaked worker.
+5. **Integration/e2e**: `services: postgres:16` (+ redis), `.env.test` from CI secrets/vars, `npx prisma migrate deploy` then `npm run test:e2e`.
+6. **Migration drift check**: with the service DB, `npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url $SHADOW_URL --exit-code` (fails if schema.prisma has changes without a migration). Also `prisma validate` and `prisma format --check` (baseline: format check fails).
+7. **Dependency gate**: `npm audit --omit=dev --audit-level=high` (blocking) and full `npm audit` (informational) + Dependabot/Renovate for grouped weekly PRs. Add `osv-scanner` or Trivy on the built image.
+8. **Build image**: `docker build` with BuildKit, run Trivy image scan, start the container against the Postgres service and curl `/health/live`.
+9. **GraphQL schema breaking-change check**: boot app with `autoSchemaFile` to a temp path and run `graphql-inspector diff schema.gql <main branch schema.gql>` (or `rover`/`graphql-inspector`) to flag removals/type changes that would break the storefront. `schema.gql` is committed, so also fail the job if regenerated `schema.gql` differs from the committed one.
+10. **CD**: tag -> push image -> run one-off `prisma migrate deploy` job (a dedicated migrator image/stage that contains the pinned CLI) -> roll out -> smoke `/health/ready`.
+
+## 7. Environment configuration
+
+Compared `env.validation.ts`, actual usage (grep of `process.env.*` / `configService.get`), `.env.example`.
+
+| ID | Severity | Finding | Evidence | Confirmation |
+|---|---|---|---|---|
+| OPS-13 | Medium | Variables used in code but **not validated**: `OTEL_ENABLED`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT` (`tracing.ts` reads raw `process.env` before Nest/ConfigModule loads, so it cannot rely on Joi; with a bad endpoint spans silently fail), `SUPER_ADMIN_EMAIL`/`SUPER_ADMIN_PASSWORD` (seed only; acceptable but not validated for strength: `.env.example` ships `ChangeMe@1234`). `main.ts` reads `ALLOWED_ORIGINS`/`NODE_ENV`/`PORT` directly from `process.env` instead of `ConfigService` (works, but bypasses Joi defaults, e.g. PORT default is applied by Joi only inside ConfigService). | `tracing.ts:15-27`; `env.validation.ts`; `main.ts:10-58,75` | CR |
+| OPS-14 | Medium | Validation gaps: `ALLOWED_ORIGINS` is `optional()` in Joi (production requirement enforced only later by a throw in `main.ts:34-41`; works, but fails after the whole module graph/DB connect rather than at config load; use `Joi.when('NODE_ENV', {is:'production', then: required})`). `DATABASE_URL` is `Joi.string()` with no `postgres(ql)://` URI scheme check. `PAYSTACK_SECRET_KEY` has no `sk_live_`/`sk_test_` prefix check against `NODE_ENV` (test key in prod would silently fail all payments; live key in dev is dangerous). `RESEND_API_KEY`/`RESEND_FROM_EMAIL` optional in all environments: in production a missing key means emails (order confirmation, password reset) are silently skipped or fail late. Cloudinary and OAuth credentials are required even for deployments that do not use them. `LOG_LEVEL` omits `verbose`/`http` while the logger implements `verbose`. `JWT_REFRESH_TOKEN_TTL` etc. are `number` but documented in seconds only in comments. | `env.validation.ts:5-62`; `main.ts:34-41` | CR |
+| OPS-15 | Medium | `.env.example` drift: omits `JWT_RESET_SECRET` and `JWT_RESET_TOKEN_TTL` (both required/used; `JWT_RESET_SECRET` is **required** by Joi, so a fresh clone following `.env.example` fails at boot; CLAUDE.md lists it as required), omits `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, all `OTEL_*`; describes Redis as "Phase 4" and leaves it commented out. Placeholder JWT secrets are shorter than the required 32 chars (`change-me-to-a-random-256-bit-secret` is 36 chars - passes the length check - so someone copying the example verbatim to production would run with a publicly known secret; consider rejecting values containing `change-me`). | `.env.example`; `env.validation.ts:15,47` | CR |
+| OPS-16 | Medium | **Redis is optional in production.** `cache.config.ts:13-34` silently falls back to in-memory cache when `REDIS_HOST` is unset, with no `NODE_ENV` check or warning. With more than one replica, per-process caches diverge (stale categories/discounts, inconsistent coupon/discount cache invalidation across instances), and `@nestjs/throttler` counters are not shared unless a Redis storage is configured (not seen in config: verify), so rate limits multiply by replica count. Also, the Redis URL is built by string interpolation without URL-encoding the password (`redis://:${redisPassword}@...`): a password with `@`/`/` breaks the connection; no TLS (`rediss://`) option. | `cache.config.ts:13-34`; `env.validation.ts:38-40` | CR (cache); S (throttler storage) |
+| OPS-17 | Low | No secrets management: secrets live in a plain `.env` file / platform env vars; no vault/SSM/Doppler, no rotation story, single `JWT_SECRET` with no key-ID rotation (changing it logs everyone out). Acceptable for a small team only if prod secrets come from the host's secret store and never from files baked into the image (OPS-03 contradicts this). | repo-wide | CR |
+| OPS-18 | **High** | **Tracked file with a database connection string**: `.claude/settings.local.json` is committed (6 commits touch it, latest `29c0193`) and its permission entry at line 21 contains an inline `DATABASE_URL=postgres...` assignment. Only the key name is reported here; the value (including password) is in git history. Actions: (1) rotate that database password now; (2) `git rm --cached .claude/settings.local.json` and add `.claude/settings.local.json` to `.gitignore`; (3) purge it from history with `git filter-repo --path .claude/settings.local.json --invert-paths` (or BFG), force-push, and have every clone re-clone; (4) enable secret scanning (gitleaks in CI, pre-commit hook). Treat the DB as compromised if the repo was ever pushed to a shared remote. Also check whether the DB host is the production database or a dev database. | `git ls-files` (tracked), `git log -- .claude/settings.local.json`; line 21 | CR (presence of key; value not read) |
+| OPS-19 | Low | `.env.test` is ignored (`.gitignore:40`), but there is no `.env.test.example`, so e2e cannot be run without guessing contents (baseline: e2e not run). `.gitignore` also lacks `.claude/settings.local.json`, `.env.*.local`, `coverage` is covered, `dist` covered. | `.gitignore`; baseline | CR |
+
+## 8. Migrations, data, and operations
+
+| ID | Severity | Finding | Evidence | Confirmation |
+|---|---|---|---|---|
+| OPS-20 | High | **No migration deploy step anywhere**: README/CLAUDE.md only document `prisma migrate dev`; `package.json` has no `migrate:deploy` script; Dockerfile cannot run it (OPS-04). A release that includes a migration will start the new code against an old schema unless a human runs it. Add a `migrate:deploy` script and a pre-deploy job; for multiple replicas run it once (not on every pod start) to avoid lock contention. | `package.json`, `CLAUDE.md:31`, `Dockerfile` | CR |
+| OPS-21 | Medium | Migration history is two files: `20260412120208_first_migration` (squashed baseline, per brief) and `20260413212251_drop_tax_rate_and_created_tax_table`. A squashed baseline is fine for greenfield, but (a) there is no baseline marker if any environment predates the squash (`prisma migrate resolve --applied` needed), (b) the second migration **drops** `TaxRate` and recreates a tax table, i.e. destructive: check data copy before running anywhere with real data (the e2e helper still references `prisma.taxRate`, baseline typecheck error `test/helpers/db.helper.ts:49`). No down-migrations (Prisma has none): rollback strategy is "restore backup" (OPS-22). `prisma format --check` also fails. | `prisma/migrations/`; baseline | CR |
+| OPS-22 | High | **No backup/PITR/DR evidence in the repo** (no scripts, runbooks, managed-DB config, IaC). For an e-commerce system holding orders and payments, nothing documents RPO/RTO, restore tests, or who owns it. Confirm the managed Postgres provider has automated backups + PITR enabled and a tested restore. | repo search (nothing found) | Suspected (may exist outside repo) |
+| OPS-23 | Medium | **No environment separation described**: one `.env.example`, no staging config, no per-environment Paystack/Cloudinary/Resend keys documented, `NODE_ENV` only distinguishes development/production/test, and the Joi `NODE_ENV` list has no `staging`. GraphQL introspection and the CSP depend on `NODE_ENV==='production'`, so a staging deployment must pretend to be production. A staging DB must be separate from production (OPS-18 shows a local-tooling connection string tracked in repo: confirm it is not prod). | `env.validation.ts:9`; `main.ts:11-31`; `app.module.ts:96` | CR |
+| OPS-09 | Medium | **Scheduled jobs run in every replica.** `@Cron(EVERY_HOUR)` expired-orders (`expired-orders.task.ts:15`) and low-stock tasks have no distributed lock. With N replicas each job runs N times: duplicate stock restocking/cancel attempts and duplicate low-stock emails unless the job body is idempotent (check inside the module). Run jobs in a single worker deployment or use a Redis/DB advisory lock. | `src/order/tasks/expired-orders.task.ts:15`, `src/inventory/tasks/low-stock.task.ts` | CR (annotation, no lock) / S (idempotency) |
+| OPS-24 | Medium | **Observability gaps (ops level):** (a) tracing never bootstrapped if `tracing.ts` is not imported (OPS-11); (b) no metrics endpoint (no Prometheus/OTel metrics), no request-latency or GraphQL operation metrics, no business metrics (orders/min, payment failures, webhook lag); (c) logs are unstructured on the console and file-based (OPS-06) with no request-ID/correlation-ID; (d) no error tracker (Sentry or equivalent), no alerting config, no uptime check on `/health/ready`; (e) graceful shutdown double handler (OPS-07) plus `process.exit(0)` after `app.close()` regardless of errors; no readiness flip to "draining" during shutdown. (f) `trust proxy` set to `1` with a comment claiming loopback (`main.ts:11`) - depends on exactly one proxy hop; if behind a CDN + LB the throttler sees the wrong IP; verify the topology (also interacts with proxy-addr advisory in 2.1). | `main.ts:11,80-91`; `tracing.ts`; `logger.service.ts` | CR |
+
+## 9. Line endings
+
+| ID | Severity | Finding | Evidence | Confirmation |
+|---|---|---|---|---|
+| OPS-25 | Medium | `git config core.autocrlf=true` on Windows checks files out with CRLF while `.prettierrc` has no `endOfLine` (Prettier 3 default `lf`), so ESLint's `prettier/prettier` rule reports 29,487 "Delete `␍`" errors and `prettier --check` fails on 323 files. This hides the single real lint error (unused `adminToken`) and makes any lint/format CI gate unusable. Mixed endings also break shell scripts and `COPY`ed `.sh` files in Linux containers (none today). No `.gitattributes` exists. | `baseline.md` Lint/Format rows; `.prettierrc`; `ls -a` (no `.gitattributes`) | CC |
+
+Fix: add `.gitattributes` with `* text=auto eol=lf` (plus `*.sh text eol=lf`, `*.png binary`, etc.), set `"endOfLine": "lf"` explicitly in `.prettierrc`, and run `git add --renormalize .` once in a dedicated commit (so blame noise is isolated; ask before doing this since it touches every file). Developers may then keep `autocrlf` as is; the working tree will still be CRLF on Windows unless `eol=lf` is honored (`git rm --cached -r . && git reset --hard` after the attributes change) or Prettier is set to `endOfLine: "auto"` as a stopgap.
+
+## 10. Docs vs reality
+
+| ID | Severity | Finding | Evidence | Confirmation |
+|---|---|---|---|---|
+| OPS-26 | Low | `CLAUDE.md` says required env includes `JWT_RESET_SECRET` (true) while `.env.example` lacks it (OPS-15); it states Redis via `REDIS_HOST` optional (true, but see OPS-16) and "`tracing.ts` enabled via `OTEL_ENABLED`" (true only if imported - OPS-11). No document describes deployment, migration, backup or rollback procedures. | `CLAUDE.md`, `.env.example` | CR |
+
+## 11. Finding index (severity order)
+
+| ID | Sev | One line |
+|---|---|---|
+| OPS-18 | High | Tracked `.claude/settings.local.json` contains `DATABASE_URL` connection string in git history: rotate, untrack, purge |
+| DEP-01 | High | Dockerfile on EOL Node 20 (EOL 2026-04-30); local is Node 24 |
+| DEP-02 | High | `npm audit` fails: 5 Critical + many High; many fixable in-range; no gate |
+| DEP-03 | High | Apollo Server 4 EOL 2026-01-26 and 2 advisories; upgrade to 5 with Nest/graphql coupling |
+| OPS-01 | High | Container runs as root |
+| OPS-02 / OPS-12 | High | No CI/CD at all; baseline would currently fail every gate |
+| OPS-03 | High | No `.dockerignore`; `.env`, `.git`, host `node_modules` copied into build stage |
+| OPS-04 / OPS-20 | High | No way to run `prisma migrate deploy` from the image; no deploy step; `prisma` CLI is a devDependency and unpinned `npx` would fetch Prisma 7+ |
+| OPS-22 | High | No backup/PITR/DR evidence (Suspected: may live outside repo) |
+| OPS-05, 06, 07, 08, 09, 11, 13-17, 21, 23-25 | Medium | HEALTHCHECK, disk logging in containers, signals/shutdown, Alpine native binaries (binaryTargets, openssl), cron in every replica, tracing not imported, env validation/.env.example drift, Redis optional in prod, destructive tax migration, env separation, observability, CRLF |
+| DEP-04..09, OPS-10, 19, 26 | Low-Med | ESLint 8, Prisma 7 prep, Nest peer drift, range hygiene, unused deps, Jest 30, docs drift |
+
+Items flagged Suspected that need verification: OPS-04 (npx behaviour), OPS-08 (openssl/musl runtime, build the image and run it), OPS-09 (job idempotency), OPS-16 (throttler storage), OPS-22 (backups outside repo), advisory reachability for multer/`@IsUrl`/subscriptions (grep and confirm), exact fix versions for `@nestjs/core` (check whether a 10.x backport exists before forcing Nest 11).

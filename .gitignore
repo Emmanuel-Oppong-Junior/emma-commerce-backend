@@ -38,3 +38,9 @@ lerna-debug.log*
 
 .env
 .env.test
+
+# Local scratch (never tracked)
+/tmp/
+
+# Local Claude Code settings
+.claude/settings.local.json
