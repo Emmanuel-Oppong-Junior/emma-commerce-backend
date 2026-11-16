@@ -5,7 +5,19 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-F.6 done (`b94e75b`), merged into `dev` and pushed; first CI run green. Take the first unblocked item in **Up next**.
+- **Task:** P0-A.1 — Context-aware request access (PLAT-01, IAM-07, UPL-01)
+- **Branch:** `fix/P0-A.1-rest-request-context` (from `dev` @ `65d8ee9`) · **State:** in progress
+- **Steps:**
+  - [x] `src/commons/request-context.ts` `getRequest` + spec (3 tests)
+  - [x] Used in `AccessTokenGuard`, `RolesGuard`, `@ActiveUser` (factory exported as `activeUserFactory` for tests); `AuthenticationGuard` no longer wraps in `GqlExecutionContext`
+  - [x] `GraphqlLoggingInterceptor` passes non-GraphQL through. Repro PLAT-01 + IAM-07 green
+  - [x] Unit tests (http + graphql) for access-token, roles, authentication guards, `@ActiveUser`, interceptor, throttler; shared `test/helpers/execution-context.helper.ts`. Without the fix 8 of them fail
+  - [x] `test/e2e/rest-routes.e2e-spec.ts` (health ×3, `GET /`, webhook bad sig → 401, initialize 401/400, upload single/multiple 401/201 with Cloudinary mocked); `createTestApp` takes an optional module-override callback. **Not run:** no `.env.test` locally (setup guard refused); runs with P0-F.7
+  - [x] Gates run
+  - [ ] Commit (waiting on Emmanuel), then mark PLAT-01/IAM-07/UPL-01 in audit, repro count 2/21, clear Active task  ← **Next step**
+- **Uncommitted work:** 4 source files, 1 new helper + 7 specs/helpers under `src/`/`test/`, STATUS.md
+- **Last test run (2026-11-16):** typecheck 0; lint:check 0; format:check clean; `npx jest --ci` 755/755; `test:repro` 2/21 pass (PLAT-01, IAM-07), 19 fail as expected; e2e not runnable (no `.env.test`)
+- **Out of scope (list at end):** `GET /` lacks `@Auth`; any customer can upload (UPL-02); upload without a file → 500
 
 **Last completed:** P0-F.6. `.github/workflows/ci.yml` (Node 20): `checks` (npm ci, prisma generate/validate, typecheck, lint:check, format:check, jest --ci), `audit` (`scripts/check-prod-audit.js`: critical prod advisories vs `scripts/audit-allowlist.json`, 5 known), `repro` (allowed to fail). Repro suite merged into `dev`. All steps pass locally except the intended repro failures; first GitHub run (#1) green: `checks` and `audit` pass, `repro` fails as intended. Follow-ups: `npm audit fix` for the 4 fixable criticals (dependency update, needs approval); Node 20 is EOL (QA-16).
 

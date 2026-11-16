@@ -1,7 +1,7 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 import { LoggerService } from '../logger.service';
-import { GqlExecutionContext } from '@nestjs/graphql';
+import { GqlContextType, GqlExecutionContext } from '@nestjs/graphql';
 import { sanitizeQuery, sanitizeVariables } from '../useful-functions';
 
 @Injectable()
@@ -9,6 +9,8 @@ export class GraphqlLoggingInterceptor implements NestInterceptor {
   constructor(private readonly logger: LoggerService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    // Registered globally, so REST requests reach it too; LoggerMiddleware already logs those.
+    if (context.getType<GqlContextType>() !== 'graphql') return next.handle();
     const start = Date.now();
     const gqlContext = GqlExecutionContext.create(context);
     const { req } = gqlContext.getContext();

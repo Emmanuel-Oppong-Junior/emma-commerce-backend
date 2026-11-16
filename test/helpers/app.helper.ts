@@ -1,5 +1,5 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { Test, TestingModule } from '@nestjs/testing';
+import { Test, TestingModule, TestingModuleBuilder } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { LoggerService } from '../../src/commons/logger.service';
@@ -49,13 +49,15 @@ export interface TestApp {
  * afterAll(() => app.close());
  * ```
  */
-export async function createTestApp(): Promise<TestApp> {
-  const moduleFixture: TestingModule = await Test.createTestingModule({
+export async function createTestApp(
+  override: (builder: TestingModuleBuilder) => TestingModuleBuilder = (builder) => builder,
+): Promise<TestApp> {
+  const builder = Test.createTestingModule({
     imports: [AppModule],
   })
     .overrideProvider(ThrottlerStorage)
-    .useValue(noopThrottlerStorage)
-    .compile();
+    .useValue(noopThrottlerStorage);
+  const moduleFixture: TestingModule = await override(builder).compile();
 
   const app = moduleFixture.createNestApplication();
   const prisma = moduleFixture.get<PrismaService>(PrismaService);

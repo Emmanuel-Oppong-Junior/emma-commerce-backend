@@ -4,8 +4,8 @@ import jwtConfig from '../../config/jwt.config';
 import { ConfigType } from '@nestjs/config';
 import { Request } from 'express';
 import { REQUEST_USER_KEY } from '../../iam.constants';
-import { GqlExecutionContext } from '@nestjs/graphql';
 import { UsersService } from '../../../users/users.service';
+import { getRequest } from '../../../commons/request-context';
 
 @Injectable()
 export class AccessTokenGuard implements CanActivate {
@@ -17,8 +17,7 @@ export class AccessTokenGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const ctx = GqlExecutionContext.create(context);
-    const request = ctx.getContext().req;
+    const request = getRequest(context);
     const token = this.extractTokenFromHeader(request);
     if (!token) throw new UnauthorizedException();
     try {
