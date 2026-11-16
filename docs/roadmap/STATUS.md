@@ -5,21 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P0-A.1 — Context-aware request access (PLAT-01, IAM-07, UPL-01)
-- **Branch:** `fix/P0-A.1-rest-request-context` (from `dev` @ `65d8ee9`) · **State:** in progress
-- **Steps:**
-  - [x] `src/commons/request-context.ts` `getRequest` + spec (3 tests)
-  - [x] Used in `AccessTokenGuard`, `RolesGuard`, `@ActiveUser` (factory exported as `activeUserFactory` for tests); `AuthenticationGuard` no longer wraps in `GqlExecutionContext`
-  - [x] `GraphqlLoggingInterceptor` passes non-GraphQL through. Repro PLAT-01 + IAM-07 green
-  - [x] Unit tests (http + graphql) for access-token, roles, authentication guards, `@ActiveUser`, interceptor, throttler; shared `test/helpers/execution-context.helper.ts`. Without the fix 8 of them fail
-  - [x] `test/e2e/rest-routes.e2e-spec.ts` (health ×3, `GET /`, webhook bad sig → 401, initialize 401/400, upload single/multiple 401/201 with Cloudinary mocked); `createTestApp` takes an optional module-override callback. **Not run:** no `.env.test` locally (setup guard refused); runs with P0-F.7
-  - [x] Gates run
-  - [ ] Commit (waiting on Emmanuel), then mark PLAT-01/IAM-07/UPL-01 in audit, repro count 2/21, clear Active task  ← **Next step**
-- **Uncommitted work:** 4 source files, 1 new helper + 7 specs/helpers under `src/`/`test/`, STATUS.md
-- **Last test run (2026-11-16):** typecheck 0; lint:check 0; format:check clean; `npx jest --ci` 755/755; `test:repro` 2/21 pass (PLAT-01, IAM-07), 19 fail as expected; e2e not runnable (no `.env.test`)
-- **Out of scope (list at end):** `GET /` lacks `@Auth`; any customer can upload (UPL-02); upload without a file → 500
+_None._ P0-A.1 done (`e42d16e`), fast-forward merged into `dev`, not pushed. Take the first unblocked item in **Up next**.
 
-**Last completed:** P0-F.6. `.github/workflows/ci.yml` (Node 20): `checks` (npm ci, prisma generate/validate, typecheck, lint:check, format:check, jest --ci), `audit` (`scripts/check-prod-audit.js`: critical prod advisories vs `scripts/audit-allowlist.json`, 5 known), `repro` (allowed to fail). Repro suite merged into `dev`. All steps pass locally except the intended repro failures; first GitHub run (#1) green: `checks` and `audit` pass, `repro` fails as intended. Follow-ups: `npm audit fix` for the 4 fixable criticals (dependency update, needs approval); Node 20 is EOL (QA-16).
+**Last completed:** P0-A.1. `getRequest(context)` (`src/commons/request-context.ts`) used by AccessTokenGuard, RolesGuard, @ActiveUser; logging interceptor skips non-GraphQL. Unit 755/755; repro PLAT-01 + IAM-07 green. `test/e2e/rest-routes.e2e-spec.ts` written but **not run** (no local `.env.test`; runs with P0-F.7). Out of scope, still open: `GET /` lacks `@Auth`; any customer can upload (UPL-02); upload without a file → 500.
 
 <!-- Shape while a task is active (keep it current):
 - **Task:** P0-X.n — <title>
@@ -36,23 +24,22 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-A.1 Context-aware guards and interceptor (fixes all REST routes) | now | — (branch from `dev`) |
-| 2 | P0-A.2 Field-level authorization (Critical PII leak) | ∥ with 1 | — |
-| 3 | P0-F.7 E2E in CI against a Postgres service container | ∥ with 1 | — |
-| 4 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
+| 1 | P0-A.2 Field-level authorization (Critical PII leak) | now | — (branch from `dev`) |
+| 2 | P0-F.7 E2E in CI against a Postgres service container (first run of the REST e2e smoke) | ∥ with 1 | — |
+| 3 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
 | P0-F Safety rails | 4 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
-| P0-A Request pipeline & access | 0 / 5 | |
+| P0-A Request pipeline & access | 1 / 5 | A.1 (`e42d16e`) |
 | P0-B Orders & stock | 0 / 11 | |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 0 / 6 | |
 | P0-O Deployability & ops | 0 / 7 | |
 | P0-D Audit & analytics | 0 / 3 | |
 
-Repro tests turned green: **0 / 21** (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **2 / 21** (PLAT-01, IAM-07) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
