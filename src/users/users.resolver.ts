@@ -15,6 +15,9 @@ import { AddressesLoader } from './loaders/addresses.loader';
 import { OrdersLoader } from './loaders/orders.loader';
 import { Address } from '../addresses/entities/address.entity';
 import { Order } from '../order/entities/order.entity';
+import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
+
+const selfOrAdmin = ownerOrAdmin<User>((user) => user.id);
 
 @Auth(AuthType.Bearer)
 @Roles(Role.SUPER_ADMIN)
@@ -119,12 +122,12 @@ export class UsersResolver {
     return this.usersService.findOne(id);
   }
 
-  @ResolveField(() => [Address], { nullable: true })
+  @ResolveField(() => [Address], { nullable: true, middleware: [selfOrAdmin] })
   async addresses(@Parent() user: User) {
     return this.addressesLoader.loader.load(user.id);
   }
 
-  @ResolveField(() => [Order], { nullable: true })
+  @ResolveField(() => [Order], { nullable: true, middleware: [selfOrAdmin] })
   async orders(@Parent() user: User) {
     return this.ordersLoader.loader.load(user.id);
   }

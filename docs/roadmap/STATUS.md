@@ -5,7 +5,17 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-A.1 done (`e42d16e`), fast-forward merged into `dev`, not pushed. Take the first unblocked item in **Up next**.
+- **Task:** P0-A.2 — Field-level authorization (SEC-01, USR-01, REV-01, PRD-01)
+- **Branch:** `fix/P0-A.2-field-authorization` (from `dev` @ `d212da3`) · **State:** in progress
+- **Steps:**
+  - [x] `Review.user` → `PublicProfile { displayName }` (`src/users/entities/public-profile.entity.ts` + spec); review resolver spec. Repro SEC-01 green
+  - [x] `src/iam/authorization/owner-or-admin.field-middleware.ts` on `User.email/phoneNumber` (@Field) and `User.addresses/orders`, `Order.user` (@ResolveField); spec incl. live-schema test proving Nest runs it on both
+  - [x] `src/iam/authorization/public-schema.spec.ts`: builds schema from all resolvers, walks from `@Auth(None)` roots; with old `Review.user` it fails listing 5 leak paths (product, products, brand, brands, categories)
+  - [x] `test/e2e/review-privacy.e2e-spec.ts` (anonymous displayName + email/phone/addresses/orders rejected); **not run** (no `.env.test`). `FRONTEND_API_DOCUMENTATION.md`: `user { displayName }` examples + privacy note (FORBIDDEN code verified in test)
+  - [x] `schema.gql` regenerated via `GraphQLSchemaFactory` script (proved identical to committed file on HEAD first); diff = `PublicProfile` type + `Review.user: PublicProfile!`
+  - [ ] Commit (waiting on Emmanuel), then mark SEC-01/USR-01/REV-01/PRD-01 in audit, repro 3/21, clear Active task  ← **Next step**
+- **Uncommitted work:** review entity/resolver, user entity, users + order resolvers, new public-profile + authorization files and specs, e2e spec, `schema.gql`, `FRONTEND_API_DOCUMENTATION.md`, STATUS.md
+- **Last test run (2026-11-16):** typecheck 0; lint:check 0; format:check clean; `npx jest --ci` 774/774; `test:repro` 3/21 pass (PLAT-01, IAM-07, SEC-01); e2e not runnable (no `.env.test`)
 
 **Last completed:** P0-A.1. `getRequest(context)` (`src/commons/request-context.ts`) used by AccessTokenGuard, RolesGuard, @ActiveUser; logging interceptor skips non-GraphQL. Unit 755/755; repro PLAT-01 + IAM-07 green. `test/e2e/rest-routes.e2e-spec.ts` written but **not run** (no local `.env.test`; runs with P0-F.7). Out of scope, still open: `GET /` lacks `@Auth`; any customer can upload (UPL-02); upload without a file → 500.
 
@@ -54,6 +64,7 @@ Repro tests turned green: **2 / 21** (PLAT-01, IAM-07) (`test/repro/` on `dev`, 
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-16 | P0-A.2: public reviewer name = first name + last initial ("Kwame A."), "Customer" when no name (Emmanuel). Field name stays `Review.user`, type becomes `PublicProfile`; field middleware, not `fieldResolverEnhancers` (Claude, per ADR-0012) | STATUS |
 | 2026-11-16 | Force-pushed local `dev` over `origin/dev` (was `9f98050`, whose commits all remain in `origin/main`); local and remote histories are unrelated (Emmanuel) | git, STATUS |
 | 2026-11-16 | P0-F.6: npm audit gate blocks at critical with a checked-in allowlist of today's 6 known advisories (Emmanuel); CI on Node 20 to match the Dockerfile; unused `adminToken` deleted now so lint can be a gate (overrides the P0-F.1 deferral) | STATUS |
 | 2026-11-16 | P0-F.5: keep payment re-initiate as delete-and-retry until P0-C.2 (Emmanuel); payment.service test rewritten to match. PENDING order guard implemented with `updateMany` (Claude's call) | STATUS |

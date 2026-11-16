@@ -8,7 +8,7 @@ import { CreateReviewInput } from './dto/create-review.input';
 import { UpdateReviewInput } from './dto/update-review.input';
 import { UsersLoader } from '../users/loaders/users.loader';
 import { ProductsLoader } from '../products/loaders/products.loader';
-import { User } from '../users/entities/user.entity';
+import { PublicProfile, toPublicProfile } from '../users/entities/public-profile.entity';
 import { Product } from '../products/entities/product.entity';
 
 @Roles(Role.USER, Role.SUPER_ADMIN, Role.ADMIN)
@@ -85,9 +85,9 @@ export class ReviewResolver {
     return this.reviewService.adminDeleteReview(reviewId);
   }
 
-  @ResolveField(() => User)
-  async user(@Parent() review: Review) {
-    return this.usersLoader.loader.load(review.userId);
+  @ResolveField(() => PublicProfile)
+  async user(@Parent() review: Review): Promise<PublicProfile> {
+    return toPublicProfile(await this.usersLoader.loader.load(review.userId));
   }
 
   @ResolveField(() => Product)

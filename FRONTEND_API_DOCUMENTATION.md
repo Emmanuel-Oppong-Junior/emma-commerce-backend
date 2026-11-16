@@ -1671,6 +1671,8 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 
 ### 2.17 Reviews
 
+> **Privacy:** `Review.user` is a `PublicProfile { displayName }` (first name + last initial, or "Customer"). Reviewer email, phone, addresses and orders are not reachable from reviews. Separately, `User.email`, `User.phoneNumber`, `User.addresses`, `User.orders` and `Order.user` return a `FORBIDDEN` error unless the caller is that user or an ADMIN/SUPER_ADMIN.
+
 ---
 
 #### `review`
@@ -1688,7 +1690,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
   comment?: string;
   productId: string;
   userId: string;
-  user: User;         // Resolved via DataLoader
+  user: PublicProfile; // { displayName } only, e.g. "Kwame A." ("Customer" if no name)
   product: Product;   // Resolved via DataLoader
 }
 ```
@@ -3713,7 +3715,7 @@ query {
     discountedPrice appliedDiscount { name type value }
     images sku quantity stockStatus
     variants { id size color price quantity }
-    reviews { score comment user { name } }
+    reviews { score comment user { displayName } }
     category { id name }
     brand { id name }
   }
@@ -3952,7 +3954,7 @@ mutation {
     comment: "Great quality, fast delivery!"
   }) {
     id score comment
-    user { name }
+    user { displayName }
     product { name }
   }
 }

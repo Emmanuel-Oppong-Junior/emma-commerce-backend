@@ -1,6 +1,9 @@
 import { Field, ObjectType } from '@nestjs/graphql';
 import { Address } from '../../addresses/entities/address.entity';
 import { Order } from '../../order/entities/order.entity';
+import { ownerOrAdmin } from '../../iam/authorization/owner-or-admin.field-middleware';
+
+const selfOrAdmin = ownerOrAdmin<User>((user) => user.id);
 
 @ObjectType()
 export class User {
@@ -10,10 +13,10 @@ export class User {
   @Field(() => String, { description: 'User’s full name', nullable: true })
   name: string;
 
-  @Field(() => String, { description: 'Email address' })
+  @Field(() => String, { description: 'Email address', middleware: [selfOrAdmin] })
   email: string;
 
-  @Field(() => String, { nullable: true, description: 'Phone number' })
+  @Field(() => String, { nullable: true, description: 'Phone number', middleware: [selfOrAdmin] })
   phoneNumber?: string;
 
   @Field(() => String, {

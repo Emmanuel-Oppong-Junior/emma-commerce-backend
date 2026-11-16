@@ -1134,6 +1134,14 @@ enum ProductStatus {
   PUBLISHED
 }
 
+"""What other customers may see about a user, e.g. on reviews"""
+type PublicProfile {
+  """
+  First name and last initial, e.g. "Kwame A."
+  """
+  displayName: String!
+}
+
 type Query {
   """Get all active pickup locations (public)"""
   activePickupLocations: [PickupLocationEntity!]!
@@ -1355,7 +1363,9 @@ type Review {
   productId: ID!
   score: Int!
   updatedAt: DateTime!
-  user: User!
+
+  """Public profile of the reviewer (never the full user)"""
+  user: PublicProfile!
   userId: ID!
 }
 

@@ -1,5 +1,5 @@
 import { Field, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
-import { User } from '../../users/entities/user.entity';
+import { PublicProfile } from '../../users/entities/public-profile.entity';
 import { Product } from '../../products/entities/product.entity';
 
 @ObjectType()
@@ -19,8 +19,8 @@ export class Review {
   @Field(() => ID)
   userId: string;
 
-  @Field(() => User)
-  user: User;
+  @Field(() => PublicProfile, { description: 'Public profile of the reviewer (never the full user)' })
+  user: PublicProfile;
 
   @Field(() => Product)
   product: Product;

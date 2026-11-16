@@ -11,6 +11,7 @@ import { DiscountService } from '../discount/discount.service';
 import { UsersLoader } from '../users/loaders/users.loader';
 import { User } from '../users/entities/user.entity';
 import { FulfillmentType, PaymentMethod } from '@prisma/client';
+import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
 
 @Resolver(() => Order)
 export class OrdersResolver {
@@ -125,7 +126,7 @@ export class OrdersResolver {
     return this.discountService.finalizeDiscountsForOrder(id);
   }
 
-  @ResolveField(() => User, { nullable: true })
+  @ResolveField(() => User, { nullable: true, middleware: [ownerOrAdmin<Order>((order) => order.userId)] })
   async user(@Parent() order: Order) {
     return this.usersLoader.loader.load(order.userId);
   }
