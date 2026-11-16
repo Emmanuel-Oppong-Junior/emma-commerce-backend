@@ -5,19 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P0-A.2 — Field-level authorization (SEC-01, USR-01, REV-01, PRD-01)
-- **Branch:** `fix/P0-A.2-field-authorization` (from `dev` @ `d212da3`) · **State:** in progress
-- **Steps:**
-  - [x] `Review.user` → `PublicProfile { displayName }` (`src/users/entities/public-profile.entity.ts` + spec); review resolver spec. Repro SEC-01 green
-  - [x] `src/iam/authorization/owner-or-admin.field-middleware.ts` on `User.email/phoneNumber` (@Field) and `User.addresses/orders`, `Order.user` (@ResolveField); spec incl. live-schema test proving Nest runs it on both
-  - [x] `src/iam/authorization/public-schema.spec.ts`: builds schema from all resolvers, walks from `@Auth(None)` roots; with old `Review.user` it fails listing 5 leak paths (product, products, brand, brands, categories)
-  - [x] `test/e2e/review-privacy.e2e-spec.ts` (anonymous displayName + email/phone/addresses/orders rejected); **not run** (no `.env.test`). `FRONTEND_API_DOCUMENTATION.md`: `user { displayName }` examples + privacy note (FORBIDDEN code verified in test)
-  - [x] `schema.gql` regenerated via `GraphQLSchemaFactory` script (proved identical to committed file on HEAD first); diff = `PublicProfile` type + `Review.user: PublicProfile!`
-  - [ ] Commit (waiting on Emmanuel), then mark SEC-01/USR-01/REV-01/PRD-01 in audit, repro 3/21, clear Active task  ← **Next step**
-- **Uncommitted work:** review entity/resolver, user entity, users + order resolvers, new public-profile + authorization files and specs, e2e spec, `schema.gql`, `FRONTEND_API_DOCUMENTATION.md`, STATUS.md
-- **Last test run (2026-11-16):** typecheck 0; lint:check 0; format:check clean; `npx jest --ci` 774/774; `test:repro` 3/21 pass (PLAT-01, IAM-07, SEC-01); e2e not runnable (no `.env.test`)
+_None._ P0-A.2 done (`c788131`), fast-forward merged into `dev`, not pushed. Take the first unblocked item in **Up next**.
 
-**Last completed:** P0-A.1. `getRequest(context)` (`src/commons/request-context.ts`) used by AccessTokenGuard, RolesGuard, @ActiveUser; logging interceptor skips non-GraphQL. Unit 755/755; repro PLAT-01 + IAM-07 green. `test/e2e/rest-routes.e2e-spec.ts` written but **not run** (no local `.env.test`; runs with P0-F.7). Out of scope, still open: `GET /` lacks `@Auth`; any customer can upload (UPL-02); upload without a file → 500.
+**Last completed:** P0-A.2. `Review.user` → `PublicProfile { displayName }` ("Kwame A."); owner-or-admin field middleware (`src/iam/authorization/`) on `User.email/phoneNumber/addresses/orders`, `Order.user`; `public-schema.spec.ts` fails if `User` is reachable from any `@Auth(None)` root. Unit 774/774; repro SEC-01 green (3/21). `schema.gql` + `FRONTEND_API_DOCUMENTATION.md` updated (**breaking for the frontend:** `user { name }` → `user { displayName }` on reviews). `test/e2e/review-privacy.e2e-spec.ts` **not run** (no `.env.test`).
 
 <!-- Shape while a task is active (keep it current):
 - **Task:** P0-X.n — <title>
@@ -34,26 +24,27 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-A.2 Field-level authorization (Critical PII leak) | now | — (branch from `dev`) |
-| 2 | P0-F.7 E2E in CI against a Postgres service container (first run of the REST e2e smoke) | ∥ with 1 | — |
+| 1 | P0-F.7 E2E in CI against a Postgres service container (first run of the REST + review-privacy e2e) | now | — (branch from `dev`) |
+| 2 | P0-A.3 Public catalogue visibility (draft products, unpaginated nested products) | ∥ with 1 | — |
 | 3 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
 | P0-F Safety rails | 4 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
-| P0-A Request pipeline & access | 1 / 5 | A.1 (`e42d16e`) |
+| P0-A Request pipeline & access | 2 / 5 | A.1 (`e42d16e`), A.2 (`c788131`) |
 | P0-B Orders & stock | 0 / 11 | |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 0 / 6 | |
 | P0-O Deployability & ops | 0 / 7 | |
 | P0-D Audit & analytics | 0 / 3 | |
 
-Repro tests turned green: **2 / 21** (PLAT-01, IAM-07) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **3 / 21** (PLAT-01, IAM-07, SEC-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
 - [ ] Decide what to do with `origin/main`: it shares no history with local `main`/`dev` (different root commits). Its history also contains a committed `.env` (`bcbae7b Delete .env`), so rotate whatever secrets it held.
+- [ ] Tell the frontend: review queries must select `user { displayName }` instead of `user { name }` (P0-A.2).
 - [ ] Rotate the DB password that was committed in `.claude/settings.local.json`. The file is untracked now, but the password is still in git history.
 - [ ] Decide the Phase 0 stop-gaps before these tasks start:
   - **P0-B.3:** fix discounts at checkout, or switch them off until Phase 2?
