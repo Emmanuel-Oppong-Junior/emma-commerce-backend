@@ -46,7 +46,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.refreshToken.deleteMany();
 
   // Independent reference data
-  await prisma.taxRate.deleteMany();
+  await prisma.tax.deleteMany();
 
   // Users last (referenced by many tables above)
   await prisma.user.deleteMany();

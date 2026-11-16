@@ -5,7 +5,16 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-F.1 done (`f2b323a`), fast-forward merged into `main`, not pushed. Take the first unblocked item in **Up next**.
+- **Task:** P0-F.2 — E2E safety guard + `.env.test.example` + fix `db.helper.ts` (QA-02, DOC-11)
+- **Branch:** `fix/P0-F.2-e2e-db-guard` (from `main` `abb2f76`) · **State:** in progress
+- **Steps:**
+  - [x] Branch created; plan approved incl. adding `test/helpers` to unit Jest roots in `package.json`
+  - [x] Guard `test/helpers/test-database-guard.ts` + spec (6 tests); `test/setup.ts` requires `.env.test`, loads with `override: true`, asserts DB name ends `_test`; `package.json` jest `roots` += `test/helpers`
+  - [x] `.env.test.example` (required vars only, incl. `JWT_RESET_SECRET`); `db.helper.ts` `taxRate` → `tax`; `CLAUDE.md` testing note
+  - [x] Verified (see Last test run); QA-02 / DOC-11 marked fixed (commit pending) in `docs/audit/04-…` and `06-…`
+  - [ ] Commit when Emmanuel asks ← **Next step**
+- **Uncommitted work:** `test/setup.ts`, `test/helpers/{test-database-guard.ts,test-database-guard.spec.ts,db.helper.ts}`, `.env.test.example`, `package.json`, `CLAUDE.md`, audit docs 04/06, `STATUS.md`
+- **Last test run:** 2026-11-16 `npx jest test-database-guard` → 6/6 pass; `npx jest` → 14 failed / 48 passed suites (same 14 as before, P0-F.5); `npx tsc --noEmit -p tsconfig.json` → 14 errors (was 15; `taxRate` gone); eslint on touched files clean; `prettier --check` pass; e2e run of `tag.e2e-spec.ts` without `.env.test` (dummy unreachable `DATABASE_URL`) → aborts in `setup.ts`, 0 tests ran.
 
 **Last completed:** P0-F.1. eslint 29,611 → 1 error (unused `adminToken`, left for P0-F.7); `prettier --check` passes. Gotcha for other Windows clones: after pulling, run `git ls-files -z | xargs -0 touch && git checkout-index -f -a && git add --renormalize .` to get an LF working tree (`checkout-index` skips entries whose stat is fresh).
 

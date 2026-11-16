@@ -127,4 +127,4 @@ Seeding:   SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD
 
 ### Testing
 
-Unit tests are colocated as `*.spec.ts` under `src/`. E2E tests live in `test/e2e/` (`*.e2e-spec.ts`) with shared helpers in `test/helpers/` and `test/setup.ts`; they use a separate database configured in `.env.test` (not committed — create it from `.env.example`).
+Unit tests are colocated as `*.spec.ts` under `src/`. E2E tests live in `test/e2e/` (`*.e2e-spec.ts`) with shared helpers in `test/helpers/` and `test/setup.ts`; they use a separate database configured in `.env.test` (not committed — create it from `.env.test.example`; `test/setup.ts` refuses to run unless the database name ends in `_test`).
