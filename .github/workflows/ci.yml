@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches the Dockerfile base image so CI tests what ships.
+  NODE_VERSION: '20'
+
+jobs:
+  checks:
+    name: Typecheck, lint, format, unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # prisma validate resolves env("DATABASE_URL"); no database is contacted.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma validate
+      - run: npm run typecheck
+      - run: npm run lint:check
+      - run: npm run format:check
+      - run: npx jest --ci
+
+  audit:
+    name: Production dependency audit (critical, allowlisted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm run audit:prod
+
+  repro:
+    name: Audit repro suite (expected to fail until fixes land)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Each failing test is an open audit finding (test/repro/README.md); it turns green when fixed.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run test:repro

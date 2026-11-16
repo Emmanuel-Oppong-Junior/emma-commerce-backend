@@ -43,7 +43,14 @@ function buildPaymentService(
 
 describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
   it('PAY-01: re-verifying a successful reference does not move a DELIVERED order back to PROCESSING', async () => {
-    const payment = { id: 'payment-1', orderId: 'order-1', amount: 500, currency: 'GHS', status: 'COMPLETED', transactionId: 'ref-1' };
+    const payment = {
+      id: 'payment-1',
+      orderId: 'order-1',
+      amount: 500,
+      currency: 'GHS',
+      status: 'COMPLETED',
+      transactionId: 'ref-1',
+    };
     const order = { id: 'order-1', userId: 'user-1', status: 'DELIVERED', totalAmount: 500, paymentMethod: 'ONLINE' };
     const { service, repository } = buildPaymentService(payment, order);
 
@@ -53,9 +60,20 @@ describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
   });
 
   it('PAY-05: a Paystack success for a smaller amount than the order total does not complete the payment', async () => {
-    const payment = { id: 'payment-1', orderId: 'order-1', amount: 500, currency: 'GHS', status: 'PENDING', transactionId: 'ref-1' };
+    const payment = {
+      id: 'payment-1',
+      orderId: 'order-1',
+      amount: 500,
+      currency: 'GHS',
+      status: 'PENDING',
+      transactionId: 'ref-1',
+    };
     const order = { id: 'order-1', userId: 'user-1', status: 'PENDING', totalAmount: 500, paymentMethod: 'ONLINE' };
-    const { service, repository } = buildPaymentService(payment, order, { status: 'success', amount: 100, currency: 'GHS' });
+    const { service, repository } = buildPaymentService(payment, order, {
+      status: 'success',
+      amount: 100,
+      currency: 'GHS',
+    });
 
     await service.verifyPaymentAsUser('ref-1', 'user-1').catch(() => undefined);
 
@@ -66,7 +84,9 @@ describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
   it('PAY-02: payment cannot be started for a CANCELLED order', async () => {
     const order = { id: 'order-1', userId: 'user-1', status: 'CANCELLED', totalAmount: 500, paymentMethod: 'ONLINE' };
     const { service, paystack } = buildPaymentService({}, order);
-    (service as unknown as { paymentRepository: { findByOrderId: jest.Mock } }).paymentRepository.findByOrderId.mockResolvedValue(null);
+    (
+      service as unknown as { paymentRepository: { findByOrderId: jest.Mock } }
+    ).paymentRepository.findByOrderId.mockResolvedValue(null);
 
     await expect(
       service.initiatePayment('user-1', { orderId: 'order-1', paymentMethod: 'card', currency: 'GHS' }),

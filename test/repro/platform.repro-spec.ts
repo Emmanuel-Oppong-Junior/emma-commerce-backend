@@ -12,7 +12,7 @@ import { sanitizeVariables } from '../../src/commons/useful-functions';
 import { SignInInput } from '../../src/iam/authentication/dto/sign-in.input';
 import { ShippingZonesService } from '../../src/shipping-zones/shipping-zones.service';
 
-function httpContext(request: Record<string, unknown>, controller: unknown, handler: (...args: unknown[]) => unknown) {
+function httpContext(request: Record<string, unknown>, controller: unknown, handler: (...args: never[]) => unknown) {
   const context = new ExecutionContextHost([request, {}, () => undefined], controller as never, handler);
   context.setType('http');
   return context;

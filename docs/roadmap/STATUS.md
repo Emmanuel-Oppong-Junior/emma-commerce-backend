@@ -5,7 +5,19 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-F.5 done (`bcc995b`), fast-forward merged into `dev`, not pushed. Take the first unblocked item in **Up next**.
+- **Task:** P0-F.6 — Minimal CI (QA-04, QA-08 `lint --fix` part)
+- **Branch:** `chore/P0-F.6-minimal-ci` (from `dev`) · **State:** in progress
+- **Baseline (dev @ a038906):** tsc 0, jest 62/62, prettier clean, prisma validate ok; eslint 1 error (`adminToken` unused, `test/e2e/order.e2e-spec.ts:14`); `npm audit --omit=dev --audit-level=critical` → 6 critical (form-data via paystack-api→request has no fix; removed by P0-C.4)
+- **Steps:**
+  - [x] Merge `audit/repro-tests` into this branch (merge commit `e762752`); repro specs prettier-formatted + 1 tsc fix (`platform.repro-spec.ts` handler type). 21/21 repro tests still fail as intended (PAY-01 repro checks the service call, so P0-F.5's repository guard doesn't turn it green)
+  - [x] Scripts `typecheck`, `lint:check`, `format:check`, `test:repro`, `audit:prod`; unused `adminToken` + `signInAdmin` call/import removed from `test/e2e/order.e2e-spec.ts`
+  - [x] Audit gate: `scripts/check-prod-audit.js` + `scripts/audit-allowlist.json` (5 critical advisories = npm's "6 critical" packages). Passes now; fails on an unlisted advisory; reports stale entries (both paths checked)
+  - [x] `.github/workflows/ci.yml` (jobs `checks`, `audit`, `repro`; YAML parses): PRs to `main`/`dev`, push to `dev`; Node 20 (matches Dockerfile); npm ci → prisma generate/validate → typecheck → lint:check → format:check → jest --ci → audit gate; repro suite `continue-on-error`
+  - [x] Run each step locally
+  - [ ] Commit (waiting on Emmanuel), then mark QA-04/QA-08 in the audit, clear Active task, F.6 → done; push + branch protection are Emmanuel's  ← **Next step**
+- **Uncommitted work:** `.github/workflows/ci.yml`, `scripts/check-prod-audit.js`, `scripts/audit-allowlist.json`, `package.json`, `test/e2e/order.e2e-spec.ts`, 2 repro specs (format) + `platform.repro-spec.ts`, STATUS.md
+- **Last test run (2026-11-16, local Node 24):** prisma validate ok; `npm run typecheck` 0; `lint:check` 0; `format:check` 0; `npx jest --ci` 720/720; `audit:prod` 5/5 allowlisted (exit 0; unlisted-advisory path exits 1); `test:repro` 21/21 fail as expected. `prisma generate` failed locally only: EPERM, query-engine DLL locked by a running Node process (Windows). `npm ci` not run locally (would wipe the locked node_modules); deps unchanged
+- **Not doable here:** proving the workflow on GitHub (needs a push, ask first); required-check branch protection (Emmanuel, GitHub settings)
 
 **Last completed:** P0-F.5. Unit suite green: `npx jest` 62/62 suites, 720 tests (was 14 suites / 32 tests red); `npx tsc --noEmit -p tsconfig.json` 0 errors (was 14). Specs updated to current code, `src/...` imports made relative, order-spec DI fixed. Code change: payment success only moves an order PENDING → PROCESSING (`updateMany` guard, warns otherwise), which partly mitigates PAY-01. Audit marked: QA-01, QA-11, PAY-16 fixed; PRD-23, USR-13, DISC-11, ADR-10, REV-09, ORD-18 compile/DI parts fixed, coverage gaps remain.
 
@@ -53,6 +65,7 @@ Repro tests turned green: **0 / 21** (branch `audit/repro-tests`, `test/repro/`)
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-16 | P0-F.6: npm audit gate blocks at critical with a checked-in allowlist of today's 6 known advisories (Emmanuel); CI on Node 20 to match the Dockerfile; unused `adminToken` deleted now so lint can be a gate (overrides the P0-F.1 deferral) | STATUS |
 | 2026-11-16 | P0-F.5: keep payment re-initiate as delete-and-retry until P0-C.2 (Emmanuel); payment.service test rewritten to match. PENDING order guard implemented with `updateMany` (Claude's call) | STATUS |
 | 2026-11-16 | Integration branch `dev` (created from `main` at `abb2f76`): task branches are cut from and merged into `dev`, not `main`. WORKING-AGREEMENT §1/§2 still say `main` | git, STATUS |
 | 2026-11-16 | P0-F.1: Prettier-format the 3 drifted files in this task; unused `adminToken` left for P0-F.7 (Claude's call, Emmanuel can override) | STATUS |

@@ -4,14 +4,12 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
-import { signInUser, signInAdmin, signUpUser } from '../helpers/auth.helper';
+import { signInUser, signUpUser } from '../helpers/auth.helper';
 
 describe('Orders (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let userToken: string;
-  // @typescript-eslint/no-unused-vars
-  let adminToken: string;
   let addressId: string;
   /** Set once the first createOrder test succeeds; reused in query/cancel tests. */
   let createdOrderId: string;
@@ -34,7 +32,6 @@ describe('Orders (e2e)', () => {
     await resetDb(prisma);
     await seedMinimal(prisma);
     userToken = await signInUser(app);
-    adminToken = await signInAdmin(app);
 
     // Create a shipping address for the main user
     const addrRes = await gqlRequest(

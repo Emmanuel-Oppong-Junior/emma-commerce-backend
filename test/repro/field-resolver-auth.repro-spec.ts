@@ -61,7 +61,15 @@ describe('Field-level authorisation (audit repro: SEC-01)', () => {
           provide: ReviewService,
           useValue: {
             getProductReviews: async () => [
-              { id: 'review-1', score: 5, comment: 'ok', productId: 'product-1', userId: reviewer.id, createdAt: new Date(), updatedAt: new Date() },
+              {
+                id: 'review-1',
+                score: 5,
+                comment: 'ok',
+                productId: 'product-1',
+                userId: reviewer.id,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+              },
             ],
           },
         },
