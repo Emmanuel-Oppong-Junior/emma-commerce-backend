@@ -22,7 +22,7 @@ _None._ Phase 0 has not started. Take the first unblocked item in **Up next**.
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-F.1 Line endings: `.gitattributes`, Prettier `endOfLine: lf`, renormalise | first | Commit or stash the working-tree changes on `main` first, so the renormalise commit only contains line endings |
+| 1 | P0-F.1 Line endings: `.gitattributes`, Prettier `endOfLine: lf`, renormalise | first | Merge `chore/audit-roadmap-workflow` into `main` first, then branch from `main` |
 | 2 | P0-F.2 E2E safety guard + `.env.test.example` + fix `db.helper.ts` | ∥ with 1 | — |
 | 3 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ with 1 | Emmanuel rotates the DB password |
 | 4 | P0-F.5 Repair the 14 failing unit suites | after 1 | — |
@@ -50,7 +50,7 @@ Repro tests turned green: **0 / 21** (branch `audit/repro-tests`, `test/repro/`)
   - **P0-B.10:** minimal tax fix, or freeze tax-rate changes?
   - **P0-B.11:** hide variant purchasing until Phase 1?
 - [ ] Accept, amend or reject the ADRs (needed before **Phase 1**).
-- [ ] Commit the current working tree. It holds the 7 earlier edits, plus `docs/`, the `.gitignore` and `CLAUDE.md` changes, and the untracked settings file and deleted `TODO.md`.
+- [ ] Merge branch `chore/audit-roadmap-workflow` into `main` (3 commits, 2026-11-16: the rename, the audit + roadmap + workflow, and untracking the settings file). Not pushed.
 
 ## Decisions log
 | Date | Decision | Where recorded |
