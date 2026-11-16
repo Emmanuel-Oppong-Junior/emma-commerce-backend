@@ -135,21 +135,38 @@ describe('UsersService', () => {
 
       // Return 3 items (take+1) to signal there is a next page
       mockUsersRepository.findMany.mockResolvedValue([user1, user2, user3]);
+      mockUsersRepository.count.mockResolvedValue(3);
 
       const result = await service.findAll(filter);
 
+      const expectedWhere = {
+        role: { not: Role.SUPER_ADMIN },
+        name: { contains: 'John', mode: 'insensitive' },
+        isActive: true,
+      };
       expect(usersRepository.findMany).toHaveBeenCalledWith(
         { take: 3, skip: 0, cursor: undefined, orderBy: undefined, orderInAsc: undefined },
-        { name: { contains: 'John', mode: 'insensitive' }, isActive: true },
+        expectedWhere,
       );
-      expect(usersRepository.count).not.toHaveBeenCalled();
+      expect(usersRepository.count).toHaveBeenCalledWith(expectedWhere);
       expect(result).toEqual({
         edges: [
           { cursor: '1', node: user1 },
           { cursor: '2', node: user2 },
         ],
-        pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true },
+        pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true, totalCount: 3 },
       });
+    });
+
+    it('should exclude super admins even when filtering by the SUPER_ADMIN role', async () => {
+      mockUsersRepository.findMany.mockResolvedValue([]);
+      mockUsersRepository.count.mockResolvedValue(0);
+
+      await service.findAll({ first: 10, role: Role.SUPER_ADMIN });
+
+      const expectedWhere = { role: { not: Role.SUPER_ADMIN, equals: Role.SUPER_ADMIN } };
+      expect(usersRepository.findMany).toHaveBeenCalledWith(expect.any(Object), expectedWhere);
+      expect(usersRepository.count).toHaveBeenCalledWith(expectedWhere);
     });
 
     it('should handle pagination with cursor', async () => {
@@ -164,7 +181,7 @@ describe('UsersService', () => {
 
       expect(usersRepository.findMany).toHaveBeenCalledWith(
         { take: 2, skip: 1, cursor: { id: '1' }, orderBy: undefined, orderInAsc: undefined },
-        {},
+        { role: { not: Role.SUPER_ADMIN } },
       );
       expect(result.pageInfo.hasNextPage).toBe(true);
     });

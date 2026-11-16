@@ -10,8 +10,8 @@ import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { CloudinaryService } from './cloudinary.service';
 import { memoryStorage } from 'multer';
-import { Auth } from 'src/iam/authentication/decorators/auth.decorator';
-import { AuthType } from 'src/iam/authentication/enums/auth-type.enum';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 
 /** 5 MB hard limit per file — prevents memory exhaustion and accidental large uploads. */
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;

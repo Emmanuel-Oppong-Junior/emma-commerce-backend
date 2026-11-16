@@ -15,6 +15,8 @@ const mockDiscount: Discount = {
   endDate: new Date('2025-06-30'),
   isActive: true,
   minimumPurchase: null,
+  createdAt: new Date('2025-05-01'),
+  updatedAt: new Date('2025-05-01'),
 };
 
 const mockPrismaDiscount = {

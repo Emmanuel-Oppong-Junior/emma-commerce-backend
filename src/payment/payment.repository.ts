@@ -75,11 +75,12 @@ export class PaymentRepository {
     return this.prisma.order.findUnique({ where: { id: orderId } });
   }
 
-  async updateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {
-    await this.prisma.order.update({
-      where: { id: orderId },
+  async updateOrderStatus(orderId: string, status: OrderStatus): Promise<boolean> {
+    const { count } = await this.prisma.order.updateMany({
+      where: { id: orderId, status: 'PENDING' },
       data: { status },
     });
+    return count > 0;
   }
 
   async forceUpdateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {

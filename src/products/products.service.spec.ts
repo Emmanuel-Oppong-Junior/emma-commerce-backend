@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProductsService } from './products.service';
 import { ProductsRepository } from './products.repository';
+import { TaxService } from '../tax/tax.service';
+import { CreateProductInput } from './dto/create-product.input';
+import { ProductSortField } from './enums/product-sort-field.enum';
+import { SortOrder } from '../commons/enums/sort-order.enum';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
 import { PaginationArgs } from '../commons/dto/paginate.args';
@@ -22,13 +26,21 @@ const mockProductsRepository = {
   countOrderItems: jest.fn(),
 };
 
+const mockTaxService = {
+  getTotalActiveRate: jest.fn(),
+};
+
 describe('ProductsService', () => {
   let service: ProductsService;
   let productsRepository: jest.Mocked<ProductsRepository>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ProductsService, { provide: ProductsRepository, useValue: mockProductsRepository }],
+      providers: [
+        ProductsService,
+        { provide: ProductsRepository, useValue: mockProductsRepository },
+        { provide: TaxService, useValue: mockTaxService },
+      ],
     }).compile();
 
     service = module.get<ProductsService>(ProductsService);
@@ -37,9 +49,10 @@ describe('ProductsService', () => {
   });
 
   describe('create', () => {
-    const input = {
+    const input: CreateProductInput = {
       name: 'T-Shirt',
-      price: '19.99',
+      basePrice: '19.99',
+      isTaxable: false,
       quantity: 100,
       categoryId: 'cat1',
       subcategoryId: 'sub1',
@@ -49,7 +62,7 @@ describe('ProductsService', () => {
     };
 
     it('should create a product successfully', async () => {
-      const product = { id: 'prod1', ...input, createdAt: new Date(), updatedAt: new Date() };
+      const product = { id: 'prod1', ...input, price: '19.99', createdAt: new Date(), updatedAt: new Date() };
       mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
       mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
       mockProductsRepository.findFirst.mockResolvedValue(null);
@@ -59,8 +72,26 @@ describe('ProductsService', () => {
 
       expect(productsRepository.findCategoryById).toHaveBeenCalledWith('cat1');
       expect(productsRepository.findSubCategoryById).toHaveBeenCalledWith('sub1');
-      expect(productsRepository.create).toHaveBeenCalledWith(input, { category: true, subcategory: true });
+      expect(productsRepository.create).toHaveBeenCalledWith(
+        { ...input, price: '19.99' },
+        { category: true, subcategory: true },
+      );
+      expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
       expect(result).toEqual(product);
+    });
+
+    it('should set price to basePrice plus the total active tax rate when taxable', async () => {
+      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
+      mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
+      mockProductsRepository.findFirst.mockResolvedValue(null);
+      mockTaxService.getTotalActiveRate.mockResolvedValue(0.15);
+
+      await service.create({ ...input, basePrice: '100.00', isTaxable: true });
+
+      expect(productsRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ basePrice: '100.00', price: '115.00', isTaxable: true }),
+        { category: true, subcategory: true },
+      );
     });
 
     it('should throw NotFoundException if category does not exist', async () => {
@@ -117,18 +148,20 @@ describe('ProductsService', () => {
       };
       // Return take+1 items to signal hasNextPage=true
       mockProductsRepository.findMany.mockResolvedValue([...products, extraProduct]);
+      mockProductsRepository.count.mockResolvedValue(3);
 
       const result = await service.findAll(paginate, filter);
 
       expect(productsRepository.findMany).toHaveBeenCalledWith(
         { take: 3, skip: 0, cursor: undefined },
         { categoryId: 'cat1', isActive: true },
+        { createdAt: 'desc' },
         undefined,
       );
-      expect(productsRepository.count).not.toHaveBeenCalled();
+      expect(productsRepository.count).toHaveBeenCalledWith({ categoryId: 'cat1', isActive: true });
       expect(result).toEqual({
         edges: products.map((p) => ({ cursor: p.id, node: p })),
-        pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true },
+        pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true, totalCount: 3 },
       });
     });
 
@@ -148,6 +181,7 @@ describe('ProductsService', () => {
             { tags: { some: { name: { contains: 'shirt', mode: 'insensitive' } } } },
           ],
         },
+        { createdAt: 'desc' },
         undefined,
       );
     });
@@ -155,12 +189,26 @@ describe('ProductsService', () => {
     it('should select only requested fields when requestedField is provided', async () => {
       mockProductsRepository.findMany.mockResolvedValue(products);
 
-      await service.findAll(paginate, filter, { id: true, name: true });
+      await service.findAll(paginate, filter, {}, { id: true, name: true });
 
       expect(productsRepository.findMany).toHaveBeenCalledWith(
         { take: 3, skip: 0, cursor: undefined },
         { categoryId: 'cat1', isActive: true },
+        { createdAt: 'desc' },
         { id: true, name: true },
+      );
+    });
+
+    it('should order by the requested sort field and direction', async () => {
+      mockProductsRepository.findMany.mockResolvedValue(products);
+
+      await service.findAll(paginate, filter, { sortBy: ProductSortField.PRICE, sortOrder: SortOrder.ASC });
+
+      expect(productsRepository.findMany).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        { price: 'asc' },
+        undefined,
       );
     });
 
@@ -172,6 +220,7 @@ describe('ProductsService', () => {
 
       expect(productsRepository.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 2, skip: 1, cursor: { id: 'prod1' } }),
+        expect.any(Object),
         expect.any(Object),
         undefined,
       );
@@ -208,30 +257,46 @@ describe('ProductsService', () => {
   });
 
   describe('update', () => {
-    const updateInput = { name: 'Updated T-Shirt', price: '29.99', id: 'prod1' };
+    const updateInput: UpdateProductInput = { name: 'Updated T-Shirt', basePrice: '29.99' };
 
     it('should update a product successfully', async () => {
       const product = {
         id: 'prod1',
         name: 'T-Shirt',
         categoryId: 'cat1',
+        basePrice: '19.99',
+        isTaxable: false,
         isActive: true,
         createdAt: new Date(),
         updatedAt: new Date(),
         images: [],
       };
-      const updatedProduct = { ...product, ...updateInput };
+      const updatedProduct = { ...product, ...updateInput, price: '29.99' };
       mockProductsRepository.findById.mockResolvedValue(product);
       mockProductsRepository.findFirst.mockResolvedValue(null);
       mockProductsRepository.update.mockResolvedValue(updatedProduct);
 
       const result = await service.update('prod1', updateInput);
 
-      expect(productsRepository.update).toHaveBeenCalledWith('prod1', updateInput, {
-        category: true,
-        subcategory: true,
-      });
+      expect(productsRepository.update).toHaveBeenCalledWith(
+        'prod1',
+        { name: 'Updated T-Shirt', basePrice: '29.99', price: '29.99' },
+        { category: true, subcategory: true },
+      );
       expect(result).toEqual(updatedProduct);
+    });
+
+    it('should recompute price from the existing basePrice when only isTaxable changes', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: '100.00', isTaxable: false });
+      mockTaxService.getTotalActiveRate.mockResolvedValue(0.2);
+
+      await service.update('prod1', { isTaxable: true });
+
+      expect(productsRepository.update).toHaveBeenCalledWith(
+        'prod1',
+        { isTaxable: true, price: '120.00' },
+        { category: true, subcategory: true },
+      );
     });
 
     it('should throw NotFoundException if product does not exist', async () => {

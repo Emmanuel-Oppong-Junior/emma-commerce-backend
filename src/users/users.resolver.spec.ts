@@ -20,6 +20,7 @@ const mockUsersService = {
   findUserByEmail: jest.fn(),
   findUserByProviderId: jest.fn(),
   update: jest.fn(),
+  adminUpdateUser: jest.fn(),
   remove: jest.fn(),
   archiveUser: jest.fn(),
   deArchiveUser: jest.fn(),
@@ -100,7 +101,7 @@ describe('UsersResolver', () => {
             } as User,
           },
         ],
-        pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true },
+        pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true, totalCount: 2 },
       };
 
       mockUsersService.findAll.mockResolvedValue(userConnection);
@@ -191,11 +192,11 @@ describe('UsersResolver', () => {
         isActive: true,
       } as User;
 
-      mockUsersService.update.mockResolvedValue(updatedUser);
+      mockUsersService.adminUpdateUser.mockResolvedValue(updatedUser);
 
       const result = await resolver.updateUser(id, input);
 
-      expect(usersService.update).toHaveBeenCalledWith(id, input);
+      expect(usersService.adminUpdateUser).toHaveBeenCalledWith(id, input);
       expect(result).toEqual(updatedUser);
     });
   });

@@ -4,7 +4,7 @@ import { Discount } from './entities/discount.entity';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
-import { Roles } from 'src/iam/authentication/decorators/roles.decorator';
+import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 
 @Resolver(() => Discount)

@@ -39,6 +39,7 @@ const mockPrismaPayment = {
 const mockPrismaOrder = {
   findUnique: jest.fn(),
   update: jest.fn(),
+  updateMany: jest.fn(),
 };
 
 const mockPrisma = { payment: mockPrismaPayment, order: mockPrismaOrder };
@@ -219,14 +220,23 @@ describe('PaymentRepository', () => {
 
   describe('updateOrderStatus', () => {
     it('should update order status', async () => {
-      mockPrismaOrder.update.mockResolvedValue(undefined);
+      mockPrismaOrder.updateMany.mockResolvedValue({ count: 1 });
 
-      await repository.updateOrderStatus('order1', 'CONFIRMED' as any);
+      const result = await repository.updateOrderStatus('order1', 'CONFIRMED' as any);
 
-      expect(mockPrismaOrder.update).toHaveBeenCalledWith({
+      expect(mockPrismaOrder.updateMany).toHaveBeenCalledWith({
         where: { id: 'order1', status: 'PENDING' },
         data: { status: 'CONFIRMED' },
       });
+      expect(result).toBe(true);
+    });
+
+    it('should leave a non-PENDING order unchanged and report it', async () => {
+      mockPrismaOrder.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await repository.updateOrderStatus('order1', 'PROCESSING');
+
+      expect(result).toBe(false);
     });
   });
 
@@ -241,6 +251,7 @@ describe('PaymentRepository', () => {
       expect(mockPrismaPayment.update).toHaveBeenCalledWith({
         where: { id: 'pay1' },
         data: { status: 'SUCCESS', paymentDetails: { gateway: 'paystack' } },
+        include: { order: true },
       });
     });
   });

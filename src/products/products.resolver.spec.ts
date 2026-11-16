@@ -71,7 +71,8 @@ describe('ProductsResolver', () => {
     it('should create a product', async () => {
       const input: CreateProductInput = {
         name: 'T-Shirt',
-        price: '19.99',
+        basePrice: '19.99',
+        isTaxable: false,
         quantity: 100,
         categoryId: 'cat1',
         isActive: true,
@@ -90,7 +91,7 @@ describe('ProductsResolver', () => {
     it('should update a product', async () => {
       const input: UpdateProductInput = {
         name: 'Updated T-Shirt',
-        price: '29.99',
+        basePrice: '29.99',
       };
       const product: Product = {
         ...mockProduct,
@@ -155,7 +156,7 @@ describe('ProductsResolver', () => {
 
       const result = await resolver.findAll(paginate, filter);
 
-      expect(service.findAll).toHaveBeenCalledWith(paginate, filter, { id: true });
+      expect(service.findAll).toHaveBeenCalledWith(paginate, filter, {}, { id: true });
       expect(result).toEqual(response);
     });
 
@@ -166,7 +167,7 @@ describe('ProductsResolver', () => {
       };
       mockProductsService.findAll.mockResolvedValue(response);
       await resolver.findAll(undefined, {});
-      expect(service.findAll).toHaveBeenCalledWith({ first: 10 }, {}, { id: true });
+      expect(service.findAll).toHaveBeenCalledWith({ first: 10 }, {}, {}, { id: true });
     });
   });
 

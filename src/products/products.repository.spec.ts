@@ -196,18 +196,18 @@ describe('ProductsRepository', () => {
     it('should return products with pagination options', async () => {
       mockPrismaProduct.findMany.mockResolvedValue([mockProduct]);
 
-      const result = await repository.findMany({ take: 10, skip: 0 }, { isActive: true });
+      const result = await repository.findMany({ take: 10, skip: 0 }, { isActive: true }, { createdAt: 'desc' });
 
       expect(result).toEqual([mockProduct]);
       expect(mockPrismaProduct.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 10, skip: 0, where: { isActive: true } }),
+        expect.objectContaining({ take: 10, skip: 0, where: { isActive: true }, orderBy: { createdAt: 'desc' } }),
       );
     });
 
     it('should apply select when provided', async () => {
       mockPrismaProduct.findMany.mockResolvedValue([{ id: 'prod1', name: 'T-Shirt' }]);
 
-      const result = await repository.findMany({}, {}, { name: true });
+      const result = await repository.findMany({}, {}, { createdAt: 'desc' }, { name: true });
 
       expect(mockPrismaProduct.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ select: expect.objectContaining({ id: true, name: true }) }),

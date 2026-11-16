@@ -127,13 +127,29 @@ describe('PaymentService', () => {
       );
     });
 
-    it('should throw BadRequestException if payment already initiated', async () => {
+    it('should replace a PENDING payment with a new one when payment is re-initiated', async () => {
       mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
       mockPaymentRepository.findByOrderId.mockResolvedValue(payment);
+      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
+      mockPaymentRepository.create.mockResolvedValue(payment);
+
+      const result = await service.initiatePayment(userId, createPaymentDto);
+
+      expect(paymentRepository.delete).toHaveBeenCalledWith('pay1');
+      expect(mockPaystackTransaction.initialize).toHaveBeenCalled();
+      expect(paymentRepository.create).toHaveBeenCalled();
+      expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/auth' });
+    });
+
+    it('should throw BadRequestException if payment is already completed', async () => {
+      mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
+      mockPaymentRepository.findByOrderId.mockResolvedValue({ ...payment, status: PaymentStatus.COMPLETED });
 
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
-        new BadRequestException('Payment already initiated for this order'),
+        new BadRequestException('Payment for this order has already been completed'),
       );
+      expect(paymentRepository.delete).not.toHaveBeenCalled();
+      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
     });
   });
 
@@ -153,7 +169,7 @@ describe('PaymentService', () => {
       mockPaymentRepository.findByReference.mockResolvedValue(payment);
       mockPaystackTransaction.verify.mockResolvedValue(verification);
       mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(undefined);
+      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
 
       const result = await service.verifyPayment(reference);
 
@@ -164,7 +180,21 @@ describe('PaymentService', () => {
         PaymentStatus.COMPLETED,
         expect.any(Object),
       );
+      expect(paymentRepository.updateOrderStatus).toHaveBeenCalledWith('order1', 'PROCESSING');
+      expect(mockLoggerService.warn).not.toHaveBeenCalled();
       expect(result).toEqual(updatedPayment);
+    });
+
+    it('should not fail and should warn when the order is no longer PENDING', async () => {
+      mockPaymentRepository.findByReference.mockResolvedValue(payment);
+      mockPaystackTransaction.verify.mockResolvedValue(verification);
+      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
+      mockPaymentRepository.updateOrderStatus.mockResolvedValue(false);
+
+      const result = await service.verifyPayment(reference);
+
+      expect(result).toEqual(updatedPayment);
+      expect(mockLoggerService.warn).toHaveBeenCalledWith(expect.stringContaining('order1'), 'PaymentService');
     });
 
     it('should handle failed payment', async () => {
@@ -325,7 +355,7 @@ describe('PaymentService', () => {
       mockPaymentRepository.findByReference.mockResolvedValue(payment);
       mockPaystackTransaction.verify.mockResolvedValue(verifyData);
       mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue({ ...payment, status: PaymentStatus.COMPLETED });
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(undefined);
+      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
 
       const result = await service.handlePaystackWebhook(dto, validSig);
 

@@ -5,6 +5,8 @@ import { Address } from './entities/address.entity';
 import { CreateAddressInput } from './dto/create-address.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { UpdateAddressInput } from './dto/update-address.input';
+import { ForbiddenException } from '@nestjs/common';
+import { Role } from '../users/enums/role.enum';
 
 describe('AddressesResolver', () => {
   let resolver: AddressesResolver;
@@ -83,13 +85,18 @@ describe('AddressesResolver', () => {
   });
 
   describe('getAllAddresses', () => {
-    it('should retrieve all addresses for admin', async () => {
+    it('should retrieve all addresses for super admin when userId is omitted', async () => {
       mockAddressesService.getAllAddresses.mockResolvedValue([mockAddress]);
 
-      const result = await resolver.getAllAddresses();
+      const result = await resolver.getAllAddresses(Role.SUPER_ADMIN);
 
-      expect(addressesService.getAllAddresses).toHaveBeenCalled();
+      expect(addressesService.getAllAddresses).toHaveBeenCalledWith(undefined);
       expect(result).toEqual([mockAddress]);
+    });
+
+    it('should reject an admin who omits userId', async () => {
+      await expect(resolver.getAllAddresses(Role.ADMIN)).rejects.toThrow(ForbiddenException);
+      expect(addressesService.getAllAddresses).not.toHaveBeenCalled();
     });
   });
 
@@ -137,12 +144,12 @@ describe('AddressesResolver', () => {
       expect(result).toEqual(mockAddress);
     });
 
-    it('should allow ADMIN role to access getAllAddresses', async () => {
+    it('should allow ADMIN role to access getAllAddresses for a given user', async () => {
       mockAddressesService.getAllAddresses.mockResolvedValue([mockAddress]);
 
-      const result = await resolver.getAllAddresses();
+      const result = await resolver.getAllAddresses(Role.ADMIN, 'user1');
 
-      expect(addressesService.getAllAddresses).toHaveBeenCalled();
+      expect(addressesService.getAllAddresses).toHaveBeenCalledWith('user1');
       expect(result).toEqual([mockAddress]);
     });
   });

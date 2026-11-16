@@ -6,6 +6,7 @@ import { CreateOrderInput } from './dto/create-order.input';
 import { UpdateOrderStatusInput } from './dto/update-order-status.input';
 import { FulfillmentTypeEnum, OrderStatusEnum } from './enums/order.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
+import { UsersLoader } from '../users/loaders/users.loader';
 
 describe('OrdersResolver', () => {
   let resolver: OrdersResolver;
@@ -75,6 +76,7 @@ describe('OrdersResolver', () => {
         OrdersResolver,
         { provide: OrdersService, useValue: mockOrdersService },
         { provide: DiscountService, useValue: {} },
+        { provide: UsersLoader, useValue: { loader: { load: jest.fn() } } },
       ],
     })
       .overrideProvider(ActiveUser)
@@ -125,7 +127,15 @@ describe('OrdersResolver', () => {
 
       const result = await resolver.createOrder(mockUserId, mockCreateOrderInput);
 
-      expect(ordersService.createOrderFromCart).toHaveBeenCalledWith(mockUserId, 'addr1', undefined);
+      expect(ordersService.createOrderFromCart).toHaveBeenCalledWith(mockUserId, {
+        fulfillmentType: 'DELIVERY',
+        shippingAddressId: 'addr1',
+        pickupLocationId: undefined,
+        contactEmail: 'test@example.com',
+        contactPhone: '+233244000000',
+        couponCode: undefined,
+        paymentMethod: undefined,
+      });
       expect(result).toEqual(mockOrder);
     });
   });

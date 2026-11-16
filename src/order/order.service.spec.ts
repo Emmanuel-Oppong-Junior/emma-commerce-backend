@@ -13,6 +13,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { FulfillmentType } from '@prisma/client';
+import { ReturnsService } from '../returns/returns.service';
 
 const mockAuditService = { log: jest.fn() };
 const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn() };
@@ -21,6 +22,7 @@ const mockInventoryService = { logInventoryChange: jest.fn().mockResolvedValue(u
 const mockNotificationsService = { sendOrderConfirmation: jest.fn(), sendOrderStatusUpdate: jest.fn() };
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
+const mockReturnsService = { createSystemReturnRequest: jest.fn() };
 
 const mockOrdersRepository = {
   findById: jest.fn(),
@@ -122,6 +124,7 @@ describe('OrdersService', () => {
         { provide: NotificationsService, useValue: mockNotificationsService },
         { provide: ShippingZonesService, useValue: mockShippingZonesService },
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
+        { provide: ReturnsService, useValue: mockReturnsService },
       ],
     }).compile();
 
@@ -184,6 +187,7 @@ describe('OrdersService', () => {
 
     it('should throw NotFoundException if shipping address is invalid', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(null);
 
       await expect(

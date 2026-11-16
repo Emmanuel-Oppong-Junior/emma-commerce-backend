@@ -356,7 +356,13 @@ export class PaymentService {
     );
 
     if (status === PaymentStatus.COMPLETED) {
-      await this.paymentRepository.updateOrderStatus(payment.orderId, 'PROCESSING');
+      const transitioned = await this.paymentRepository.updateOrderStatus(payment.orderId, 'PROCESSING');
+      if (!transitioned) {
+        this.logger.warn(
+          `Payment completed but order was not PENDING, status left unchanged | orderId: ${payment.orderId} | paymentId: ${payment.id}`,
+          'PaymentService',
+        );
+      }
     }
 
     return payment;

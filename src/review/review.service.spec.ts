@@ -35,6 +35,8 @@ describe('ReviewService', () => {
     comment: 'Great product!',
     deleted: false,
     deletedAt: null,
+    createdAt: new Date('2025-05-01'),
+    updatedAt: new Date('2025-05-01'),
     user: { id: mockUserId, email: 'user1@example.com' },
     product: { id: mockProductId, name: 'T-Shirt' },
   };
