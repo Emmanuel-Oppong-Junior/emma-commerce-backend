@@ -25,7 +25,7 @@ export class EmailService {
   }
 
   async sendWelcomeEmail(to: string, name: string): Promise<void> {
-    await this.send(to, 'Welcome to Franko!', welcomeEmailHtml(name));
+    await this.send(to, 'Welcome to Emma Commerce!', welcomeEmailHtml(name));
   }
 
   async sendOrderConfirmationEmail(to: string, orderId: string, totalAmount: number): Promise<void> {
@@ -41,7 +41,7 @@ export class EmailService {
   }
 
   async sendPasswordResetEmail(to: string, resetToken: string): Promise<void> {
-    await this.send(to, 'Reset your Franko password', passwordResetEmailHtml(resetToken));
+    await this.send(to, 'Reset your Emma Commerce password', passwordResetEmailHtml(resetToken));
   }
 
   private async send(to: string, subject: string, html: string): Promise<void> {

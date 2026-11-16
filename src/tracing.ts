@@ -21,7 +21,7 @@ if (process.env.OTEL_ENABLED === 'true') {
 
   const sdk = new NodeSDK({
     resource: resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? 'franko-backend',
+      [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? 'emma-commerce-backend',
       [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? '1.0.0',
     }),
     spanProcessor: new BatchSpanProcessor(exporter),

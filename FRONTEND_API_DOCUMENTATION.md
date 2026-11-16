@@ -1,4 +1,4 @@
-# Franko E-Commerce Backend — Complete Frontend Technical Documentation
+# Emma Commerce Backend — Complete Frontend Technical Documentation
 
 > Generated from actual source code. Every type, field name, enum value, validation rule, and flow described here is extracted directly from the codebase.
 
@@ -3404,7 +3404,7 @@ Snapshot of key admin metrics:
 |---|---|---|---|
 | `OTEL_ENABLED` | ❌ | `false` | Set to `"true"` to enable |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | `http://localhost:4318/v1/traces` | OTLP collector endpoint |
-| `OTEL_SERVICE_NAME` | ❌ | `franko-backend` | Service name in traces |
+| `OTEL_SERVICE_NAME` | ❌ | `emma-commerce-backend` | Service name in traces |
 
 ---
 

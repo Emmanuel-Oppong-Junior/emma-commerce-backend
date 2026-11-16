@@ -1,5 +1,5 @@
 export function welcomeEmailHtml(name: string): string {
-  return `<h1>Welcome${name ? `, ${name}` : ''}!</h1><p>Thanks for joining Franko. Start shopping today.</p>`;
+  return `<h1>Welcome${name ? `, ${name}` : ''}!</h1><p>Thanks for joining Emma Commerce. Start shopping today.</p>`;
 }
 
 export function orderConfirmationEmailHtml(orderId: string, totalAmount: number): string {
