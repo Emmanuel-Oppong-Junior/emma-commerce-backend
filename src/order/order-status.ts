@@ -13,6 +13,12 @@ export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
   return TRANSITIONS[from].includes(to);
 }
 
+export function isFinal(status: OrderStatus): boolean {
+  return TRANSITIONS[status].length === 0;
+}
+
+export const FINAL_STATUSES = (Object.keys(TRANSITIONS) as OrderStatus[]).filter(isFinal);
+
 export function allowedFrom(to: OrderStatus): OrderStatus[] {
   return (Object.keys(TRANSITIONS) as OrderStatus[]).filter((from) => canTransition(from, to));
 }

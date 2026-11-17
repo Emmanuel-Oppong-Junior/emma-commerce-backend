@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { allowedFrom, assertTransition } from './order-status';
+import { allowedFrom, assertTransition, FINAL_STATUSES, isFinal } from './order-status';
 import { CartService } from '../cart/cart.service';
 import {
   Cart,
@@ -248,11 +248,20 @@ export class OrdersService {
   }
 
   /**
-   * Soft-deletes an order and restores its reserved stock (admin only).
+   * Soft-deletes a finished (DELIVERED or CANCELLED) order (admin only). Never moves stock.
    */
   async deleteOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
-    const result = await this.softDeleteOrder(order);
+    if (!isFinal(order.status)) {
+      throw new ConflictException(
+        `Order "${orderId}" is ${order.status}; only ${FINAL_STATUSES.join(' or ')} orders can be deleted (cancel it first)`,
+      );
+    }
+    if (order.deleted) throw new ConflictException(`Order "${orderId}" is already deleted`);
+    const result = await this.ordersRepository.runTransaction((tx) =>
+      this.ordersRepository.softDelete(tx, orderId, FINAL_STATUSES),
+    );
+    if (!result) throw this.changedMeanwhile(orderId);
     await this.auditService.log({
       entity: 'Order',
       entityId: orderId,
@@ -451,17 +460,6 @@ export class OrdersService {
     const order = await this.ordersRepository.findById(orderId, { items: true });
     if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
     return order;
-  }
-
-  private async softDeleteOrder(order: Order & { items: OrderItem[] }): Promise<Order & { items: OrderItem[] }> {
-    return this.ordersRepository.runTransaction(async (tx) => {
-      const deleted = await this.ordersRepository.softDelete(tx, order.id);
-      if (!deleted) throw this.changedMeanwhile(order.id);
-      for (const item of order.items) {
-        await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
-      }
-      return deleted;
-    });
   }
 
   private async requestReturnIfPaidOnline(order: Order & { items: OrderItem[] }): Promise<void> {

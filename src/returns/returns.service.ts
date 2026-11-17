@@ -79,7 +79,9 @@ export class ReturnsService {
   }
 
   /**
-   * Initiates a Paystack refund for an approved return request and restores the product stock.
+   * Initiates a Paystack refund for an approved return request. Moves money only: stock is never
+   * restored here (cancellation already restored it, and returned goods are restocked by an admin
+   * via `restockProduct` once received and inspected).
    * @param returnRequestId - The ID of the approved return request to refund.
    * @returns The updated return request with REFUNDED status.
    * @throws NotFoundException if the return request or associated payment is not found.
@@ -103,10 +105,7 @@ export class ReturnsService {
 
     await this.callPaystackRefund(payment.transactionId, Number(returnRequest.refundAmount));
 
-    return this.prisma.$transaction(async (tx) => {
-      await this.returnsRepository.restoreOrderStock(tx, returnRequest.orderId);
-      return this.returnsRepository.updateStatus(returnRequestId, 'REFUNDED');
-    });
+    return this.returnsRepository.updateStatus(returnRequestId, 'REFUNDED');
   }
 
   /**

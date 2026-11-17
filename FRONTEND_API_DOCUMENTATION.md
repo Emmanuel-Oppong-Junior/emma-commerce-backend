@@ -1291,7 +1291,7 @@ CANCELLED     — Order cancelled
 #### `deleteOrder` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `orderId: String!`
-- **Description**: Soft-delete an order. Sets `deleted = true`, `deletedAt = now()`. Restores stock.
+- **Description**: Soft-delete a finished order (`DELIVERED` or `CANCELLED` only). Sets `deleted = true`, `deletedAt = now()`. **Never moves stock.** An open order returns `CONFLICT` (cancel it first, which restores its stock); deleting twice also returns `CONFLICT`.
 
 ---
 
@@ -1676,7 +1676,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 #### `processRefund` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `returnRequestId: ID!`
-- **Description**: Move status from `APPROVED` to `REFUNDED`. Actual refund disbursement is handled externally.
+- **Description**: Refund the approved amount through Paystack and move the request from `APPROVED` to `REFUNDED`. **Moves money only, never stock:** a cancelled order already had its stock restored at cancellation, and physically returned goods are put back with `restockProduct` once received and inspected.
 
 ---
 

@@ -145,37 +145,4 @@ describe('ReturnsRepository', () => {
       await expect(repository.updateStatus('return1', 'APPROVED' as any)).rejects.toThrow('DB error');
     });
   });
-
-  describe('restoreOrderStock', () => {
-    it('should restore stock for all order items', async () => {
-      const mockOrderItems = [
-        { productId: 'prod1', quantity: 2 },
-        { productId: 'prod2', quantity: 1 },
-      ];
-      const mockTx = {
-        orderItem: { findMany: jest.fn().mockResolvedValue(mockOrderItems) },
-        product: { update: jest.fn().mockResolvedValue(undefined) },
-      };
-
-      await repository.restoreOrderStock(mockTx as any, 'order1');
-
-      expect(mockTx.orderItem.findMany).toHaveBeenCalledWith({ where: { orderId: 'order1' } });
-      expect(mockTx.product.update).toHaveBeenCalledTimes(2);
-      expect(mockTx.product.update).toHaveBeenCalledWith({
-        where: { id: 'prod1' },
-        data: { quantity: { increment: 2 } },
-      });
-    });
-
-    it('should handle empty order items', async () => {
-      const mockTx = {
-        orderItem: { findMany: jest.fn().mockResolvedValue([]) },
-        product: { update: jest.fn() },
-      };
-
-      await repository.restoreOrderStock(mockTx as any, 'order1');
-
-      expect(mockTx.product.update).not.toHaveBeenCalled();
-    });
-  });
 });

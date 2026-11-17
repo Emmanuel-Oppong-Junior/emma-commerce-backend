@@ -47,14 +47,4 @@ export class ReturnsRepository {
       throw e;
     }
   }
-
-  async restoreOrderStock(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
-    const items = await tx.orderItem.findMany({ where: { orderId } });
-    for (const item of items) {
-      await tx.product.update({
-        where: { id: item.productId },
-        data: { quantity: { increment: item.quantity } },
-      });
-    }
-  }
 }

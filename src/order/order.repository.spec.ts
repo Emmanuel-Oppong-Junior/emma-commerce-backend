@@ -222,26 +222,26 @@ describe('OrdersRepository', () => {
 
     beforeEach(() => jest.resetAllMocks());
 
-    it('should soft delete an order that is not already deleted', async () => {
+    it('should soft delete a finished order that is not already deleted', async () => {
       const deleted = { ...mockOrder, deleted: true, deletedAt: fixedDate };
       tx.order.updateMany.mockResolvedValue({ count: 1 });
       tx.order.findUniqueOrThrow.mockResolvedValue(deleted);
 
-      const result = await repository.softDelete(tx as any, 'order1');
+      const result = await repository.softDelete(tx as any, 'order1', ['DELIVERED', 'CANCELLED'] as any);
 
       expect(result).toEqual(deleted);
       expect(tx.order.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'order1', deleted: false },
+          where: { id: 'order1', deleted: false, status: { in: ['DELIVERED', 'CANCELLED'] } },
           data: expect.objectContaining({ deleted: true }),
         }),
       );
     });
 
-    it('returns null when the order was already deleted', async () => {
+    it('returns null when the order was already deleted or is not finished', async () => {
       tx.order.updateMany.mockResolvedValue({ count: 0 });
 
-      expect(await repository.softDelete(tx as any, 'order1')).toBeNull();
+      expect(await repository.softDelete(tx as any, 'order1', ['DELIVERED'] as any)).toBeNull();
     });
   });
 

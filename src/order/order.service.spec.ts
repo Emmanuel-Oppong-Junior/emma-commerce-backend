@@ -448,15 +448,21 @@ describe('OrdersService', () => {
   });
 
   describe('deleteOrder (soft delete)', () => {
-    it('should soft-delete an order and restore stock', async () => {
-      const deletedOrder = { ...mockOrder, deleted: true, deletedAt: new Date() };
-      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+    const deliveredOrder = { ...mockOrder, status: OrderStatus.DELIVERED };
+
+    it('should soft-delete a delivered order without moving stock', async () => {
+      const deletedOrder = { ...deliveredOrder, deleted: true, deletedAt: new Date() };
+      mockOrdersRepository.findById.mockResolvedValue(deliveredOrder);
       mockOrdersRepository.softDelete.mockResolvedValue(deletedOrder);
       mockAuditService.log.mockResolvedValue(undefined);
 
       const result = await ordersService.deleteOrder('order1', 'admin1');
 
-      expect(ordersRepository.softDelete).toHaveBeenCalledWith(expect.anything(), 'order1');
+      expect(ordersRepository.softDelete).toHaveBeenCalledWith(expect.anything(), 'order1', [
+        OrderStatus.DELIVERED,
+        OrderStatus.CANCELLED,
+      ]);
+      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Order', action: 'DELETE', userId: 'admin1' }),
       );
@@ -467,6 +473,45 @@ describe('OrdersService', () => {
       mockOrdersRepository.findById.mockResolvedValue(null);
 
       await expect(ordersService.deleteOrder('order1')).rejects.toThrow(NotFoundException);
+    });
+
+    it('refuses to delete an order that is still open, so its stock stays reserved correctly', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+
+      await expect(ordersService.deleteOrder('order1', 'admin1')).rejects.toThrow(
+        new ConflictException(
+          'Order "order1" is PENDING; only DELIVERED or CANCELLED orders can be deleted (cancel it first)',
+        ),
+      );
+      expect(ordersRepository.softDelete).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete an order twice', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...deliveredOrder, deleted: true });
+
+      await expect(ordersService.deleteOrder('order1', 'admin1')).rejects.toThrow(/already deleted/);
+      expect(ordersRepository.softDelete).not.toHaveBeenCalled();
+    });
+
+    it('reports a conflict when the order changed between the check and the write', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(deliveredOrder);
+      mockOrdersRepository.softDelete.mockResolvedValue(null);
+
+      await expect(ordersService.deleteOrder('order1', 'admin1')).rejects.toThrow(/changed by another request/);
+      expect(mockAuditService.log).not.toHaveBeenCalled();
+    });
+
+    it('writes one inventory log per item when cancelling, the only automatic restore', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+
+      await ordersService.cancelOrder(mockUserId, 'order1');
+
+      expect(mockInventoryService.logInventoryChange).toHaveBeenCalledTimes(1);
+      expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ productId: 'prod1', action: 'RETURN_RESTORE', quantityChange: 2 }),
+      );
     });
   });
 

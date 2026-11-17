@@ -115,9 +115,10 @@ export class OrdersRepository {
     return this.findInTransaction(tx, orderId);
   }
 
-  async softDelete(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems | null> {
+  /** Hides a finished order; returns null if it is not in one of `from` or is already deleted. */
+  async softDelete(tx: Prisma.TransactionClient, orderId: string, from: OrderStatus[]): Promise<OrderWithItems | null> {
     const { count } = await tx.order.updateMany({
-      where: { id: orderId, deleted: false },
+      where: { id: orderId, deleted: false, status: { in: from } },
       data: { deleted: true, deletedAt: new Date() },
     });
     if (count === 0) return null;

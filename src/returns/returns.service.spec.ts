@@ -18,7 +18,6 @@ const mockReturnsRepository = {
   findByUser: jest.fn(),
   findAll: jest.fn(),
   updateStatus: jest.fn(),
-  restoreOrderStock: jest.fn(),
 };
 
 const mockPrisma = {
@@ -195,11 +194,12 @@ describe('ReturnsService', () => {
       mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
       mockPrisma.payment.findUnique.mockResolvedValue({ transactionId: 'txn_123', orderId: 'order1' });
       mockedAxios.post.mockResolvedValue({ data: { status: true } });
-      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb({ returnsRepository: mockReturnsRepository }));
-      mockReturnsRepository.restoreOrderStock.mockResolvedValue(undefined);
       mockReturnsRepository.updateStatus.mockResolvedValue(refundedReturn);
 
       const result = await service.processRefund('return1');
+
+      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith('return1', 'REFUNDED');
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
 
       expect(mockedAxios.post).toHaveBeenCalledWith(
         'https://api.paystack.co/refund',

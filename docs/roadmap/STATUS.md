@@ -5,7 +5,18 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-B.1 done (`9028bb3`), merged into `dev` and pushed; check its CI run. Take the first unblocked item in **Up next**.
+- **Task:** P0-B.2 — Restore stock exactly once (ORD-03, RET-01, INV-03, DB-06)
+- **Branch:** `fix/P0-B.2-stock-restore-once` (from `dev` @ `d560e6d`) · **State:** in progress
+- **Steps:**
+  - [x] Soft delete: only DELIVERED/CANCELLED (`FINAL_STATUSES`/`isFinal` in order-status.ts), once, conditional write, never moves stock; else CONFLICT
+  - [x] `processRefund` money only; `restoreOrderStock` + its 2 repo tests removed; refund test asserts no transaction
+  - [x] Order service delete tests rewritten (old one asserted the restore) + open/twice/race/log tests; repro ORD-01, ORD-03, ORD-04 green
+  - [x] `test/e2e/stock-restore.e2e-spec.ts` 3/3 (all fail on the B.1 code); frontend docs (delete, refund; refund doc wrongly said "handled externally")
+  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 861/861; repro 11/21; e2e Linux node:20 212/212
+  - [ ] Commit/merge/push (waiting on Emmanuel); mark ORD-03/RET-01/INV-03/DB-06 in audit; repro 11/21; clear Active task  ← **Next step**
+- **Uncommitted work:** STATUS.md only
+
+**Previously:** P0-B.1 done (`9028bb3`), CI green on `d560e6d`.
 
 **Last completed:** P0-B.1. Order transition table (`src/order/order-status.ts`) enforced everywhere; status/soft-delete writes are conditional `updateMany` claims inside the stock transaction; admin CANCELLED → real cancel; unpaid ONLINE orders leave PENDING only via payment. Invalid changes → `CONFLICT` (was BAD_REQUEST). Unit 859/859, e2e 209/209 (incl. concurrent cancel), repro 10/21. Left: ORD-03 / restore semantics → P0-B.2; `markOrderAsPaid` has no callers.
 
@@ -58,6 +69,7 @@ Repro tests turned green: **10 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-17 | P0-B.2: refunds never restock; returned goods go back via admin `restockProduct` after inspection (Emmanuel). Soft delete limited to CANCELLED/DELIVERED (Claude, per ORD-03 fix) | STATUS |
 | 2026-11-17 | P0-B.1: unpaid ONLINE orders leave PENDING only via confirmed payment; admins cannot move them to PROCESSING by hand (Emmanuel). Missed webhooks wait for reconciliation (P0-C.5) | STATUS |
 | 2026-11-17 | P0-A.4: add `graphql-query-complexity` for cost limits (Emmanuel); depth/alias limits hand-written (no `graphql-depth-limit`, unmaintained) | STATUS |
 | 2026-11-17 | P0-A.3: admins see drafts via new `adminProducts`/`adminProduct` queries; public `products`/`product` always filtered (Emmanuel). Admin UI must switch its draft listing | STATUS |
