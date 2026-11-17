@@ -8,7 +8,7 @@
 **Parallel batch (in progress, 2026-11-17):** three sub-agents in their own git worktrees, each with its own e2e DB. Agents do not edit STATUS/audit; the orchestrator merges into `dev` and updates both.
 - **Fulfilment** (P0-B.4 shipping, P0-B.5 pickup, P0-B.6 currency) · DB `emma_wt_fulfil_test` · only agent allowed a migration
 - ~~**Identity**~~ ✅ merged + pushed: P0-I.1 (`d2445ad`), P0-I.6 (`d11e961`). Gates on dev: unit 905/905, e2e 212/212 (Linux node:20), repro 12/21. Frontend: sign-in accepts up to 128 chars; reset/change/admin-create now follow the full policy; forgotPassword limited 3/h per email
-- **Ops** (P0-O.3 env validation, P0-O.5 health readiness, P0-O.7 email errors) · DB `emma_wt_ops_test`
+- ~~**Ops**~~ ✅ merged + pushed (rebased onto dev): P0-O.3 (`fd0543c`), P0-O.5 (`66eb517`), P0-O.7 (`e18cf27`). Gates on dev: unit 956/956, e2e 212/212 (Linux node:20), repro 12/21. **Local dev:** `NODE_ENV` is now required
 - **Next step:** wait for agent reports → review diff, run gates on the merged result, merge into `dev`, update STATUS/audit per task.
 
 **Last completed:** P0-B.2. Soft delete only for DELIVERED/CANCELLED, never moves stock; refunds move money only (returned goods restocked by admin via `restockProduct`); cancellation is the single automatic restore, one log per item. Unit 861/861, e2e 212/212, repro 11/21. **Admin UI:** open orders must be cancelled before deleting.
@@ -41,7 +41,7 @@
 | P0-B Orders & stock | 2 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`) |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 2 / 6 | I.1 (`d2445ad`), I.6 (`d11e961`); IAM-04 `jti` part of I.2 done in P0-F.7 |
-| P0-O Deployability & ops | 0 / 7 | |
+| P0-O Deployability & ops | 3 / 7 | O.3 (`fd0543c`), O.5 (`66eb517`), O.7 (`e18cf27`) |
 | P0-D Audit & analytics | 0 / 3 | |
 
 Repro tests turned green: **12 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
@@ -51,6 +51,7 @@ Repro tests turned green: **12 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD
 - [ ] Decide what to do with `origin/main`: it shares no history with local `main`/`dev` (different root commits). Its history also contains a committed `.env` (`bcbae7b Delete .env`), so rotate whatever secrets it held.
 - [ ] Tell the frontend: review queries must select `user { displayName }` instead of `user { name }` (P0-A.2); admin draft listing must use `adminProducts`/`adminProduct` (P0-A.3); invalid order status changes now return `CONFLICT` (P0-B.1); open orders must be cancelled before deleting (P0-B.2).
 - [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
+- [ ] Add `NODE_ENV=development` to your local `.env` if it is missing (now required, P0-O.3), and update `.env.example` with: NODE_ENV, PORT, ALLOWED_ORIGINS, LOG_LEVEL, DATABASE_URL, JWT_SECRET/JWT_REFRESH_SECRET/JWT_RESET_SECRET (≥32 chars, all different), JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER, JWT_ACCESS/REFRESH/RESET_TOKEN_TTL, GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET, PAYSTACK_SECRET_KEY, PAYSTACK_CALLBACK_URL, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET, REDIS_HOST (prod)/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL, OTEL_ENABLED (true|false), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, SUPER_ADMIN_EMAIL/PASSWORD.
 - [ ] Rotate the DB password that was committed in `.claude/settings.local.json`. The file is untracked now, but the password is still in git history.
 - [ ] Decide the Phase 0 stop-gaps before these tasks start:
   - **P0-B.3:** fix discounts at checkout, or switch them off until Phase 2?
