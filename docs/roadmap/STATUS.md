@@ -5,21 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P0-A.4 — GraphQL hardening (PLAT-05, PERF-01, DOC-06, USR-14)
-- **Branch:** `fix/P0-A.4-graphql-hardening` (from `dev` @ `ca25094`) · **State:** in progress
-- **Steps:**
-  - [x] `graphql-query-complexity@2.0.0` added (pulls `lodash.get`, deprecated but tiny)
-  - [x] `src/commons/graphql/query-limits.ts`: depth ≤ 8 + aliases ≤ 15 validation rules, cost ≤ **3000** plugin (1000 was too low: a 50-product page with variants + reviews ≈ 2800); introspection exempt. 12 unit tests
-  - [x] Landing page disabled in production (`ApolloServerPluginLandingPageDisabled`)
-  - [x] `src/commons/filters/error-classification.ts` used by `AllExceptionsFilter` (13 unit tests). ValidationPipe failures → `InputValidationException` → `BAD_USER_INPUT`; the 7 duplicated pipe configs now use `createValidationPipe()` (`src/commons/validation-pipe.ts`). `formatError` treats `GRAPHQL_VALIDATION_FAILED`/`GRAPHQL_PARSE_FAILED` as safe
-  - [x] `test/e2e/graphql-hardening.e2e-spec.ts` 8/8 (deleting a category with sub-categories → `CONFLICT`, was 500). CLAUDE.md + frontend docs updated
-  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 808/808; repro 3/21; `audit:prod` 5/5 allowlisted (no new critical); e2e Linux node:20 205/205
-  - [ ] Commit/merge/push (waiting on Emmanuel); mark PLAT-05/PERF-01/DOC-06/USR-14 in audit; clear Active task  ← **Next step**
-- **Uncommitted work:** STATUS.md only
+_None._ P0-A.4 done (`c3000bf`), merged into `dev` and pushed; check its CI run. Take the first unblocked item in **Up next**.
 
-**Previously:** P0-A.3 done (`c6f5fe5`), CI green on `ca25094`.
-
-**Last completed:** P0-A.3. Public `products`/`product` show only active + `PUBLISHED`; new `adminProducts`/`adminProduct` (ADMIN, SUPER_ADMIN) and `status` filter; nested `products` on Category/SubCategory/Brand published-only, `first` 1–100 (default 20). Seeds set `PUBLISHED`. Unit 784/784, e2e 197/197 (Linux node:20). **Breaking for the admin UI:** draft listing must use `adminProducts`/`adminProduct`. Not fixed: drafts can be added to cart; expiry (PRD-04); one query per parent for nested products.
+**Last completed:** P0-A.4. Query limits: depth 8, aliases 15, cost 3000 (`graphql-query-complexity` 2.0.0, new dependency); landing page off in production; `error-classification.ts` gives real GraphQL codes incl. Prisma P2002/P2003 → CONFLICT, P2025 → NOT_FOUND; ValidationPipe → `BAD_USER_INPUT` via shared `createValidationPipe()`. Unit 808/808, e2e 205/205 (Linux node:20). Surfaced: deleting a category with sub-categories was a 500, now CONFLICT. **Frontend:** 401s are now `UNAUTHENTICATED` (token refresh starts working); 5xx messages always generic.
 
 <!-- Shape while a task is active (keep it current):
 - **Task:** P0-X.n — <title>
@@ -36,15 +24,14 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-A.4 GraphQL hardening: depth/complexity/alias limits, landing page off in prod, Prisma error codes | now | — (branch from `dev`) |
-| 2 | P0-A.5 Logging: no variable values or tokens in logs (repro PLAT-02) | ∥ with 1 | — |
+| 1 | P0-A.5 Logging: no variable values or tokens in logs (repro PLAT-02) | now | — (branch from `dev`) |
 | 3 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
 | P0-F Safety rails | 5 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
-| P0-A Request pipeline & access | 3 / 5 | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`) |
+| P0-A Request pipeline & access | 4 / 5 | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`) |
 | P0-B Orders & stock | 0 / 11 | |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 0 / 6 | |
