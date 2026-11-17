@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { HealthCheck, HealthCheckService, PrismaHealthIndicator } from '@nestjs/terminus';
+import { HealthCheck, HealthCheckService, HealthIndicatorFunction, PrismaHealthIndicator } from '@nestjs/terminus';
 import { PrismaService } from '../prisma/prisma.service';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
@@ -17,10 +17,12 @@ export class HealthController {
     private readonly cloudinaryHealth: CloudinaryHealthIndicator,
   ) {}
 
+  // Full dependency report for dashboards and alerts. Cloudinary is checked here only: an image-CDN
+  // outage must not take replicas out of rotation via /health/ready.
   @Get()
   @HealthCheck()
   check() {
-    return this.health.check([() => this.prismaHealth.pingCheck('database', this.prisma)]);
+    return this.health.check([...this.readinessChecks(), () => this.cloudinaryHealth.isHealthy('cloudinary')]);
   }
 
   @Get('live')
@@ -31,10 +33,11 @@ export class HealthController {
   @Get('ready')
   @HealthCheck()
   readiness() {
-    return this.health.check([
-      () => this.prismaHealth.pingCheck('database', this.prisma),
-      () => this.redisHealth.isHealthy('redis'),
-      () => this.cloudinaryHealth.isHealthy('cloudinary'),
-    ]);
+    return this.health.check(this.readinessChecks());
+  }
+
+  // The Redis indicator reports up without probing when REDIS_HOST is unset (in-memory cache).
+  private readinessChecks(): HealthIndicatorFunction[] {
+    return [() => this.prismaHealth.pingCheck('database', this.prisma), () => this.redisHealth.isHealthy('redis')];
   }
 }

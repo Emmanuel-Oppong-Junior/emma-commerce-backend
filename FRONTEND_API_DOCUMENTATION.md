@@ -2100,7 +2100,9 @@ These endpoints are not in GraphQL. They use standard HTTP.
 ### `GET /health`
 
 **Auth Required**: No
-**Description**: Health check endpoint. Returns status of database, Redis, and Cloudinary.
+**Description**: Health check endpoint. Returns status of database, Redis, and Cloudinary (503 if any is down).
+
+`GET /health/ready` (readiness) checks only the database and, when `REDIS_HOST` is configured, Redis; a Cloudinary outage does not fail it. `GET /health/live` (liveness) checks no dependencies.
 
 ---
 
