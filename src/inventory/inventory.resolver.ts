@@ -2,6 +2,7 @@ import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { InventoryService } from './inventory.service';
 import { InventoryLogEntity } from './entities/inventory-log.entity';
 import { RestockProductInput, RestockVariantInput } from './dto/restock.input';
+import { AdjustProductStockInput, AdjustVariantStockInput } from './dto/adjust-stock.input';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '../users/enums/role.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
@@ -19,6 +20,20 @@ export class InventoryResolver {
   @Mutation(() => InventoryLogEntity, { description: 'Restock a product variant (admin only)' })
   restockVariant(@ActiveUser('id') actorId: string, @Args('input') input: RestockVariantInput) {
     return this.inventoryService.restockVariant(input, actorId);
+  }
+
+  @Mutation(() => InventoryLogEntity, {
+    description: 'Change a product’s stock by a signed amount with a reason, never below zero (admin only)',
+  })
+  adjustProductStock(@ActiveUser('id') actorId: string, @Args('input') input: AdjustProductStockInput) {
+    return this.inventoryService.adjustProductStock(input, actorId);
+  }
+
+  @Mutation(() => InventoryLogEntity, {
+    description: 'Change a variant’s stock by a signed amount with a reason, never below zero (admin only)',
+  })
+  adjustVariantStock(@ActiveUser('id') actorId: string, @Args('input') input: AdjustVariantStockInput) {
+    return this.inventoryService.adjustVariantStock(input, actorId);
   }
 
   @Query(() => [InventoryLogEntity], { description: 'Get all inventory logs (admin only)' })

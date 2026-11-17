@@ -172,11 +172,18 @@ export class OrdersRepository {
     });
   }
 
-  async decrementProductStock(tx: Prisma.TransactionClient, productId: string, quantity: number): Promise<Product> {
-    return tx.product.update({
-      where: { id: productId },
+  /** Takes `quantity` units only if that many are left; returns null when stock is short. */
+  async decrementProductStock(
+    tx: Prisma.TransactionClient,
+    productId: string,
+    quantity: number,
+  ): Promise<Product | null> {
+    const { count } = await tx.product.updateMany({
+      where: { id: productId, quantity: { gte: quantity } },
       data: { quantity: { decrement: quantity } },
     });
+    if (count === 0) return null;
+    return tx.product.findUniqueOrThrow({ where: { id: productId } });
   }
 
   async findProductById(productId: string): Promise<Product | null> {

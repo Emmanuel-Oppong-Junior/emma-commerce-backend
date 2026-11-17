@@ -27,6 +27,28 @@ type Address {
   zipCode: String!
 }
 
+input AdjustProductStockInput {
+  """
+  Signed change: negative removes stock (damage, loss, count), positive adds it
+  """
+  delta: Int!
+  productId: ID!
+
+  """Why the stock changed"""
+  reason: String!
+}
+
+input AdjustVariantStockInput {
+  """
+  Signed change: negative removes stock (damage, loss, count), positive adds it
+  """
+  delta: Int!
+
+  """Why the stock changed"""
+  reason: String!
+  variantId: ID!
+}
+
 input ApproveReturnInput {
   adminNote: String
   refundAmount: Float!
@@ -591,6 +613,16 @@ type Mutation {
 
   """Adds a product to the user’s wishlist"""
   addToWishlist(productId: String!): Wishlist!
+
+  """
+  Change a product’s stock by a signed amount with a reason, never below zero (admin only)
+  """
+  adjustProductStock(input: AdjustProductStockInput!): InventoryLogEntity!
+
+  """
+  Change a variant’s stock by a signed amount with a reason, never below zero (admin only)
+  """
+  adjustVariantStock(input: AdjustVariantStockInput!): InventoryLogEntity!
 
   """Admin: cancel any order by ID and restore its stock"""
   adminCancelOrder(orderId: String!): Order!
@@ -1695,9 +1727,6 @@ input UpdateProductInput {
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String
 
-  """Initial stock quantity (0 or more)"""
-  quantity: Int
-
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
 
@@ -1787,9 +1816,6 @@ input UpdateVariantInput {
 
   """ID of the associated product"""
   productId: ID
-
-  """Quantity in stock"""
-  quantity: Float
 
   """Size of the variant"""
   size: String

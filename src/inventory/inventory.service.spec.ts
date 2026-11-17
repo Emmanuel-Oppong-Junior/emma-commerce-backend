@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { InventoryRepository } from './inventory.repository';
 import { PrismaService } from '../prisma/prisma.service';
@@ -155,6 +155,83 @@ describe('InventoryService', () => {
         mockTx,
         expect.objectContaining({ productId: 'prod1', action: 'ORDER_DEDUCTION' }),
       );
+    });
+  });
+
+  describe.each([
+    {
+      target: 'product',
+      adjust: (s: InventoryService) =>
+        s.adjustProductStock.bind(s) as (input: any, actorId: string) => Promise<InventoryLog>,
+      idField: 'productId',
+      found: { quantity: 7 },
+      expectedLog: { productId: 'id1' },
+    },
+    {
+      target: 'variant',
+      adjust: (s: InventoryService) =>
+        s.adjustVariantStock.bind(s) as (input: any, actorId: string) => Promise<InventoryLog>,
+      idField: 'variantId',
+      found: { quantity: 7, productId: 'prod1' },
+      expectedLog: { productId: 'prod1', variantId: 'id1' },
+    },
+  ])('adjust $target stock', ({ target, adjust, idField, found, expectedLog }) => {
+    const runWith = (count: number, row: object | null) => {
+      const model = {
+        updateMany: jest.fn().mockResolvedValue({ count }),
+        findUnique: jest.fn().mockResolvedValue(row),
+      };
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb({ [target]: model }));
+      return model;
+    };
+
+    it('moves stock by a signed delta only while it stays at or above zero, and logs an ADJUSTMENT', async () => {
+      const model = runWith(1, found);
+      mockInventoryRepository.createLog.mockResolvedValue(mockLog);
+
+      await adjust(service)({ [idField]: 'id1', delta: -3, reason: 'Damaged in storage' }, 'admin1');
+
+      expect(model.updateMany).toHaveBeenCalledWith({
+        where: { id: 'id1', quantity: { gte: 3 } },
+        data: { quantity: { increment: -3 } },
+      });
+      expect(mockInventoryRepository.createLog).toHaveBeenCalledWith(expect.anything(), {
+        ...expectedLog,
+        action: 'ADJUSTMENT',
+        quantityChange: -3,
+        quantityAfter: 7,
+        reason: 'Damaged in storage',
+        actorId: 'admin1',
+      });
+    });
+
+    it('allows a positive correction without a stock floor', async () => {
+      const model = runWith(1, found);
+
+      await adjust(service)({ [idField]: 'id1', delta: 4, reason: 'Stock count' }, 'admin1');
+
+      expect(model.updateMany).toHaveBeenCalledWith({
+        where: { id: 'id1', quantity: { gte: 0 } },
+        data: { quantity: { increment: 4 } },
+      });
+    });
+
+    it('refuses to take stock below zero and writes no log', async () => {
+      runWith(0, found);
+
+      await expect(adjust(service)({ [idField]: 'id1', delta: -10, reason: 'Lost' }, 'admin1')).rejects.toThrow(
+        new BadRequestException(`Cannot remove 10 units from ${target} "id1": only 7 in stock`),
+      );
+      expect(mockInventoryRepository.createLog).not.toHaveBeenCalled();
+    });
+
+    it('reports a missing target as not found', async () => {
+      runWith(0, null);
+
+      await expect(adjust(service)({ [idField]: 'id1', delta: -1, reason: 'Lost' }, 'admin1')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(mockInventoryRepository.createLog).not.toHaveBeenCalled();
     });
   });
 

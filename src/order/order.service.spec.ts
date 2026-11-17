@@ -412,7 +412,7 @@ describe('OrdersService', () => {
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
-      mockOrdersRepository.decrementProductStock.mockResolvedValue({ ...mockProduct, quantity: -1 });
+      mockOrdersRepository.decrementProductStock.mockResolvedValue(null);
 
       await expect(
         ordersService.createOrderFromCart(mockUserId, {

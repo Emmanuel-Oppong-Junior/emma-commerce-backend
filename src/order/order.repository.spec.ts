@@ -293,17 +293,31 @@ describe('OrdersRepository', () => {
   });
 
   describe('decrementProductStock', () => {
-    it('should decrement product quantity via transaction', async () => {
+    it('decrements only when enough stock is left and returns the product after the write', async () => {
       const updatedProduct = { id: 'prod1', quantity: 8 } as unknown as Product;
-      const mockTx = { product: { update: jest.fn().mockResolvedValue(updatedProduct) } };
+      const mockTx = {
+        product: {
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: jest.fn().mockResolvedValue(updatedProduct),
+        },
+      };
 
       const result = await repository.decrementProductStock(mockTx as any, 'prod1', 2);
 
       expect(result).toEqual(updatedProduct);
-      expect(mockTx.product.update).toHaveBeenCalledWith({
-        where: { id: 'prod1' },
+      expect(mockTx.product.updateMany).toHaveBeenCalledWith({
+        where: { id: 'prod1', quantity: { gte: 2 } },
         data: { quantity: { decrement: 2 } },
       });
+    });
+
+    it('returns null and reads nothing when stock is short', async () => {
+      const mockTx = {
+        product: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), findUniqueOrThrow: jest.fn() },
+      };
+
+      await expect(repository.decrementProductStock(mockTx as any, 'prod1', 5)).resolves.toBeNull();
+      expect(mockTx.product.findUniqueOrThrow).not.toHaveBeenCalled();
     });
   });
 

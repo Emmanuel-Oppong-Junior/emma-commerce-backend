@@ -1,0 +1,38 @@
+import { Field, ID, InputType, Int } from '@nestjs/graphql';
+import { IsInt, IsNotEmpty, IsString, MaxLength, NotEquals } from 'class-validator';
+
+@InputType()
+export class AdjustProductStockInput {
+  @Field(() => ID)
+  @IsString()
+  productId: string;
+
+  @Field(() => Int, { description: 'Signed change: negative removes stock (damage, loss, count), positive adds it' })
+  @IsInt()
+  @NotEquals(0)
+  delta: number;
+
+  @Field({ description: 'Why the stock changed' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason: string;
+}
+
+@InputType()
+export class AdjustVariantStockInput {
+  @Field(() => ID)
+  @IsString()
+  variantId: string;
+
+  @Field(() => Int, { description: 'Signed change: negative removes stock (damage, loss, count), positive adds it' })
+  @IsInt()
+  @NotEquals(0)
+  delta: number;
+
+  @Field({ description: 'Why the stock changed' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason: string;
+}

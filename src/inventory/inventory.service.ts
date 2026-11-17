@@ -1,8 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InventoryLog, Prisma } from '@prisma/client';
 import { InventoryRepository, CreateLogData } from './inventory.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { RestockProductInput, RestockVariantInput } from './dto/restock.input';
+import { AdjustProductStockInput, AdjustVariantStockInput } from './dto/adjust-stock.input';
+
+function insufficientStock(target: string, id: string, delta: number, inStock: number): BadRequestException {
+  return new BadRequestException(`Cannot remove ${-delta} units from ${target} "${id}": only ${inStock} in stock`);
+}
 
 @Injectable()
 export class InventoryService {
@@ -69,6 +74,58 @@ export class InventoryService {
         quantityChange: input.quantity,
         quantityAfter: updated.quantity,
         reason: input.reason ?? 'Manual restock',
+        actorId,
+      });
+    });
+  }
+
+  /**
+   * Moves a product's stock by a signed delta with a reason, never below zero, and logs an ADJUSTMENT.
+   * @throws NotFoundException if the product does not exist; BadRequestException if stock would go negative.
+   */
+  async adjustProductStock(input: AdjustProductStockInput, actorId: string): Promise<InventoryLog> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.product.updateMany({
+        where: { id: input.productId, quantity: { gte: Math.max(0, -input.delta) } },
+        data: { quantity: { increment: input.delta } },
+      });
+      const product = await tx.product.findUnique({ where: { id: input.productId }, select: { quantity: true } });
+      if (!product) throw new NotFoundException(`Product "${input.productId}" not found`);
+      if (count === 0) throw insufficientStock('product', input.productId, input.delta, product.quantity);
+      return this.inventoryRepository.createLog(tx, {
+        productId: input.productId,
+        action: 'ADJUSTMENT',
+        quantityChange: input.delta,
+        quantityAfter: product.quantity,
+        reason: input.reason,
+        actorId,
+      });
+    });
+  }
+
+  /**
+   * Moves a variant's stock by a signed delta with a reason, never below zero, and logs an ADJUSTMENT.
+   * @throws NotFoundException if the variant does not exist; BadRequestException if stock would go negative.
+   */
+  async adjustVariantStock(input: AdjustVariantStockInput, actorId: string): Promise<InventoryLog> {
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.variant.updateMany({
+        where: { id: input.variantId, quantity: { gte: Math.max(0, -input.delta) } },
+        data: { quantity: { increment: input.delta } },
+      });
+      const variant = await tx.variant.findUnique({
+        where: { id: input.variantId },
+        select: { quantity: true, productId: true },
+      });
+      if (!variant) throw new NotFoundException(`Variant "${input.variantId}" not found`);
+      if (count === 0) throw insufficientStock('variant', input.variantId, input.delta, variant.quantity);
+      return this.inventoryRepository.createLog(tx, {
+        productId: variant.productId,
+        variantId: input.variantId,
+        action: 'ADJUSTMENT',
+        quantityChange: input.delta,
+        quantityAfter: variant.quantity,
+        reason: input.reason,
         actorId,
       });
     });

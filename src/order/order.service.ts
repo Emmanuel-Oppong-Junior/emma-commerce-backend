@@ -422,7 +422,7 @@ export class OrdersService {
     return this.ordersRepository.runTransaction(async (tx) => {
       for (const item of orderDetails.orderItems) {
         const product = await this.ordersRepository.decrementProductStock(tx, item.productId, item.quantity);
-        if (product.quantity < 0) {
+        if (!product) {
           throw new BadRequestException(`Insufficient stock for product "${item.productId}" — please review your cart`);
         }
         await this.inventoryService.logInventoryChange(tx, {

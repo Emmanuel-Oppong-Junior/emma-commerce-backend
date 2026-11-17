@@ -255,7 +255,6 @@ describe('Variant E2E Test', () => {
         id: variant.id,
         size: 'Large',
         color: 'White',
-        quantity: 25,
         price: 59.99,
       };
 
@@ -430,7 +429,6 @@ describe('Variant E2E Test', () => {
         id: variant.id,
         size: 'Large',
         color: 'White',
-        quantity: 25,
         price: 59.99,
       };
 
@@ -443,7 +441,7 @@ describe('Variant E2E Test', () => {
         productId: product1Id,
         size: 'Large',
         color: 'White',
-        quantity: 25,
+        quantity: 20,
         price: 59.99,
       });
 
@@ -452,7 +450,7 @@ describe('Variant E2E Test', () => {
         where: { id: variant.id },
       });
       expect(variantInDb).toMatchObject({
-        quantity: 25,
+        quantity: 20,
       });
     });
 
@@ -515,7 +513,6 @@ describe('Variant E2E Test', () => {
         id: 'non-existent-variant-id',
         size: 'Large',
         color: 'White',
-        quantity: 25,
         price: 59.99,
       };
 
@@ -673,7 +670,6 @@ describe('Variant E2E Test', () => {
         id: variant.id,
         size: 'Large',
         color: 'White',
-        quantity: 25,
         price: 59.99,
       };
 
@@ -686,7 +682,7 @@ describe('Variant E2E Test', () => {
         productId: product2Id,
         size: 'Large',
         color: 'White',
-        quantity: 25,
+        quantity: 20,
       });
 
       // Verify in database
@@ -694,7 +690,7 @@ describe('Variant E2E Test', () => {
         where: { id: variant.id },
       });
       expect(variantInDb).toMatchObject({
-        quantity: 25,
+        quantity: 20,
       });
     });
 
@@ -757,7 +753,6 @@ describe('Variant E2E Test', () => {
         id: 'non-existent-variant-id',
         size: 'Large',
         color: 'White',
-        quantity: 25,
         price: 59.99,
       };
 
