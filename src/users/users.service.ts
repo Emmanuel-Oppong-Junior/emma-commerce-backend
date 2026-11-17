@@ -43,7 +43,7 @@ export class UsersService {
     if (!isOldPasswordValid) throw new ForbiddenException('Old password is incorrect');
     await this.compareNewPasswordToOld(newPassword, user.password ?? '');
     const hashedNewPassword = await this.passwordService.hash(newPassword);
-    return this.usersRepository.update(id, { password: hashedNewPassword });
+    return this.usersRepository.updateAndRevokeSessions(id, { password: hashedNewPassword });
   }
 
   /**
@@ -187,13 +187,22 @@ export class UsersService {
    * @returns The updated user record.
    */
   async update(id: string, updateUserInput: UpdateUserInput) {
-    return this.usersRepository.update(id, updateUserInput);
+    if (!updateUserInput.email) return this.usersRepository.update(id, updateUserInput);
+    const user = await this.findUserByIdOrThrow(id);
+    return this.applyProfileUpdate(user, updateUserInput);
   }
 
   async adminUpdateUser(id: string, updateUserInput: UpdateUserInput, actorRole: Role) {
     const user = await this.findUserByIdOrThrow(id);
     this.ensureActorMayManage(user, actorRole, 'updated');
-    return this.usersRepository.update(id, updateUserInput);
+    return this.applyProfileUpdate(user, updateUserInput);
+  }
+
+  private applyProfileUpdate(user: User, updateUserInput: UpdateUserInput) {
+    const emailChanges = !!updateUserInput.email && updateUserInput.email !== user.email;
+    return emailChanges
+      ? this.usersRepository.updateAndRevokeSessions(user.id, updateUserInput)
+      : this.usersRepository.update(user.id, updateUserInput);
   }
 
   private async compareNewPasswordToOld(newPassword: string, oldEncryptedPassword: string) {
@@ -226,7 +235,7 @@ export class UsersService {
   async archiveUser(id: string, actorRole: Role) {
     const user = await this.findUserByIdOrThrow(id);
     this.ensureActorMayManage(user, actorRole, 'archived');
-    return this.usersRepository.update(id, { isActive: false });
+    return this.usersRepository.updateAndRevokeSessions(id, { isActive: false });
   }
 
   /**

@@ -13,6 +13,7 @@ import { FacebookAuthenticationService } from '../../src/iam/authentication/soci
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { signInAdmin, signUpUser } from '../helpers/auth.helper';
 import { genSalt, hash } from 'bcrypt';
 
 describe('Authentication (e2e)', () => {
@@ -255,6 +256,137 @@ describe('Authentication (e2e)', () => {
     });
   });
 
+  // ─── session security ────────────────────────────────────────────────────────
+
+  describe('refresh sessions', () => {
+    const REFRESH = `
+      mutation Refresh($input: RefreshTokenInput!) {
+        refreshToken(input: $input) {
+          accessToken
+          refreshToken
+        }
+      }
+    `;
+    let accountCounter = 0;
+
+    const refresh = (refreshToken: string) => gqlRequest(app, REFRESH, { input: { refreshToken } }).expect(200);
+
+    const newAccount = async () => {
+      accountCounter += 1;
+      const email = `session${accountCounter}@test.com`;
+      const tokens = await signUpUser(app, { name: 'Session User', email, password: 'Password@1' });
+      const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+      return { ...tokens, userId: user.id, email };
+    };
+
+    it('lets exactly one of several concurrent refreshes with the same token succeed', async () => {
+      const { refreshToken, userId } = await newAccount();
+
+      const responses = await Promise.all(Array.from({ length: 5 }, () => refresh(refreshToken)));
+
+      const succeeded = responses.filter((res) => res.body.errors === undefined);
+      expect(succeeded).toHaveLength(1);
+      expect(succeeded[0].body.data.refreshToken.refreshToken).toEqual(expect.any(String));
+      responses
+        .filter((res) => res.body.errors !== undefined)
+        .forEach((res) => expect(res.body.errors[0].message).toMatch(/invalid or expired/i));
+      // The losing duplicates count as reuse, so the whole session (including the winner's new token) is revoked.
+      expect(await prisma.refreshToken.count({ where: { userId, revoked: false } })).toBe(0);
+    });
+
+    it('kills the session when an already-rotated token is presented again', async () => {
+      const { refreshToken: original } = await newAccount();
+      const rotated = await refresh(original);
+      expect(rotated.body.errors).toBeUndefined();
+      const current = rotated.body.data.refreshToken.refreshToken as string;
+
+      const replay = await refresh(original);
+      expect(replay.body.errors[0].message).toMatch(/invalid or expired/i);
+
+      const afterReplay = await refresh(current);
+      expect(afterReplay.body.errors[0].message).toMatch(/invalid or expired/i);
+    });
+
+    it('refuses to refresh a session older than the absolute lifetime', async () => {
+      const { userId } = await newAccount();
+      const jwtService = app.get(JwtService);
+      const thirtyOneDaysAgo = Math.floor(Date.now() / 1000) - 31 * 86400;
+      const staleToken = await jwtService.signAsync(
+        { sub: userId, sessionStart: thirtyOneDaysAgo },
+        {
+          secret: process.env.JWT_REFRESH_SECRET,
+          audience: process.env.JWT_TOKEN_AUDIENCE,
+          issuer: process.env.JWT_TOKEN_ISSUER,
+          expiresIn: 3600,
+          jwtid: 'stale-session',
+        },
+      );
+      await prisma.refreshToken.create({
+        data: {
+          userId,
+          tokenHash: createHash('sha256').update(staleToken).digest('hex'),
+          expiresAt: new Date(Date.now() + 3600_000),
+        },
+      });
+
+      const res = await refresh(staleToken);
+
+      expect(res.body.errors[0].message).toMatch(/session has expired/i);
+    });
+
+    it('revokes every session when the user changes their password', async () => {
+      const { accessToken, refreshToken } = await newAccount();
+      const mutation = `
+        mutation Change($input: ChangeUserPasswordInput!) {
+          changeUserPassword(input: $input) { id }
+        }
+      `;
+
+      const change = await gqlRequest(
+        app,
+        mutation,
+        { input: { oldPassword: 'Password@1', newPassword: 'Changed@123' } },
+        accessToken,
+      ).expect(200);
+      expect(change.body.errors).toBeUndefined();
+
+      const res = await refresh(refreshToken);
+      expect(res.body.errors[0].message).toMatch(/invalid or expired/i);
+    });
+
+    it('revokes every session when the user changes their email', async () => {
+      const { accessToken, refreshToken, email } = await newAccount();
+      const mutation = `
+        mutation Update($input: UpdateUserInput!) {
+          updateMyProfile(updateMyProfileInput: $input) { id }
+        }
+      `;
+
+      const update = await gqlRequest(app, mutation, { input: { email: `moved-${email}` } }, accessToken).expect(200);
+      expect(update.body.errors).toBeUndefined();
+
+      const res = await refresh(refreshToken);
+      expect(res.body.errors[0].message).toMatch(/invalid or expired/i);
+    });
+
+    it('revokes every session when an admin archives the account', async () => {
+      const { refreshToken, userId } = await newAccount();
+      const adminToken = await signInAdmin(app);
+
+      const archive = await gqlRequest(
+        app,
+        `mutation { archiveUser(id: "${userId}") { id } }`,
+        undefined,
+        adminToken,
+      ).expect(200);
+      expect(archive.body.errors).toBeUndefined();
+
+      expect(await prisma.refreshToken.count({ where: { userId, revoked: false } })).toBe(0);
+      const res = await refresh(refreshToken);
+      expect(res.body.errors).toBeDefined();
+    });
+  });
+
   // ─── signOut ──────────────────────────────────────────────────────────────────
 
   describe('signOut', () => {
@@ -393,6 +525,39 @@ describe('Authentication (e2e)', () => {
       // Confirm the token was cleared from the DB (one-time use)
       const user = await prisma.user.findUnique({ where: { id: RESET_USER_ID } });
       expect(user?.passwordResetToken).toBeNull();
+    });
+
+    it('revokes every refresh token of the user on reset', async () => {
+      const signIn = await gqlRequest(
+        app,
+        `mutation { signIn(input: { email: "resettest@example.com", password: "NewPass@1" }) { refreshToken } }`,
+      ).expect(200);
+      expect(signIn.body.errors).toBeUndefined();
+      const resetToken = await jwtService.signAsync(
+        { sub: RESET_USER_ID, purpose: 'password-reset' },
+        {
+          secret: process.env.JWT_RESET_SECRET,
+          audience: process.env.JWT_TOKEN_AUDIENCE,
+          issuer: process.env.JWT_TOKEN_ISSUER,
+          expiresIn: 900,
+          jwtid: 'reset-revokes-sessions',
+        },
+      );
+      await prisma.user.update({
+        where: { id: RESET_USER_ID },
+        data: {
+          passwordResetToken: createHash('sha256').update(resetToken).digest('hex'),
+          passwordResetTokenExp: new Date(Date.now() + 900 * 1000),
+        },
+      });
+
+      const reset = await gqlRequest(
+        app,
+        `mutation { resetPassword(input: { resetToken: "${resetToken}", newPassword: "Revoked@123" }) }`,
+      ).expect(200);
+      expect(reset.body.errors).toBeUndefined();
+
+      expect(await prisma.refreshToken.count({ where: { userId: RESET_USER_ID, revoked: false } })).toBe(0);
     });
 
     it('fails with an already-used token (cleared after first reset)', async () => {

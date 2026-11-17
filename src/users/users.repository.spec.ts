@@ -293,15 +293,69 @@ describe('UsersRepository', () => {
       expect(mockPrismaRefreshToken.create).toHaveBeenCalled();
     });
 
-    it('should atomically rotate refresh token via $transaction', async () => {
-      mockPrisma.$transaction.mockResolvedValue(undefined);
-
+    describe('rotateRefreshToken', () => {
       const expiresAt = new Date(Date.now() + 86400_000);
-      await repository.rotateRefreshToken('old-hash', 'user1', 'new-hash', expiresAt);
+      const runTransactionInline = () =>
+        mockPrisma.$transaction.mockImplementation((work: (tx: typeof mockPrisma) => unknown) => work(mockPrisma));
 
-      expect(mockPrisma.$transaction).toHaveBeenCalledWith(
-        expect.arrayContaining([expect.anything(), expect.anything(), expect.anything()]),
-      );
+      it('revokes the presented token only if it is still live, then stores the replacement', async () => {
+        runTransactionInline();
+        mockPrismaRefreshToken.updateMany.mockResolvedValue({ count: 1 });
+
+        const outcome = await repository.rotateRefreshToken('old-hash', 'user1', 'new-hash', expiresAt);
+
+        expect(outcome).toBe('rotated');
+        expect(mockPrismaRefreshToken.updateMany).toHaveBeenCalledWith({
+          where: { tokenHash: 'old-hash', userId: 'user1', revoked: false, expiresAt: { gt: expect.any(Date) } },
+          data: { revoked: true },
+        });
+        expect(mockPrismaRefreshToken.create).toHaveBeenCalledWith({
+          data: { userId: 'user1', tokenHash: 'new-hash', expiresAt },
+        });
+      });
+
+      it("revokes all of the user's tokens and stores nothing when a revoked token is presented", async () => {
+        runTransactionInline();
+        mockPrismaRefreshToken.updateMany.mockResolvedValue({ count: 0 });
+        mockPrismaRefreshToken.findUnique.mockResolvedValue({ tokenHash: 'old-hash', userId: 'user1', revoked: true });
+
+        const outcome = await repository.rotateRefreshToken('old-hash', 'user1', 'new-hash', expiresAt);
+
+        expect(outcome).toBe('reused');
+        expect(mockPrismaRefreshToken.updateMany).toHaveBeenLastCalledWith({
+          where: { userId: 'user1', revoked: false },
+          data: { revoked: true },
+        });
+        expect(mockPrismaRefreshToken.create).not.toHaveBeenCalled();
+      });
+
+      it('reports an unknown token as invalid without revoking anything else', async () => {
+        runTransactionInline();
+        mockPrismaRefreshToken.updateMany.mockResolvedValue({ count: 0 });
+        mockPrismaRefreshToken.findUnique.mockResolvedValue(null);
+
+        const outcome = await repository.rotateRefreshToken('old-hash', 'user1', 'new-hash', expiresAt);
+
+        expect(outcome).toBe('invalid');
+        expect(mockPrismaRefreshToken.updateMany).toHaveBeenCalledTimes(1);
+        expect(mockPrismaRefreshToken.create).not.toHaveBeenCalled();
+      });
+    });
+
+    it('updates a user and revokes all of their refresh tokens in one transaction', async () => {
+      mockPrisma.$transaction.mockResolvedValue([mockUser, { count: 2 }]);
+      mockPrismaUser.update.mockReturnValue('user-update');
+      mockPrismaRefreshToken.updateMany.mockReturnValue('token-revoke');
+
+      const result = await repository.updateAndRevokeSessions('user1', { isActive: false });
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledWith(['user-update', 'token-revoke']);
+      expect(mockPrismaUser.update).toHaveBeenCalledWith({ where: { id: 'user1' }, data: { isActive: false } });
+      expect(mockPrismaRefreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user1', revoked: false },
+        data: { revoked: true },
+      });
+      expect(result).toEqual(mockUser);
     });
   });
 

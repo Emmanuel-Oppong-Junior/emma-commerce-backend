@@ -2,6 +2,8 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Prisma, RefreshToken, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+export type RefreshRotationOutcome = 'rotated' | 'reused' | 'invalid';
+
 @Injectable()
 export class UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -115,26 +117,49 @@ export class UsersRepository {
   }
 
   /**
-   * [HIGH-2] Atomically revoke the old refresh token and persist the new one in a single
-   * Prisma transaction to eliminate the race-condition window where two concurrent requests
-   * could both pass the "not yet revoked" check and each receive a valid new token pair.
+   * Revokes the presented token and stores its replacement in one transaction, but only if the presented
+   * token is still live. A token that was already rotated or revoked is treated as stolen: every refresh
+   * token the user holds is revoked.
    */
-  async rotateRefreshToken(oldTokenHash: string, userId: string, newTokenHash: string, expiresAt: Date): Promise<void> {
-    await this.prisma.$transaction([
-      // Purge stale tokens first to keep the table lean
-      this.prisma.refreshToken.deleteMany({
-        where: { userId, expiresAt: { lt: new Date() } },
-      }),
-      // Revoke the consumed token
-      this.prisma.refreshToken.update({
-        where: { tokenHash: oldTokenHash },
+  async rotateRefreshToken(
+    oldTokenHash: string,
+    userId: string,
+    newTokenHash: string,
+    expiresAt: Date,
+  ): Promise<RefreshRotationOutcome> {
+    return this.prisma.$transaction(async (tx) => {
+      const now = new Date();
+      // Concurrent rotations of one token queue on the row lock and re-check revoked=false, so only one matches.
+      const { count } = await tx.refreshToken.updateMany({
+        where: { tokenHash: oldTokenHash, userId, revoked: false, expiresAt: { gt: now } },
         data: { revoked: true },
-      }),
-      // Persist the replacement token
-      this.prisma.refreshToken.create({
-        data: { userId, tokenHash: newTokenHash, expiresAt },
-      }),
-    ]);
+      });
+      if (count === 0) {
+        const presented = await tx.refreshToken.findUnique({ where: { tokenHash: oldTokenHash } });
+        if (!presented?.revoked || presented.userId !== userId) return 'invalid';
+        await tx.refreshToken.updateMany({ where: { userId, revoked: false }, data: { revoked: true } });
+        return 'reused';
+      }
+      await tx.refreshToken.deleteMany({ where: { userId, expiresAt: { lt: now } } });
+      await tx.refreshToken.create({ data: { userId, tokenHash: newTokenHash, expiresAt } });
+      return 'rotated';
+    });
+  }
+
+  /** Applies the update and revokes every refresh token of the user in the same transaction. */
+  async updateAndRevokeSessions(id: string, data: Prisma.UserUpdateInput): Promise<User> {
+    try {
+      const [user] = await this.prisma.$transaction([
+        this.prisma.user.update({ where: { id }, data }),
+        this.prisma.refreshToken.updateMany({ where: { userId: id, revoked: false }, data: { revoked: true } }),
+      ]);
+      return user;
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+        throw new NotFoundException('User not found');
+      }
+      throw e;
+    }
   }
 
   async revokeRefreshTokensByHash(tokenHash: string): Promise<void> {

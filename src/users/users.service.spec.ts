@@ -21,6 +21,7 @@ const mockUsersRepository = {
   findMany: jest.fn(),
   count: jest.fn(),
   update: jest.fn(),
+  updateAndRevokeSessions: jest.fn(),
   delete: jest.fn(),
 };
 
@@ -248,23 +249,71 @@ describe('UsersService', () => {
       expect(usersRepository.update).toHaveBeenCalledWith('1', input);
       expect(result).toEqual(updatedUser);
     });
+
+    it('revokes all refresh tokens when the email changes', async () => {
+      const input: UpdateUserInput = { email: 'new@example.com' };
+      const updatedUser = { ...mockUser, email: 'new@example.com' };
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(updatedUser);
+
+      const result = await service.update('1', input);
+
+      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', input);
+      expect(usersRepository.update).not.toHaveBeenCalled();
+      expect(result).toEqual(updatedUser);
+    });
+
+    it('keeps sessions when the submitted email is unchanged', async () => {
+      const input: UpdateUserInput = { email: mockUser.email, name: 'Renamed' };
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+      mockUsersRepository.update.mockResolvedValue({ ...mockUser, name: 'Renamed' });
+
+      await service.update('1', input);
+
+      expect(usersRepository.update).toHaveBeenCalledWith('1', input);
+      expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('adminUpdateUser', () => {
+    it("revokes all of the customer's refresh tokens when an admin changes their email", async () => {
+      const input: UpdateUserInput = { email: 'new@example.com' };
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue({ ...mockUser, ...input });
+
+      await service.adminUpdateUser('1', input, Role.ADMIN);
+
+      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', input);
+      expect(usersRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('keeps sessions when an admin edits other fields', async () => {
+      const input: UpdateUserInput = { name: 'Renamed' };
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+      mockUsersRepository.update.mockResolvedValue({ ...mockUser, ...input });
+
+      await service.adminUpdateUser('1', input, Role.ADMIN);
+
+      expect(usersRepository.update).toHaveBeenCalledWith('1', input);
+      expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
+    });
   });
 
   describe('changePassword', () => {
-    it("should change the user's password", async () => {
+    it("should change the user's password and revoke all of their refresh tokens", async () => {
       const input: ChangeUserPasswordInput = { oldPassword: 'oldPass123', newPassword: 'NewPass123' };
       const updatedUser = { ...mockUser, password: 'hashedNewPass' };
 
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockHashingService.compare.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
       mockHashingService.hash.mockResolvedValue('hashedNewPass');
-      mockUsersRepository.update.mockResolvedValue(updatedUser);
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(updatedUser);
 
       const result = await service.changePassword('1', input);
 
       expect(hashingService.compare).toHaveBeenCalledWith('oldPass123', mockUser.password);
       expect(hashingService.hash).toHaveBeenCalledWith('NewPass123');
-      expect(usersRepository.update).toHaveBeenCalledWith('1', { password: 'hashedNewPass' });
+      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', { password: 'hashedNewPass' });
       expect(result).toEqual(updatedUser);
     });
 
@@ -306,15 +355,15 @@ describe('UsersService', () => {
   });
 
   describe('archiveUser', () => {
-    it('should archive a user', async () => {
+    it('should archive a user and revoke all of their refresh tokens', async () => {
       const archivedUser = { ...mockUser, isActive: false };
 
       mockUsersRepository.findById.mockResolvedValue(mockUser);
-      mockUsersRepository.update.mockResolvedValue(archivedUser);
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(archivedUser);
 
       const result = await service.archiveUser('1', Role.ADMIN);
 
-      expect(usersRepository.update).toHaveBeenCalledWith('1', { isActive: false });
+      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', { isActive: false });
       expect(result).toEqual(archivedUser);
     });
   });
@@ -350,12 +399,14 @@ describe('UsersService', () => {
 
       await expect(act(adminTarget.id, Role.ADMIN)).rejects.toThrow(ForbiddenException);
       expect(mockUsersRepository.update).not.toHaveBeenCalled();
+      expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
       expect(mockUsersRepository.delete).not.toHaveBeenCalled();
     });
 
     it.each(adminActions)('%s lets a SUPER_ADMIN act on an ADMIN account', async (_name, act) => {
       mockUsersRepository.findById.mockResolvedValue(adminTarget);
       mockUsersRepository.update.mockResolvedValue(adminTarget);
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(adminTarget);
       mockUsersRepository.delete.mockResolvedValue(adminTarget);
 
       await expect(act(adminTarget.id, Role.SUPER_ADMIN)).resolves.toEqual(adminTarget);
@@ -367,12 +418,14 @@ describe('UsersService', () => {
       await expect(act(superAdminTarget.id, Role.ADMIN)).rejects.toThrow(ForbiddenException);
       await expect(act(superAdminTarget.id, Role.SUPER_ADMIN)).rejects.toThrow(ForbiddenException);
       expect(mockUsersRepository.update).not.toHaveBeenCalled();
+      expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
       expect(mockUsersRepository.delete).not.toHaveBeenCalled();
     });
 
     it.each(adminActions)('%s lets an ADMIN act on a customer account', async (_name, act) => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.update.mockResolvedValue(mockUser);
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(mockUser);
       mockUsersRepository.delete.mockResolvedValue(mockUser);
 
       await expect(act(mockUser.id, Role.ADMIN)).resolves.toEqual(mockUser);

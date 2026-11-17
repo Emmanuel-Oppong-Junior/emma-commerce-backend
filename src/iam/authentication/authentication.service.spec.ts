@@ -35,6 +35,7 @@ const mockUsersRepository = {
   findByResetToken: jest.fn(),
   clearPasswordResetToken: jest.fn(),
   update: jest.fn(),
+  updateAndRevokeSessions: jest.fn(),
 };
 
 const mockHashingService = {
@@ -56,6 +57,7 @@ const mockJwtConfig = {
   accessTokenTtl: 3600,
   refreshTokenTtl: 86400,
   resetTokenTtl: 900,
+  sessionMaxTtl: 30 * 86400,
 };
 
 const mockNotificationsService = {
@@ -65,6 +67,7 @@ const mockNotificationsService = {
 
 const mockLogger = {
   error: jest.fn(),
+  warn: jest.fn(),
 };
 
 const flushBackgroundWork = () => new Promise((resolve) => setImmediate(resolve));
@@ -214,48 +217,97 @@ describe('AuthenticationService', () => {
   });
 
   describe('refreshToken', () => {
-    it('should atomically rotate refresh token and return new token pair', async () => {
-      const rawToken = 'valid-refresh-token';
-      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
-      const storedToken = { tokenHash, revoked: false };
+    const rawToken = 'valid-refresh-token';
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const nowSeconds = () => Math.floor(Date.now() / 1000);
 
-      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1' });
-      mockUsersRepository.findRefreshToken.mockResolvedValue(storedToken);
+    const arrangeValidRefresh = (payload: Record<string, unknown>, outcome: string) => {
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', iat: nowSeconds(), ...payload });
       mockUsersService.findOne.mockResolvedValue(baseUser);
       mockJwtService.signAsync.mockResolvedValueOnce('new-access').mockResolvedValueOnce('new-refresh');
-      mockUsersRepository.rotateRefreshToken.mockResolvedValue(undefined);
+      mockUsersRepository.rotateRefreshToken.mockResolvedValue(outcome);
       mockUsersService.updateLastLogin.mockResolvedValue(undefined);
+    };
+
+    it('rotates the presented token and returns a new token pair', async () => {
+      arrangeValidRefresh({ sessionStart: nowSeconds() }, 'rotated');
 
       const result = await service.refreshToken({ refreshToken: rawToken });
 
-      // Should use atomic rotation, not separate revoke + create calls
       expect(usersRepository.rotateRefreshToken).toHaveBeenCalledWith(
         tokenHash,
         baseUser.id,
-        expect.any(String), // new token hash
+        createHash('sha256').update('new-refresh').digest('hex'),
         expect.any(Date),
       );
-      expect(usersRepository.revokeRefreshToken).not.toHaveBeenCalled();
       expect(result).toEqual({ accessToken: 'new-access', refreshToken: 'new-refresh' });
     });
 
-    it('should throw if token is revoked', async () => {
-      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1' });
-      mockUsersRepository.findRefreshToken.mockResolvedValue({ tokenHash: 'h', revoked: true });
+    it('carries the original session start into the new refresh token', async () => {
+      const sessionStart = nowSeconds() - 3 * 86400;
+      arrangeValidRefresh({ sessionStart }, 'rotated');
 
-      await expect(service.refreshToken({ refreshToken: 'token' })).rejects.toThrow(UnauthorizedException);
+      await service.refreshToken({ refreshToken: rawToken });
+
+      const [refreshPayload] = jwtService.signAsync.mock.calls[1];
+      expect(refreshPayload).toEqual(expect.objectContaining({ sub: '1', sessionStart }));
     });
 
-    it('should throw if token hash is not found in DB', async () => {
-      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1' });
-      mockUsersRepository.findRefreshToken.mockResolvedValue(null);
+    it('uses the issue time as the session start for tokens issued without one', async () => {
+      const iat = nowSeconds() - 600;
+      arrangeValidRefresh({ iat }, 'rotated');
 
-      await expect(service.refreshToken({ refreshToken: 'token' })).rejects.toThrow(UnauthorizedException);
+      await service.refreshToken({ refreshToken: rawToken });
+
+      const [refreshPayload] = jwtService.signAsync.mock.calls[1];
+      expect(refreshPayload).toEqual(expect.objectContaining({ sessionStart: iat }));
+    });
+
+    it('rejects a session older than the absolute lifetime without rotating', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({
+        sub: '1',
+        sessionStart: nowSeconds() - mockJwtConfig.sessionMaxTtl - 1,
+      });
+
+      await expect(service.refreshToken({ refreshToken: rawToken })).rejects.toThrow('Session has expired');
+      expect(usersRepository.rotateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('caps the new refresh token at the time left in the session', async () => {
+      const secondsLeft = 600;
+      arrangeValidRefresh({ sessionStart: nowSeconds() - mockJwtConfig.sessionMaxTtl + secondsLeft }, 'rotated');
+
+      await service.refreshToken({ refreshToken: rawToken });
+
+      const [, refreshOptions] = jwtService.signAsync.mock.calls[1];
+      const refreshTtl = (refreshOptions as { expiresIn: number }).expiresIn;
+      expect(refreshTtl).toBeLessThanOrEqual(secondsLeft);
+      expect(refreshTtl).toBeGreaterThan(secondsLeft - 5);
+      const [, , , expiresAt] = usersRepository.rotateRefreshToken.mock.calls[0];
+      expect((expiresAt as Date).getTime()).toBeLessThanOrEqual(Date.now() + secondsLeft * 1000);
+    });
+
+    it('rejects a reused token and logs the reuse', async () => {
+      arrangeValidRefresh({ sessionStart: nowSeconds() }, 'reused');
+
+      await expect(service.refreshToken({ refreshToken: rawToken })).rejects.toThrow(
+        'Invalid or expired refresh token',
+      );
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('reuse'), AuthenticationService.name);
+      expect(usersService.updateLastLogin).not.toHaveBeenCalled();
+    });
+
+    it('rejects a token that is unknown or expired in the database', async () => {
+      arrangeValidRefresh({ sessionStart: nowSeconds() }, 'invalid');
+
+      await expect(service.refreshToken({ refreshToken: rawToken })).rejects.toThrow(
+        'Invalid or expired refresh token',
+      );
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('should throw if user is inactive', async () => {
-      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1' });
-      mockUsersRepository.findRefreshToken.mockResolvedValue({ tokenHash: 'h', revoked: false });
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', iat: nowSeconds() });
       mockUsersService.findOne.mockResolvedValue({ ...baseUser, isActive: false });
 
       await expect(service.refreshToken({ refreshToken: 'token' })).rejects.toThrow('Account is inactive');
@@ -356,13 +408,15 @@ describe('AuthenticationService', () => {
       mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', purpose: 'password-reset' });
       mockUsersRepository.findByResetToken = jest.fn().mockResolvedValue(baseUser);
       mockHashingService.hash.mockResolvedValue('newHashedPass');
-      mockUsersRepository.update.mockResolvedValue({ ...baseUser, password: 'newHashedPass' });
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue({ ...baseUser, password: 'newHashedPass' });
       mockUsersRepository.clearPasswordResetToken = jest.fn().mockResolvedValue(undefined);
 
       const result = await service.resetPassword('valid-token', 'NewPass123');
 
       expect(result).toBe(true);
-      expect(mockUsersRepository.update).toHaveBeenCalledWith(baseUser.id, { password: 'newHashedPass' });
+      expect(mockUsersRepository.updateAndRevokeSessions).toHaveBeenCalledWith(baseUser.id, {
+        password: 'newHashedPass',
+      });
     });
 
     it('should throw UnauthorizedException when token verification fails', async () => {
@@ -394,6 +448,18 @@ describe('AuthenticationService', () => {
       expect(usersRepository.createRefreshToken).toHaveBeenCalledTimes(1);
       expect(usersService.updateLastLogin).toHaveBeenCalledWith(baseUser.id);
       expect(result).toEqual({ accessToken: 'access', refreshToken: 'refresh' });
+    });
+
+    it('starts a new session: the refresh token carries the current time as sessionStart', async () => {
+      mockJwtService.signAsync.mockResolvedValue('token');
+      const before = Math.floor(Date.now() / 1000);
+
+      await service.generateTokens(baseUser as User);
+
+      const [refreshPayload] = jwtService.signAsync.mock.calls[1];
+      const { sessionStart } = refreshPayload as { sessionStart: number };
+      expect(sessionStart).toBeGreaterThanOrEqual(before);
+      expect(sessionStart).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
     });
   });
 });

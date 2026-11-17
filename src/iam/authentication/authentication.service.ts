@@ -80,45 +80,54 @@ export class AuthenticationService {
 
   /**
    * Issues new tokens using a valid refresh token (rotation).
-   * The supplied refresh token is revoked immediately and replaced with a new one.
-   * Re-validates that the user's account is still active.
-   * [HIGH-2] Revoke + create are now atomic via a Prisma $transaction.
+   * The supplied refresh token is revoked and replaced; presenting it again revokes all of the user's sessions.
+   * A session cannot be refreshed past `sessionMaxTtl` from its original sign-in.
    *
-   * @throws UnauthorizedException - If the token is invalid, revoked, or the user is inactive.
+   * @throws UnauthorizedException - If the token is invalid, already used, the session is too old, or the user is inactive.
    */
   async refreshToken(refreshTokenInput: RefreshTokenInput) {
+    const { sub: userId, sessionStart } = await this.verifyRefreshToken(refreshTokenInput.refreshToken);
+    const sessionSecondsLeft = sessionStart + this.jwtConfiguration.sessionMaxTtl - Math.floor(Date.now() / 1000);
+    if (sessionSecondsLeft <= 0) throw new UnauthorizedException('Session has expired, please sign in again');
+
+    const user = await this.userService.findOne(userId);
+    if (!user) throw new UnauthorizedException('User not found');
+    if (!user.isActive) throw new UnauthorizedException('Account is inactive');
+
+    const refreshTtl = Math.min(this.jwtConfiguration.refreshTokenTtl, sessionSecondsLeft);
+    const [accessToken, newRefreshToken] = await Promise.all([
+      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!),
+      this.signToken(user.id, refreshTtl, this.jwtConfiguration.refreshSecret!, { sessionStart }),
+    ]);
+
+    const outcome = await this.usersRepository.rotateRefreshToken(
+      this.hashToken(refreshTokenInput.refreshToken),
+      user.id,
+      this.hashToken(newRefreshToken),
+      new Date(Date.now() + refreshTtl * 1000),
+    );
+    if (outcome === 'reused') {
+      this.logger.warn(
+        `Refresh token reuse detected; revoked all sessions of user ${user.id}`,
+        AuthenticationService.name,
+      );
+    }
+    if (outcome !== 'rotated') throw new UnauthorizedException('Invalid or expired refresh token');
+
+    await this.userService.updateLastLogin(user.id);
+    return { accessToken, refreshToken: newRefreshToken };
+  }
+
+  private async verifyRefreshToken(token: string): Promise<{ sub: string; sessionStart: number }> {
     try {
-      const { sub: userId } = await this.jwtServices.verifyAsync<{ sub: string }>(refreshTokenInput.refreshToken, {
+      const payload = await this.jwtServices.verifyAsync<{ sub: string; iat: number; sessionStart?: number }>(token, {
         audience: this.jwtConfiguration.audience,
         issuer: this.jwtConfiguration.issuer,
         secret: this.jwtConfiguration.refreshSecret,
       });
-
-      const tokenHash = this.hashToken(refreshTokenInput.refreshToken);
-      const storedToken = await this.usersRepository.findRefreshToken(tokenHash);
-      if (!storedToken || storedToken.revoked) {
-        throw new UnauthorizedException('Invalid or expired refresh token');
-      }
-
-      const user = await this.userService.findOne(userId);
-      if (!user) throw new UnauthorizedException('User not found');
-      if (!user.isActive) throw new UnauthorizedException('Account is inactive');
-
-      // Sign new tokens before touching the DB (pure CPU, no side-effects)
-      const [accessToken, newRefreshToken] = await Promise.all([
-        this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!),
-        this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret!),
-      ]);
-      const newTokenHash = this.hashToken(newRefreshToken);
-      const expiresAt = new Date(Date.now() + this.jwtConfiguration.refreshTokenTtl * 1000);
-
-      // Atomic: revoke old token + persist new one in one transaction
-      await this.usersRepository.rotateRefreshToken(tokenHash, user.id, newTokenHash, expiresAt);
-      await this.userService.updateLastLogin(user.id);
-
-      return { accessToken, refreshToken: newRefreshToken };
-    } catch (error) {
-      if (error instanceof UnauthorizedException) throw error;
+      // Tokens issued before sessionStart existed fall back to their own issue time.
+      return { sub: payload.sub, sessionStart: payload.sessionStart ?? payload.iat };
+    } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
   }
@@ -184,19 +193,22 @@ export class AuthenticationService {
     if (!user) throw new UnauthorizedException('Invalid or expired reset token');
 
     const hashedPassword = await this.passwordService.hash(newPassword);
-    await this.usersRepository.update(user.id, { password: hashedPassword });
+    await this.usersRepository.updateAndRevokeSessions(user.id, { password: hashedPassword });
     await this.usersRepository.clearPasswordResetToken(user.id);
     return true;
   }
 
   /**
-   * Generates a new access + refresh token pair for a user.
+   * Starts a new session: generates an access + refresh token pair for a user.
    * Persists the refresh token hash and purges expired tokens for that user.
    */
   async generateTokens(user: User) {
+    const sessionStart = Math.floor(Date.now() / 1000);
     const [accessToken, refreshToken] = await Promise.all([
       this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!),
-      this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret!),
+      this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret!, {
+        sessionStart,
+      }),
     ]);
     await Promise.all([this.saveRefreshToken(user.id, refreshToken), this.userService.updateLastLogin(user.id)]);
     return { accessToken, refreshToken };
