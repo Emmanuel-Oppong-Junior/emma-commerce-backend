@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
+import { createValidationPipe } from './commons/validation-pipe';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
 import { LoggerService } from './commons/logger.service';
 import { AllExceptionsFilter } from './commons/filters/all-exceptions.filter';
 import helmet from 'helmet';
@@ -65,14 +65,7 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter(logger));
 
   // Strict validation — strip unknown props and reject extra fields
-  app.useGlobalPipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
+  app.useGlobalPipes(createValidationPipe());
 
   const port = process.env.PORT ?? 3000;
   await app.listen(port);

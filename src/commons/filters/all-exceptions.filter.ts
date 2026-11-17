@@ -1,20 +1,16 @@
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
+import { ArgumentsHost, Catch, ExceptionFilter } from '@nestjs/common';
 import { GqlArgumentsHost } from '@nestjs/graphql';
 import { Request, Response } from 'express';
 import { GraphQLError } from 'graphql';
 import { LoggerService } from '../logger.service';
+import { classifyError } from './error-classification';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   constructor(private readonly logger: LoggerService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const status = exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
-    const rawResponse = exception instanceof HttpException ? exception.getResponse() : 'Internal server error';
-    const message =
-      typeof rawResponse === 'string'
-        ? rawResponse
-        : (((rawResponse as Record<string, unknown>).message as string) ?? 'Internal server error');
+    const { status, code, message } = classifyError(exception);
     // [CRITICAL-4] Never expose stack traces outside development
     const isDev = process.env.NODE_ENV === 'development';
     const stack = isDev && exception instanceof Error ? exception.stack : undefined;
@@ -25,7 +21,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       const originalMessage = exception instanceof Error ? exception.message : String(exception);
       this.logger.error(`GraphQL Error: ${originalMessage} | Path: ${info?.path?.key}`, stack, 'ExceptionFilter');
       throw new GraphQLError(message, {
-        extensions: { code: status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'BAD_USER_INPUT', status },
+        extensions: { code, status },
       });
     }
 

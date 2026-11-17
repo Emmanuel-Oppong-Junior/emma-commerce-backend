@@ -5,7 +5,19 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-A.3 done (`c6f5fe5`), merged into `dev` and pushed; check its CI run. Take the first unblocked item in **Up next**.
+- **Task:** P0-A.4 — GraphQL hardening (PLAT-05, PERF-01, DOC-06, USR-14)
+- **Branch:** `fix/P0-A.4-graphql-hardening` (from `dev` @ `ca25094`) · **State:** in progress
+- **Steps:**
+  - [x] `graphql-query-complexity@2.0.0` added (pulls `lodash.get`, deprecated but tiny)
+  - [x] `src/commons/graphql/query-limits.ts`: depth ≤ 8 + aliases ≤ 15 validation rules, cost ≤ **3000** plugin (1000 was too low: a 50-product page with variants + reviews ≈ 2800); introspection exempt. 12 unit tests
+  - [x] Landing page disabled in production (`ApolloServerPluginLandingPageDisabled`)
+  - [x] `src/commons/filters/error-classification.ts` used by `AllExceptionsFilter` (13 unit tests). ValidationPipe failures → `InputValidationException` → `BAD_USER_INPUT`; the 7 duplicated pipe configs now use `createValidationPipe()` (`src/commons/validation-pipe.ts`). `formatError` treats `GRAPHQL_VALIDATION_FAILED`/`GRAPHQL_PARSE_FAILED` as safe
+  - [x] `test/e2e/graphql-hardening.e2e-spec.ts` 8/8 (deleting a category with sub-categories → `CONFLICT`, was 500). CLAUDE.md + frontend docs updated
+  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 808/808; repro 3/21; `audit:prod` 5/5 allowlisted (no new critical); e2e Linux node:20 205/205
+  - [ ] Commit/merge/push (waiting on Emmanuel); mark PLAT-05/PERF-01/DOC-06/USR-14 in audit; clear Active task  ← **Next step**
+- **Uncommitted work:** STATUS.md only
+
+**Previously:** P0-A.3 done (`c6f5fe5`), CI green on `ca25094`.
 
 **Last completed:** P0-A.3. Public `products`/`product` show only active + `PUBLISHED`; new `adminProducts`/`adminProduct` (ADMIN, SUPER_ADMIN) and `status` filter; nested `products` on Category/SubCategory/Brand published-only, `first` 1–100 (default 20). Seeds set `PUBLISHED`. Unit 784/784, e2e 197/197 (Linux node:20). **Breaking for the admin UI:** draft listing must use `adminProducts`/`adminProduct`. Not fixed: drafts can be added to cart; expiry (PRD-04); one query per parent for nested products.
 
@@ -55,6 +67,7 @@ Repro tests turned green: **3 / 21** (PLAT-01, IAM-07, SEC-01) (`test/repro/` on
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-17 | P0-A.4: add `graphql-query-complexity` for cost limits (Emmanuel); depth/alias limits hand-written (no `graphql-depth-limit`, unmaintained) | STATUS |
 | 2026-11-17 | P0-A.3: admins see drafts via new `adminProducts`/`adminProduct` queries; public `products`/`product` always filtered (Emmanuel). Admin UI must switch its draft listing | STATUS |
 | 2026-11-16 | P0-A.2: public reviewer name = first name + last initial ("Kwame A."), "Customer" when no name (Emmanuel). Field name stays `Review.user`, type becomes `PublicProfile`; field middleware, not `fieldResolverEnhancers` (Claude, per ADR-0012) | STATUS |
 | 2026-11-16 | Force-pushed local `dev` over `origin/dev` (was `9f98050`, whose commits all remain in `origin/main`); local and remote histories are unrelated (Emmanuel) | git, STATUS |

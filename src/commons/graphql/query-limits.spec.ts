@@ -1,0 +1,102 @@
+import { buildSchema, getIntrospectionQuery, parse, validate } from 'graphql';
+import { getComplexity } from 'graphql-query-complexity';
+import { aliasLimitRule, depthLimitRule, listAwareEstimator } from './query-limits';
+
+const schema = buildSchema(`
+  input PaginationArgs { first: Int }
+  type Profile { displayName: String! }
+  type Review { score: Int! user: Profile! product: Product! }
+  type Variant { id: ID! size: String }
+  type Product { id: ID! name: String! reviews: [Review!] variants: [Variant!] }
+  type ProductEdge { node: Product! }
+  type ProductConnection { edges: [ProductEdge!]! }
+  type Category { name: String! products(first: Int): [Product!]! }
+  type Query {
+    products(paginationArgs: PaginationArgs): ProductConnection!
+    product(id: ID!): Product
+    categories: [Category!]!
+  }
+`);
+
+const errorsFor = (query: string, rule: ReturnType<typeof depthLimitRule>) =>
+  validate(schema, parse(query), [rule]).map((e) => e.message);
+
+const cost = (query: string, variables: Record<string, unknown> = {}) =>
+  getComplexity({ schema, query: parse(query), variables, estimators: [listAwareEstimator] });
+
+describe('depthLimitRule', () => {
+  it('accepts the deepest query the storefront uses', () => {
+    const query = '{ products { edges { node { reviews { user { displayName } } } } } }';
+
+    expect(errorsFor(query, depthLimitRule(8))).toEqual([]);
+  });
+
+  it('rejects a query that walks the review/product cycle too deep', () => {
+    const query =
+      '{ product(id: "1") { reviews { product { reviews { product { reviews { product { reviews { score } } } } } } } } }';
+
+    expect(errorsFor(query, depthLimitRule(8))).toEqual(['Query depth 9 exceeds the maximum of 8']);
+  });
+
+  it('counts depth through fragments and survives fragment cycles', () => {
+    const query = `
+      { product(id: "1") { ...R } }
+      fragment R on Product { reviews { product { ...R } } }
+    `;
+
+    expect(errorsFor(query, depthLimitRule(2))).toEqual(['Query depth 3 exceeds the maximum of 2']);
+  });
+
+  it('ignores introspection so dev tooling keeps working', () => {
+    expect(errorsFor(getIntrospectionQuery(), depthLimitRule(8))).toEqual([]);
+  });
+});
+
+describe('aliasLimitRule', () => {
+  const aliased = (count: number) =>
+    `{ ${Array.from({ length: count }, (_, i) => `a${i}: product(id: "${i}") { id }`).join(' ')} }`;
+
+  it('accepts up to the limit', () => {
+    expect(errorsFor(aliased(15), aliasLimitRule(15))).toEqual([]);
+  });
+
+  it('rejects alias batching above the limit', () => {
+    expect(errorsFor(aliased(16), aliasLimitRule(15))).toEqual(['Query uses 16 aliases; the maximum is 15']);
+  });
+});
+
+describe('listAwareEstimator', () => {
+  it('multiplies a connection by the requested page size, counting edges once', () => {
+    // products 1 + 20 × (edges 1 + node 1 + name 1)
+    expect(cost('{ products(paginationArgs: { first: 20 }) { edges { node { name } } } }')).toBe(61);
+  });
+
+  it('uses the request variables for the page size', () => {
+    const query = 'query($n: Int) { products(paginationArgs: { first: $n }) { edges { node { name } } } }';
+
+    expect(cost(query, { n: 50 })).toBe(151);
+  });
+
+  it('assumes the default list size when no page size is given', () => {
+    // categories 1 + 10 × (name 1 + products 1 + 10 × name 1)
+    expect(cost('{ categories { name products { name } } }')).toBe(121);
+  });
+
+  it('keeps a realistic catalogue page within budget', () => {
+    const query = `{ products(paginationArgs: { first: 50 }) { edges { node {
+      id name variants { id size } reviews { score user { displayName } } } } } }`;
+
+    expect(cost(query)).toBeLessThanOrEqual(3000);
+  });
+
+  it('prices an abusive nested fan-out far above budget', () => {
+    const query = `{ products(paginationArgs: { first: 100 }) { edges { node {
+      reviews { product { reviews { product { reviews { score } } } } } } } } }`;
+
+    expect(cost(query)).toBeGreaterThan(3000);
+  });
+
+  it('does not charge for introspection', () => {
+    expect(cost('{ __schema { types { name fields { name } } } }')).toBe(0);
+  });
+});

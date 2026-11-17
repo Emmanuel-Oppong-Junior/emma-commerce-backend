@@ -1,4 +1,5 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
+import { createValidationPipe } from '../../src/commons/validation-pipe';
 import { Test } from '@nestjs/testing';
 import { createHmac } from 'crypto';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
@@ -114,14 +115,7 @@ describe('Payments & Returns (e2e)', () => {
       const logger = moduleFixture.get<LoggerService>(LoggerService);
       mockApp.useLogger(logger);
       mockApp.useGlobalFilters(new AllExceptionsFilter(logger));
-      mockApp.useGlobalPipes(
-        new ValidationPipe({
-          transform: true,
-          whitelist: true,
-          forbidNonWhitelisted: true,
-          transformOptions: { enableImplicitConversion: true },
-        }),
-      );
+      mockApp.useGlobalPipes(createValidationPipe());
       await mockApp.init();
 
       // Act
@@ -157,14 +151,7 @@ describe('Payments & Returns (e2e)', () => {
       const logger = moduleFixture.get<LoggerService>(LoggerService);
       mockApp.useLogger(logger);
       mockApp.useGlobalFilters(new AllExceptionsFilter(logger));
-      mockApp.useGlobalPipes(
-        new ValidationPipe({
-          transform: true,
-          whitelist: true,
-          forbidNonWhitelisted: true,
-          transformOptions: { enableImplicitConversion: true },
-        }),
-      );
+      mockApp.useGlobalPipes(createValidationPipe());
       await mockApp.init();
 
       const mutation = `

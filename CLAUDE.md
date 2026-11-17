@@ -99,7 +99,8 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 - `LoggerService` — Winston-based logger, used app-wide
 - `CloudinaryService` — image upload/storage (`upload.controller.ts` exposes the REST upload)
 - `AuditService` — writes to the `AuditLog` model
-- Global exception filter handles Prisma errors and maps them to GraphQL errors; stack traces are logged only in development
+- Global exception filter (`AllExceptionsFilter` + `error-classification.ts`) maps HTTP statuses to GraphQL codes (400 `BAD_REQUEST`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN`, 404 `NOT_FOUND`, 409 `CONFLICT`; ValidationPipe failures `BAD_USER_INPUT`) and Prisma P2002/P2003 → `CONFLICT`, P2025 → `NOT_FOUND` with safe messages; stack traces are logged only in development
+- GraphQL query limits (`commons/graphql/query-limits.ts`): depth ≤ 8, aliases ≤ 15, estimated cost ≤ 3000 (`graphql-query-complexity`); introspection is exempt and off in production
 - `GqlThrottlerGuard` — global rate limiting (stricter limits on auth mutations such as `forgotPassword`/`resetPassword`)
 - `PaginationArgs` / `PageInfo` entities are shared across all list queries
 

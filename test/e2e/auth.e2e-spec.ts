@@ -1,4 +1,5 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
+import { createValidationPipe } from '../../src/commons/validation-pipe';
 import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { createHash } from 'crypto';
@@ -460,14 +461,7 @@ describe('Authentication (e2e)', () => {
       const logger = moduleFixture.get<LoggerService>(LoggerService);
       mockApp.useLogger(logger);
       mockApp.useGlobalFilters(new AllExceptionsFilter(logger));
-      mockApp.useGlobalPipes(
-        new ValidationPipe({
-          transform: true,
-          whitelist: true,
-          forbidNonWhitelisted: true,
-          transformOptions: { enableImplicitConversion: true },
-        }),
-      );
+      mockApp.useGlobalPipes(createValidationPipe());
       await mockApp.init();
     });
 
@@ -516,14 +510,7 @@ describe('Authentication (e2e)', () => {
       const logger = moduleFixture.get<LoggerService>(LoggerService);
       mockApp.useLogger(logger);
       mockApp.useGlobalFilters(new AllExceptionsFilter(logger));
-      mockApp.useGlobalPipes(
-        new ValidationPipe({
-          transform: true,
-          whitelist: true,
-          forbidNonWhitelisted: true,
-          transformOptions: { enableImplicitConversion: true },
-        }),
-      );
+      mockApp.useGlobalPipes(createValidationPipe());
       await mockApp.init();
     });
 

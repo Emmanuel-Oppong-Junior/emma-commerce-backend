@@ -6,7 +6,16 @@ const INTERNAL_ERROR_CODE = 'INTERNAL_SERVER_ERROR';
 const isSafeToExpose = (extensions: GraphQLFormattedError['extensions']): boolean => {
   const code = extensions?.code as string | undefined;
   // Expose validation, auth, and business logic errors to clients
-  const safeCode = ['BAD_USER_INPUT', 'UNAUTHENTICATED', 'FORBIDDEN', 'NOT_FOUND', 'CONFLICT', 'BAD_REQUEST'];
+  const safeCode = [
+    'BAD_USER_INPUT',
+    'UNAUTHENTICATED',
+    'FORBIDDEN',
+    'NOT_FOUND',
+    'CONFLICT',
+    'BAD_REQUEST',
+    'GRAPHQL_VALIDATION_FAILED',
+    'GRAPHQL_PARSE_FAILED',
+  ];
   return !!code && safeCode.includes(code);
 };
 

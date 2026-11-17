@@ -3062,11 +3062,17 @@ GraphQL errors follow the standard Apollo format:
 | `404 NotFoundException` | `NOT_FOUND` |
 | `409 ConflictException` | `CONFLICT` |
 | Validation Pipe failures | `BAD_USER_INPUT` |
+| Duplicate value (Prisma `P2002`) | `CONFLICT` |
+| Record still referenced, e.g. deleting a category that has sub-categories (Prisma `P2003`) | `CONFLICT` |
+| Record not found (Prisma `P2025`) | `NOT_FOUND` |
+| Query too deep (> 8), too many aliases (> 15) or too costly (> 3000), HTTP 400 | `GRAPHQL_VALIDATION_FAILED` |
 | `500 InternalServerError` | `INTERNAL_SERVER_ERROR` |
+
+**Query cost:** each field costs 1; a list costs its page size (`first`, or 10 when not given) times the cost of its fields. A page of 50 products with variants and reviews costs about 2,800.
 
 ### Production vs. Development
 
-In **production**: only errors with codes `BAD_USER_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `BAD_REQUEST` expose their real message. All other errors return `{ "message": "Internal server error", "extensions": { "code": "INTERNAL_SERVER_ERROR" } }`.
+In **production**: only errors with codes `BAD_USER_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `BAD_REQUEST`, `GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED` expose their real message. All other errors return `{ "message": "Internal server error", "extensions": { "code": "INTERNAL_SERVER_ERROR" } }`.
 
 In **development**: full error details (including stack traces) are returned.
 

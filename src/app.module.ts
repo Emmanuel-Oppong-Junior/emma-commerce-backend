@@ -12,6 +12,8 @@ import { envValidationSchema } from './config/env.validation';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { ApolloServerPluginLandingPageLocalDefault } from '@apollo/server/plugin/landingPage/default';
+import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/disabled';
+import { aliasLimitRule, depthLimitRule, queryCostPlugin } from './commons/graphql/query-limits';
 import { CommonsModule } from './commons/commons.module';
 import { ProductsModule } from './products/products.module';
 import { CategoriesModule } from './categories/categories.module';
@@ -97,7 +99,13 @@ import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
         playground: false,
         introspection: process.env.NODE_ENV !== 'production',
         formatError: formatError(logger),
-        plugins: [ApolloServerPluginLandingPageLocalDefault()],
+        plugins: [
+          process.env.NODE_ENV === 'production'
+            ? ApolloServerPluginLandingPageDisabled()
+            : ApolloServerPluginLandingPageLocalDefault(),
+          queryCostPlugin(),
+        ],
+        validationRules: [depthLimitRule(), aliasLimitRule()],
         sortSchema: true,
         autoSchemaFile: 'schema.gql',
         context: ({ req, res }: { req: unknown; res: unknown }) => ({ req, res }),
