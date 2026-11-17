@@ -2,8 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CartService } from '../cart/cart.service';
 import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '@prisma/client';
-import { OrdersService } from './order.service';
-import { OrdersRepository } from './order.repository';
+import { ORDER_EXPIRY_LOCK_KEY, OrdersService } from './order.service';
+import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { AuditService } from '../commons/audit.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { TaxService } from '../tax/tax.service';
@@ -41,6 +41,7 @@ const mockOrdersRepository = {
   findProduct: jest.fn(),
   clearCartItems: jest.fn(),
   runTransaction: jest.fn(),
+  runWithAdvisoryLock: jest.fn(),
 };
 
 const mockCartService = {
@@ -173,6 +174,7 @@ describe('OrdersService', () => {
       const stubTx = {};
       return callback(stubTx as any);
     });
+    mockOrdersRepository.runWithAdvisoryLock.mockImplementation((_key, _maxMs, fn: () => Promise<unknown>) => fn());
     // Default product stock operations return the product unchanged
     mockOrdersRepository.decrementProductStock.mockResolvedValue({ ...mockProduct, quantity: 98 });
     mockOrdersRepository.updateProductStock.mockResolvedValue(mockProduct);
@@ -571,6 +573,7 @@ describe('OrdersService', () => {
         'order1',
         OrderStatus.CANCELLED,
         [OrderStatus.PENDING, OrderStatus.PROCESSING],
+        undefined,
       );
       expect(ordersRepository.updateProductStock).toHaveBeenCalledWith(expect.anything(), 'prod1', 2);
       expect(result.status).toBe('CANCELLED');
@@ -685,6 +688,37 @@ describe('OrdersService', () => {
 
       expect(expired).toBe(1);
       expect(ordersRepository.updateProductStock).toHaveBeenCalledTimes(1);
+    });
+
+    it('claims each order only while it still matches the expiry rule, so a restarted payment is not cancelled', async () => {
+      mockOrdersRepository.findExpiredPendingOrders.mockResolvedValue([mockOrder]);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+
+      await ordersService.expireAbandonedOrders(1);
+
+      const cutoff: Date = mockOrdersRepository.findExpiredPendingOrders.mock.calls[0][0];
+      expect(ordersRepository.transitionStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        'order1',
+        OrderStatus.CANCELLED,
+        [OrderStatus.PENDING, OrderStatus.PROCESSING],
+        abandonedOrderWhere(cutoff),
+      );
+    });
+
+    it('does nothing and returns null when another instance holds the expiry lock', async () => {
+      mockOrdersRepository.runWithAdvisoryLock.mockResolvedValue(null);
+
+      const expired = await ordersService.expireAbandonedOrders(1);
+
+      expect(expired).toBeNull();
+      expect(ordersRepository.runWithAdvisoryLock).toHaveBeenCalledWith(
+        ORDER_EXPIRY_LOCK_KEY,
+        expect.any(Number),
+        expect.any(Function),
+      );
+      expect(ordersRepository.findExpiredPendingOrders).not.toHaveBeenCalled();
+      expect(ordersRepository.transitionStatus).not.toHaveBeenCalled();
     });
   });
 });

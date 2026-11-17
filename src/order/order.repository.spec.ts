@@ -350,4 +350,29 @@ describe('OrdersRepository', () => {
       expect(mockPrisma.$transaction).toHaveBeenCalledWith(fn);
     });
   });
+
+  describe('runWithAdvisoryLock', () => {
+    const tx = { $queryRaw: jest.fn() };
+
+    beforeEach(() => {
+      jest.resetAllMocks();
+      mockPrisma.$transaction.mockImplementation((cb: any) => cb(tx));
+    });
+
+    it('runs the job and returns its result when the lock is free', async () => {
+      tx.$queryRaw.mockResolvedValue([{ locked: true }]);
+      const job = jest.fn().mockResolvedValue(3);
+
+      await expect(repository.runWithAdvisoryLock(42, 60_000, job)).resolves.toBe(3);
+      expect(job).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips the job and returns null when another process holds the lock', async () => {
+      tx.$queryRaw.mockResolvedValue([{ locked: false }]);
+      const job = jest.fn();
+
+      await expect(repository.runWithAdvisoryLock(42, 60_000, job)).resolves.toBeNull();
+      expect(job).not.toHaveBeenCalled();
+    });
+  });
 });

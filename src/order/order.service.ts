@@ -15,13 +15,16 @@ import {
   Product,
 } from '@prisma/client';
 import { AuditService } from '../commons/audit.service';
-import { OrdersRepository } from './order.repository';
+import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { CouponsService } from '../coupons/coupons.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
+
+export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
+const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
 
 interface CreateOrderParams {
   fulfillmentType: FulfillmentType;
@@ -154,22 +157,25 @@ export class OrdersService {
   }
 
   /**
-   * Cancels all PENDING online orders that have had no payment initiated within the given window.
+   * Cancels PENDING online orders older than the window that have no payment attempt, or only a pending or
+   * failed one untouched for the window. Returns null when another instance is already running the job.
    */
-  async expireAbandonedOrders(expiryHours: number): Promise<number> {
-    const cutoff = new Date(Date.now() - expiryHours * 60 * 60 * 1000);
-    const orders = await this.ordersRepository.findExpiredPendingOrders(cutoff);
-    let expired = 0;
-    for (const order of orders) {
-      try {
-        await this.cancelOrderAndRestoreStock(order);
-        expired += 1;
-      } catch (error) {
-        // Paid or cancelled since it was selected: leave it alone and expire the rest.
-        if (!(error instanceof ConflictException)) throw error;
+  async expireAbandonedOrders(expiryHours: number): Promise<number | null> {
+    return this.ordersRepository.runWithAdvisoryLock(ORDER_EXPIRY_LOCK_KEY, ORDER_EXPIRY_MAX_RUN_MS, async () => {
+      const cutoff = new Date(Date.now() - expiryHours * 60 * 60 * 1000);
+      const orders = await this.ordersRepository.findExpiredPendingOrders(cutoff);
+      let expired = 0;
+      for (const order of orders) {
+        try {
+          await this.cancelOrderAndRestoreStock(order, abandonedOrderWhere(cutoff));
+          expired += 1;
+        } catch (error) {
+          // Paid, payment restarted or cancelled since it was selected: leave it alone and expire the rest.
+          if (!(error instanceof ConflictException)) throw error;
+        }
       }
-    }
-    return expired;
+      return expired;
+    });
   }
 
   /**
@@ -456,9 +462,13 @@ export class OrdersService {
     return new ConflictException(`Order "${orderId}" was changed by another request; reload it and try again`);
   }
 
-  /** Claims the order (conditional status write) before returning stock, so stock comes back exactly once. */
+  /**
+   * Claims the order (conditional status write, optionally narrowed by `claimGuard`) before returning stock,
+   * so stock comes back exactly once.
+   */
   private async cancelOrderAndRestoreStock(
     order: Order & { items: OrderItem[] },
+    claimGuard?: Prisma.OrderWhereInput,
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
       const cancelled = await this.ordersRepository.transitionStatus(
@@ -466,6 +476,7 @@ export class OrdersService {
         order.id,
         OrderStatus.CANCELLED,
         allowedFrom(OrderStatus.CANCELLED),
+        claimGuard,
       );
       if (!cancelled) throw this.changedMeanwhile(order.id);
       for (const item of order.items) {

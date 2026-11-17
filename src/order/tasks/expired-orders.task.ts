@@ -18,7 +18,9 @@ export class ExpiredOrdersTask {
 
     const cancelled = await this.ordersService.expireAbandonedOrders(ORDER_EXPIRY_HOURS);
 
-    if (cancelled > 0) {
+    if (cancelled === null) {
+      this.logger.log('Skipped: another instance is already expiring orders', 'ExpiredOrdersTask');
+    } else if (cancelled > 0) {
       this.logger.warn(
         `Expired orders cancelled: ${cancelled} order(s) exceeded ${ORDER_EXPIRY_HOURS}h without payment`,
         'ExpiredOrdersTask',

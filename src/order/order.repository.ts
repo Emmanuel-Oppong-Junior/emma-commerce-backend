@@ -6,6 +6,7 @@ import {
   OrderItem,
   OrderStatus,
   PaymentMethod,
+  PaymentStatus,
   Prisma,
   Product,
   User,
@@ -13,6 +14,23 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 
 type OrderWithItems = Order & { items: OrderItem[] };
+
+/**
+ * Unpaid online orders older than `cutoff` with no payment attempt, or whose last attempt is still
+ * pending or failed and was last touched before `cutoff`. Never matches an order with a completed payment.
+ */
+export function abandonedOrderWhere(cutoff: Date): Prisma.OrderWhereInput {
+  return {
+    status: OrderStatus.PENDING,
+    paymentMethod: PaymentMethod.ONLINE,
+    createdAt: { lt: cutoff },
+    deleted: false,
+    OR: [
+      { payment: { is: null } },
+      { payment: { is: { status: { in: [PaymentStatus.PENDING, PaymentStatus.FAILED] }, updatedAt: { lt: cutoff } } } },
+    ],
+  };
+}
 
 @Injectable()
 export class OrdersRepository {
@@ -104,7 +122,7 @@ export class OrdersRepository {
   }
 
   /**
-   * Moves the order to `to` only if it is still in one of `from` (and not deleted).
+   * Moves the order to `to` only if it is still in one of `from` (and not deleted) and matches `guard`.
    * Returns null when another request changed it first, so callers can report a conflict.
    */
   async transitionStatus(
@@ -112,9 +130,10 @@ export class OrdersRepository {
     orderId: string,
     to: OrderStatus,
     from: OrderStatus[],
+    guard?: Prisma.OrderWhereInput,
   ): Promise<OrderWithItems | null> {
     const { count } = await tx.order.updateMany({
-      where: { id: orderId, status: { in: from }, deleted: false },
+      where: { id: orderId, status: { in: from }, deleted: false, ...(guard && { AND: [guard] }) },
       data: { status: to },
     });
     if (count === 0) return null;
@@ -182,14 +201,24 @@ export class OrdersRepository {
 
   async findExpiredPendingOrders(cutoff: Date): Promise<OrderWithItems[]> {
     return this.prisma.order.findMany({
-      where: {
-        status: OrderStatus.PENDING,
-        paymentMethod: PaymentMethod.ONLINE,
-        createdAt: { lt: cutoff },
-        payment: { is: null },
-        deleted: false,
-      },
+      where: abandonedOrderWhere(cutoff),
       include: { items: true },
     }) as unknown as OrderWithItems[];
+  }
+
+  /**
+   * Runs `fn` only when no other process holds the Postgres advisory lock `lockKey`; returns null otherwise.
+   * The lock belongs to a transaction kept open while `fn` runs, so it is released even if the process dies.
+   */
+  async runWithAdvisoryLock<T>(lockKey: number, maxDurationMs: number, fn: () => Promise<T>): Promise<T | null> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const [{ locked }] = await tx.$queryRaw<
+          { locked: boolean }[]
+        >`SELECT pg_try_advisory_xact_lock(${lockKey}::bigint) AS locked`;
+        return locked ? fn() : null;
+      },
+      { timeout: maxDurationMs },
+    );
   }
 }
