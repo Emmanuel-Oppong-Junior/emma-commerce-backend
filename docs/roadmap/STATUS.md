@@ -5,20 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P0-B.1 — Order status state machine (ORD-02, ORD-04; ADR-0014 subset on current enum)
-- **Branch:** `fix/P0-B.1-order-state-machine` (from `dev` @ `d5b0962`) · **State:** in progress
-- **Steps:**
-  - [x] `src/order/order-status.ts` table + `order-status.spec.ts` (all 25 pairs)
-  - [x] Repository: `transitionStatus(tx, id, to, from)` / `softDelete(tx, id)` conditional `updateMany`, return null if lost; old `updateStatus` removed (its 3 repo tests replaced by equivalent transitionStatus tests)
-  - [x] Service: admin `updateOrderStatus` via table, CANCELLED → `adminCancelOrder`, ONLINE PENDING→PROCESSING refused; cancel claims before restoring stock; `markOrderAsPaid` (no callers) conditional; expiry skips CONFLICTs. Invalid → `CONFLICT` (was BAD_REQUEST)
-  - [x] Service spec 26/26; `test/e2e/order-status.e2e-spec.ts` 4/4 (concurrent cancel fails on old code); repro ORD-01 + ORD-04 green (ORD-03 is B.2); frontend docs
-  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 859/859; repro 10/21; e2e Linux node:20 209/209
-  - [ ] Commit/merge/push (waiting on Emmanuel); mark ORD-02/ORD-04 (+ORD-01 partly) in audit; repro 10/21; clear Active task  ← **Next step**
-- **Uncommitted work:** STATUS.md only
+_None._ P0-B.1 done (`9028bb3`), merged into `dev` and pushed; check its CI run. Take the first unblocked item in **Up next**.
 
-**Previously:** P0-A.5 done (`5e71ff2`), CI green on `d5b0962`; epic P0-A complete.
-
-**Last completed:** P0-A.5. GraphQL log lines: `op Name > rootField | Variables: {keys: "[redacted]"}`, no query text; Prisma errors logged by code (`Prisma P2002 on User.email`); email recipients masked; 4 local log files deleted. Unit 818/818, e2e 205/205, repro 8/21. Residual: GraphQL validation messages can quote a mistyped value (`formatError` logs them).
+**Last completed:** P0-B.1. Order transition table (`src/order/order-status.ts`) enforced everywhere; status/soft-delete writes are conditional `updateMany` claims inside the stock transaction; admin CANCELLED → real cancel; unpaid ONLINE orders leave PENDING only via payment. Invalid changes → `CONFLICT` (was BAD_REQUEST). Unit 859/859, e2e 209/209 (incl. concurrent cancel), repro 10/21. Left: ORD-03 / restore semantics → P0-B.2; `markOrderAsPaid` has no callers.
 
 <!-- Shape while a task is active (keep it current):
 - **Task:** P0-X.n — <title>
@@ -35,7 +24,7 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-B.1 Order status transition table + conditional writes in the transaction (ADR-0014; ORD-02, ORD-04) | now | — (branch from `dev`) |
+| 1 | P0-B.2 Restore stock only on the transition that releases it; soft delete never restores; inventory log on every restore (repro ORD-03) | now | — (branch from `dev`) |
 | 2 | P0-B.4 Shipping: unmatched city rejected, no silent free delivery (repro SHZ-01) | ∥ with 1 | — |
 | 3 | P0-B.5 Pickup orders validate an active pickup location | ∥ | — |
 | 4 | P0-B.6 Charge currency fixed server-side to GHS | ∥ | — |
@@ -46,13 +35,13 @@
 |---|---|---|
 | P0-F Safety rails | 5 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
 | P0-A Request pipeline & access | **5 / 5** | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`), A.5 (`5e71ff2`) |
-| P0-B Orders & stock | 0 / 11 | |
+| P0-B Orders & stock | 1 / 11 | B.1 (`9028bb3`) |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 0 / 6 | |
 | P0-O Deployability & ops | 0 / 7 | |
 | P0-D Audit & analytics | 0 / 3 | |
 
-Repro tests turned green: **8 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **10 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-04) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks`, `e2e` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
