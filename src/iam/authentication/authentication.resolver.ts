@@ -14,6 +14,9 @@ import { GoogleAuthenticationService } from './social/google-authentication.serv
 import { FacebookAuthenticationService } from './social/facebook-authentication.service';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { trackForgotPasswordByEmail } from './forgot-password-email.tracker';
+import { VerifyEmailInput } from './dto/verify-email.input';
+import { EmailVerificationService } from '../../users/email-verification.service';
+import { ActiveUser } from './decorators/active-user.decorator';
 
 @Auth(AuthType.None)
 @Resolver(() => AuthEntity)
@@ -22,6 +25,7 @@ export class AuthenticationResolver {
     private readonly authService: AuthenticationService,
     private readonly googleAuthService: GoogleAuthenticationService,
     private readonly facebookAuthService: FacebookAuthenticationService,
+    private readonly emailVerificationService: EmailVerificationService,
   ) {}
 
   @Throttle({ auth: { ttl: 60000, limit: 5 } })
@@ -83,5 +87,24 @@ export class AuthenticationResolver {
   @Mutation(() => Boolean, { description: 'Reset password using a valid reset token' })
   resetPassword(@Args('input', { type: () => ResetPasswordInput }) input: ResetPasswordInput) {
     return this.authService.resetPassword(input.resetToken, input.newPassword);
+  }
+
+  @Throttle({ auth: { ttl: 60000, limit: 10 } })
+  @Mutation(() => Boolean, {
+    description:
+      'Verify an email address with the token from the verification email. Completes a pending email change (signing the user out everywhere) if one is in progress.',
+  })
+  verifyEmail(@Args('input', { type: () => VerifyEmailInput }) input: VerifyEmailInput) {
+    return this.emailVerificationService.verify(input.token);
+  }
+
+  @Throttle({ verificationEmail: { ttl: 3600000, limit: 5 } })
+  @Auth(AuthType.Bearer)
+  @Mutation(() => Boolean, {
+    description:
+      'Send a new verification email to the signed-in user: to the pending new email if a change is in progress, otherwise to the unverified current email',
+  })
+  resendVerificationEmail(@ActiveUser('id') userId: string) {
+    return this.emailVerificationService.resend(userId);
   }
 }

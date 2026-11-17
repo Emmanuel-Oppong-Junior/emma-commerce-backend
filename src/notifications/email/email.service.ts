@@ -8,6 +8,8 @@ import {
   orderStatusEmailHtml,
   paymentConfirmationEmailHtml,
   passwordResetEmailHtml,
+  emailVerificationEmailHtml,
+  emailChangeRequestedEmailHtml,
 } from './templates/email.templates';
 
 export function maskEmail(email: string): string {
@@ -48,6 +50,22 @@ export class EmailService {
 
   async sendPasswordResetEmail(to: string, resetToken: string): Promise<void> {
     await this.send(to, 'Reset your Emma Commerce password', passwordResetEmailHtml(resetToken));
+  }
+
+  async sendEmailVerificationEmail(to: string, verificationToken: string, expiresInHours: number): Promise<void> {
+    await this.send(
+      to,
+      'Confirm your Emma Commerce email address',
+      emailVerificationEmailHtml(verificationToken, expiresInHours),
+    );
+  }
+
+  async sendEmailChangeRequestedEmail(to: string, newEmail: string): Promise<void> {
+    await this.send(
+      to,
+      'Your Emma Commerce email address is changing',
+      emailChangeRequestedEmailHtml(maskEmail(newEmail)),
+    );
   }
 
   private async send(to: string, subject: string, html: string): Promise<void> {

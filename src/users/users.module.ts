@@ -9,18 +9,21 @@ import { AddressesLoader } from './loaders/addresses.loader';
 import { OrdersLoader } from './loaders/orders.loader';
 import { UsersLoader } from './loaders/users.loader';
 import { PrismaModule } from '../prisma/prisma.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailVerificationService } from './email-verification.service';
 
 @Module({
-  imports: [CommonsModule, PrismaModule],
+  imports: [CommonsModule, PrismaModule, NotificationsModule],
   providers: [
     UsersResolver,
     UsersService,
     UsersRepository,
+    EmailVerificationService,
     { provide: HashingService, useClass: BcryptService },
     AddressesLoader,
     OrdersLoader,
     UsersLoader,
   ],
-  exports: [UsersService, UsersRepository, UsersLoader],
+  exports: [UsersService, UsersRepository, UsersLoader, EmailVerificationService],
 })
 export class UsersModule {}

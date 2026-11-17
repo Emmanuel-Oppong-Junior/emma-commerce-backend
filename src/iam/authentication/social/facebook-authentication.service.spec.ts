@@ -56,7 +56,12 @@ describe('FacebookAuthenticationService', () => {
 
     await expect(service.authenticate(TOKEN)).resolves.toEqual(tokens);
 
-    expect(usersService.createUserByAuthProvider).toHaveBeenCalledWith('fb-42', PROVIDERS.facebook, 'kofi@example.com');
+    expect(usersService.createUserByAuthProvider).toHaveBeenCalledWith(
+      'fb-42',
+      PROVIDERS.facebook,
+      'kofi@example.com',
+      false,
+    );
   });
 
   it('signs in the account already linked to the Facebook identity', async () => {

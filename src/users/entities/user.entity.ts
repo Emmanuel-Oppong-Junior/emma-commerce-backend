@@ -16,6 +16,19 @@ export class User {
   @Field(() => String, { description: 'Email address', middleware: [selfOrAdmin] })
   email: string;
 
+  @Field(() => Boolean, {
+    description: 'Whether the current email address has been verified',
+    middleware: [selfOrAdmin],
+  })
+  emailVerified?: boolean;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'New email address awaiting verification; the account keeps `email` until it is verified',
+    middleware: [selfOrAdmin],
+  })
+  pendingEmail?: string;
+
   @Field(() => String, { nullable: true, description: 'Phone number', middleware: [selfOrAdmin] })
   phoneNumber?: string;
 

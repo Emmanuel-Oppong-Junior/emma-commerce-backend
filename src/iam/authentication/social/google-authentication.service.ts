@@ -40,7 +40,15 @@ export class GoogleAuthenticationService {
     if (user) {
       return this.authService.generateTokens(user);
     }
-    const newUser = await this.userService.createUserByAuthProvider(googleId, PROVIDERS.google, email, name, picture);
+    // getVerifiedProfile only returns an email Google marks as verified.
+    const newUser = await this.userService.createUserByAuthProvider(
+      googleId,
+      PROVIDERS.google,
+      email,
+      true,
+      name,
+      picture,
+    );
     return this.authService.generateTokens(newUser);
   }
 

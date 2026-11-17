@@ -75,6 +75,30 @@ describe('EmailService', () => {
     expect(allLogLines(logger)).not.toContain('reset-token-abc123');
   });
 
+  it('never logs the email verification token', async () => {
+    mockSend.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'Invalid `to` field.' } });
+    const { service, logger } = buildEmailService('re_test_key');
+
+    await service.sendEmailVerificationEmail(RECIPIENT, 'verify-token-abc123', 24);
+
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({ html: expect.stringContaining('verify-token-abc123') }),
+    );
+    expect(allLogLines(logger)).not.toContain('verify-token-abc123');
+  });
+
+  it('shows the old address only a masked form of the requested new address', async () => {
+    mockSend.mockResolvedValue({ data: { id: 'email-2' }, error: null });
+    const { service } = buildEmailService('re_test_key');
+
+    await service.sendEmailChangeRequestedEmail(RECIPIENT, 'attacker.mailbox@evil.example');
+
+    const { to, html } = mockSend.mock.calls[0][0];
+    expect(to).toBe(RECIPIENT);
+    expect(html).toContain('a***@evil.example');
+    expect(html).not.toContain('attacker.mailbox');
+  });
+
   it('warns without calling Resend when RESEND_API_KEY is not configured', async () => {
     const { service, logger } = buildEmailService(undefined);
 

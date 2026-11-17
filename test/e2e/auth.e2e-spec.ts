@@ -10,6 +10,7 @@ import { AllExceptionsFilter } from '../../src/commons/filters/all-exceptions.fi
 import { GqlThrottlerGuard } from '../../src/commons/guards/gql-throttler.guard';
 import { GoogleAuthenticationService } from '../../src/iam/authentication/social/google-authentication.service';
 import { FacebookAuthenticationService } from '../../src/iam/authentication/social/facebook-authentication.service';
+import { NotificationsService } from '../../src/notifications/notifications.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
@@ -362,15 +363,27 @@ describe('Authentication (e2e)', () => {
     });
 
     it('revokes every session when the user changes their email', async () => {
-      const { accessToken, refreshToken, email } = await newAccount();
+      const { accessToken, refreshToken, email, userId } = await newAccount();
       const mutation = `
-        mutation Update($input: UpdateUserInput!) {
-          updateMyProfile(updateMyProfileInput: $input) { id }
+        mutation Update($input: UpdateUserInput!, $currentPassword: String) {
+          updateMyProfile(updateMyProfileInput: $input, currentPassword: $currentPassword) { id }
         }
       `;
+      const verificationEmails = jest.spyOn(app.get(NotificationsService), 'sendEmailVerification');
 
-      const update = await gqlRequest(app, mutation, { input: { email: `moved-${email}` } }, accessToken).expect(200);
+      const update = await gqlRequest(
+        app,
+        mutation,
+        { input: { email: `moved-${email}` }, currentPassword: 'Password@1' },
+        accessToken,
+      ).expect(200);
       expect(update.body.errors).toBeUndefined();
+      const token = verificationEmails.mock.calls.find(([to]) => to === `moved-${email}`)![1];
+      verificationEmails.mockRestore();
+      // The email (and so the sessions) only change once the new address is verified.
+      expect(await prisma.refreshToken.count({ where: { userId, revoked: false } })).toBe(1);
+      const verify = await gqlRequest(app, `mutation { verifyEmail(input: { token: "${token}" }) }`).expect(200);
+      expect(verify.body.errors).toBeUndefined();
 
       const res = await refresh(refreshToken);
       expect(res.body.errors[0].message).toMatch(/invalid or expired/i);
@@ -661,6 +674,7 @@ describe('Authentication (e2e)', () => {
         include: { user: true },
       });
       expect(link.user.email).toBe('newcomer@gmail.com');
+      expect(link.user.emailVerifiedAt).not.toBeNull();
 
       const again = await gqlRequest(app, GOOGLE_SIGN_IN, { input: { token: 'newcomer-google-token' } }).expect(200);
       expect(again.body.errors).toBeUndefined();

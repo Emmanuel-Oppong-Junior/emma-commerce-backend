@@ -3,6 +3,7 @@ import { AuthenticationResolver } from './authentication.resolver';
 import { AuthenticationService } from './authentication.service';
 import { GoogleAuthenticationService } from './social/google-authentication.service';
 import { FacebookAuthenticationService } from './social/facebook-authentication.service';
+import { EmailVerificationService } from '../../users/email-verification.service';
 import { AuthEntity } from './entities/auth.entity';
 import { SignUpInput } from './dto/sign-up.input';
 import { SignInInput } from './dto/sign-in.input';
@@ -23,6 +24,7 @@ describe('AuthenticationResolver', () => {
         { provide: AuthenticationService, useValue: mockAuthService },
         { provide: GoogleAuthenticationService, useValue: {} },
         { provide: FacebookAuthenticationService, useValue: {} },
+        { provide: EmailVerificationService, useValue: {} },
       ],
     }).compile();
 

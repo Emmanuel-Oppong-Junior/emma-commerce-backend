@@ -4,6 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type RefreshRotationOutcome = 'rotated' | 'reused' | 'invalid';
 
+export type EmailVerificationOutcome =
+  | { status: 'invalid' }
+  | { status: 'email-taken' }
+  | { status: 'verified'; user: User; firstVerification: boolean }
+  | { status: 'email-changed'; user: User };
+
 // A replay this soon after the token was rotated is a simultaneous refresh (two tabs), not theft.
 const CONCURRENT_REFRESH_GRACE_MS = 10_000;
 
@@ -28,12 +34,14 @@ export class UsersRepository {
     profilePicture: string | undefined,
     providerId: string,
     provider: string,
+    emailVerifiedAt: Date | null,
   ): Promise<User> {
     return this.prisma.user.create({
       data: {
         email: email as string,
         name,
         profilePicture,
+        emailVerifiedAt,
         authProvider: { create: { providerId, provider } },
       },
     });
@@ -203,5 +211,66 @@ export class UsersRepository {
       where: { id: userId },
       data: { passwordResetToken: null, passwordResetTokenExp: null },
     });
+  }
+
+  // Email verification operations
+
+  /** Stores the hash of a new verification token (replacing any earlier one) and, for an email change, the pending address. */
+  async saveEmailVerificationToken(
+    userId: string,
+    token: { hash: string; expiresAt: Date },
+    data: Prisma.UserUpdateInput = {},
+  ): Promise<User> {
+    return this.update(userId, {
+      ...data,
+      emailVerificationToken: token.hash,
+      emailVerificationTokenExp: token.expiresAt,
+    });
+  }
+
+  /**
+   * Consumes a live verification token exactly once. Without a pending email it marks the current email verified;
+   * with one it switches the account to the pending email and revokes every session, unless another account
+   * took that address in the meantime, in which case the pending change is dropped.
+   */
+  async consumeEmailVerificationToken(tokenHash: string): Promise<EmailVerificationOutcome> {
+    try {
+      return await this.prisma.$transaction(async (tx): Promise<EmailVerificationOutcome> => {
+        const now = new Date();
+        const user = await tx.user.findFirst({
+          where: { emailVerificationToken: tokenHash, emailVerificationTokenExp: { gt: now } },
+        });
+        if (!user) return { status: 'invalid' };
+
+        // Concurrent verifications queue on the row lock and re-check the token, so only one claim matches.
+        const claim = { id: user.id, emailVerificationToken: tokenHash };
+        const clearToken = { emailVerificationToken: null, emailVerificationTokenExp: null };
+        const { pendingEmail } = user;
+
+        if (!pendingEmail) {
+          const { count } = await tx.user.updateMany({ where: claim, data: { ...clearToken, emailVerifiedAt: now } });
+          if (count !== 1) return { status: 'invalid' };
+          return {
+            status: 'verified',
+            user: { ...user, ...clearToken, emailVerifiedAt: now },
+            firstVerification: !user.emailVerifiedAt,
+          };
+        }
+
+        if (await tx.user.findUnique({ where: { email: pendingEmail } })) {
+          await tx.user.updateMany({ where: claim, data: { ...clearToken, pendingEmail: null } });
+          return { status: 'email-taken' };
+        }
+        const changed = { ...clearToken, email: pendingEmail, pendingEmail: null, emailVerifiedAt: now };
+        const { count } = await tx.user.updateMany({ where: claim, data: changed });
+        if (count !== 1) return { status: 'invalid' };
+        await tx.refreshToken.updateMany({ where: { userId: user.id, revoked: false }, data: { revoked: true } });
+        return { status: 'email-changed', user: { ...user, ...changed } };
+      });
+    } catch (e) {
+      // Another account claimed the address between the check and the switch.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') return { status: 'email-taken' };
+      throw e;
+    }
   }
 }

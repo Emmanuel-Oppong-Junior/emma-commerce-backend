@@ -19,6 +19,10 @@ const mockUser: User = {
   lockedUntil: null,
   passwordResetToken: null,
   passwordResetTokenExp: null,
+  emailVerifiedAt: null,
+  pendingEmail: null,
+  emailVerificationToken: null,
+  emailVerificationTokenExp: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };
@@ -98,6 +102,7 @@ describe('UsersRepository', () => {
         undefined,
         'google123',
         'google',
+        null,
       );
 
       expect(mockPrismaUser.create).toHaveBeenCalledWith(

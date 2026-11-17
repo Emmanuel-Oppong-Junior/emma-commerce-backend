@@ -14,6 +14,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { LoggerService } from '../../commons/logger.service';
+import { EmailVerificationService } from '../../users/email-verification.service';
 
 const mockUsersService = {
   findUserByEmail: jest.fn(),
@@ -65,6 +66,10 @@ const mockNotificationsService = {
   sendPasswordReset: jest.fn(),
 };
 
+const mockEmailVerificationService = {
+  sendSignUpVerification: jest.fn(),
+};
+
 const mockLogger = {
   error: jest.fn(),
   warn: jest.fn(),
@@ -101,6 +106,7 @@ describe('AuthenticationService', () => {
         { provide: jwtConfig.KEY, useValue: mockJwtConfig },
         { provide: NotificationsService, useValue: mockNotificationsService },
         { provide: LoggerService, useValue: mockLogger },
+        { provide: EmailVerificationService, useValue: mockEmailVerificationService },
       ],
     }).compile();
 
@@ -130,6 +136,17 @@ describe('AuthenticationService', () => {
       expect(jwtService.signAsync).toHaveBeenCalledTimes(2);
       expect(usersRepository.createRefreshToken).toHaveBeenCalledTimes(1);
       expect(result).toEqual({ accessToken: 'access', refreshToken: 'refresh' });
+    });
+
+    it('emails a verification token instead of the welcome email', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(null);
+      mockUsersService.createUserByCredentials.mockResolvedValue(baseUser);
+      mockJwtService.signAsync.mockResolvedValueOnce('access').mockResolvedValueOnce('refresh');
+
+      await service.signUp({ email: 'test@example.com', password: 'Password@1', name: 'Test' });
+
+      expect(mockEmailVerificationService.sendSignUpVerification).toHaveBeenCalledWith(baseUser);
+      expect(mockNotificationsService.sendWelcomeEmail).not.toHaveBeenCalled();
     });
 
     it('should throw ConflictException if user already exists', async () => {

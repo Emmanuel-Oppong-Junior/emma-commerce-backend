@@ -15,31 +15,35 @@ datasource db {
 }
 
 model User {
-  id                    String          @id @default(cuid())
-  name                  String?
-  email                 String          @unique
-  password              String?
-  phoneNumber           String?         @unique
-  role                  Role            @default(USER)
-  isActive              Boolean         @default(true)
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
-  lastLoginAt           DateTime?
-  profilePicture        String?
-  failedLoginAttempts   Int             @default(0)
-  lockedUntil           DateTime?
-  addresses             Address[]
-  reviews               Review[]
-  cart                  Cart?
-  order                 Order[]
-  authProvider          AuthProvider[]
-  auditLog              AuditLog[]
-  wishlist              WishList?
-  refreshTokens         RefreshToken[]
-  passwordResetToken    String?
-  passwordResetTokenExp DateTime?
-  couponUsages          CouponUsage[]
-  returnRequests        ReturnRequest[]
+  id                        String          @id @default(cuid())
+  name                      String?
+  email                     String          @unique
+  password                  String?
+  phoneNumber               String?         @unique
+  role                      Role            @default(USER)
+  isActive                  Boolean         @default(true)
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+  lastLoginAt               DateTime?
+  profilePicture            String?
+  failedLoginAttempts       Int             @default(0)
+  lockedUntil               DateTime?
+  addresses                 Address[]
+  reviews                   Review[]
+  cart                      Cart?
+  order                     Order[]
+  authProvider              AuthProvider[]
+  auditLog                  AuditLog[]
+  wishlist                  WishList?
+  refreshTokens             RefreshToken[]
+  passwordResetToken        String?
+  passwordResetTokenExp     DateTime?
+  emailVerifiedAt           DateTime?
+  pendingEmail              String?
+  emailVerificationToken    String?         @unique
+  emailVerificationTokenExp DateTime?
+  couponUsages              CouponUsage[]
+  returnRequests            ReturnRequest[]
 }
 
 model RefreshToken {

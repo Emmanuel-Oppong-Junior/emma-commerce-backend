@@ -42,7 +42,8 @@ export class FacebookAuthenticationService {
     if (user) {
       return this.authService.generateTokens(user);
     }
-    const newUser = await this.userService.createUserByAuthProvider(facebookId, PROVIDERS.facebook, email);
+    // Facebook does not assert that the email it returns was verified.
+    const newUser = await this.userService.createUserByAuthProvider(facebookId, PROVIDERS.facebook, email, false);
     return this.authService.generateTokens(newUser);
   }
 

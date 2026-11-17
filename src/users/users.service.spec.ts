@@ -7,8 +7,9 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { User } from '@prisma/client';
 import { Role } from './enums/role.enum';
 import { UpdateUserInput } from './dto/update-user.input';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
+import { EmailVerificationService } from './email-verification.service';
 
 const mockUsersRepository = {
   create: jest.fn(),
@@ -23,6 +24,10 @@ const mockUsersRepository = {
   update: jest.fn(),
   updateAndRevokeSessions: jest.fn(),
   delete: jest.fn(),
+};
+
+const mockEmailVerificationService = {
+  requestEmailChange: jest.fn(),
 };
 
 const mockHashingService = {
@@ -46,6 +51,10 @@ const mockUser: User = {
   lockedUntil: null,
   passwordResetToken: null,
   passwordResetTokenExp: null,
+  emailVerifiedAt: null,
+  pendingEmail: null,
+  emailVerificationToken: null,
+  emailVerificationTokenExp: null,
 };
 
 describe('UsersService', () => {
@@ -59,6 +68,7 @@ describe('UsersService', () => {
         UsersService,
         { provide: UsersRepository, useValue: mockUsersRepository },
         { provide: HashingService, useValue: mockHashingService },
+        { provide: EmailVerificationService, useValue: mockEmailVerificationService },
       ],
     }).compile();
 
@@ -100,7 +110,7 @@ describe('UsersService', () => {
       mockUsersRepository.findByEmail.mockResolvedValue(null);
       mockUsersRepository.createWithAuthProvider.mockResolvedValue({ ...mockUser, email });
 
-      const result = await service.createUserByAuthProvider(providerId, provider, email);
+      const result = await service.createUserByAuthProvider(providerId, provider, email, false);
 
       expect(usersRepository.createWithAuthProvider).toHaveBeenCalledWith(
         email,
@@ -108,6 +118,7 @@ describe('UsersService', () => {
         undefined,
         providerId,
         provider,
+        null,
       );
       expect(result.email).toEqual(email);
     });
@@ -115,7 +126,7 @@ describe('UsersService', () => {
     it('refuses to attach a social identity to an existing account with the same email (pre-hijack)', async () => {
       mockUsersRepository.findByEmail.mockResolvedValue(mockUser);
 
-      await expect(service.createUserByAuthProvider('google123', 'Google', mockUser.email)).rejects.toThrow(
+      await expect(service.createUserByAuthProvider('google123', 'Google', mockUser.email, true)).rejects.toThrow(
         new ConflictException(
           'An account with this email already exists. Sign in with your email and password, then link Google from your account.',
         ),
@@ -127,7 +138,7 @@ describe('UsersService', () => {
     it('matches the existing account regardless of the case the provider uses for the email', async () => {
       mockUsersRepository.findByEmail.mockResolvedValue(mockUser);
 
-      await expect(service.createUserByAuthProvider('google123', 'Google', ' John@Example.COM ')).rejects.toThrow(
+      await expect(service.createUserByAuthProvider('google123', 'Google', ' John@Example.COM ', true)).rejects.toThrow(
         ConflictException,
       );
       expect(usersRepository.findByEmail).toHaveBeenCalledWith('john@example.com');
@@ -258,41 +269,78 @@ describe('UsersService', () => {
       expect(result).toEqual(updatedUser);
     });
 
-    it('revokes all refresh tokens when the email changes', async () => {
-      const input: UpdateUserInput = { email: 'new@example.com' };
-      const updatedUser = { ...mockUser, email: 'new@example.com' };
+    it('stores a new email as pending once the current password is confirmed, keeping the current email', async () => {
+      const pendingUser = { ...mockUser, pendingEmail: 'new@example.com' };
       mockUsersRepository.findById.mockResolvedValue(mockUser);
-      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(updatedUser);
+      mockHashingService.compare.mockResolvedValue(true);
+      mockEmailVerificationService.requestEmailChange.mockResolvedValue(pendingUser);
 
-      const result = await service.update('1', input);
+      const result = await service.update('1', { email: 'new@example.com', name: 'Renamed' }, 'Current@123');
 
-      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', input);
+      expect(hashingService.compare).toHaveBeenCalledWith('Current@123', mockUser.password);
+      expect(mockEmailVerificationService.requestEmailChange).toHaveBeenCalledWith(mockUser, 'new@example.com', {
+        name: 'Renamed',
+      });
       expect(usersRepository.update).not.toHaveBeenCalled();
-      expect(result).toEqual(updatedUser);
+      expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
+      expect(result).toEqual(pendingUser);
     });
 
-    it('keeps sessions when the submitted email is unchanged', async () => {
+    it('rejects an email change without the current password', async () => {
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+
+      await expect(service.update('1', { email: 'new@example.com' })).rejects.toThrow(
+        new BadRequestException('currentPassword is required to change your email'),
+      );
+      expect(mockEmailVerificationService.requestEmailChange).not.toHaveBeenCalled();
+      expect(usersRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an email change with a wrong current password, applying none of the changes', async () => {
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+      mockHashingService.compare.mockResolvedValue(false);
+
+      await expect(service.update('1', { email: 'new@example.com', name: 'Renamed' }, 'Wrong@123')).rejects.toThrow(
+        new ForbiddenException('Current password is incorrect'),
+      );
+      expect(mockEmailVerificationService.requestEmailChange).not.toHaveBeenCalled();
+      expect(usersRepository.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an email change on an account that has no password (social sign-in only)', async () => {
+      mockUsersRepository.findById.mockResolvedValue({ ...mockUser, password: null });
+
+      await expect(service.update('1', { email: 'new@example.com' }, 'anything')).rejects.toThrow(BadRequestException);
+      expect(mockEmailVerificationService.requestEmailChange).not.toHaveBeenCalled();
+    });
+
+    it('updates other fields without a password when the submitted email is unchanged', async () => {
       const input: UpdateUserInput = { email: mockUser.email, name: 'Renamed' };
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.update.mockResolvedValue({ ...mockUser, name: 'Renamed' });
 
       await service.update('1', input);
 
-      expect(usersRepository.update).toHaveBeenCalledWith('1', input);
+      expect(usersRepository.update).toHaveBeenCalledWith('1', { name: 'Renamed' });
       expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
+      expect(mockEmailVerificationService.requestEmailChange).not.toHaveBeenCalled();
     });
   });
 
   describe('adminUpdateUser', () => {
-    it("revokes all of the customer's refresh tokens when an admin changes their email", async () => {
-      const input: UpdateUserInput = { email: 'new@example.com' };
+    it("sends an admin's change of a customer's email through verification of the new address", async () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
-      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue({ ...mockUser, ...input });
+      mockEmailVerificationService.requestEmailChange.mockResolvedValue({
+        ...mockUser,
+        pendingEmail: 'new@example.com',
+      });
 
-      await service.adminUpdateUser('1', input, Role.ADMIN);
+      await service.adminUpdateUser('1', { email: 'new@example.com' }, Role.ADMIN);
 
-      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', input);
+      expect(mockEmailVerificationService.requestEmailChange).toHaveBeenCalledWith(mockUser, 'new@example.com', {});
+      expect(hashingService.compare).not.toHaveBeenCalled();
       expect(usersRepository.update).not.toHaveBeenCalled();
+      expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
     });
 
     it('keeps sessions when an admin edits other fields', async () => {
@@ -409,6 +457,7 @@ describe('UsersService', () => {
       expect(mockUsersRepository.update).not.toHaveBeenCalled();
       expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
       expect(mockUsersRepository.delete).not.toHaveBeenCalled();
+      expect(mockEmailVerificationService.requestEmailChange).not.toHaveBeenCalled();
     });
 
     it.each(adminActions)('%s lets a SUPER_ADMIN act on an ADMIN account', async (_name, act) => {
@@ -416,6 +465,7 @@ describe('UsersService', () => {
       mockUsersRepository.update.mockResolvedValue(adminTarget);
       mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(adminTarget);
       mockUsersRepository.delete.mockResolvedValue(adminTarget);
+      mockEmailVerificationService.requestEmailChange.mockResolvedValue(adminTarget);
 
       await expect(act(adminTarget.id, Role.SUPER_ADMIN)).resolves.toEqual(adminTarget);
     });
@@ -428,6 +478,7 @@ describe('UsersService', () => {
       expect(mockUsersRepository.update).not.toHaveBeenCalled();
       expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
       expect(mockUsersRepository.delete).not.toHaveBeenCalled();
+      expect(mockEmailVerificationService.requestEmailChange).not.toHaveBeenCalled();
     });
 
     it.each(adminActions)('%s lets an ADMIN act on a customer account', async (_name, act) => {
@@ -435,6 +486,7 @@ describe('UsersService', () => {
       mockUsersRepository.update.mockResolvedValue(mockUser);
       mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(mockUser);
       mockUsersRepository.delete.mockResolvedValue(mockUser);
+      mockEmailVerificationService.requestEmailChange.mockResolvedValue(mockUser);
 
       await expect(act(mockUser.id, Role.ADMIN)).resolves.toEqual(mockUser);
     });

@@ -9,6 +9,8 @@ function buildNotificationsService() {
     sendOrderStatusEmail: jest.fn(),
     sendPaymentConfirmationEmail: jest.fn(),
     sendPasswordResetEmail: jest.fn(),
+    sendEmailVerificationEmail: jest.fn(),
+    sendEmailChangeRequestedEmail: jest.fn(),
   };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   return { service: new NotificationsService(emailService as never, logger as never), emailService, logger };
@@ -33,6 +35,16 @@ describe('NotificationsService', () => {
       'sendPaymentConfirmationEmail',
     ],
     ['sendPasswordReset', (s) => s.sendPasswordReset('kwame@gmail.com', 'token-123'), 'sendPasswordResetEmail'],
+    [
+      'sendEmailVerification',
+      (s) => s.sendEmailVerification('kwame@gmail.com', 'token-123', 24),
+      'sendEmailVerificationEmail',
+    ],
+    [
+      'sendEmailChangeRequested',
+      (s) => s.sendEmailChangeRequested('kwame@gmail.com', 'new@gmail.com'),
+      'sendEmailChangeRequestedEmail',
+    ],
   ];
 
   it.each(sends)('%s logs a rejected send instead of leaving it unhandled', async (_name, send, emailMethod) => {

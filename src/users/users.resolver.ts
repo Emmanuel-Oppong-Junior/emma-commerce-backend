@@ -8,7 +8,7 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role, User as UserRecord } from '@prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { AddressesLoader } from './loaders/addresses.loader';
@@ -82,9 +82,21 @@ export class UsersResolver {
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
-  @Mutation(() => User, { description: 'Update user profile' })
-  updateMyProfile(@ActiveUser('id') id: string, @Args('updateMyProfileInput') updateMyProfileInput: UpdateUserInput) {
-    return this.usersService.update(id, updateMyProfileInput);
+  @Mutation(() => User, {
+    description:
+      'Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.',
+  })
+  updateMyProfile(
+    @ActiveUser('id') id: string,
+    @Args('updateMyProfileInput') updateMyProfileInput: UpdateUserInput,
+    @Args('currentPassword', {
+      type: () => String,
+      nullable: true,
+      description: 'Current password; required when changing the email',
+    })
+    currentPassword?: string,
+  ) {
+    return this.usersService.update(id, updateMyProfileInput, currentPassword ?? undefined);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
@@ -124,6 +136,11 @@ export class UsersResolver {
   })
   userProfile(@ActiveUser('id') id: string) {
     return this.usersService.findOne(id);
+  }
+
+  @ResolveField(() => Boolean, { middleware: [selfOrAdmin] })
+  emailVerified(@Parent() user: UserRecord) {
+    return user.emailVerifiedAt !== null && user.emailVerifiedAt !== undefined;
   }
 
   @ResolveField(() => [Address], { nullable: true, middleware: [selfOrAdmin] })

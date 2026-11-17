@@ -58,6 +58,28 @@ export class NotificationsService {
     this.fireAndForget('password reset', this.emailService.sendPasswordResetEmail(to, resetToken));
   }
 
+  /**
+   * Fires an email asking the recipient to confirm the address with the given token. Runs asynchronously.
+   * @param to - The address being verified (a new sign-up's email, or a pending new email).
+   * @param verificationToken - The one-time verification token to include in the email.
+   * @param expiresInHours - How long the token stays valid, shown to the recipient.
+   */
+  sendEmailVerification(to: string, verificationToken: string, expiresInHours: number): void {
+    this.fireAndForget(
+      'email verification',
+      this.emailService.sendEmailVerificationEmail(to, verificationToken, expiresInHours),
+    );
+  }
+
+  /**
+   * Fires a notice to an account's current address that a change to another address was requested. Runs asynchronously.
+   * @param to - The account's current email address.
+   * @param newEmail - The requested new address; only a masked form is shown.
+   */
+  sendEmailChangeRequested(to: string, newEmail: string): void {
+    this.fireAndForget('email change notice', this.emailService.sendEmailChangeRequestedEmail(to, newEmail));
+  }
+
   private fireAndForget(emailKind: string, send: Promise<void>): void {
     send.catch((error: unknown) => {
       this.logger.error(

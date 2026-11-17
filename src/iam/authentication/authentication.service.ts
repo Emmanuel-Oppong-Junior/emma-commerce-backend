@@ -13,6 +13,7 @@ import { UsersRepository } from '../../users/users.repository';
 import { createHash, randomUUID } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { LoggerService } from '../../commons/logger.service';
+import { EmailVerificationService } from '../../users/email-verification.service';
 
 @Injectable()
 export class AuthenticationService {
@@ -23,12 +24,14 @@ export class AuthenticationService {
     private readonly usersRepository: UsersRepository,
     private readonly notificationsService: NotificationsService,
     private readonly logger: LoggerService,
+    private readonly emailVerificationService: EmailVerificationService,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
 
   /**
-   * Registers a new user by creating an account with the provided sign-up details.
+   * Registers a new user by creating an account with the provided sign-up details, and emails a token
+   * that verifies the address. The welcome email follows verification.
    *
    * @throws ConflictException - If a user with the provided email already exists.
    * @returns Access and refresh tokens for the newly created user.
@@ -44,7 +47,7 @@ export class AuthenticationService {
       role: Role.USER,
       isActive: true,
     });
-    this.notificationsService.sendWelcomeEmail(email, name ?? '');
+    this.emailVerificationService.sendSignUpVerification(user);
     return this.generateTokens(user);
   }
 

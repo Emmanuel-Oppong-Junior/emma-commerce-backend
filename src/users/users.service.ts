@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateUserInput } from './dto/create-user.input';
 import { UpdateUserInput } from './dto/update-user.input';
 import { HashingService } from '../iam/hashing/hashing.service';
@@ -6,12 +12,14 @@ import { Prisma, Role, User } from '@prisma/client';
 import { UserPaginateArgs } from './dto/user-paginate.args';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { UsersRepository } from './users.repository';
+import { EmailVerificationService } from './email-verification.service';
 
 @Injectable()
 export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly passwordService: HashingService,
+    private readonly emailVerificationService: EmailVerificationService,
   ) {}
 
   /**
@@ -53,6 +61,7 @@ export class UsersService {
    * @param providerId - The unique identifier assigned by the OAuth provider.
    * @param provider - The OAuth provider name (e.g., "Google", "Facebook").
    * @param email - The email address the provider vouches for.
+   * @param emailVerified - Whether the provider asserts it verified that address; such accounts start verified.
    * @param name - Optional display name from the provider.
    * @param profilePicture - Optional profile picture URL from the provider.
    * @returns The created user record.
@@ -62,6 +71,7 @@ export class UsersService {
     providerId: string,
     provider: string,
     email: string,
+    emailVerified: boolean,
     name?: string,
     profilePicture?: string,
   ) {
@@ -72,7 +82,14 @@ export class UsersService {
         `An account with this email already exists. Sign in with your email and password, then link ${provider} from your account.`,
       );
     }
-    return this.usersRepository.createWithAuthProvider(normalizedEmail, name, profilePicture, providerId, provider);
+    return this.usersRepository.createWithAuthProvider(
+      normalizedEmail,
+      name,
+      profilePicture,
+      providerId,
+      provider,
+      emailVerified ? new Date() : null,
+    );
   }
 
   /**
@@ -184,28 +201,47 @@ export class UsersService {
   }
 
   /**
-   * Updates profile fields for an existing user.
+   * Updates the signed-in user's own profile. A new email needs the current password and only takes effect once
+   * the new address is verified; until then it is stored as `pendingEmail`.
    * @param id - The ID of the user to update.
    * @param updateUserInput - Partial user data to apply.
+   * @param currentPassword - Required when the email changes.
    * @returns The updated user record.
+   * @throws BadRequestException if the email changes without a current password, or the account has no password.
+   * @throws ForbiddenException if the current password is wrong.
+   * @throws ConflictException if another account already uses the new email.
    */
-  async update(id: string, updateUserInput: UpdateUserInput) {
-    if (!updateUserInput.email) return this.usersRepository.update(id, updateUserInput);
+  async update(id: string, updateUserInput: UpdateUserInput, currentPassword?: string) {
+    const { email, ...otherChanges } = updateUserInput;
+    if (!email) return this.usersRepository.update(id, otherChanges);
     const user = await this.findUserByIdOrThrow(id);
-    return this.applyProfileUpdate(user, updateUserInput);
+    if (email === user.email) return this.usersRepository.update(id, otherChanges);
+    await this.confirmPasswordForEmailChange(user, currentPassword);
+    return this.emailVerificationService.requestEmailChange(user, email, otherChanges);
   }
 
+  /**
+   * Updates another user's profile as an admin. A new email goes through the same verification as a self-service
+   * change (stored as `pendingEmail` until the new address is verified), without re-authentication.
+   * @throws ForbiddenException if the actor may not manage the target account.
+   * @throws ConflictException if another account already uses the new email.
+   */
   async adminUpdateUser(id: string, updateUserInput: UpdateUserInput, actorRole: Role) {
     const user = await this.findUserByIdOrThrow(id);
     this.ensureActorMayManage(user, actorRole, 'updated');
-    return this.applyProfileUpdate(user, updateUserInput);
+    const { email, ...otherChanges } = updateUserInput;
+    return email && email !== user.email
+      ? this.emailVerificationService.requestEmailChange(user, email, otherChanges)
+      : this.usersRepository.update(user.id, otherChanges);
   }
 
-  private applyProfileUpdate(user: User, updateUserInput: UpdateUserInput) {
-    const emailChanges = !!updateUserInput.email && updateUserInput.email !== user.email;
-    return emailChanges
-      ? this.usersRepository.updateAndRevokeSessions(user.id, updateUserInput)
-      : this.usersRepository.update(user.id, updateUserInput);
+  private async confirmPasswordForEmailChange(user: User, currentPassword: string | undefined) {
+    if (!user.password) {
+      throw new BadRequestException('Set a password (via forgotPassword) before changing your email');
+    }
+    if (!currentPassword) throw new BadRequestException('currentPassword is required to change your email');
+    const isPasswordValid = await this.passwordService.compare(currentPassword, user.password);
+    if (!isPasswordValid) throw new ForbiddenException('Current password is incorrect');
   }
 
   private async compareNewPasswordToOld(newPassword: string, oldEncryptedPassword: string) {

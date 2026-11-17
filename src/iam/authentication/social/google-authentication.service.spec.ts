@@ -63,6 +63,7 @@ describe('GoogleAuthenticationService', () => {
       'google-123',
       PROVIDERS.google,
       'ama@gmail.com',
+      true,
       'Ama Mensah',
       userInfoFixture.picture,
     );

@@ -144,7 +144,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 - **Type**: Mutation
 - **Auth Required**: No
 - **Rate Limit**: 5 requests/minute
-- **Description**: Register a new user account with email and password. Sends a welcome email. Returns token pair immediately.
+- **Description**: Register a new user account with email and password. Returns a token pair immediately; the account starts unverified (`User.emailVerified: false`) and a verification email with a one-time token is sent shortly after. The welcome email is sent only once the address is verified with `verifyEmail`. Unverified accounts can sign in and check out as usual.
 
 **Input: `SignUpInput`**
 
@@ -331,6 +331,44 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 ---
 
+#### `verifyEmail`
+- **Type**: Mutation
+- **Auth Required**: No
+- **Rate Limit**: 10 requests/minute
+- **Description**: Verify an email address with the token from a verification email (the frontend page that receives the token calls this). Without a pending change it marks the account's current email verified. With a pending email change it replaces `email` with `pendingEmail` and **revokes every refresh token of the user** (all sessions end; the user signs in again with the new email).
+
+**Input: `VerifyEmailInput`**
+
+```typescript
+{
+  token: string; // The token from the email. Non-empty, at most 128 chars.
+}
+```
+
+**Response**: `Boolean` (`true`)
+
+**Possible Errors**:
+- `BAD_REQUEST` — "Invalid or expired verification token" (unknown, expired after 24 hours, already used, or replaced by a newer token).
+- `CONFLICT` — The pending new address was taken by another account before it was verified; the email change is cancelled (`pendingEmail` cleared).
+
+**Note**: Tokens are random, single-use, valid for 24 hours, and stored **hashed** (`User.emailVerificationToken`). Each new verification email (sign-up, resend, email change) replaces the previous token.
+
+---
+
+#### `resendVerificationEmail`
+- **Type**: Mutation
+- **Auth Required**: Yes (any signed-in user)
+- **Rate Limit**: 5 requests/hour per IP, and at most one email per minute per account
+- **Description**: Send a fresh verification token: to `pendingEmail` if an email change is in progress, otherwise to the current email if it is unverified.
+
+**Response**: `Boolean` (`true`)
+
+**Possible Errors**:
+- `UNAUTHENTICATED` — No or invalid access token.
+- `BAD_REQUEST` — "Your email address is already verified" (nothing pending), or "A verification email was sent less than a minute ago; please wait before retrying".
+
+---
+
 ### 2.2 Users
 
 Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN)` (unless overridden).
@@ -400,20 +438,35 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 #### `updateMyProfile` (USER, ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Auth Required**: Yes
-- **Description**: Update the currently authenticated user's own profile.
+- **Description**: Update the currently authenticated user's own profile. Changing `email` requires the `currentPassword` argument and does **not** change the email immediately: the new address is stored as `pendingEmail`, a verification token is emailed to it, and a notice (with the new address masked) goes to the current address. `email` switches only when the new address is verified with `verifyEmail`, which also signs the user out everywhere. Other fields in the same call are applied right away. Submitting the current email unchanged needs no password.
+
+**Args**: `updateMyProfileInput: UpdateUserInput!`, `currentPassword: String` (optional; required when `email` changes)
 
 **Input: `UpdateUserInput`**
 
 ```typescript
 {
   name?: string;           // Optional. 2–50 chars.
-  email?: string;          // Optional. Valid email.
+  email?: string;          // Optional. Valid email. A new value becomes pendingEmail until verified.
   phoneNumber?: string;    // Optional. No specific format enforced.
   profilePicture?: string; // Optional. Must be a valid URL.
 }
 ```
 
-**Response**: `User`
+**Response**: `User` (with the unchanged `email` and the new `pendingEmail` after an email change request)
+
+**Possible Errors** (email change):
+- `BAD_REQUEST` — "currentPassword is required to change your email", or the account has no password (social sign-in only; set one with `forgotPassword` first).
+- `FORBIDDEN` — "Current password is incorrect". Nothing in the call is applied.
+- `CONFLICT` — "This email address is already in use".
+
+---
+
+#### `updateUser` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `id: String!`, `updateUserInput: UpdateUserInput!`
+- **Description**: Update another user's profile (super admin accounts cannot be modified; admin accounts only by a super admin). A new `email` goes through the same verification as `updateMyProfile` (stored as `pendingEmail`, verification email to the new address, notice to the old one, switch on `verifyEmail`), without a password.
+- **Possible Errors**: `FORBIDDEN`, `NOT_FOUND`, `CONFLICT` ("This email address is already in use").
 
 ---
 
@@ -448,6 +501,8 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
   id: string;
   name: string | null;
   email: string;
+  emailVerified: boolean;  // Owner or admin only. False until the current email is verified.
+  pendingEmail?: string;   // Owner or admin only. New email awaiting verification.
   phoneNumber?: string;
   authProvider?: string;
   isActive: boolean;
@@ -2146,6 +2201,10 @@ model User {
   lockedUntil           DateTime?                         // Set 15 min in future after 5 failed attempts
   passwordResetToken    String?                           // Hashed reset token
   passwordResetTokenExp DateTime?
+  emailVerifiedAt       DateTime?                         // Null until the current email is verified
+  pendingEmail          String?                           // Requested new email, applied on verification
+  emailVerificationToken    String?  @unique              // Hashed verification token (single-use)
+  emailVerificationTokenExp DateTime?                     // 24 hours after issue
   addresses             Address[]
   reviews               Review[]
   cart                  Cart?
@@ -2727,9 +2786,9 @@ SUPER_ADMIN  > ADMIN  > USER
 3. Backend calls Google's `tokeninfo` and `userinfo` endpoints.
 4. Backend verifies `aud === GOOGLE_CLIENT_ID`.
 5. If `AuthProvider(provider="google", providerId=googleId)` exists → return tokens.
-6. If not → create new `User` + `AuthProvider` → return tokens.
+6. If not → create new `User` + `AuthProvider` → return tokens. The new account's email starts verified, since Google asserts `email_verified`.
 
-**Facebook**: Same flow using Facebook's Graph API endpoints.
+**Facebook**: Same flow using Facebook's Graph API endpoints. Facebook does not assert that the email is verified, so new Facebook accounts start unverified.
 
 ### How Frontend Should Store and Send Tokens
 

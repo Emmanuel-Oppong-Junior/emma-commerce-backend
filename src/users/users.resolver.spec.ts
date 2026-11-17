@@ -6,7 +6,7 @@ import { UserConnection } from './entities/user-connection.entity';
 import { CreateUserInput } from './dto/create-user.input';
 import { UpdateUserInput } from './dto/update-user.input';
 import { UserPaginateArgs } from './dto/user-paginate.args';
-import { Role } from '@prisma/client';
+import { Role, User as PrismaUser } from '@prisma/client';
 import { Reflector } from '@nestjs/core';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { AddressesLoader } from './loaders/addresses.loader';
@@ -311,6 +311,28 @@ describe('UsersResolver', () => {
 
       expect(usersService.changePassword).toHaveBeenCalledWith('1', input);
       expect(result).toEqual(updatedUser);
+    });
+  });
+
+  describe('updateMyProfile', () => {
+    it('passes the current password through for an email change', async () => {
+      mockUsersService.update.mockResolvedValue({ id: '1' });
+
+      await resolver.updateMyProfile('1', { email: 'new@example.com' }, 'Current@123');
+
+      expect(usersService.update).toHaveBeenCalledWith('1', { email: 'new@example.com' }, 'Current@123');
+    });
+  });
+
+  describe('emailVerified', () => {
+    const record = { id: '1', email: 'test@example.com' } as PrismaUser;
+
+    it('is true once the email has a verification time', () => {
+      expect(resolver.emailVerified({ ...record, emailVerifiedAt: new Date() })).toBe(true);
+    });
+
+    it('is false while the email is unverified', () => {
+      expect(resolver.emailVerified({ ...record, emailVerifiedAt: null })).toBe(false);
     });
   });
 });

@@ -771,6 +771,11 @@ type Mutation {
   """Delete a user permanently"""
   removeUser(id: String!): User!
 
+  """
+  Send a new verification email to the signed-in user: to the pending new email if a change is in progress, otherwise to the unverified current email
+  """
+  resendVerificationEmail: Boolean!
+
   """Reset password using a valid reset token"""
   resetPassword(input: ResetPasswordInput!): Boolean!
 
@@ -816,8 +821,14 @@ type Mutation {
   updateCoupon(id: ID!, input: UpdateCouponInput!): Coupon!
   updateDiscount(updateDiscountInput: UpdateDiscountInput!): Discount!
 
-  """Update user profile"""
-  updateMyProfile(updateMyProfileInput: UpdateUserInput!): User!
+  """
+  Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.
+  """
+  updateMyProfile(
+    """Current password; required when changing the email"""
+    currentPassword: String
+    updateMyProfileInput: UpdateUserInput!
+  ): User!
 
   """Updates the status of an order"""
   updateOrderStatus(input: UpdateOrderStatusInput!): Order!
@@ -860,6 +871,11 @@ type Mutation {
 
   """Validate a coupon code before applying to order"""
   validateCoupon(input: ValidateCouponInput!): CouponValidation!
+
+  """
+  Verify an email address with the token from the verification email. Completes a pending email change (signing the user out everywhere) if one is in progress.
+  """
+  verifyEmail(input: VerifyEmailInput!): Boolean!
   verifyPayment(verifyPaymentInput: VerifyPaymentInput!): Payment!
 }
 
@@ -1834,6 +1850,9 @@ type User {
   """Email address"""
   email: String!
 
+  """Whether the current email address has been verified"""
+  emailVerified: Boolean!
+
   """Facebook ID for social login"""
   facebookId: String
 
@@ -1851,6 +1870,11 @@ type User {
 
   """Orders placed by this user"""
   orders: [Order!]
+
+  """
+  New email address awaiting verification; the account keeps `email` until it is verified
+  """
+  pendingEmail: String
 
   """Phone number"""
   phoneNumber: String
@@ -1924,6 +1948,11 @@ type Variant {
   productId: ID!
   quantity: Float!
   size: String
+}
+
+input VerifyEmailInput {
+  """The verification token from the email"""
+  token: String!
 }
 
 input VerifyPaymentInput {
