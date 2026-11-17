@@ -32,8 +32,8 @@ export class UsersResolver {
   @Mutation(() => User, {
     description: 'Create a new user with email and password',
   })
-  createUser(@Args('createUserInput') createUserInput: CreateUserInput) {
-    return this.usersService.createUserByCredentials(createUserInput);
+  createUser(@Args('createUserInput') createUserInput: CreateUserInput, @ActiveUser('id') actorId: string) {
+    return this.usersService.adminCreateUser(createUserInput, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
@@ -77,8 +77,9 @@ export class UsersResolver {
     @Args('id', { type: () => String }) id: string,
     @Args('updateUserInput') updateUserInput: UpdateUserInput,
     @ActiveUser('role') actorRole: Role,
+    @ActiveUser('id') actorId: string,
   ) {
-    return this.usersService.adminUpdateUser(id, updateUserInput, actorRole);
+    return this.usersService.adminUpdateUser(id, updateUserInput, actorRole, actorId);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
@@ -113,20 +114,32 @@ export class UsersResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Delete a user permanently' })
-  removeUser(@Args('id', { type: () => String }) id: string, @ActiveUser('role') actorRole: Role) {
-    return this.usersService.remove(id, actorRole);
+  removeUser(
+    @Args('id', { type: () => String }) id: string,
+    @ActiveUser('role') actorRole: Role,
+    @ActiveUser('id') actorId: string,
+  ) {
+    return this.usersService.remove(id, actorRole, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Archive (soft delete) a user' })
-  archiveUser(@Args('id', { type: () => String }) id: string, @ActiveUser('role') actorRole: Role) {
-    return this.usersService.archiveUser(id, actorRole);
+  archiveUser(
+    @Args('id', { type: () => String }) id: string,
+    @ActiveUser('role') actorRole: Role,
+    @ActiveUser('id') actorId: string,
+  ) {
+    return this.usersService.archiveUser(id, actorRole, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Restore an archived user' })
-  deArchiveUser(@Args('id', { type: () => String }) id: string, @ActiveUser('role') actorRole: Role) {
-    return this.usersService.deArchiveUser(id, actorRole);
+  deArchiveUser(
+    @Args('id', { type: () => String }) id: string,
+    @ActiveUser('role') actorRole: Role,
+    @ActiveUser('id') actorId: string,
+  ) {
+    return this.usersService.deArchiveUser(id, actorRole, actorId);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)

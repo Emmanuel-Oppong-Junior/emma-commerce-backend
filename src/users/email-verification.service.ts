@@ -57,11 +57,16 @@ export class EmailVerificationService {
    * verification token and tells the current address. The account keeps its current email until the token is used.
    * @throws ConflictException if another account already uses the new address.
    */
-  async requestEmailChange(user: User, newEmail: string, otherChanges: Prisma.UserUpdateInput = {}): Promise<User> {
+  async requestEmailChange(
+    user: User,
+    newEmail: string,
+    otherChanges: Prisma.UserUpdateInput = {},
+    tx?: Prisma.TransactionClient,
+  ): Promise<User> {
     const owner = await this.usersRepository.findByEmail(newEmail);
     if (owner && owner.id !== user.id) throw new ConflictException('This email address is already in use');
 
-    const updated = await this.issueToken(user.id, newEmail, { ...otherChanges, pendingEmail: newEmail });
+    const updated = await this.issueToken(user.id, newEmail, { ...otherChanges, pendingEmail: newEmail }, tx);
     this.notificationsService.sendEmailChangeRequested(user.email, newEmail);
     return updated;
   }
@@ -89,13 +94,19 @@ export class EmailVerificationService {
     }
   }
 
-  private async issueToken(userId: string, sendTo: string, data?: Prisma.UserUpdateInput): Promise<User> {
+  private async issueToken(
+    userId: string,
+    sendTo: string,
+    data?: Prisma.UserUpdateInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<User> {
     const token = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + VERIFICATION_TOKEN_TTL_MS);
     const user = await this.usersRepository.saveEmailVerificationToken(
       userId,
       { hash: this.hashToken(token), expiresAt },
       data,
+      tx,
     );
     this.notificationsService.sendEmailVerification(sendTo, token, VERIFICATION_TOKEN_TTL_HOURS);
     return user;

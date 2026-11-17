@@ -7,6 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../commons/logger.service';
 import { ReturnRequest } from '@prisma/client';
 import axios from 'axios';
+import { AuditService } from '../commons/audit.service';
+import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
@@ -28,6 +30,7 @@ const mockPrisma = {
 
 const mockConfigService = { get: jest.fn().mockReturnValue('paystack_secret') };
 const mockLogger = { log: jest.fn(), error: jest.fn(), warn: jest.fn() };
+const mockAuditService = createAuditServiceMock();
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -60,6 +63,7 @@ describe('ReturnsService', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLogger },
+        { provide: AuditService, useValue: mockAuditService },
       ],
     }).compile();
 
@@ -134,30 +138,52 @@ describe('ReturnsService', () => {
       mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
       mockReturnsRepository.updateStatus.mockResolvedValue(approved);
 
-      const result = await service.approveReturn({
-        returnRequestId: 'return1',
-        refundAmount: 50,
-        adminNote: 'Approved',
-      });
+      const result = await service.approveReturn(
+        { returnRequestId: 'return1', refundAmount: 50, adminNote: 'Approved' },
+        'admin1',
+      );
 
       expect(result.status).toBe('APPROVED');
-      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith('return1', 'APPROVED', 50, 'Approved');
+      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith('return1', 'APPROVED', 50, 'Approved', AUDIT_TX);
+    });
+
+    it('audits the approval with the admin, the status change and the refund amount in the same transaction', async () => {
+      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
+      mockReturnsRepository.updateStatus.mockResolvedValue({
+        ...mockReturnRequest,
+        status: 'APPROVED',
+        refundAmount: 50,
+      });
+
+      await service.approveReturn({ returnRequestId: 'return1', refundAmount: 50 }, 'admin1');
+
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        {
+          entity: 'ReturnRequest',
+          entityId: 'return1',
+          action: 'STATUS_CHANGE',
+          userId: 'admin1',
+          details: { orderId: 'order1', from: 'PENDING', to: 'APPROVED', refundAmount: '50' },
+        },
+        AUDIT_TX,
+      );
     });
 
     it('should throw NotFoundException if return request not found', async () => {
       mockReturnsRepository.findById.mockResolvedValue(null);
 
-      await expect(service.approveReturn({ returnRequestId: 'nonexistent', refundAmount: 50 })).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.approveReturn({ returnRequestId: 'nonexistent', refundAmount: 50 }, 'admin1'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw BadRequestException if return is not pending', async () => {
       mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'APPROVED' });
 
-      await expect(service.approveReturn({ returnRequestId: 'return1', refundAmount: 50 })).rejects.toThrow(
+      await expect(service.approveReturn({ returnRequestId: 'return1', refundAmount: 50 }, 'admin1')).rejects.toThrow(
         BadRequestException,
       );
+      expect(mockAuditService.log).not.toHaveBeenCalled();
     });
   });
 
@@ -167,15 +193,32 @@ describe('ReturnsService', () => {
       mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
       mockReturnsRepository.updateStatus.mockResolvedValue(rejected);
 
-      const result = await service.rejectReturn({ returnRequestId: 'return1', adminNote: 'Not eligible' });
+      const result = await service.rejectReturn({ returnRequestId: 'return1', adminNote: 'Not eligible' }, 'admin1');
 
       expect(result.status).toBe('REJECTED');
+      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith(
+        'return1',
+        'REJECTED',
+        undefined,
+        'Not eligible',
+        AUDIT_TX,
+      );
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        {
+          entity: 'ReturnRequest',
+          entityId: 'return1',
+          action: 'STATUS_CHANGE',
+          userId: 'admin1',
+          details: { orderId: 'order1', from: 'PENDING', to: 'REJECTED', refundAmount: null },
+        },
+        AUDIT_TX,
+      );
     });
 
     it('should throw BadRequestException if return is not pending', async () => {
       mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'APPROVED' });
 
-      await expect(service.rejectReturn({ returnRequestId: 'return1', adminNote: 'note' })).rejects.toThrow(
+      await expect(service.rejectReturn({ returnRequestId: 'return1', adminNote: 'note' }, 'admin1')).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -195,9 +238,25 @@ describe('ReturnsService', () => {
       mockedAxios.post.mockResolvedValue({ data: { status: true } });
       mockReturnsRepository.updateStatus.mockResolvedValue(refundedReturn);
 
-      const result = await service.processRefund('return1');
+      const result = await service.processRefund('return1', 'admin1');
 
-      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith('return1', 'REFUNDED');
+      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith(
+        'return1',
+        'REFUNDED',
+        undefined,
+        undefined,
+        AUDIT_TX,
+      );
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        {
+          entity: 'ReturnRequest',
+          entityId: 'return1',
+          action: 'REFUND',
+          userId: 'admin1',
+          details: { orderId: 'order1', from: 'APPROVED', to: 'REFUNDED', amount: '50', providerReference: 'txn_123' },
+        },
+        AUDIT_TX,
+      );
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
 
       expect(mockedAxios.post).toHaveBeenCalledWith(
@@ -211,7 +270,9 @@ describe('ReturnsService', () => {
     it('should throw BadRequestException if return is not approved', async () => {
       mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'PENDING' });
 
-      await expect(service.processRefund('return1')).rejects.toThrow('Only approved return requests can be refunded');
+      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(
+        'Only approved return requests can be refunded',
+      );
     });
 
     it('should throw BadRequestException if refund amount is not set', async () => {
@@ -221,7 +282,7 @@ describe('ReturnsService', () => {
         refundAmount: null,
       });
 
-      await expect(service.processRefund('return1')).rejects.toThrow('Refund amount not set');
+      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow('Refund amount not set');
     });
 
     it('should throw BadRequestException if no payment transaction found', async () => {
@@ -232,7 +293,9 @@ describe('ReturnsService', () => {
       });
       mockPrisma.paymentAttempt.findFirst.mockResolvedValue(null);
 
-      await expect(service.processRefund('return1')).rejects.toThrow('No payment transaction found for this order');
+      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(
+        'No payment transaction found for this order',
+      );
     });
 
     it('should throw BadRequestException if Paystack refund fails', async () => {
@@ -241,7 +304,9 @@ describe('ReturnsService', () => {
       mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ reference: 'txn_123' });
       mockedAxios.post.mockRejectedValue(new Error('Network error'));
 
-      await expect(service.processRefund('return1')).rejects.toThrow('Refund processing failed');
+      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow('Refund processing failed');
+      expect(mockReturnsRepository.updateStatus).not.toHaveBeenCalled();
+      expect(mockAuditService.log).not.toHaveBeenCalled();
     });
   });
 

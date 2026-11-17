@@ -193,16 +193,20 @@ export class OrdersService {
         `Order "${orderId}" is awaiting online payment; only a confirmed payment can move it to PROCESSING`,
       );
     }
-    const updated = await this.ordersRepository.runTransaction((tx) =>
-      this.ordersRepository.transitionStatus(tx, orderId, status, [order.status]),
-    );
-    if (!updated) throw this.changedMeanwhile(orderId);
-    await this.auditService.log({
-      entity: 'Order',
-      entityId: orderId,
-      action: 'STATUS_CHANGE',
-      userId: adminUserId,
-      details: { from: order.status as string, to: status as string },
+    const updated = await this.ordersRepository.runTransaction(async (tx) => {
+      const transitioned = await this.ordersRepository.transitionStatus(tx, orderId, status, [order.status]);
+      if (!transitioned) throw this.changedMeanwhile(orderId);
+      await this.auditService.log(
+        {
+          entity: 'Order',
+          entityId: orderId,
+          action: 'STATUS_CHANGE',
+          userId: adminUserId,
+          details: { from: order.status as string, to: status as string },
+        },
+        tx,
+      );
+      return transitioned;
     });
     if (status === 'SHIPPED' || status === 'DELIVERED') {
       this.sendOrderStatusEmail(
@@ -232,14 +236,7 @@ export class OrdersService {
   async adminCancelOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
     assertTransition(orderId, order.status, OrderStatus.CANCELLED);
-    const cancelled = await this.cancelOrderAndRestoreStock(order);
-    await this.auditService.log({
-      entity: 'Order',
-      entityId: orderId,
-      action: 'STATUS_CHANGE',
-      details: { from: order.status as string, to: 'CANCELLED' },
-      userId: adminUserId,
-    });
+    const cancelled = await this.cancelOrderAndRestoreStock(order, undefined, { userId: adminUserId });
     await this.requestReturnIfPaidOnline(order);
     return cancelled;
   }
@@ -271,17 +268,12 @@ export class OrdersService {
       );
     }
     if (order.deleted) throw new ConflictException(`Order "${orderId}" is already deleted`);
-    const result = await this.ordersRepository.runTransaction((tx) =>
-      this.ordersRepository.softDelete(tx, orderId, FINAL_STATUSES),
-    );
-    if (!result) throw this.changedMeanwhile(orderId);
-    await this.auditService.log({
-      entity: 'Order',
-      entityId: orderId,
-      action: 'DELETE',
-      userId: adminUserId,
+    return this.ordersRepository.runTransaction(async (tx) => {
+      const deleted = await this.ordersRepository.softDelete(tx, orderId, FINAL_STATUSES);
+      if (!deleted) throw this.changedMeanwhile(orderId);
+      await this.auditService.log({ entity: 'Order', entityId: orderId, action: 'DELETE', userId: adminUserId }, tx);
+      return deleted;
     });
-    return result;
   }
 
   /**
@@ -294,13 +286,19 @@ export class OrdersService {
     adminUserId?: string,
   ): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
-    const updated = await this.ordersRepository.updateShipping(orderId, trackingNumber, carrier);
-    await this.auditService.log({
-      entity: 'Order',
-      entityId: orderId,
-      action: 'UPDATE',
-      userId: adminUserId,
-      details: { trackingNumber, carrier },
+    const updated = await this.ordersRepository.runTransaction(async (tx) => {
+      const shipped = await this.ordersRepository.updateShipping(orderId, trackingNumber, carrier, tx);
+      await this.auditService.log(
+        {
+          entity: 'Order',
+          entityId: orderId,
+          action: 'UPDATE',
+          userId: adminUserId,
+          details: { trackingNumber, carrier },
+        },
+        tx,
+      );
+      return shipped;
     });
     if (trackingNumber) {
       this.sendOrderStatusEmail(order.userId, orderId, 'SHIPPED', trackingNumber);
@@ -468,6 +466,7 @@ export class OrdersService {
   private async cancelOrderAndRestoreStock(
     order: Order & { items: OrderItem[] },
     claimGuard?: Prisma.OrderWhereInput,
+    auditAs?: { userId?: string },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
       const cancelled = await this.ordersRepository.transitionStatus(
@@ -478,6 +477,18 @@ export class OrdersService {
         claimGuard,
       );
       if (!cancelled) throw this.changedMeanwhile(order.id);
+      if (auditAs) {
+        await this.auditService.log(
+          {
+            entity: 'Order',
+            entityId: order.id,
+            action: 'STATUS_CHANGE',
+            userId: auditAs.userId,
+            details: { from: order.status as string, to: OrderStatus.CANCELLED as string },
+          },
+          tx,
+        );
+      }
       if (order.couponId) await this.couponsService.releaseUsage(tx, order.id);
       for (const item of order.items) {
         const product = await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);

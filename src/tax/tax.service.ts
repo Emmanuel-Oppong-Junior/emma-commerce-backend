@@ -4,32 +4,60 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TaxRepository } from './tax.repository';
 import { CreateTaxInput } from './dto/create-tax-rate.input';
 import { UpdateTaxInput } from './dto/update-tax-rate.input';
+import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+
+const AUDITED_TAX_FIELDS = ['name', 'rate', 'isActive'] as const satisfies readonly (keyof Tax)[];
 
 @Injectable()
 export class TaxService {
   constructor(
     private readonly taxRepository: TaxRepository,
     private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
   ) {}
 
-  async create(input: CreateTaxInput): Promise<Tax> {
-    const tax = await this.taxRepository.create({
-      name: input.name,
-      rate: input.rate,
-      isActive: input.isActive ?? true,
-    });
+  async create(input: CreateTaxInput, actorId: string): Promise<Tax> {
+    const tax = await this.auditService.record(
+      (tx) => this.taxRepository.create({ name: input.name, rate: input.rate, isActive: input.isActive ?? true }, tx),
+      (created) => ({
+        entity: 'Tax',
+        entityId: created.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { after: fieldValues(created, AUDITED_TAX_FIELDS) },
+      }),
+    );
     await this.recomputeAllTaxableProductPrices();
     return tax;
   }
 
-  async update(id: string, input: UpdateTaxInput): Promise<Tax> {
-    const tax = await this.taxRepository.update(id, input);
+  async update(id: string, input: UpdateTaxInput, actorId: string): Promise<Tax> {
+    const existing = await this.findOne(id);
+    const tax = await this.auditService.record(
+      (tx) => this.taxRepository.update(id, input, tx),
+      (updated) => ({
+        entity: 'Tax',
+        entityId: id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, updated, AUDITED_TAX_FIELDS) },
+      }),
+    );
     await this.recomputeAllTaxableProductPrices();
     return tax;
   }
 
-  async delete(id: string): Promise<Tax> {
-    const tax = await this.taxRepository.delete(id);
+  async delete(id: string, actorId: string): Promise<Tax> {
+    const tax = await this.auditService.record(
+      (tx) => this.taxRepository.delete(id, tx),
+      (deleted) => ({
+        entity: 'Tax',
+        entityId: id,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: fieldValues(deleted, AUDITED_TAX_FIELDS) },
+      }),
+    );
     await this.recomputeAllTaxableProductPrices();
     return tax;
   }

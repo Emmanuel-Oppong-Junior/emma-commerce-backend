@@ -19,20 +19,23 @@ export class ReturnsResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => ReturnRequestEntity, { description: 'Approve a return request (admin only)' })
-  approveReturn(@Args('input') input: ApproveReturnInput) {
-    return this.returnsService.approveReturn(input);
+  approveReturn(@ActiveUser('id') adminUserId: string, @Args('input') input: ApproveReturnInput) {
+    return this.returnsService.approveReturn(input, adminUserId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => ReturnRequestEntity, { description: 'Reject a return request (admin only)' })
-  rejectReturn(@Args('input') input: RejectReturnInput) {
-    return this.returnsService.rejectReturn(input);
+  rejectReturn(@ActiveUser('id') adminUserId: string, @Args('input') input: RejectReturnInput) {
+    return this.returnsService.rejectReturn(input, adminUserId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => ReturnRequestEntity, { description: 'Process a refund for an approved return (admin only)' })
-  processRefund(@Args('returnRequestId', { type: () => ID }) returnRequestId: string) {
-    return this.returnsService.processRefund(returnRequestId);
+  processRefund(
+    @ActiveUser('id') adminUserId: string,
+    @Args('returnRequestId', { type: () => ID }) returnRequestId: string,
+  ) {
+    return this.returnsService.processRefund(returnRequestId, adminUserId);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)

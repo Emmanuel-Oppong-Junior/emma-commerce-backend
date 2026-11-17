@@ -6,9 +6,9 @@ import { PrismaService } from '../prisma/prisma.service';
 export class CouponsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: Prisma.CouponCreateInput): Promise<Coupon> {
+  async create(data: Prisma.CouponCreateInput, db: Prisma.TransactionClient = this.prisma): Promise<Coupon> {
     try {
-      return await this.prisma.coupon.create({ data });
+      return await db.coupon.create({ data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException(`Coupon code already exists`);
@@ -29,9 +29,13 @@ export class CouponsRepository {
     return this.prisma.coupon.findMany({ orderBy: { createdAt: 'desc' } });
   }
 
-  async update(id: string, data: Prisma.CouponUpdateInput): Promise<Coupon> {
+  async update(
+    id: string,
+    data: Prisma.CouponUpdateInput,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Coupon> {
     try {
-      return await this.prisma.coupon.update({ where: { id }, data });
+      return await db.coupon.update({ where: { id }, data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Coupon "${id}" not found`);
@@ -40,9 +44,9 @@ export class CouponsRepository {
     }
   }
 
-  async delete(id: string): Promise<Coupon> {
+  async delete(id: string, db: Prisma.TransactionClient = this.prisma): Promise<Coupon> {
     try {
-      return await this.prisma.coupon.delete({ where: { id } });
+      return await db.coupon.delete({ where: { id } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Coupon "${id}" not found`);

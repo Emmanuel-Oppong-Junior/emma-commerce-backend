@@ -5,6 +5,9 @@ import { CreateShippingZoneInput } from './dto/create-shipping-zone.input';
 import { UpdateShippingZoneInput } from './dto/update-shipping-zone.input';
 import { Decimal } from '@prisma/client/runtime/library';
 import { AddressesService } from '../addresses/addresses.service';
+import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+
+const AUDITED_ZONE_FIELDS = ['name', 'cities', 'fee', 'isActive'] as const satisfies readonly (keyof ShippingZone)[];
 
 /** Cities are compared case-insensitively, ignoring surrounding and repeated whitespace. */
 export function normaliseCity(city: string): string {
@@ -16,31 +19,56 @@ export class ShippingZonesService {
   constructor(
     private readonly repository: ShippingZonesRepository,
     private readonly addressesService: AddressesService,
+    private readonly auditService: AuditService,
   ) {}
 
-  async create(input: CreateShippingZoneInput): Promise<ShippingZone> {
+  async create(input: CreateShippingZoneInput, actorId: string): Promise<ShippingZone> {
     const cities = this.normaliseCities(input.cities);
     await this.ensureCitiesNotInOtherZones(cities);
-    return this.repository.create({
-      name: input.name,
-      cities,
-      fee: input.fee,
-      isActive: input.isActive ?? true,
-    });
+    return this.auditService.record(
+      (tx) =>
+        this.repository.create({ name: input.name, cities, fee: input.fee, isActive: input.isActive ?? true }, tx),
+      (zone) => ({
+        entity: 'ShippingZone',
+        entityId: zone.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { after: fieldValues(zone, AUDITED_ZONE_FIELDS) },
+      }),
+    );
   }
 
-  async update(id: string, input: UpdateShippingZoneInput): Promise<ShippingZone> {
+  async update(id: string, input: UpdateShippingZoneInput, actorId: string): Promise<ShippingZone> {
+    const existing = await this.findOne(id);
     const data: Record<string, unknown> = { ...input };
     if (input.cities) {
       const cities = this.normaliseCities(input.cities);
       await this.ensureCitiesNotInOtherZones(cities, id);
       data.cities = cities;
     }
-    return this.repository.update(id, data);
+    return this.auditService.record(
+      (tx) => this.repository.update(id, data, tx),
+      (updated) => ({
+        entity: 'ShippingZone',
+        entityId: id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, updated, AUDITED_ZONE_FIELDS) },
+      }),
+    );
   }
 
-  async delete(id: string): Promise<ShippingZone> {
-    return this.repository.delete(id);
+  async delete(id: string, actorId: string): Promise<ShippingZone> {
+    return this.auditService.record(
+      (tx) => this.repository.delete(id, tx),
+      (deleted) => ({
+        entity: 'ShippingZone',
+        entityId: id,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: fieldValues(deleted, AUDITED_ZONE_FIELDS) },
+      }),
+    );
   }
 
   async findAll(): Promise<ShippingZone[]> {

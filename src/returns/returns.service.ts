@@ -1,11 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PaymentStatus, ReturnRequest } from '@prisma/client';
+import { PaymentStatus, Prisma, ReturnRequest, ReturnStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReturnsRepository } from './returns.repository';
 import { CreateReturnRequestInput } from './dto/create-return-request.input';
 import { ApproveReturnInput, RejectReturnInput } from './dto/review-return.input';
 import { LoggerService } from '../commons/logger.service';
+import { AuditService } from '../commons/audit.service';
 import axios from 'axios';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class ReturnsService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -52,12 +54,14 @@ export class ReturnsService {
    * @throws NotFoundException if the return request does not exist.
    * @throws BadRequestException if the request is not in PENDING status.
    */
-  async approveReturn(input: ApproveReturnInput): Promise<ReturnRequest> {
+  async approveReturn(input: ApproveReturnInput, adminUserId: string): Promise<ReturnRequest> {
     const returnRequest = await this.findReturnOrThrow(input.returnRequestId);
     if (returnRequest.status !== 'PENDING') {
       throw new BadRequestException(`Return request is already ${returnRequest.status}`);
     }
-    return this.returnsRepository.updateStatus(input.returnRequestId, 'APPROVED', input.refundAmount, input.adminNote);
+    return this.changeStatusAudited(returnRequest, 'APPROVED', adminUserId, (tx) =>
+      this.returnsRepository.updateStatus(input.returnRequestId, 'APPROVED', input.refundAmount, input.adminNote, tx),
+    );
   }
 
   /**
@@ -67,12 +71,14 @@ export class ReturnsService {
    * @throws NotFoundException if the return request does not exist.
    * @throws BadRequestException if the request is not in PENDING status.
    */
-  async rejectReturn(input: RejectReturnInput): Promise<ReturnRequest> {
+  async rejectReturn(input: RejectReturnInput, adminUserId: string): Promise<ReturnRequest> {
     const returnRequest = await this.findReturnOrThrow(input.returnRequestId);
     if (returnRequest.status !== 'PENDING') {
       throw new BadRequestException(`Return request is already ${returnRequest.status}`);
     }
-    return this.returnsRepository.updateStatus(input.returnRequestId, 'REJECTED', undefined, input.adminNote);
+    return this.changeStatusAudited(returnRequest, 'REJECTED', adminUserId, (tx) =>
+      this.returnsRepository.updateStatus(input.returnRequestId, 'REJECTED', undefined, input.adminNote, tx),
+    );
   }
 
   /**
@@ -84,7 +90,7 @@ export class ReturnsService {
    * @throws NotFoundException if the return request or associated payment is not found.
    * @throws BadRequestException if the request is not approved, refund amount is missing, or the Paystack call fails.
    */
-  async processRefund(returnRequestId: string): Promise<ReturnRequest> {
+  async processRefund(returnRequestId: string, adminUserId: string): Promise<ReturnRequest> {
     const returnRequest = await this.findReturnOrThrow(returnRequestId);
     if (returnRequest.status !== 'APPROVED') {
       throw new BadRequestException('Only approved return requests can be refunded');
@@ -103,7 +109,22 @@ export class ReturnsService {
 
     await this.callPaystackRefund(payment.reference, Number(returnRequest.refundAmount));
 
-    return this.returnsRepository.updateStatus(returnRequestId, 'REFUNDED');
+    return this.auditService.record(
+      (tx) => this.returnsRepository.updateStatus(returnRequestId, 'REFUNDED', undefined, undefined, tx),
+      () => ({
+        entity: 'ReturnRequest',
+        entityId: returnRequestId,
+        action: 'REFUND',
+        userId: adminUserId,
+        details: {
+          orderId: returnRequest.orderId,
+          from: returnRequest.status,
+          to: 'REFUNDED',
+          amount: String(returnRequest.refundAmount),
+          providerReference: payment.reference,
+        },
+      }),
+    );
   }
 
   /**
@@ -150,6 +171,26 @@ export class ReturnsService {
       );
       throw new BadRequestException('Refund processing failed. Please try again.');
     }
+  }
+
+  private changeStatusAudited(
+    before: ReturnRequest,
+    to: ReturnStatus,
+    adminUserId: string,
+    change: (tx: Prisma.TransactionClient) => Promise<ReturnRequest>,
+  ): Promise<ReturnRequest> {
+    return this.auditService.record(change, (after) => ({
+      entity: 'ReturnRequest',
+      entityId: before.id,
+      action: 'STATUS_CHANGE',
+      userId: adminUserId,
+      details: {
+        orderId: before.orderId,
+        from: before.status,
+        to,
+        refundAmount: after.refundAmount === null ? null : String(after.refundAmount),
+      },
+    }));
   }
 
   private async findReturnOrThrow(id: string): Promise<ReturnRequest> {

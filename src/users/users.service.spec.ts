@@ -10,6 +10,8 @@ import { UpdateUserInput } from './dto/update-user.input';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { EmailVerificationService } from './email-verification.service';
+import { AuditService } from '../commons/audit.service';
+import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 
 const mockUsersRepository = {
   create: jest.fn(),
@@ -29,6 +31,8 @@ const mockUsersRepository = {
 const mockEmailVerificationService = {
   requestEmailChange: jest.fn(),
 };
+
+const mockAuditService = createAuditServiceMock();
 
 const mockHashingService = {
   hash: jest.fn(),
@@ -69,6 +73,7 @@ describe('UsersService', () => {
         { provide: UsersRepository, useValue: mockUsersRepository },
         { provide: HashingService, useValue: mockHashingService },
         { provide: EmailVerificationService, useValue: mockEmailVerificationService },
+        { provide: AuditService, useValue: mockAuditService },
       ],
     }).compile();
 
@@ -335,9 +340,14 @@ describe('UsersService', () => {
         pendingEmail: 'new@example.com',
       });
 
-      await service.adminUpdateUser('1', { email: 'new@example.com' }, Role.ADMIN);
+      await service.adminUpdateUser('1', { email: 'new@example.com' }, Role.ADMIN, 'admin1');
 
-      expect(mockEmailVerificationService.requestEmailChange).toHaveBeenCalledWith(mockUser, 'new@example.com', {});
+      expect(mockEmailVerificationService.requestEmailChange).toHaveBeenCalledWith(
+        mockUser,
+        'new@example.com',
+        {},
+        AUDIT_TX,
+      );
       expect(hashingService.compare).not.toHaveBeenCalled();
       expect(usersRepository.update).not.toHaveBeenCalled();
       expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
@@ -348,9 +358,9 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.update.mockResolvedValue({ ...mockUser, ...input });
 
-      await service.adminUpdateUser('1', input, Role.ADMIN);
+      await service.adminUpdateUser('1', input, Role.ADMIN, 'admin1');
 
-      expect(usersRepository.update).toHaveBeenCalledWith('1', input);
+      expect(usersRepository.update).toHaveBeenCalledWith('1', input, AUDIT_TX);
       expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
     });
   });
@@ -397,16 +407,17 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.delete.mockResolvedValue(mockUser);
 
-      const result = await service.remove('1', Role.ADMIN);
+      const result = await service.remove('1', Role.ADMIN, 'admin1');
 
-      expect(usersRepository.delete).toHaveBeenCalledWith('1');
+      expect(usersRepository.delete).toHaveBeenCalledWith('1', AUDIT_TX);
       expect(result).toEqual(mockUser);
     });
 
     it('should throw if user not found', async () => {
       mockUsersRepository.findById.mockResolvedValue(null);
 
-      await expect(service.remove('1', Role.ADMIN)).rejects.toThrow(NotFoundException);
+      await expect(service.remove('1', Role.ADMIN, 'admin1')).rejects.toThrow(NotFoundException);
+      expect(mockAuditService.log).not.toHaveBeenCalled();
     });
   });
 
@@ -417,9 +428,9 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(archivedUser);
 
-      const result = await service.archiveUser('1', Role.ADMIN);
+      const result = await service.archiveUser('1', Role.ADMIN, 'admin1');
 
-      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', { isActive: false });
+      expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', { isActive: false }, AUDIT_TX);
       expect(result).toEqual(archivedUser);
     });
   });
@@ -432,9 +443,9 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(inactiveUser);
       mockUsersRepository.update.mockResolvedValue(activeUser);
 
-      const result = await service.deArchiveUser('1', Role.ADMIN);
+      const result = await service.deArchiveUser('1', Role.ADMIN, 'admin1');
 
-      expect(usersRepository.update).toHaveBeenCalledWith('1', { isActive: true });
+      expect(usersRepository.update).toHaveBeenCalledWith('1', { isActive: true }, AUDIT_TX);
       expect(result).toEqual(activeUser);
     });
   });
@@ -444,16 +455,20 @@ describe('UsersService', () => {
     const superAdminTarget: User = { ...mockUser, id: 'super-1', role: Role.SUPER_ADMIN };
 
     const adminActions: Array<[string, (id: string, actorRole: Role) => Promise<unknown>]> = [
-      ['adminUpdateUser', (id, actorRole) => service.adminUpdateUser(id, { email: 'taken@example.com' }, actorRole)],
-      ['remove', (id, actorRole) => service.remove(id, actorRole)],
-      ['archiveUser', (id, actorRole) => service.archiveUser(id, actorRole)],
-      ['deArchiveUser', (id, actorRole) => service.deArchiveUser(id, actorRole)],
+      [
+        'adminUpdateUser',
+        (id, actorRole) => service.adminUpdateUser(id, { email: 'taken@example.com' }, actorRole, 'actor1'),
+      ],
+      ['remove', (id, actorRole) => service.remove(id, actorRole, 'actor1')],
+      ['archiveUser', (id, actorRole) => service.archiveUser(id, actorRole, 'actor1')],
+      ['deArchiveUser', (id, actorRole) => service.deArchiveUser(id, actorRole, 'actor1')],
     ];
 
     it.each(adminActions)('%s rejects an ADMIN acting on another ADMIN account', async (_name, act) => {
       mockUsersRepository.findById.mockResolvedValue(adminTarget);
 
       await expect(act(adminTarget.id, Role.ADMIN)).rejects.toThrow(ForbiddenException);
+      expect(mockAuditService.log).not.toHaveBeenCalled();
       expect(mockUsersRepository.update).not.toHaveBeenCalled();
       expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
       expect(mockUsersRepository.delete).not.toHaveBeenCalled();
@@ -490,5 +505,108 @@ describe('UsersService', () => {
 
       await expect(act(mockUser.id, Role.ADMIN)).resolves.toEqual(mockUser);
     });
+  });
+
+  describe('audit trail', () => {
+    const inactiveUser: User = { ...mockUser, isActive: false };
+
+    it('records who created an account and with which role, without the password hash', async () => {
+      const input: CreateUserInput = {
+        email: 'staff@example.com',
+        password: 'password123',
+        role: Role.ADMIN,
+        isActive: true,
+        name: 'staff member',
+      };
+      mockHashingService.hash.mockResolvedValue('hashed');
+      mockUsersRepository.create.mockResolvedValue({ ...mockUser, id: 'new1', role: Role.ADMIN, password: 'hashed' });
+
+      await service.adminCreateUser(input, 'super1');
+
+      expect(usersRepository.create).toHaveBeenCalledWith({ ...input, password: 'hashed' }, AUDIT_TX);
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        {
+          entity: 'User',
+          entityId: 'new1',
+          action: 'CREATE',
+          userId: 'super1',
+          details: { role: Role.ADMIN, isActive: true },
+        },
+        AUDIT_TX,
+      );
+      expect(JSON.stringify(mockAuditService.log.mock.calls)).not.toContain('hashed');
+    });
+
+    it('does not audit self sign-up through createUserByCredentials', async () => {
+      mockHashingService.hash.mockResolvedValue('hashed');
+      mockUsersRepository.create.mockResolvedValue(mockUser);
+
+      await service.createUserByCredentials({
+        email: 'me@example.com',
+        password: 'password123',
+        role: Role.USER,
+        isActive: true,
+        name: 'me myself',
+      });
+
+      expect(mockAuditService.record).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, () => Promise<unknown>, User, object]>([
+      [
+        'adminUpdateUser (profile fields)',
+        () => service.adminUpdateUser('1', { name: 'Renamed', phoneNumber: undefined }, Role.ADMIN, 'admin1'),
+        mockUser,
+        {
+          action: 'UPDATE',
+          details: { fields: ['name'], role: Role.USER, emailChangePending: false },
+        },
+      ],
+      [
+        'adminUpdateUser (email)',
+        () => service.adminUpdateUser('1', { email: 'new@example.com' }, Role.ADMIN, 'admin1'),
+        mockUser,
+        {
+          action: 'UPDATE',
+          details: { fields: ['email'], role: Role.USER, emailChangePending: true },
+        },
+      ],
+      [
+        'remove',
+        () => service.remove('1', Role.ADMIN, 'admin1'),
+        mockUser,
+        { action: 'DELETE', details: { before: { role: Role.USER, isActive: true } } },
+      ],
+      [
+        'archiveUser',
+        () => service.archiveUser('1', Role.ADMIN, 'admin1'),
+        mockUser,
+        { action: 'ARCHIVE', details: { role: Role.USER, changes: { isActive: { from: true, to: false } } } },
+      ],
+      [
+        'deArchiveUser',
+        () => service.deArchiveUser('1', Role.ADMIN, 'admin1'),
+        inactiveUser,
+        { action: 'RESTORE', details: { role: Role.USER, changes: { isActive: { from: false, to: true } } } },
+      ],
+    ])(
+      '%s writes an audit entry with the acting admin in the same transaction',
+      async (_name, act, target, expected) => {
+        mockUsersRepository.findById.mockResolvedValue(target);
+        mockUsersRepository.update.mockImplementation(async (_id, data) => ({ ...target, ...data }));
+        mockUsersRepository.updateAndRevokeSessions.mockImplementation(async (_id, data) => ({ ...target, ...data }));
+        mockUsersRepository.delete.mockResolvedValue(target);
+        mockEmailVerificationService.requestEmailChange.mockResolvedValue(target);
+
+        await act();
+
+        expect(mockAuditService.log).toHaveBeenCalledTimes(1);
+        expect(mockAuditService.log).toHaveBeenCalledWith(
+          { entity: 'User', entityId: '1', userId: 'admin1', ...expected },
+          AUDIT_TX,
+        );
+        expect(JSON.stringify(mockAuditService.log.mock.calls)).not.toMatch(/new@example\.com|John Doe|hashedPass/);
+      },
+    );
   });
 });

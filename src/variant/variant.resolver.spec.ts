@@ -88,9 +88,9 @@ describe('VariantResolver', () => {
     it('should create a variant for admin', async () => {
       mockVariantService.createVariant.mockResolvedValue(mockVariant);
 
-      const result = await resolver.createVariant(mockCreateVariantInput);
+      const result = await resolver.createVariant('admin1', mockCreateVariantInput);
 
-      expect(variantService.createVariant).toHaveBeenCalledWith(mockCreateVariantInput);
+      expect(variantService.createVariant).toHaveBeenCalledWith(mockCreateVariantInput, 'admin1');
       expect(result).toEqual(mockVariant);
     });
   });
@@ -100,9 +100,9 @@ describe('VariantResolver', () => {
       const updatedVariant = { ...mockVariant, size: 'L' };
       mockVariantService.updateVariant.mockResolvedValue(updatedVariant);
 
-      const result = await resolver.updateVariant(mockUpdateVariantInput);
+      const result = await resolver.updateVariant('admin1', mockUpdateVariantInput);
 
-      expect(variantService.updateVariant).toHaveBeenCalledWith('var1', mockUpdateVariantInput);
+      expect(variantService.updateVariant).toHaveBeenCalledWith('var1', mockUpdateVariantInput, 'admin1');
       expect(result).toEqual(updatedVariant);
     });
   });
@@ -111,9 +111,9 @@ describe('VariantResolver', () => {
     it('should delete a variant for admin', async () => {
       mockVariantService.deleteVariant.mockResolvedValue(mockVariant);
 
-      const result = await resolver.deleteVariant('var1');
+      const result = await resolver.deleteVariant('admin1', 'var1');
 
-      expect(variantService.deleteVariant).toHaveBeenCalledWith('var1');
+      expect(variantService.deleteVariant).toHaveBeenCalledWith('var1', 'admin1');
       expect(result).toEqual(mockVariant);
     });
   });
@@ -141,7 +141,7 @@ describe('VariantResolver', () => {
     it('should allow ADMIN role to createVariant', async () => {
       mockVariantService.createVariant.mockResolvedValue(mockVariant);
 
-      const result = await resolver.createVariant(mockCreateVariantInput);
+      const result = await resolver.createVariant('admin1', mockCreateVariantInput);
 
       expect(variantService.createVariant).toHaveBeenCalled();
       expect(result).toEqual(mockVariant);

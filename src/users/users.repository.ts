@@ -17,9 +17,9 @@ const CONCURRENT_REFRESH_GRACE_MS = 10_000;
 export class UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: Prisma.UserCreateInput): Promise<User> {
+  async create(data: Prisma.UserCreateInput, db: Prisma.TransactionClient = this.prisma): Promise<User> {
     try {
-      return await this.prisma.user.create({ data });
+      return await db.user.create({ data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException('A user with this email already exists');
@@ -95,9 +95,9 @@ export class UsersRepository {
     return this.prisma.user.count({ where });
   }
 
-  async update(id: string, data: Prisma.UserUpdateInput): Promise<User> {
+  async update(id: string, data: Prisma.UserUpdateInput, db: Prisma.TransactionClient = this.prisma): Promise<User> {
     try {
-      return await this.prisma.user.update({ where: { id }, data });
+      return await db.user.update({ where: { id }, data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException('User not found');
@@ -106,9 +106,9 @@ export class UsersRepository {
     }
   }
 
-  async delete(id: string): Promise<User> {
+  async delete(id: string, db: Prisma.TransactionClient = this.prisma): Promise<User> {
     try {
-      return await this.prisma.user.delete({ where: { id } });
+      return await db.user.delete({ where: { id } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException('User not found');
@@ -161,9 +161,18 @@ export class UsersRepository {
     });
   }
 
-  /** Applies the update and revokes every refresh token of the user in the same transaction. */
-  async updateAndRevokeSessions(id: string, data: Prisma.UserUpdateInput): Promise<User> {
+  /** Applies the update and revokes every refresh token of the user in one transaction (the caller's `tx` if given). */
+  async updateAndRevokeSessions(
+    id: string,
+    data: Prisma.UserUpdateInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<User> {
     try {
+      if (tx) {
+        const user = await tx.user.update({ where: { id }, data });
+        await tx.refreshToken.updateMany({ where: { userId: id, revoked: false }, data: { revoked: true } });
+        return user;
+      }
       const [user] = await this.prisma.$transaction([
         this.prisma.user.update({ where: { id }, data }),
         this.prisma.refreshToken.updateMany({ where: { userId: id, revoked: false }, data: { revoked: true } }),
@@ -220,12 +229,13 @@ export class UsersRepository {
     userId: string,
     token: { hash: string; expiresAt: Date },
     data: Prisma.UserUpdateInput = {},
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<User> {
-    return this.update(userId, {
-      ...data,
-      emailVerificationToken: token.hash,
-      emailVerificationTokenExp: token.expiresAt,
-    });
+    return this.update(
+      userId,
+      { ...data, emailVerificationToken: token.hash, emailVerificationTokenExp: token.expiresAt },
+      db,
+    );
   }
 
   /**

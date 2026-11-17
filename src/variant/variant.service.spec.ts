@@ -3,6 +3,8 @@ import { VariantService } from './variant.service';
 import { VariantRepository } from './variant.repository';
 import { NotFoundException } from '@nestjs/common';
 import { CreateVariantInput } from './dto/create-variant.input';
+import { AuditService } from '../commons/audit.service';
+import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 
 describe('VariantService', () => {
   let service: VariantService;
@@ -17,6 +19,8 @@ describe('VariantService', () => {
     update: jest.fn(),
     delete: jest.fn(),
   };
+
+  const mockAuditService = createAuditServiceMock();
 
   const mockProductId = 'prod1';
   const fixedDate = new Date('2025-03-18T00:00:00.000Z');
@@ -59,12 +63,17 @@ describe('VariantService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [VariantService, { provide: VariantRepository, useValue: mockVariantRepository }],
+      providers: [
+        VariantService,
+        { provide: VariantRepository, useValue: mockVariantRepository },
+        { provide: AuditService, useValue: mockAuditService },
+      ],
     }).compile();
 
     service = module.get<VariantService>(VariantService);
     variantRepository = module.get<VariantRepository>(VariantRepository);
     jest.resetAllMocks();
+    Object.assign(mockAuditService, createAuditServiceMock());
   });
 
   describe('createVariant', () => {
@@ -74,11 +83,11 @@ describe('VariantService', () => {
       mockVariantRepository.create.mockResolvedValue(mockVariantWithProduct);
 
       // Act
-      const result = await service.createVariant(mockCreateVariantInput);
+      const result = await service.createVariant(mockCreateVariantInput, 'admin1');
 
       // Assert
       expect(variantRepository.findProductById).toHaveBeenCalledWith(mockProductId);
-      expect(variantRepository.create).toHaveBeenCalledWith(mockCreateVariantInput);
+      expect(variantRepository.create).toHaveBeenCalledWith(mockCreateVariantInput, AUDIT_TX);
       expect(result).toEqual(mockVariantWithProduct);
     });
 
@@ -87,7 +96,7 @@ describe('VariantService', () => {
       mockVariantRepository.findProductById.mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.createVariant(mockCreateVariantInput)).rejects.toThrow(
+      await expect(service.createVariant(mockCreateVariantInput, 'admin1')).rejects.toThrow(
         new NotFoundException(`Product "${mockProductId}" not found`),
       );
       expect(variantRepository.create).not.toHaveBeenCalled();
@@ -176,11 +185,11 @@ describe('VariantService', () => {
       mockVariantRepository.update.mockResolvedValue(updatedVariant);
 
       // Act
-      const result = await service.updateVariant('var1', mockUpdateVariantInput);
+      const result = await service.updateVariant('var1', mockUpdateVariantInput, 'admin1');
 
       // Assert
       expect(variantRepository.findById).toHaveBeenCalledWith('var1');
-      expect(variantRepository.update).toHaveBeenCalledWith('var1', mockUpdateVariantInput);
+      expect(variantRepository.update).toHaveBeenCalledWith('var1', mockUpdateVariantInput, AUDIT_TX);
       expect(result).toEqual(updatedVariant);
     });
 
@@ -189,7 +198,7 @@ describe('VariantService', () => {
       mockVariantRepository.findById.mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.updateVariant('var1', mockUpdateVariantInput)).rejects.toThrow(
+      await expect(service.updateVariant('var1', mockUpdateVariantInput, 'admin1')).rejects.toThrow(
         new NotFoundException(`Variant "var1" not found`),
       );
       expect(variantRepository.update).not.toHaveBeenCalled();
@@ -203,11 +212,11 @@ describe('VariantService', () => {
       mockVariantRepository.delete.mockResolvedValue(mockVariant);
 
       // Act
-      const result = await service.deleteVariant('var1');
+      const result = await service.deleteVariant('var1', 'admin1');
 
       // Assert
       expect(variantRepository.findById).toHaveBeenCalledWith('var1');
-      expect(variantRepository.delete).toHaveBeenCalledWith('var1');
+      expect(variantRepository.delete).toHaveBeenCalledWith('var1', AUDIT_TX);
       expect(result).toEqual(mockVariant);
     });
 
@@ -216,8 +225,44 @@ describe('VariantService', () => {
       mockVariantRepository.findById.mockResolvedValue(null);
 
       // Act & Assert
-      await expect(service.deleteVariant('var1')).rejects.toThrow(new NotFoundException(`Variant "var1" not found`));
+      await expect(service.deleteVariant('var1', 'admin1')).rejects.toThrow(
+        new NotFoundException(`Variant "var1" not found`),
+      );
       expect(variantRepository.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('audit trail', () => {
+    it.each<[string, () => Promise<unknown>, object]>([
+      [
+        'createVariant',
+        () => service.createVariant(mockCreateVariantInput, 'admin1'),
+        { action: 'CREATE', details: { after: { productId: 'prod1', size: 'M', color: 'Blue', price: 29.99 } } },
+      ],
+      [
+        'updateVariant',
+        () => service.updateVariant('var1', { id: 'var1', price: 35 }, 'admin1'),
+        { action: 'UPDATE', details: { changes: { price: { from: 29.99, to: 35 } } } },
+      ],
+      [
+        'deleteVariant',
+        () => service.deleteVariant('var1', 'admin1'),
+        { action: 'DELETE', details: { before: { productId: 'prod1', size: 'M', color: 'Blue', price: 29.99 } } },
+      ],
+    ])('%s writes an audit entry with the acting admin in the same transaction', async (_name, act, expected) => {
+      mockVariantRepository.findProductById.mockResolvedValue(mockProduct);
+      mockVariantRepository.findById.mockResolvedValue(mockVariantWithProduct);
+      mockVariantRepository.create.mockResolvedValue(mockVariantWithProduct);
+      mockVariantRepository.update.mockImplementation(async (_id, data) => ({ ...mockVariantWithProduct, ...data }));
+      mockVariantRepository.delete.mockResolvedValue(mockVariant);
+
+      await act();
+
+      expect(mockAuditService.log).toHaveBeenCalledTimes(1);
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        { entity: 'Variant', entityId: 'var1', userId: 'admin1', ...expected },
+        AUDIT_TX,
+      );
     });
   });
 });

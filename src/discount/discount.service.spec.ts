@@ -7,6 +7,8 @@ import { UpdateDiscountInput } from './dto/update-discount.input';
 import { Discount, Prisma, Product } from '@prisma/client';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
+import { AuditService } from '../commons/audit.service';
+import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
 
 const mockCacheManager = {
   get: jest.fn(),
@@ -88,6 +90,8 @@ const mockCart = {
   updatedAt: new Date(),
 };
 
+const mockAuditService = createAuditServiceMock();
+
 describe('DiscountService', () => {
   let service: DiscountService;
   let discountRepository: jest.Mocked<DiscountRepository>;
@@ -98,6 +102,7 @@ describe('DiscountService', () => {
         DiscountService,
         { provide: DiscountRepository, useValue: mockDiscountRepository },
         { provide: CACHE_MANAGER, useValue: mockCacheManager },
+        { provide: AuditService, useValue: mockAuditService },
       ],
     }).compile();
 
@@ -123,7 +128,7 @@ describe('DiscountService', () => {
       mockDiscountRepository.getInvalidIds.mockResolvedValue([]);
       mockDiscountRepository.create.mockResolvedValue(mockDiscount);
 
-      const result = await service.createDiscount(input);
+      const result = await service.createDiscount(input, 'admin1');
 
       expect(result).toEqual(mockDiscount);
       expect(discountRepository.create).toHaveBeenCalledWith(
@@ -134,6 +139,7 @@ describe('DiscountService', () => {
           isActive: true,
           products: { connect: [{ id: 'product1' }] },
         }),
+        AUDIT_TX,
       );
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
     });
@@ -141,14 +147,14 @@ describe('DiscountService', () => {
     it('should throw BadRequestException for invalid product IDs', async () => {
       mockDiscountRepository.getInvalidIds.mockResolvedValue(['product1']);
 
-      await expect(service.createDiscount(input)).rejects.toThrow(BadRequestException);
+      await expect(service.createDiscount(input, 'admin1')).rejects.toThrow(BadRequestException);
       expect(discountRepository.getInvalidIds).toHaveBeenCalledWith(['product1'], 'product');
     });
 
     it('should throw BadRequestException for endDate before startDate', async () => {
       const invalidInput = { ...input, endDate: new Date('2025-05-01') };
 
-      await expect(service.createDiscount(invalidInput)).rejects.toThrow('End date must be after start date');
+      await expect(service.createDiscount(invalidInput, 'admin1')).rejects.toThrow('End date must be after start date');
     });
   });
 
@@ -164,12 +170,13 @@ describe('DiscountService', () => {
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
       mockDiscountRepository.update.mockResolvedValue(updated);
 
-      const result = await service.updateDiscount(input.id, input);
+      const result = await service.updateDiscount(input.id, input, 'admin1');
 
       expect(result).toEqual(updated);
       expect(discountRepository.update).toHaveBeenCalledWith(
         input.id,
         expect.objectContaining({ name: input.name, isActive: false }),
+        AUDIT_TX,
       );
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:discount1');
@@ -178,13 +185,13 @@ describe('DiscountService', () => {
     it('should throw NotFoundException for non-existent discount', async () => {
       mockDiscountRepository.findById.mockResolvedValue(null);
 
-      await expect(service.updateDiscount(input.id, input)).rejects.toThrow(NotFoundException);
+      await expect(service.updateDiscount(input.id, input, 'admin1')).rejects.toThrow(NotFoundException);
     });
 
     it('should throw BadRequestException for empty update', async () => {
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
 
-      await expect(service.updateDiscount(input.id, { id: input.id })).rejects.toThrow(
+      await expect(service.updateDiscount(input.id, { id: input.id }, 'admin1')).rejects.toThrow(
         'At least one field must be provided for update',
       );
     });
@@ -245,10 +252,10 @@ describe('DiscountService', () => {
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
       mockDiscountRepository.delete.mockResolvedValue(mockDiscount);
 
-      const result = await service.deleteDiscount('discount1');
+      const result = await service.deleteDiscount('discount1', 'admin1');
 
       expect(result).toEqual(mockDiscount);
-      expect(discountRepository.delete).toHaveBeenCalledWith('discount1');
+      expect(discountRepository.delete).toHaveBeenCalledWith('discount1', AUDIT_TX);
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:discount1');
     });
@@ -256,7 +263,7 @@ describe('DiscountService', () => {
     it('should throw NotFoundException for non-existent discount', async () => {
       mockDiscountRepository.findById.mockResolvedValue(null);
 
-      await expect(service.deleteDiscount('discount2')).rejects.toThrow(NotFoundException);
+      await expect(service.deleteDiscount('discount2', 'admin1')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -450,17 +457,21 @@ describe('DiscountService', () => {
       mockDiscountRepository.getInvalidIds.mockResolvedValue([]);
       mockDiscountRepository.addItemsToDiscount.mockResolvedValue(updatedDiscount);
 
-      const result = await service.addToDiscount({
-        discountId: 'discount1',
-        products: ['product1'],
-        variants: [],
-        categories: [],
-      });
+      const result = await service.addToDiscount(
+        {
+          discountId: 'discount1',
+          products: ['product1'],
+          variants: [],
+          categories: [],
+        },
+        'admin1',
+      );
 
       expect(result).toEqual(updatedDiscount);
       expect(mockDiscountRepository.addItemsToDiscount).toHaveBeenCalledWith(
         'discount1',
         expect.objectContaining({ products: { connect: [{ id: 'product1' }] } }),
+        AUDIT_TX,
       );
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:discount1');
@@ -469,7 +480,7 @@ describe('DiscountService', () => {
     it('should throw NotFoundException if discount not found', async () => {
       mockDiscountRepository.findById.mockResolvedValue(null);
 
-      await expect(service.addToDiscount({ discountId: 'nonexistent', products: ['p1'] })).rejects.toThrow(
+      await expect(service.addToDiscount({ discountId: 'nonexistent', products: ['p1'] }, 'admin1')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -478,9 +489,9 @@ describe('DiscountService', () => {
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
       mockDiscountRepository.getInvalidIds.mockResolvedValue(['invalid-id']);
 
-      await expect(service.addToDiscount({ discountId: 'discount1', products: ['invalid-id'] })).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.addToDiscount({ discountId: 'discount1', products: ['invalid-id'] }, 'admin1'),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should not call addItemsToDiscount with empty products/variants/categories', async () => {
@@ -488,13 +499,17 @@ describe('DiscountService', () => {
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
       mockDiscountRepository.addItemsToDiscount.mockResolvedValue(updatedDiscount);
 
-      await service.addToDiscount({ discountId: 'discount1' });
+      await service.addToDiscount({ discountId: 'discount1' }, 'admin1');
 
-      expect(mockDiscountRepository.addItemsToDiscount).toHaveBeenCalledWith('discount1', {
-        products: undefined,
-        variants: undefined,
-        categories: undefined,
-      });
+      expect(mockDiscountRepository.addItemsToDiscount).toHaveBeenCalledWith(
+        'discount1',
+        {
+          products: undefined,
+          variants: undefined,
+          categories: undefined,
+        },
+        AUDIT_TX,
+      );
     });
   });
 
@@ -504,17 +519,21 @@ describe('DiscountService', () => {
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
       mockDiscountRepository.removeItemsFromDiscount.mockResolvedValue(updatedDiscount);
 
-      const result = await service.removeFromDiscount({
-        discountId: 'discount1',
-        products: ['product1'],
-        variants: [],
-        categories: [],
-      });
+      const result = await service.removeFromDiscount(
+        {
+          discountId: 'discount1',
+          products: ['product1'],
+          variants: [],
+          categories: [],
+        },
+        'admin1',
+      );
 
       expect(result).toEqual(updatedDiscount);
       expect(mockDiscountRepository.removeItemsFromDiscount).toHaveBeenCalledWith(
         'discount1',
         expect.objectContaining({ products: { disconnect: [{ id: 'product1' }] } }),
+        AUDIT_TX,
       );
       expect(mockCacheManager.del).toHaveBeenCalledWith('discount:all');
     });
@@ -522,9 +541,9 @@ describe('DiscountService', () => {
     it('should throw NotFoundException if discount not found', async () => {
       mockDiscountRepository.findById.mockResolvedValue(null);
 
-      await expect(service.removeFromDiscount({ discountId: 'nonexistent', products: ['p1'] })).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.removeFromDiscount({ discountId: 'nonexistent', products: ['p1'] }, 'admin1'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('should handle empty arrays by passing undefined to repository', async () => {
@@ -532,13 +551,93 @@ describe('DiscountService', () => {
       mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
       mockDiscountRepository.removeItemsFromDiscount.mockResolvedValue(updatedDiscount);
 
-      await service.removeFromDiscount({ discountId: 'discount1' });
+      await service.removeFromDiscount({ discountId: 'discount1' }, 'admin1');
 
-      expect(mockDiscountRepository.removeItemsFromDiscount).toHaveBeenCalledWith('discount1', {
-        products: undefined,
-        variants: undefined,
-        categories: undefined,
-      });
+      expect(mockDiscountRepository.removeItemsFromDiscount).toHaveBeenCalledWith(
+        'discount1',
+        {
+          products: undefined,
+          variants: undefined,
+          categories: undefined,
+        },
+        AUDIT_TX,
+      );
+    });
+  });
+
+  describe('audit trail', () => {
+    beforeEach(() => {
+      mockDiscountRepository.findById.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.getInvalidIds.mockResolvedValue([]);
+      mockDiscountRepository.create.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.update.mockImplementation(async (_id, data) => ({
+        ...mockDiscount,
+        ...withoutUndefined(data),
+      }));
+      mockDiscountRepository.delete.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.addItemsToDiscount.mockResolvedValue(mockDiscount);
+      mockDiscountRepository.removeItemsFromDiscount.mockResolvedValue(mockDiscount);
+    });
+
+    it.each<[string, () => Promise<unknown>, object]>([
+      [
+        'createDiscount',
+        () =>
+          service.createDiscount(
+            {
+              name: mockDiscount.name,
+              type: DiscountType.PERCENTAGE,
+              value: 20,
+              startDate: new Date('2025-06-01'),
+              endDate: new Date('2025-06-30'),
+              isActive: true,
+              products: ['product1'],
+              variants: [],
+              categories: [],
+            },
+            'admin1',
+          ),
+        {
+          action: 'CREATE',
+          details: {
+            after: expect.objectContaining({ name: mockDiscount.name }),
+            products: ['product1'],
+            variants: [],
+            categories: [],
+          },
+        },
+      ],
+      [
+        'updateDiscount',
+        () => service.updateDiscount('discount1', { id: 'discount1', isActive: !mockDiscount.isActive }, 'admin1'),
+        {
+          action: 'UPDATE',
+          details: { changes: { isActive: { from: mockDiscount.isActive, to: !mockDiscount.isActive } } },
+        },
+      ],
+      [
+        'addToDiscount',
+        () => service.addToDiscount({ discountId: 'discount1', products: ['product1'] }, 'admin1'),
+        { action: 'UPDATE', details: { add: { products: ['product1'] } } },
+      ],
+      [
+        'removeFromDiscount',
+        () => service.removeFromDiscount({ discountId: 'discount1', categories: ['category1'] }, 'admin1'),
+        { action: 'UPDATE', details: { remove: { categories: ['category1'] } } },
+      ],
+      [
+        'deleteDiscount',
+        () => service.deleteDiscount('discount1', 'admin1'),
+        { action: 'DELETE', details: { before: expect.objectContaining({ name: mockDiscount.name }) } },
+      ],
+    ])('%s writes an audit entry with the acting admin in the same transaction', async (_name, act, expected) => {
+      await act();
+
+      expect(mockAuditService.log).toHaveBeenCalledTimes(1);
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        { entity: 'Discount', entityId: mockDiscount.id, userId: 'admin1', ...expected },
+        AUDIT_TX,
+      );
     });
   });
 });

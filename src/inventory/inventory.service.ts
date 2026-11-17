@@ -4,6 +4,7 @@ import { InventoryRepository, CreateLogData } from './inventory.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { RestockProductInput, RestockVariantInput } from './dto/restock.input';
 import { AdjustProductStockInput, AdjustVariantStockInput } from './dto/adjust-stock.input';
+import { AuditService } from '../commons/audit.service';
 
 function insufficientStock(target: string, id: string, delta: number, inStock: number): BadRequestException {
   return new BadRequestException(`Cannot remove ${-delta} units from ${target} "${id}": only ${inStock} in stock`);
@@ -14,6 +15,7 @@ export class InventoryService {
   constructor(
     private readonly inventoryRepository: InventoryRepository,
     private readonly prisma: PrismaService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -36,7 +38,7 @@ export class InventoryService {
         data: { quantity: { increment: input.quantity }, stockStatus: 'IN_STOCK' },
         select: { quantity: true },
       });
-      return this.inventoryRepository.createLog(tx, {
+      const log = await this.inventoryRepository.createLog(tx, {
         productId: input.productId,
         action: 'RESTOCK',
         quantityChange: input.quantity,
@@ -44,6 +46,8 @@ export class InventoryService {
         reason: input.reason ?? 'Manual restock',
         actorId,
       });
+      await this.auditStockChange(tx, log);
+      return log;
     });
   }
 
@@ -67,7 +71,7 @@ export class InventoryService {
         data: { quantity: { increment: input.quantity } },
         select: { quantity: true },
       });
-      return this.inventoryRepository.createLog(tx, {
+      const log = await this.inventoryRepository.createLog(tx, {
         productId: variant.productId,
         variantId: input.variantId,
         action: 'RESTOCK',
@@ -76,6 +80,8 @@ export class InventoryService {
         reason: input.reason ?? 'Manual restock',
         actorId,
       });
+      await this.auditStockChange(tx, log);
+      return log;
     });
   }
 
@@ -92,7 +98,7 @@ export class InventoryService {
       const product = await tx.product.findUnique({ where: { id: input.productId }, select: { quantity: true } });
       if (!product) throw new NotFoundException(`Product "${input.productId}" not found`);
       if (count === 0) throw insufficientStock('product', input.productId, input.delta, product.quantity);
-      return this.inventoryRepository.createLog(tx, {
+      const log = await this.inventoryRepository.createLog(tx, {
         productId: input.productId,
         action: 'ADJUSTMENT',
         quantityChange: input.delta,
@@ -100,6 +106,8 @@ export class InventoryService {
         reason: input.reason,
         actorId,
       });
+      await this.auditStockChange(tx, log);
+      return log;
     });
   }
 
@@ -119,7 +127,7 @@ export class InventoryService {
       });
       if (!variant) throw new NotFoundException(`Variant "${input.variantId}" not found`);
       if (count === 0) throw insufficientStock('variant', input.variantId, input.delta, variant.quantity);
-      return this.inventoryRepository.createLog(tx, {
+      const log = await this.inventoryRepository.createLog(tx, {
         productId: variant.productId,
         variantId: input.variantId,
         action: 'ADJUSTMENT',
@@ -128,7 +136,29 @@ export class InventoryService {
         reason: input.reason,
         actorId,
       });
+      await this.auditStockChange(tx, log);
+      return log;
     });
+  }
+
+  private async auditStockChange(tx: Prisma.TransactionClient, log: InventoryLog): Promise<void> {
+    await this.auditService.log(
+      {
+        entity: log.variantId ? 'Variant' : 'Product',
+        entityId: log.variantId ?? log.productId,
+        action: 'STOCK_ADJUSTMENT',
+        userId: log.actorId ?? undefined,
+        details: {
+          inventoryLogId: log.id,
+          kind: log.action,
+          productId: log.productId,
+          quantityChange: log.quantityChange,
+          quantityAfter: log.quantityAfter,
+          reason: log.reason,
+        },
+      },
+      tx,
+    );
   }
 
   /**

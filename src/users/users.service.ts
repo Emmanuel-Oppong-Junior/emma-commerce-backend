@@ -13,6 +13,7 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { UsersRepository } from './users.repository';
 import { EmailVerificationService } from './email-verification.service';
+import { AuditEntry, AuditService, fieldChanges } from '../commons/audit.service';
 
 @Injectable()
 export class UsersService {
@@ -20,6 +21,7 @@ export class UsersService {
     private readonly usersRepository: UsersRepository,
     private readonly passwordService: HashingService,
     private readonly emailVerificationService: EmailVerificationService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -29,12 +31,31 @@ export class UsersService {
    * @returns The created user record.
    */
   async createUserByCredentials(createUserInput: CreateUserInput) {
+    return this.usersRepository.create(await this.withHashedPassword(createUserInput));
+  }
+
+  /** Creates an account on behalf of an admin, recording who created it and with which role. */
+  async adminCreateUser(createUserInput: CreateUserInput, actorId: string) {
+    const data = await this.withHashedPassword(createUserInput);
+    return this.auditService.record(
+      (tx) => this.usersRepository.create(data, tx),
+      (user) => ({
+        entity: 'User',
+        entityId: user.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { role: user.role, isActive: user.isActive },
+      }),
+    );
+  }
+
+  private async withHashedPassword(createUserInput: CreateUserInput): Promise<CreateUserInput> {
     if (createUserInput.role === Role.SUPER_ADMIN) {
       throw new ForbiddenException('Super admin accounts cannot be created through the API');
     }
     const { password } = createUserInput;
     createUserInput.password = await this.passwordService.hash(password!);
-    return this.usersRepository.create(createUserInput);
+    return createUserInput;
   }
 
   /**
@@ -226,13 +247,28 @@ export class UsersService {
    * @throws ForbiddenException if the actor may not manage the target account.
    * @throws ConflictException if another account already uses the new email.
    */
-  async adminUpdateUser(id: string, updateUserInput: UpdateUserInput, actorRole: Role) {
+  async adminUpdateUser(id: string, updateUserInput: UpdateUserInput, actorRole: Role, actorId: string) {
     const user = await this.findUserByIdOrThrow(id);
     this.ensureActorMayManage(user, actorRole, 'updated');
     const { email, ...otherChanges } = updateUserInput;
-    return email && email !== user.email
-      ? this.emailVerificationService.requestEmailChange(user, email, otherChanges)
-      : this.usersRepository.update(user.id, otherChanges);
+    const newEmail = email && email !== user.email ? email : undefined;
+    // Field names only: the values are personal data and stay out of the audit log.
+    const fields = Object.entries({ ...otherChanges, email: newEmail })
+      .filter(([, value]) => value !== undefined)
+      .map(([field]) => field);
+    return this.auditService.record(
+      (tx) =>
+        newEmail
+          ? this.emailVerificationService.requestEmailChange(user, newEmail, otherChanges, tx)
+          : this.usersRepository.update(user.id, otherChanges, tx),
+      () => ({
+        entity: 'User',
+        entityId: user.id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { fields, role: user.role, emailChangePending: !!newEmail },
+      }),
+    );
   }
 
   private async confirmPasswordForEmailChange(user: User, currentPassword: string | undefined) {
@@ -258,10 +294,19 @@ export class UsersService {
    * @returns The deleted user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async remove(id: string, actorRole: Role) {
+  async remove(id: string, actorRole: Role, actorId: string) {
     const user = await this.findUserByIdOrThrow(id);
     this.ensureActorMayManage(user, actorRole, 'deleted');
-    return this.usersRepository.delete(id);
+    return this.auditService.record(
+      (tx) => this.usersRepository.delete(id, tx),
+      () => ({
+        entity: 'User',
+        entityId: id,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: { role: user.role, isActive: user.isActive } },
+      }),
+    );
   }
 
   /**
@@ -271,10 +316,13 @@ export class UsersService {
    * @returns The updated user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async archiveUser(id: string, actorRole: Role) {
+  async archiveUser(id: string, actorRole: Role, actorId: string) {
     const user = await this.findUserByIdOrThrow(id);
     this.ensureActorMayManage(user, actorRole, 'archived');
-    return this.usersRepository.updateAndRevokeSessions(id, { isActive: false });
+    return this.auditService.record(
+      (tx) => this.usersRepository.updateAndRevokeSessions(id, { isActive: false }, tx),
+      (archived) => this.activeFlagChange(user, archived, 'ARCHIVE', actorId),
+    );
   }
 
   /**
@@ -284,10 +332,23 @@ export class UsersService {
    * @returns The updated user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async deArchiveUser(id: string, actorRole: Role) {
+  async deArchiveUser(id: string, actorRole: Role, actorId: string) {
     const user = await this.findUserByIdOrThrow(id);
     this.ensureActorMayManage(user, actorRole, 'restored');
-    return this.usersRepository.update(id, { isActive: true });
+    return this.auditService.record(
+      (tx) => this.usersRepository.update(id, { isActive: true }, tx),
+      (restored) => this.activeFlagChange(user, restored, 'RESTORE', actorId),
+    );
+  }
+
+  private activeFlagChange(before: User, after: User, action: 'ARCHIVE' | 'RESTORE', actorId: string): AuditEntry {
+    return {
+      entity: 'User',
+      entityId: before.id,
+      action,
+      userId: actorId,
+      details: { role: before.role, changes: fieldChanges(before, after, ['isActive']) },
+    };
   }
 
   /**

@@ -14,8 +14,8 @@ export class VariantRepository {
     return this.prisma.product.findUnique({ where: { id: productId } });
   }
 
-  async create(data: CreateVariantInput): Promise<VariantWithProduct> {
-    return this.prisma.variant.create({
+  async create(data: CreateVariantInput, db: Prisma.TransactionClient = this.prisma): Promise<VariantWithProduct> {
+    return db.variant.create({
       data,
       include: { product: { select: { id: true, name: true } } },
     });
@@ -40,9 +40,13 @@ export class VariantRepository {
     return this.prisma.variant.findMany({ orderBy: { id: 'asc' } });
   }
 
-  async update(variantId: string, data: UpdateVariantInput): Promise<VariantWithProduct> {
+  async update(
+    variantId: string,
+    data: UpdateVariantInput,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<VariantWithProduct> {
     try {
-      return await this.prisma.variant.update({
+      return await db.variant.update({
         where: { id: variantId },
         data,
         include: { product: { select: { id: true, name: true } } },
@@ -55,9 +59,9 @@ export class VariantRepository {
     }
   }
 
-  async delete(variantId: string): Promise<Variant> {
+  async delete(variantId: string, db: Prisma.TransactionClient = this.prisma): Promise<Variant> {
     try {
-      return await this.prisma.variant.delete({ where: { id: variantId } });
+      return await db.variant.delete({ where: { id: variantId } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Variant "${variantId}" not found`);

@@ -10,6 +10,8 @@ import { ProductFilterArgs } from './dto/product-filter.args';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ProductStatusEnum } from './enums/product.enum';
+import { AuditService } from '../commons/audit.service';
+import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 
 const mockProductsRepository = {
   create: jest.fn(),
@@ -31,6 +33,8 @@ const mockTaxService = {
   getTotalActiveRate: jest.fn(),
 };
 
+const mockAuditService = createAuditServiceMock();
+
 describe('ProductsService', () => {
   let service: ProductsService;
   let productsRepository: jest.Mocked<ProductsRepository>;
@@ -41,6 +45,7 @@ describe('ProductsService', () => {
         ProductsService,
         { provide: ProductsRepository, useValue: mockProductsRepository },
         { provide: TaxService, useValue: mockTaxService },
+        { provide: AuditService, useValue: mockAuditService },
       ],
     }).compile();
 
@@ -69,13 +74,14 @@ describe('ProductsService', () => {
       mockProductsRepository.findFirst.mockResolvedValue(null);
       mockProductsRepository.create.mockResolvedValue(product);
 
-      const result = await service.create(input);
+      const result = await service.create(input, 'admin1');
 
       expect(productsRepository.findCategoryById).toHaveBeenCalledWith('cat1');
       expect(productsRepository.findSubCategoryById).toHaveBeenCalledWith('sub1');
       expect(productsRepository.create).toHaveBeenCalledWith(
         { ...input, price: '19.99' },
         { category: true, subcategory: true },
+        AUDIT_TX,
       );
       expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
       expect(result).toEqual(product);
@@ -87,18 +93,21 @@ describe('ProductsService', () => {
       mockProductsRepository.findFirst.mockResolvedValue(null);
       mockTaxService.getTotalActiveRate.mockResolvedValue(0.15);
 
-      await service.create({ ...input, basePrice: '100.00', isTaxable: true });
+      await service.create({ ...input, basePrice: '100.00', isTaxable: true }, 'admin1');
 
       expect(productsRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({ basePrice: '100.00', price: '115.00', isTaxable: true }),
         { category: true, subcategory: true },
+        AUDIT_TX,
       );
     });
 
     it('should throw NotFoundException if category does not exist', async () => {
       mockProductsRepository.findCategoryById.mockResolvedValue(null);
 
-      await expect(service.create(input)).rejects.toThrow(new NotFoundException('Category ID "cat1" not found'));
+      await expect(service.create(input, 'admin1')).rejects.toThrow(
+        new NotFoundException('Category ID "cat1" not found'),
+      );
     });
 
     it('should throw ConflictException if SKU is already in use', async () => {
@@ -106,7 +115,9 @@ describe('ProductsService', () => {
       mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
       mockProductsRepository.findFirst.mockResolvedValue({ id: 'prod2', sku: 'TSHIRT001' });
 
-      await expect(service.create(input)).rejects.toThrow(new ConflictException('SKU "TSHIRT001" is already in use'));
+      await expect(service.create(input, 'admin1')).rejects.toThrow(
+        new ConflictException('SKU "TSHIRT001" is already in use'),
+      );
     });
   });
 
@@ -335,12 +346,13 @@ describe('ProductsService', () => {
       mockProductsRepository.findFirst.mockResolvedValue(null);
       mockProductsRepository.update.mockResolvedValue(updatedProduct);
 
-      const result = await service.update('prod1', updateInput);
+      const result = await service.update('prod1', updateInput, 'admin1');
 
       expect(productsRepository.update).toHaveBeenCalledWith(
         'prod1',
         { name: 'Updated T-Shirt', basePrice: '29.99', price: '29.99' },
         { category: true, subcategory: true },
+        AUDIT_TX,
       );
       expect(result).toEqual(updatedProduct);
     });
@@ -349,19 +361,22 @@ describe('ProductsService', () => {
       mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: '100.00', isTaxable: false });
       mockTaxService.getTotalActiveRate.mockResolvedValue(0.2);
 
-      await service.update('prod1', { isTaxable: true });
+      await service.update('prod1', { isTaxable: true }, 'admin1');
 
       expect(productsRepository.update).toHaveBeenCalledWith(
         'prod1',
         { isTaxable: true, price: '120.00' },
         { category: true, subcategory: true },
+        AUDIT_TX,
       );
     });
 
     it('should throw NotFoundException if product does not exist', async () => {
       mockProductsRepository.findById.mockResolvedValue(null);
 
-      await expect(service.update('prod999', updateInput)).rejects.toThrow(new NotFoundException('Product not found'));
+      await expect(service.update('prod999', updateInput, 'admin1')).rejects.toThrow(
+        new NotFoundException('Product not found'),
+      );
     });
 
     it('should throw ConflictException if SKU conflicts', async () => {
@@ -369,7 +384,7 @@ describe('ProductsService', () => {
       mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', categoryId: 'cat1' });
       mockProductsRepository.findFirst.mockResolvedValue({ id: 'prod2', sku: 'TSHIRT002' });
 
-      await expect(service.update('prod1', skuInput)).rejects.toThrow(
+      await expect(service.update('prod1', skuInput, 'admin1')).rejects.toThrow(
         new ConflictException('SKU "TSHIRT002" is already in use by another product'),
       );
     });
@@ -391,9 +406,9 @@ describe('ProductsService', () => {
       mockProductsRepository.countOrderItems.mockResolvedValue(0);
       mockProductsRepository.delete.mockResolvedValue(product);
 
-      const result = await service.remove('prod1');
+      const result = await service.remove('prod1', 'admin1');
 
-      expect(productsRepository.delete).toHaveBeenCalledWith('prod1');
+      expect(productsRepository.delete).toHaveBeenCalledWith('prod1', AUDIT_TX);
       expect(result).toEqual(product);
     });
 
@@ -401,7 +416,7 @@ describe('ProductsService', () => {
       mockProductsRepository.findById.mockResolvedValue({ id: 'prod1' });
       mockProductsRepository.countCartItems.mockResolvedValue(1);
 
-      await expect(service.remove('prod1')).rejects.toThrow(
+      await expect(service.remove('prod1', 'admin1')).rejects.toThrow(
         new ConflictException('Cannot delete product referenced in active carts or orders'),
       );
     });
@@ -422,16 +437,18 @@ describe('ProductsService', () => {
       mockProductsRepository.findById.mockResolvedValue(product);
       mockProductsRepository.update.mockResolvedValue(archivedProduct);
 
-      const result = await service.archiveProduct('prod1');
+      const result = await service.archiveProduct('prod1', 'admin1');
 
-      expect(productsRepository.update).toHaveBeenCalledWith('prod1', { isActive: false });
+      expect(productsRepository.update).toHaveBeenCalledWith('prod1', { isActive: false }, undefined, AUDIT_TX);
       expect(result).toEqual(archivedProduct);
     });
 
     it('should throw NotFoundException if product does not exist', async () => {
       mockProductsRepository.findById.mockResolvedValue(null);
 
-      await expect(service.archiveProduct('prod999')).rejects.toThrow(new NotFoundException('Product not found'));
+      await expect(service.archiveProduct('prod999', 'admin1')).rejects.toThrow(
+        new NotFoundException('Product not found'),
+      );
     });
   });
 
@@ -450,16 +467,116 @@ describe('ProductsService', () => {
       mockProductsRepository.findById.mockResolvedValue(product);
       mockProductsRepository.update.mockResolvedValue(restoredProduct);
 
-      const result = await service.restoreProduct('prod1');
+      const result = await service.restoreProduct('prod1', 'admin1');
 
-      expect(productsRepository.update).toHaveBeenCalledWith('prod1', { isActive: true });
+      expect(productsRepository.update).toHaveBeenCalledWith('prod1', { isActive: true }, undefined, AUDIT_TX);
       expect(result).toEqual(restoredProduct);
     });
 
     it('should throw NotFoundException if product does not exist', async () => {
       mockProductsRepository.findById.mockResolvedValue(null);
 
-      await expect(service.restoreProduct('prod999')).rejects.toThrow(new NotFoundException('Product not found'));
+      await expect(service.restoreProduct('prod999', 'admin1')).rejects.toThrow(
+        new NotFoundException('Product not found'),
+      );
+    });
+  });
+
+  describe('audit trail', () => {
+    const existing = {
+      id: 'prod1',
+      name: 'T-Shirt',
+      sku: 'TSHIRT001',
+      basePrice: '100.00',
+      price: '100.00',
+      isTaxable: false,
+      isActive: true,
+      status: 'PUBLISHED',
+      categoryId: null,
+    };
+
+    beforeEach(() => {
+      mockProductsRepository.findById.mockResolvedValue(existing);
+      mockProductsRepository.findFirst.mockResolvedValue(null);
+      mockProductsRepository.findTagById.mockResolvedValue({ id: 'tag1' });
+      mockProductsRepository.countCartItems.mockResolvedValue(0);
+      mockProductsRepository.countOrderItems.mockResolvedValue(0);
+      mockProductsRepository.create.mockImplementation(async (data) => ({ id: 'prod2', ...data }));
+      mockProductsRepository.update.mockImplementation(async (_id, data) => ({ ...existing, ...data }));
+      mockProductsRepository.delete.mockResolvedValue(existing);
+      mockProductsRepository.updateTags.mockResolvedValue(existing);
+      mockTaxService.getTotalActiveRate.mockResolvedValue(0.2);
+    });
+
+    it.each<[string, () => Promise<unknown>, object]>([
+      [
+        'create',
+        () =>
+          service.create({ name: 'Mug', basePrice: '10.00', isTaxable: true, quantity: 1, isActive: true }, 'admin1'),
+        {
+          entityId: 'prod2',
+          action: 'CREATE',
+          details: {
+            after: expect.objectContaining({ name: 'Mug', basePrice: '10.00', price: '12.00', isTaxable: true }),
+          },
+        },
+      ],
+      [
+        'update (price)',
+        () => service.update('prod1', { basePrice: '150.00', isTaxable: true }, 'admin1'),
+        {
+          entityId: 'prod1',
+          action: 'UPDATE',
+          details: {
+            changes: {
+              basePrice: { from: '100.00', to: '150.00' },
+              price: { from: '100.00', to: '180.00' },
+              isTaxable: { from: false, to: true },
+            },
+          },
+        },
+      ],
+      [
+        'remove',
+        () => service.remove('prod1', 'admin1'),
+        {
+          entityId: 'prod1',
+          action: 'DELETE',
+          details: { before: expect.objectContaining({ name: 'T-Shirt', price: '100.00', sku: 'TSHIRT001' }) },
+        },
+      ],
+      [
+        'archiveProduct',
+        () => service.archiveProduct('prod1', 'admin1'),
+        { entityId: 'prod1', action: 'ARCHIVE', details: { changes: { isActive: { from: true, to: false } } } },
+      ],
+      [
+        'restoreProduct',
+        () => service.restoreProduct('prod1', 'admin1'),
+        { entityId: 'prod1', action: 'RESTORE', details: { changes: {} } },
+      ],
+      [
+        'addTagToProduct',
+        () => service.addTagToProduct('prod1', 'tag1', 'admin1'),
+        { entityId: 'prod1', action: 'UPDATE', details: { tags: { connect: 'tag1' } } },
+      ],
+      [
+        'removeTagFromProduct',
+        () => service.removeTagFromProduct('prod1', 'tag1', 'admin1'),
+        { entityId: 'prod1', action: 'UPDATE', details: { tags: { disconnect: 'tag1' } } },
+      ],
+    ])('%s writes an audit entry with the acting admin in the same transaction', async (_name, act, expected) => {
+      await act();
+
+      expect(mockAuditService.log).toHaveBeenCalledTimes(1);
+      expect(mockAuditService.log).toHaveBeenCalledWith({ entity: 'Product', userId: 'admin1', ...expected }, AUDIT_TX);
+    });
+
+    it('writes nothing to the audit log when validation rejects the change', async () => {
+      mockProductsRepository.findById.mockResolvedValue(null);
+
+      await expect(service.update('prod999', { name: 'x' }, 'admin1')).rejects.toThrow(NotFoundException);
+      expect(mockAuditService.record).not.toHaveBeenCalled();
     });
   });
 });

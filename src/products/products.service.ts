@@ -10,15 +10,30 @@ import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { ProductsRepository } from './products.repository';
 import { TaxService } from '../tax/tax.service';
+import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 
 export const PUBLIC_PRODUCT_WHERE = { isActive: true, status: 'PUBLISHED' } satisfies Prisma.ProductWhereInput;
 export const MAX_NESTED_PRODUCTS = 100;
+const AUDITED_PRODUCT_FIELDS = [
+  'name',
+  'sku',
+  'basePrice',
+  'price',
+  'currentPrice',
+  'isTaxable',
+  'status',
+  'isActive',
+  'categoryId',
+  'subcategoryId',
+  'brandId',
+] as const satisfies readonly (keyof Product)[];
 
 @Injectable()
 export class ProductsService {
   constructor(
     private readonly productsRepository: ProductsRepository,
     private readonly taxService: TaxService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -26,13 +41,24 @@ export class ProductsService {
    * If isTaxable is true, price is computed as basePrice × (1 + total active tax rate).
    * Otherwise price equals basePrice.
    */
-  async create(createProductInput: CreateProductInput): Promise<Product> {
+  async create(createProductInput: CreateProductInput, actorId: string): Promise<Product> {
     await this.validateProductInput(createProductInput);
     const { basePrice, isTaxable, ...rest } = createProductInput;
     const price = await this.computePrice(Number(basePrice), isTaxable);
-    return this.productsRepository.create(
-      { ...rest, basePrice, price: price.toFixed(2), isTaxable: isTaxable ?? false },
-      { category: true, subcategory: true },
+    return this.auditService.record(
+      (tx) =>
+        this.productsRepository.create(
+          { ...rest, basePrice, price: price.toFixed(2), isTaxable: isTaxable ?? false },
+          { category: true, subcategory: true },
+          tx,
+        ),
+      (product) => ({
+        entity: 'Product',
+        entityId: product.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { after: fieldValues(product, AUDITED_PRODUCT_FIELDS) },
+      }),
     );
   }
 
@@ -40,29 +66,47 @@ export class ProductsService {
    * Updates an existing product.
    * Recomputes price whenever basePrice or isTaxable changes.
    */
-  async update(id: string, updateProductInput: UpdateProductInput): Promise<Product> {
+  async update(id: string, updateProductInput: UpdateProductInput, actorId: string): Promise<Product> {
     const existing = await this.productsRepository.findById(id);
     if (!existing) throw new NotFoundException('Product not found');
     await this.validateProductInput({ ...updateProductInput, id });
     const updateData = await this.buildUpdateData(existing, updateProductInput);
-    return this.productsRepository.update(id, updateData, { category: true, subcategory: true });
+    return this.auditService.record(
+      (tx) => this.productsRepository.update(id, updateData, { category: true, subcategory: true }, tx),
+      (updated) => ({
+        entity: 'Product',
+        entityId: id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, updated, Object.keys(updateData) as (keyof Product)[]) },
+      }),
+    );
   }
 
   /**
    * Removes a product from the database by its ID.
    */
-  async remove(id: string): Promise<Product> {
+  async remove(id: string, actorId: string): Promise<Product> {
     await this.ensureProductExist(id);
     await this.checkProductDependencies(id);
-    return this.productsRepository.delete(id);
+    return this.auditService.record(
+      (tx) => this.productsRepository.delete(id, tx),
+      (deleted) => ({
+        entity: 'Product',
+        entityId: id,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: fieldValues(deleted, AUDITED_PRODUCT_FIELDS) },
+      }),
+    );
   }
 
-  async addTagToProduct(productId: string, tagId: string): Promise<Product> {
-    return this.updateProductTag(productId, tagId, 'connect');
+  async addTagToProduct(productId: string, tagId: string, actorId: string): Promise<Product> {
+    return this.updateProductTag(productId, tagId, 'connect', actorId);
   }
 
-  async removeTagFromProduct(productId: string, tagId: string): Promise<Product> {
-    return this.updateProductTag(productId, tagId, 'disconnect');
+  async removeTagFromProduct(productId: string, tagId: string, actorId: string): Promise<Product> {
+    return this.updateProductTag(productId, tagId, 'disconnect', actorId);
   }
 
   async findAll(
@@ -126,14 +170,27 @@ export class ProductsService {
     return this.productsRepository.findById(id, requestedFields);
   }
 
-  async archiveProduct(id: string): Promise<Product> {
-    await this.ensureProductExist(id);
-    return this.productsRepository.update(id, { isActive: false });
+  async archiveProduct(id: string, actorId: string): Promise<Product> {
+    return this.setActive(id, false, actorId);
   }
 
-  async restoreProduct(id: string): Promise<Product> {
-    await this.ensureProductExist(id);
-    return this.productsRepository.update(id, { isActive: true });
+  async restoreProduct(id: string, actorId: string): Promise<Product> {
+    return this.setActive(id, true, actorId);
+  }
+
+  private async setActive(id: string, isActive: boolean, actorId: string): Promise<Product> {
+    const existing = await this.productsRepository.findById(id);
+    if (!existing) throw new NotFoundException('Product not found');
+    return this.auditService.record(
+      (tx) => this.productsRepository.update(id, { isActive }, undefined, tx),
+      (updated) => ({
+        entity: 'Product',
+        entityId: id,
+        action: isActive ? 'RESTORE' : 'ARCHIVE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, updated, ['isActive']) },
+      }),
+    );
   }
 
   private async computePrice(basePrice: number, isTaxable: boolean): Promise<number> {
@@ -297,9 +354,19 @@ export class ProductsService {
     productId: string,
     tagId: string,
     operation: 'connect' | 'disconnect',
+    actorId: string,
   ): Promise<Product> {
     await this.ensureProductExist(productId);
     await this.ensureTagExists(tagId);
-    return this.productsRepository.updateTags(productId, operation, tagId);
+    return this.auditService.record(
+      (tx) => this.productsRepository.updateTags(productId, operation, tagId, tx),
+      () => ({
+        entity: 'Product',
+        entityId: productId,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { tags: { [operation]: tagId } },
+      }),
+    );
   }
 }

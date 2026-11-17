@@ -5,6 +5,8 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Coupon, Prisma } from '@prisma/client';
 import { CreateCouponInput } from './dto/create-coupon.input';
 import { DiscountTypeEnum } from './enums/discount-type.enum';
+import { AuditService } from '../commons/audit.service';
+import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
 
 const mockCouponsRepository = {
   create: jest.fn(),
@@ -19,6 +21,7 @@ const mockCouponsRepository = {
 };
 
 const fixedDate = new Date('2026-12-31T00:00:00.000Z');
+const mockAuditService = createAuditServiceMock();
 
 const mockCoupon = {
   id: 'coupon1',
@@ -40,7 +43,11 @@ describe('CouponsService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CouponsService, { provide: CouponsRepository, useValue: mockCouponsRepository }],
+      providers: [
+        CouponsService,
+        { provide: CouponsRepository, useValue: mockCouponsRepository },
+        { provide: AuditService, useValue: mockAuditService },
+      ],
     }).compile();
 
     service = module.get<CouponsService>(CouponsService);
@@ -58,10 +65,11 @@ describe('CouponsService', () => {
       };
       mockCouponsRepository.create.mockResolvedValue(mockCoupon);
 
-      const result = await service.createCoupon(input);
+      const result = await service.createCoupon(input, 'admin1');
 
       expect(couponsRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({ code: 'SAVE10', isActive: true }),
+        AUDIT_TX,
       );
       expect(result).toEqual(mockCoupon);
     });
@@ -70,9 +78,9 @@ describe('CouponsService', () => {
       const input: CreateCouponInput = { code: 'NEW', discountType: DiscountTypeEnum.FLAT, value: 5 };
       mockCouponsRepository.create.mockResolvedValue({ ...mockCoupon, isActive: true });
 
-      await service.createCoupon(input);
+      await service.createCoupon(input, 'admin1');
 
-      expect(couponsRepository.create).toHaveBeenCalledWith(expect.objectContaining({ isActive: true }));
+      expect(couponsRepository.create).toHaveBeenCalledWith(expect.objectContaining({ isActive: true }), AUDIT_TX);
     });
   });
 
@@ -82,7 +90,7 @@ describe('CouponsService', () => {
       mockCouponsRepository.findById.mockResolvedValue(mockCoupon);
       mockCouponsRepository.update.mockResolvedValue(updated);
 
-      const result = await service.updateCoupon('coupon1', { value: 20 });
+      const result = await service.updateCoupon('coupon1', { value: 20 }, 'admin1');
 
       expect(result).toEqual(updated);
     });
@@ -91,15 +99,19 @@ describe('CouponsService', () => {
       mockCouponsRepository.findById.mockResolvedValue(mockCoupon);
       mockCouponsRepository.update.mockResolvedValue(mockCoupon);
 
-      await service.updateCoupon('coupon1', { code: 'newsave' });
+      await service.updateCoupon('coupon1', { code: 'newsave' }, 'admin1');
 
-      expect(couponsRepository.update).toHaveBeenCalledWith('coupon1', expect.objectContaining({ code: 'NEWSAVE' }));
+      expect(couponsRepository.update).toHaveBeenCalledWith(
+        'coupon1',
+        expect.objectContaining({ code: 'NEWSAVE' }),
+        AUDIT_TX,
+      );
     });
 
     it('should throw NotFoundException if coupon does not exist', async () => {
       mockCouponsRepository.findById.mockResolvedValue(null);
 
-      await expect(service.updateCoupon('nonexistent', { value: 20 })).rejects.toThrow(NotFoundException);
+      await expect(service.updateCoupon('nonexistent', { value: 20 }, 'admin1')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -107,9 +119,9 @@ describe('CouponsService', () => {
     it('should delete a coupon', async () => {
       mockCouponsRepository.delete.mockResolvedValue(mockCoupon);
 
-      const result = await service.deleteCoupon('coupon1');
+      const result = await service.deleteCoupon('coupon1', 'admin1');
 
-      expect(couponsRepository.delete).toHaveBeenCalledWith('coupon1');
+      expect(couponsRepository.delete).toHaveBeenCalledWith('coupon1', AUDIT_TX);
       expect(result).toEqual(mockCoupon);
     });
   });
@@ -287,6 +299,48 @@ describe('CouponsService', () => {
       await service.releaseUsage(mockTx, 'order1');
 
       expect(couponsRepository.releaseUsage).toHaveBeenCalledWith(mockTx, 'order1');
+    });
+  });
+
+  describe('audit trail', () => {
+    it.each<[string, () => Promise<unknown>, object]>([
+      [
+        'createCoupon',
+        () => service.createCoupon({ code: 'save10', discountType: DiscountTypeEnum.PERCENTAGE, value: 10 }, 'admin1'),
+        {
+          action: 'CREATE',
+          details: { after: expect.objectContaining({ code: 'SAVE10', value: '10', usageLimit: 100, isActive: true }) },
+        },
+      ],
+      [
+        'updateCoupon',
+        () => service.updateCoupon('coupon1', { value: 25, isActive: false }, 'admin1'),
+        {
+          action: 'UPDATE',
+          details: { changes: { value: { from: '10', to: 25 }, isActive: { from: true, to: false } } },
+        },
+      ],
+      [
+        'deleteCoupon',
+        () => service.deleteCoupon('coupon1', 'admin1'),
+        { action: 'DELETE', details: { before: expect.objectContaining({ code: 'SAVE10', value: '10' }) } },
+      ],
+    ])('%s writes an audit entry with the acting admin in the same transaction', async (_name, act, expected) => {
+      mockCouponsRepository.findById.mockResolvedValue(mockCoupon);
+      mockCouponsRepository.create.mockResolvedValue(mockCoupon);
+      mockCouponsRepository.update.mockImplementation(async (_id, data) => ({
+        ...mockCoupon,
+        ...withoutUndefined(data),
+      }));
+      mockCouponsRepository.delete.mockResolvedValue(mockCoupon);
+
+      await act();
+
+      expect(mockAuditService.log).toHaveBeenCalledTimes(1);
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        { entity: 'Coupon', entityId: 'coupon1', userId: 'admin1', ...expected },
+        AUDIT_TX,
+      );
     });
   });
 });

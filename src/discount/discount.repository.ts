@@ -6,13 +6,17 @@ import { PrismaService } from '../prisma/prisma.service';
 export class DiscountRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: Prisma.DiscountCreateInput): Promise<Discount> {
-    return this.prisma.discount.create({ data });
+  async create(data: Prisma.DiscountCreateInput, db: Prisma.TransactionClient = this.prisma): Promise<Discount> {
+    return db.discount.create({ data });
   }
 
-  async update(id: string, data: Prisma.DiscountUpdateInput): Promise<Discount> {
+  async update(
+    id: string,
+    data: Prisma.DiscountUpdateInput,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Discount> {
     try {
-      return await this.prisma.discount.update({ where: { id }, data });
+      return await db.discount.update({ where: { id }, data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Discount with ID ${id} not found`);
@@ -29,9 +33,9 @@ export class DiscountRepository {
     return this.prisma.discount.findMany();
   }
 
-  async delete(id: string): Promise<Discount> {
+  async delete(id: string, db: Prisma.TransactionClient = this.prisma): Promise<Discount> {
     try {
-      return await this.prisma.discount.delete({ where: { id } });
+      return await db.discount.delete({ where: { id } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Discount with ID ${id} not found`);
@@ -138,15 +142,17 @@ export class DiscountRepository {
   async addItemsToDiscount(
     id: string,
     data: Pick<Prisma.DiscountUpdateInput, 'products' | 'variants' | 'categories'>,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<Discount> {
-    return this.prisma.discount.update({ where: { id }, data });
+    return db.discount.update({ where: { id }, data });
   }
 
   async removeItemsFromDiscount(
     id: string,
     data: Pick<Prisma.DiscountUpdateInput, 'products' | 'variants' | 'categories'>,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<Discount> {
-    return this.prisma.discount.update({ where: { id }, data });
+    return db.discount.update({ where: { id }, data });
   }
 
   async updateOrderWithDiscount(

@@ -31,6 +31,7 @@ const mockOrdersRepository = {
   create: jest.fn(),
   transitionStatus: jest.fn(),
   softDelete: jest.fn(),
+  updateShipping: jest.fn(),
   findExpiredPendingOrders: jest.fn(),
   hasCompletedPayment: jest.fn(),
   findAddressForUser: jest.fn(),
@@ -485,8 +486,10 @@ describe('OrdersService', () => {
       expect(ordersRepository.transitionStatus).toHaveBeenCalledWith(expect.anything(), 'order1', OrderStatus.SHIPPED, [
         OrderStatus.PROCESSING,
       ]);
+      const [tx] = ordersRepository.transitionStatus.mock.calls[0];
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Order', entityId: 'order1', action: 'STATUS_CHANGE', userId: 'admin1' }),
+        tx,
       );
       expect(result.status).toBe('SHIPPED');
     });
@@ -624,8 +627,10 @@ describe('OrdersService', () => {
         OrderStatus.CANCELLED,
       ]);
       expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
+      const [tx] = ordersRepository.softDelete.mock.calls[0];
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Order', action: 'DELETE', userId: 'admin1' }),
+        tx,
       );
       expect(result.deleted).toBe(true);
     });
@@ -693,6 +698,65 @@ describe('OrdersService', () => {
         expect.anything(),
         expect.objectContaining({ productId: 'prod1', action: 'RETURN_RESTORE', quantityChange: 2 }),
       );
+    });
+  });
+
+  describe('audit trail in the same transaction', () => {
+    const stubTx = { id: 'tx' };
+
+    beforeEach(() => {
+      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
+      mockAuditService.log.mockResolvedValue(undefined);
+    });
+
+    it('audits an admin cancellation with from/to inside the cancel-and-restock transaction', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+      mockOrdersRepository.updateProductStock.mockResolvedValue({ quantity: 10 });
+
+      await ordersService.adminCancelOrder('order1', 'admin1');
+
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        {
+          entity: 'Order',
+          entityId: 'order1',
+          action: 'STATUS_CHANGE',
+          userId: 'admin1',
+          details: { from: OrderStatus.PENDING, to: OrderStatus.CANCELLED },
+        },
+        stubTx,
+      );
+    });
+
+    it('writes the shipping update and its audit entry on the same transaction', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+      mockOrdersRepository.updateShipping.mockResolvedValue({ ...mockOrder, trackingNumber: 'TRK1', carrier: 'DHL' });
+
+      await ordersService.updateShipping('order1', undefined, 'DHL', 'admin1');
+
+      expect(mockOrdersRepository.updateShipping).toHaveBeenCalledWith('order1', undefined, 'DHL', stubTx);
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        {
+          entity: 'Order',
+          entityId: 'order1',
+          action: 'UPDATE',
+          userId: 'admin1',
+          details: { trackingNumber: undefined, carrier: 'DHL' },
+        },
+        stubTx,
+      );
+    });
+
+    it('fails the status change from inside the transaction when the audit write fails, so it rolls back', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.PROCESSING });
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.SHIPPED });
+      mockAuditService.log.mockRejectedValue(new Error('audit insert failed'));
+
+      await expect(ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1')).rejects.toThrow(
+        'audit insert failed',
+      );
+      await expect(mockOrdersRepository.runTransaction.mock.results[0].value).rejects.toThrow('audit insert failed');
+      expect(mockOrdersRepository.findUserById).not.toHaveBeenCalled();
     });
   });
 

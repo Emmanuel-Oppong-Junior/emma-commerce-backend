@@ -14,7 +14,11 @@ function buildDiscountService(repositoryOverrides: Record<string, unknown>) {
     updateOrderWithDiscount: jest.fn().mockResolvedValue({}),
     ...repositoryOverrides,
   };
-  const service = new DiscountService(repository as never, { get: jest.fn(), set: jest.fn(), del: jest.fn() } as never);
+  const service = new DiscountService(
+    repository as never,
+    { get: jest.fn(), set: jest.fn(), del: jest.fn() } as never,
+    {} as never,
+  );
   return { service, repository };
 }
 

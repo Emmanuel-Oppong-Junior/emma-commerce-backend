@@ -1,0 +1,127 @@
+import { RESOLVER_NAME_METADATA, RESOLVER_TYPE_METADATA } from '@nestjs/graphql';
+import { Role } from '@prisma/client';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';
+
+const SRC_DIR = join(__dirname, '..');
+
+// Each entry names the unit spec that proves the mutation writes its audit row in the same transaction.
+const AUDITED: Record<string, string> = {
+  createUser: 'users.service.spec (audit trail)',
+  updateUser: 'users.service.spec (audit trail)',
+  removeUser: 'users.service.spec (audit trail)',
+  archiveUser: 'users.service.spec (audit trail)',
+  deArchiveUser: 'users.service.spec (audit trail)',
+  approveReturn: 'returns.service.spec',
+  rejectReturn: 'returns.service.spec',
+  processRefund: 'returns.service.spec',
+  createProduct: 'products.service.spec (audit trail)',
+  updateProduct: 'products.service.spec (audit trail)',
+  permanentlyDeleteProduct: 'products.service.spec (audit trail)',
+  archiveProduct: 'products.service.spec (audit trail)',
+  restoreProduct: 'products.service.spec (audit trail)',
+  addTagToProduct: 'products.service.spec (audit trail)',
+  removeTagFromProduct: 'products.service.spec (audit trail)',
+  createVariant: 'variant.service.spec (audit trail)',
+  updateVariant: 'variant.service.spec (audit trail)',
+  deleteVariant: 'variant.service.spec (audit trail)',
+  createCoupon: 'coupons.service.spec (audit trail)',
+  updateCoupon: 'coupons.service.spec (audit trail)',
+  deleteCoupon: 'coupons.service.spec (audit trail)',
+  createDiscount: 'discount.service.spec (audit trail)',
+  updateDiscount: 'discount.service.spec (audit trail)',
+  addToDiscount: 'discount.service.spec (audit trail)',
+  removeFromDiscount: 'discount.service.spec (audit trail)',
+  removeDiscount: 'discount.service.spec (audit trail)',
+  createTax: 'tax.service.spec',
+  updateTax: 'tax.service.spec',
+  deleteTax: 'tax.service.spec',
+  createShippingZone: 'shipping-zones.service.spec (audit trail)',
+  updateShippingZone: 'shipping-zones.service.spec (audit trail)',
+  deleteShippingZone: 'shipping-zones.service.spec (audit trail)',
+  createPickupLocation: 'pickup-locations.service.spec (audit trail)',
+  updatePickupLocation: 'pickup-locations.service.spec (audit trail)',
+  deletePickupLocation: 'pickup-locations.service.spec (audit trail)',
+  restockProduct: 'inventory.service.spec (audit trail)',
+  restockVariant: 'inventory.service.spec (audit trail)',
+  adjustProductStock: 'inventory.service.spec (audit trail)',
+  adjustVariantStock: 'inventory.service.spec (audit trail)',
+  updateOrderStatus: 'order.service.spec',
+  adminCancelOrder: 'order.service.spec',
+  deleteOrder: 'order.service.spec',
+  updateShipping: 'order.service.spec',
+};
+
+// Privileged mutations deliberately left unaudited, with the reason. Adding to this list is a reviewed decision.
+const PAYMENT_FOLLOW_UP = 'payment module is reworked separately; COD recording audit lands with P0-C.7';
+const CATALOGUE_FOLLOW_UP = 'catalogue taxonomy or moderation, no price, stock or access impact; not in P0-D.1 scope';
+const NOT_AUDITED: Record<string, string> = {
+  recordCodPayment: PAYMENT_FOLLOW_UP,
+  softDeletePayment: PAYMENT_FOLLOW_UP,
+  restorePayment: PAYMENT_FOLLOW_UP,
+  createBrand: CATALOGUE_FOLLOW_UP,
+  updateBrand: CATALOGUE_FOLLOW_UP,
+  deleteBrand: CATALOGUE_FOLLOW_UP,
+  createCategory: CATALOGUE_FOLLOW_UP,
+  updateCategory: CATALOGUE_FOLLOW_UP,
+  removeCategory: CATALOGUE_FOLLOW_UP,
+  createSubCategory: CATALOGUE_FOLLOW_UP,
+  updateSubCategory: CATALOGUE_FOLLOW_UP,
+  removeSubCategory: CATALOGUE_FOLLOW_UP,
+  createTag: CATALOGUE_FOLLOW_UP,
+  updateTag: CATALOGUE_FOLLOW_UP,
+  deleteTag: CATALOGUE_FOLLOW_UP,
+  addProductsToTag: CATALOGUE_FOLLOW_UP,
+  removeProductsFromTag: CATALOGUE_FOLLOW_UP,
+  adminDeleteReview: CATALOGUE_FOLLOW_UP,
+};
+
+type ClassRef = { prototype: object; name: string };
+
+async function loadResolverClasses(): Promise<ClassRef[]> {
+  const files = readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.resolver.ts'));
+  const modules: Record<string, unknown>[] = await Promise.all(files.map((file) => import(join(SRC_DIR, file))));
+  return modules.flatMap((exports) =>
+    Object.values(exports).filter(
+      (value): value is ClassRef => typeof value === 'function' && value.name.endsWith('Resolver'),
+    ),
+  );
+}
+
+function privilegedMutations(resolvers: ClassRef[]): string[] {
+  return resolvers.flatMap((cls) => {
+    const classRoles: Role[] | undefined = Reflect.getMetadata(ROLES_KEY, cls);
+    return Object.getOwnPropertyNames(cls.prototype).flatMap((key) => {
+      const method = (cls.prototype as Record<string, unknown>)[key];
+      if (typeof method !== 'function' || Reflect.getMetadata(RESOLVER_TYPE_METADATA, method) !== 'Mutation') return [];
+      const roles: Role[] | undefined = Reflect.getMetadata(ROLES_KEY, method) ?? classRoles;
+      if (!roles?.length || roles.includes(Role.USER)) return [];
+      return [Reflect.getMetadata(RESOLVER_NAME_METADATA, method) ?? key];
+    });
+  });
+}
+
+describe('Audit coverage of privileged mutations', () => {
+  let mutations: string[];
+
+  beforeAll(async () => {
+    mutations = privilegedMutations(await loadResolverClasses());
+  });
+
+  it('finds the admin-only mutations it is meant to check', () => {
+    expect(mutations).toEqual(expect.arrayContaining(['processRefund', 'updateUser', 'adjustProductStock']));
+  });
+
+  it('classifies every admin-only mutation as audited or as a reviewed exemption', () => {
+    const unclassified = mutations.filter((name) => !(name in AUDITED) && !(name in NOT_AUDITED));
+
+    expect(unclassified).toEqual([]);
+  });
+
+  it('lists no audited mutation that no longer exists', () => {
+    const stale = [...Object.keys(AUDITED), ...Object.keys(NOT_AUDITED)].filter((name) => !mutations.includes(name));
+
+    expect(stale).toEqual([]);
+  });
+});

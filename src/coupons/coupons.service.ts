@@ -3,26 +3,53 @@ import { Coupon, Prisma } from '@prisma/client';
 import { CouponsRepository } from './coupons.repository';
 import { CreateCouponInput } from './dto/create-coupon.input';
 import { UpdateCouponInput } from './dto/update-coupon.input';
+import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+
+const AUDITED_COUPON_FIELDS = [
+  'code',
+  'discountType',
+  'value',
+  'usageLimit',
+  'expiresAt',
+  'isActive',
+  'minimumOrderAmount',
+] as const satisfies readonly (keyof Coupon)[];
 
 @Injectable()
 export class CouponsService {
-  constructor(private readonly couponsRepository: CouponsRepository) {}
+  constructor(
+    private readonly couponsRepository: CouponsRepository,
+    private readonly auditService: AuditService,
+  ) {}
 
   /**
    * Creates a new coupon with the provided settings.
    * @param input - Coupon creation data including code, type, value, and usage limits.
    * @returns The created coupon.
    */
-  async createCoupon(input: CreateCouponInput): Promise<Coupon> {
-    return this.couponsRepository.create({
-      code: input.code.toUpperCase(),
-      discountType: input.discountType,
-      value: input.value,
-      usageLimit: input.usageLimit,
-      expiresAt: input.expiresAt,
-      isActive: input.isActive ?? true,
-      minimumOrderAmount: input.minimumOrderAmount,
-    });
+  async createCoupon(input: CreateCouponInput, actorId: string): Promise<Coupon> {
+    return this.auditService.record(
+      (tx) =>
+        this.couponsRepository.create(
+          {
+            code: input.code.toUpperCase(),
+            discountType: input.discountType,
+            value: input.value,
+            usageLimit: input.usageLimit,
+            expiresAt: input.expiresAt,
+            isActive: input.isActive ?? true,
+            minimumOrderAmount: input.minimumOrderAmount,
+          },
+          tx,
+        ),
+      (coupon) => ({
+        entity: 'Coupon',
+        entityId: coupon.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { after: fieldValues(coupon, AUDITED_COUPON_FIELDS) },
+      }),
+    );
   }
 
   /**
@@ -32,17 +59,31 @@ export class CouponsService {
    * @returns The updated coupon.
    * @throws NotFoundException if the coupon does not exist.
    */
-  async updateCoupon(id: string, input: UpdateCouponInput): Promise<Coupon> {
-    await this.findCouponOrThrow(id);
-    return this.couponsRepository.update(id, {
-      ...(input.code && { code: input.code.toUpperCase() }),
-      discountType: input.discountType,
-      value: input.value,
-      usageLimit: input.usageLimit,
-      expiresAt: input.expiresAt,
-      isActive: input.isActive,
-      minimumOrderAmount: input.minimumOrderAmount,
-    });
+  async updateCoupon(id: string, input: UpdateCouponInput, actorId: string): Promise<Coupon> {
+    const existing = await this.findCouponOrThrow(id);
+    return this.auditService.record(
+      (tx) =>
+        this.couponsRepository.update(
+          id,
+          {
+            ...(input.code && { code: input.code.toUpperCase() }),
+            discountType: input.discountType,
+            value: input.value,
+            usageLimit: input.usageLimit,
+            expiresAt: input.expiresAt,
+            isActive: input.isActive,
+            minimumOrderAmount: input.minimumOrderAmount,
+          },
+          tx,
+        ),
+      (updated) => ({
+        entity: 'Coupon',
+        entityId: id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, updated, AUDITED_COUPON_FIELDS) },
+      }),
+    );
   }
 
   /**
@@ -50,8 +91,17 @@ export class CouponsService {
    * @param id - The ID of the coupon to delete.
    * @returns The deleted coupon.
    */
-  async deleteCoupon(id: string): Promise<Coupon> {
-    return this.couponsRepository.delete(id);
+  async deleteCoupon(id: string, actorId: string): Promise<Coupon> {
+    return this.auditService.record(
+      (tx) => this.couponsRepository.delete(id, tx),
+      (deleted) => ({
+        entity: 'Coupon',
+        entityId: id,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: fieldValues(deleted, AUDITED_COUPON_FIELDS) },
+      }),
+    );
   }
 
   /**

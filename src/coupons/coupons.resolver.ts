@@ -15,20 +15,24 @@ export class CouponsResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Coupon, { description: 'Create a new coupon (admin only)' })
-  createCoupon(@Args('input') input: CreateCouponInput) {
-    return this.couponsService.createCoupon(input);
+  createCoupon(@ActiveUser('id') actorId: string, @Args('input') input: CreateCouponInput) {
+    return this.couponsService.createCoupon(input, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Coupon, { description: 'Update a coupon (admin only)' })
-  updateCoupon(@Args('id', { type: () => ID }) id: string, @Args('input') input: UpdateCouponInput) {
-    return this.couponsService.updateCoupon(id, input);
+  updateCoupon(
+    @ActiveUser('id') actorId: string,
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: UpdateCouponInput,
+  ) {
+    return this.couponsService.updateCoupon(id, input, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Coupon, { description: 'Delete a coupon (admin only)' })
-  deleteCoupon(@Args('id', { type: () => ID }) id: string) {
-    return this.couponsService.deleteCoupon(id);
+  deleteCoupon(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
+    return this.couponsService.deleteCoupon(id, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)

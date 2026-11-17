@@ -4,6 +4,7 @@ import { Discount } from './entities/discount.entity';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
+import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '@prisma/client';
 
@@ -13,8 +14,11 @@ export class DiscountResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Discount)
-  createDiscount(@Args('createDiscountInput') createDiscountInput: CreateDiscountInput) {
-    return this.discountService.createDiscount(createDiscountInput);
+  createDiscount(
+    @ActiveUser('id') actorId: string,
+    @Args('createDiscountInput') createDiscountInput: CreateDiscountInput,
+  ) {
+    return this.discountService.createDiscount(createDiscountInput, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
@@ -31,25 +35,31 @@ export class DiscountResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Discount)
-  updateDiscount(@Args('updateDiscountInput') updateDiscountInput: UpdateDiscountInput) {
-    return this.discountService.updateDiscount(updateDiscountInput.id, updateDiscountInput);
+  updateDiscount(
+    @ActiveUser('id') actorId: string,
+    @Args('updateDiscountInput') updateDiscountInput: UpdateDiscountInput,
+  ) {
+    return this.discountService.updateDiscount(updateDiscountInput.id, updateDiscountInput, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Discount)
-  addToDiscount(@Args('modifyDiscountItemsInput') input: ModifyDiscountItemsInput) {
-    return this.discountService.addToDiscount(input);
+  addToDiscount(@ActiveUser('id') actorId: string, @Args('modifyDiscountItemsInput') input: ModifyDiscountItemsInput) {
+    return this.discountService.addToDiscount(input, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Discount)
-  removeFromDiscount(@Args('modifyDiscountItemsInput') input: ModifyDiscountItemsInput) {
-    return this.discountService.removeFromDiscount(input);
+  removeFromDiscount(
+    @ActiveUser('id') actorId: string,
+    @Args('modifyDiscountItemsInput') input: ModifyDiscountItemsInput,
+  ) {
+    return this.discountService.removeFromDiscount(input, actorId);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Discount)
-  removeDiscount(@Args('id', { type: () => ID }) id: string) {
-    return this.discountService.deleteDiscount(id);
+  removeDiscount(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
+    return this.discountService.deleteDiscount(id, actorId);
   }
 }

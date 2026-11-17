@@ -17,15 +17,48 @@ import {
   OrderItemWithProduct,
 } from './types';
 import { DiscountRepository } from './discount.repository';
+import { AuditEntry, AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 
 const DISCOUNT_ALL_KEY = 'discount:all';
 const discountKey = (id: string) => `discount:${id}`;
+const AUDITED_DISCOUNT_FIELDS = [
+  'name',
+  'type',
+  'value',
+  'startDate',
+  'endDate',
+  'isActive',
+  'minimumPurchase',
+] as const satisfies readonly (keyof Discount)[];
+
+function discountTargets(input: { products?: string[]; variants?: string[]; categories?: string[] }) {
+  return {
+    ...(input.products && { products: input.products }),
+    ...(input.variants && { variants: input.variants }),
+    ...(input.categories && { categories: input.categories }),
+  };
+}
+
+function discountItemsChange(
+  input: ModifyDiscountItemsInput,
+  operation: 'add' | 'remove',
+  actorId: string,
+): AuditEntry {
+  return {
+    entity: 'Discount',
+    entityId: input.discountId,
+    action: 'UPDATE',
+    userId: actorId,
+    details: { [operation]: discountTargets(input) },
+  };
+}
 
 @Injectable()
 export class DiscountService {
   constructor(
     private readonly discountRepository: DiscountRepository,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -35,22 +68,35 @@ export class DiscountService {
    * @returns The created discount.
    * @throws BadRequestException if business rules are violated.
    */
-  async createDiscount(input: CreateDiscountInput): Promise<Discount> {
+  async createDiscount(input: CreateDiscountInput, actorId: string): Promise<Discount> {
     await this.validateDiscountInput(input);
     const connectData = this.prepareDiscountConnectionData(input, 'connect') as DiscountConnectInput;
-    const discount = await this.discountRepository.create({
-      name: input.name,
-      description: input.description,
-      type: input.type,
-      value: input.value,
-      startDate: input.startDate,
-      endDate: input.endDate,
-      isActive: input.isActive ?? false,
-      minimumPurchase: input.minimumPurchase,
-      products: connectData.products,
-      variants: connectData.variants,
-      categories: connectData.categories,
-    });
+    const discount = await this.auditService.record(
+      (tx) =>
+        this.discountRepository.create(
+          {
+            name: input.name,
+            description: input.description,
+            type: input.type,
+            value: input.value,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            isActive: input.isActive ?? false,
+            minimumPurchase: input.minimumPurchase,
+            products: connectData.products,
+            variants: connectData.variants,
+            categories: connectData.categories,
+          },
+          tx,
+        ),
+      (created) => ({
+        entity: 'Discount',
+        entityId: created.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { after: fieldValues(created, AUDITED_DISCOUNT_FIELDS), ...discountTargets(input) },
+      }),
+    );
     await this.cacheManager.del(DISCOUNT_ALL_KEY);
     return discount;
   }
@@ -64,23 +110,37 @@ export class DiscountService {
    * @throws NotFoundException if the discount is not found.
    * @throws BadRequestException if business rules are violated.
    */
-  async updateDiscount(id: string, input: UpdateDiscountInput): Promise<Discount> {
-    await this.findDiscountOrThrow(id);
+  async updateDiscount(id: string, input: UpdateDiscountInput, actorId: string): Promise<Discount> {
+    const existing = await this.findDiscountOrThrow(id);
     await this.validateDiscountInput(input, true);
     const connectData = this.prepareDiscountConnectionData(input, 'set') as DiscountSetInput;
-    const updated = await this.discountRepository.update(id, {
-      name: input.name,
-      description: input.description,
-      type: input.type,
-      value: input.value,
-      startDate: input.startDate,
-      endDate: input.endDate,
-      isActive: input.isActive,
-      minimumPurchase: input.minimumPurchase,
-      products: connectData.products,
-      variants: connectData.variants,
-      categories: connectData.categories,
-    });
+    const updated = await this.auditService.record(
+      (tx) =>
+        this.discountRepository.update(
+          id,
+          {
+            name: input.name,
+            description: input.description,
+            type: input.type,
+            value: input.value,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            isActive: input.isActive,
+            minimumPurchase: input.minimumPurchase,
+            products: connectData.products,
+            variants: connectData.variants,
+            categories: connectData.categories,
+          },
+          tx,
+        ),
+      (after) => ({
+        entity: 'Discount',
+        entityId: id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, after, AUDITED_DISCOUNT_FIELDS), ...discountTargets(input) },
+      }),
+    );
     await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(id))]);
     return updated;
   }
@@ -116,17 +176,25 @@ export class DiscountService {
    * @param input - The discount ID and IDs to add.
    * @returns The updated discount.
    */
-  async addToDiscount(input: ModifyDiscountItemsInput): Promise<Discount> {
+  async addToDiscount(input: ModifyDiscountItemsInput, actorId: string): Promise<Discount> {
     await this.findDiscountOrThrow(input.discountId);
     if (input.products?.length) await this.ensureProductsExist(input);
     if (input.variants?.length) await this.ensureVariantsExist(input);
     if (input.categories?.length) await this.ensureCategoriesExist(input);
 
-    const updated = await this.discountRepository.addItemsToDiscount(input.discountId, {
-      products: input.products?.length ? { connect: input.products.map((id) => ({ id })) } : undefined,
-      variants: input.variants?.length ? { connect: input.variants.map((id) => ({ id })) } : undefined,
-      categories: input.categories?.length ? { connect: input.categories.map((id) => ({ id })) } : undefined,
-    });
+    const updated = await this.auditService.record(
+      (tx) =>
+        this.discountRepository.addItemsToDiscount(
+          input.discountId,
+          {
+            products: input.products?.length ? { connect: input.products.map((id) => ({ id })) } : undefined,
+            variants: input.variants?.length ? { connect: input.variants.map((id) => ({ id })) } : undefined,
+            categories: input.categories?.length ? { connect: input.categories.map((id) => ({ id })) } : undefined,
+          },
+          tx,
+        ),
+      () => discountItemsChange(input, 'add', actorId),
+    );
     await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(input.discountId))]);
     return updated;
   }
@@ -136,14 +204,22 @@ export class DiscountService {
    * @param input - The discount ID and IDs to remove.
    * @returns The updated discount.
    */
-  async removeFromDiscount(input: ModifyDiscountItemsInput): Promise<Discount> {
+  async removeFromDiscount(input: ModifyDiscountItemsInput, actorId: string): Promise<Discount> {
     await this.findDiscountOrThrow(input.discountId);
 
-    const updated = await this.discountRepository.removeItemsFromDiscount(input.discountId, {
-      products: input.products?.length ? { disconnect: input.products.map((id) => ({ id })) } : undefined,
-      variants: input.variants?.length ? { disconnect: input.variants.map((id) => ({ id })) } : undefined,
-      categories: input.categories?.length ? { disconnect: input.categories.map((id) => ({ id })) } : undefined,
-    });
+    const updated = await this.auditService.record(
+      (tx) =>
+        this.discountRepository.removeItemsFromDiscount(
+          input.discountId,
+          {
+            products: input.products?.length ? { disconnect: input.products.map((id) => ({ id })) } : undefined,
+            variants: input.variants?.length ? { disconnect: input.variants.map((id) => ({ id })) } : undefined,
+            categories: input.categories?.length ? { disconnect: input.categories.map((id) => ({ id })) } : undefined,
+          },
+          tx,
+        ),
+      () => discountItemsChange(input, 'remove', actorId),
+    );
     await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(input.discountId))]);
     return updated;
   }
@@ -154,9 +230,18 @@ export class DiscountService {
    * @returns The deleted discount.
    * @throws NotFoundException if the discount is not found.
    */
-  async deleteDiscount(id: string): Promise<Discount> {
+  async deleteDiscount(id: string, actorId: string): Promise<Discount> {
     await this.findDiscountOrThrow(id);
-    const deleted = await this.discountRepository.delete(id);
+    const deleted = await this.auditService.record(
+      (tx) => this.discountRepository.delete(id, tx),
+      (before) => ({
+        entity: 'Discount',
+        entityId: id,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: fieldValues(before, AUDITED_DISCOUNT_FIELDS) },
+      }),
+    );
     await Promise.all([this.cacheManager.del(DISCOUNT_ALL_KEY), this.cacheManager.del(discountKey(id))]);
     return deleted;
   }

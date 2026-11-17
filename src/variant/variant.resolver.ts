@@ -1,6 +1,7 @@
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { VariantService } from './variant.service';
 import { Variant } from './entities/variant.entity';
+import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '../users/enums/role.enum';
 import { CreateVariantInput } from './dto/create-variant.input';
@@ -42,23 +43,23 @@ export class VariantResolver {
     name: 'createVariant',
     description: 'Creates a new variant for a product',
   })
-  async createVariant(@Args('input') input: CreateVariantInput) {
-    return this.variantService.createVariant(input);
+  async createVariant(@ActiveUser('id') actorId: string, @Args('input') input: CreateVariantInput) {
+    return this.variantService.createVariant(input, actorId);
   }
 
   @Mutation(() => Variant, {
     name: 'updateVariant',
     description: 'Updates an existing variant',
   })
-  async updateVariant(@Args('input') input: UpdateVariantInput) {
-    return this.variantService.updateVariant(input.id, input);
+  async updateVariant(@ActiveUser('id') actorId: string, @Args('input') input: UpdateVariantInput) {
+    return this.variantService.updateVariant(input.id, input, actorId);
   }
 
   @Mutation(() => Variant, {
     name: 'deleteVariant',
     description: 'Deletes a variant',
   })
-  async deleteVariant(@Args('variantId', { type: () => String }) variantId: string) {
-    return this.variantService.deleteVariant(variantId);
+  async deleteVariant(@ActiveUser('id') actorId: string, @Args('variantId', { type: () => String }) variantId: string) {
+    return this.variantService.deleteVariant(variantId, actorId);
   }
 }

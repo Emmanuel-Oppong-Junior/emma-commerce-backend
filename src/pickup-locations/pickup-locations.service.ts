@@ -3,21 +3,62 @@ import { PickupLocation } from '@prisma/client';
 import { PickupLocationsRepository } from './pickup-locations.repository';
 import { CreatePickupLocationInput } from './dto/create-pickup-location.input';
 import { UpdatePickupLocationInput } from './dto/update-pickup-location.input';
+import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+
+const AUDITED_PICKUP_FIELDS = [
+  'name',
+  'address',
+  'city',
+  'state',
+  'country',
+  'isActive',
+] as const satisfies readonly (keyof PickupLocation)[];
 
 @Injectable()
 export class PickupLocationsService {
-  constructor(private readonly repository: PickupLocationsRepository) {}
+  constructor(
+    private readonly repository: PickupLocationsRepository,
+    private readonly auditService: AuditService,
+  ) {}
 
-  async create(input: CreatePickupLocationInput): Promise<PickupLocation> {
-    return this.repository.create({ ...input, isActive: input.isActive ?? true });
+  async create(input: CreatePickupLocationInput, actorId: string): Promise<PickupLocation> {
+    return this.auditService.record(
+      (tx) => this.repository.create({ ...input, isActive: input.isActive ?? true }, tx),
+      (location) => ({
+        entity: 'PickupLocation',
+        entityId: location.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { after: fieldValues(location, AUDITED_PICKUP_FIELDS) },
+      }),
+    );
   }
 
-  async update(id: string, input: UpdatePickupLocationInput): Promise<PickupLocation> {
-    return this.repository.update(id, input);
+  async update(id: string, input: UpdatePickupLocationInput, actorId: string): Promise<PickupLocation> {
+    const existing = await this.findOne(id);
+    return this.auditService.record(
+      (tx) => this.repository.update(id, input, tx),
+      (updated) => ({
+        entity: 'PickupLocation',
+        entityId: id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, updated, AUDITED_PICKUP_FIELDS) },
+      }),
+    );
   }
 
-  async delete(id: string): Promise<PickupLocation> {
-    return this.repository.delete(id);
+  async delete(id: string, actorId: string): Promise<PickupLocation> {
+    return this.auditService.record(
+      (tx) => this.repository.delete(id, tx),
+      (deleted) => ({
+        entity: 'PickupLocation',
+        entityId: id,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: fieldValues(deleted, AUDITED_PICKUP_FIELDS) },
+      }),
+    );
   }
 
   async findAll(): Promise<PickupLocation[]> {

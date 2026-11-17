@@ -380,6 +380,23 @@ describe('UsersRepository', () => {
       });
       expect(result).toEqual(mockUser);
     });
+
+    it("updates a user and revokes their refresh tokens on the caller's transaction when given one", async () => {
+      const tx = {
+        user: { update: jest.fn().mockResolvedValue(mockUser) },
+        refreshToken: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) },
+      };
+
+      const result = await repository.updateAndRevokeSessions('user1', { isActive: false }, tx as never);
+
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.user.update).toHaveBeenCalledWith({ where: { id: 'user1' }, data: { isActive: false } });
+      expect(tx.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'user1', revoked: false },
+        data: { revoked: true },
+      });
+      expect(result).toEqual(mockUser);
+    });
   });
 
   describe('password reset operations', () => {

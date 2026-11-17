@@ -119,9 +119,14 @@ export class OrdersRepository {
     return this.prisma.address.findUnique({ where: { id: addressId } });
   }
 
-  async updateShipping(orderId: string, trackingNumber?: string, carrier?: string): Promise<OrderWithItems> {
+  async updateShipping(
+    orderId: string,
+    trackingNumber?: string,
+    carrier?: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<OrderWithItems> {
     try {
-      return (await this.prisma.order.update({
+      return (await db.order.update({
         where: { id: orderId },
         data: { trackingNumber, carrier },
         include: { items: { include: { product: true } } },

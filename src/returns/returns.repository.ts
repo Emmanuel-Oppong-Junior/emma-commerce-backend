@@ -34,9 +34,10 @@ export class ReturnsRepository {
     status: ReturnStatus,
     refundAmount?: number,
     adminNote?: string,
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<ReturnRequest> {
     try {
-      return await this.prisma.returnRequest.update({
+      return await db.returnRequest.update({
         where: { id },
         data: { status, refundAmount, adminNote },
       });

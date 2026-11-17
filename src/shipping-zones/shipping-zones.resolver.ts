@@ -14,18 +14,22 @@ export class ShippingZonesResolver {
   constructor(private readonly service: ShippingZonesService) {}
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => ShippingZoneEntity, { description: 'Create a shipping zone (admin only)' })
-  createShippingZone(@Args('input') input: CreateShippingZoneInput) {
-    return this.service.create(input);
+  createShippingZone(@ActiveUser('id') actorId: string, @Args('input') input: CreateShippingZoneInput) {
+    return this.service.create(input, actorId);
   }
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => ShippingZoneEntity, { description: 'Update a shipping zone (admin only)' })
-  updateShippingZone(@Args('id', { type: () => ID }) id: string, @Args('input') input: UpdateShippingZoneInput) {
-    return this.service.update(id, input);
+  updateShippingZone(
+    @ActiveUser('id') actorId: string,
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: UpdateShippingZoneInput,
+  ) {
+    return this.service.update(id, input, actorId);
   }
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => ShippingZoneEntity, { description: 'Delete a shipping zone (admin only)' })
-  deleteShippingZone(@Args('id', { type: () => ID }) id: string) {
-    return this.service.delete(id);
+  deleteShippingZone(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
+    return this.service.delete(id, actorId);
   }
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => [ShippingZoneEntity], { description: 'Get all shipping zones (admin only)' })

@@ -7,6 +7,7 @@ import { ProductFilterArgs } from './dto/product-filter.args';
 import { ProductSortArgs } from './dto/product-sort.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { Role } from '@prisma/client';
+import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { DiscountService } from '../discount/discount.service';
 import { Discount } from '../discount/entities/discount.entity';
@@ -43,56 +44,63 @@ export class ProductsResolver {
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @Mutation(() => Product)
   createProduct(
+    @ActiveUser('id') actorId: string,
     @Args('createProductInput', { type: () => CreateProductInput })
     createProductInput: CreateProductInput,
   ) {
-    return this.productsService.create(createProductInput);
+    return this.productsService.create(createProductInput, actorId);
   }
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @Mutation(() => Product)
   updateProduct(
+    @ActiveUser('id') actorId: string,
     @Args('productId', { type: () => String }) productId: string,
     @Args('updateProductInput', { type: () => UpdateProductInput })
     updateProductInput: UpdateProductInput,
   ) {
-    return this.productsService.update(productId, updateProductInput);
+    return this.productsService.update(productId, updateProductInput, actorId);
   }
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @Mutation(() => Product)
-  permanentlyDeleteProduct(@Args('productId', { type: () => String }) productId: string) {
-    return this.productsService.remove(productId);
+  permanentlyDeleteProduct(
+    @ActiveUser('id') actorId: string,
+    @Args('productId', { type: () => String }) productId: string,
+  ) {
+    return this.productsService.remove(productId, actorId);
   }
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @Mutation(() => Product)
-  archiveProduct(@Args('productId', { type: () => String }) productId: string) {
-    return this.productsService.archiveProduct(productId);
+  archiveProduct(@ActiveUser('id') actorId: string, @Args('productId', { type: () => String }) productId: string) {
+    return this.productsService.archiveProduct(productId, actorId);
   }
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @Mutation(() => Product)
-  restoreProduct(@Args('productId', { type: () => String }) productId: string) {
-    return this.productsService.restoreProduct(productId);
+  restoreProduct(@ActiveUser('id') actorId: string, @Args('productId', { type: () => String }) productId: string) {
+    return this.productsService.restoreProduct(productId, actorId);
   }
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @Mutation(() => Product, { name: 'addTagToProduct' })
   async addTagToProduct(
+    @ActiveUser('id') actorId: string,
     @Args('productId', { type: () => String }) productId: string,
     @Args('tagId', { type: () => String }) tagId: string,
   ) {
-    return this.productsService.addTagToProduct(productId, tagId);
+    return this.productsService.addTagToProduct(productId, tagId, actorId);
   }
 
   @Roles(Role.SUPER_ADMIN, Role.ADMIN)
   @Mutation(() => Product, { name: 'removeTagFromProduct' })
   async removeTagFromProduct(
+    @ActiveUser('id') actorId: string,
     @Args('productId', { type: () => String }) productId: string,
     @Args('tagId', { type: () => String }) tagId: string,
   ) {
-    return this.productsService.removeTagFromProduct(productId, tagId);
+    return this.productsService.removeTagFromProduct(productId, tagId, actorId);
   }
 
   @Auth(AuthType.None)

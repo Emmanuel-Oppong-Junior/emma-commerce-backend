@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { User } from '@prisma/client';
+import { Prisma, User } from '@prisma/client';
 import { createHash } from 'crypto';
 import { EmailVerificationService } from './email-verification.service';
 import { Role } from './enums/role.enum';
@@ -142,9 +142,26 @@ describe('EmailVerificationService', () => {
         user.id,
         { hash: expect.any(String), expiresAt: expect.any(Date) },
         { name: 'Ama', pendingEmail: 'new@example.com' },
+        undefined,
       );
       expect(notifications.sendEmailVerification).toHaveBeenCalledWith('new@example.com', expect.any(String), 24);
       expect(notifications.sendEmailChangeRequested).toHaveBeenCalledWith(user.email, 'new@example.com');
+    });
+
+    it("stores the pending address on the caller's transaction when given one", async () => {
+      const { service, repository } = buildService();
+      const tx = { id: 'tx' } as unknown as Prisma.TransactionClient;
+      repository.findByEmail.mockResolvedValue(null);
+      repository.saveEmailVerificationToken.mockResolvedValue({ ...user, pendingEmail: 'new@example.com' });
+
+      await service.requestEmailChange(user, 'new@example.com', {}, tx);
+
+      expect(repository.saveEmailVerificationToken).toHaveBeenCalledWith(
+        user.id,
+        expect.any(Object),
+        { pendingEmail: 'new@example.com' },
+        tx,
+      );
     });
 
     it('refuses an address another account already uses', async () => {

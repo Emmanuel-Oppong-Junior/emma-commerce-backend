@@ -6,9 +6,13 @@ import { PrismaService } from '../prisma/prisma.service';
 export class ProductsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: Prisma.ProductCreateInput, include?: Prisma.ProductInclude): Promise<Product> {
+  async create(
+    data: Prisma.ProductCreateInput,
+    include?: Prisma.ProductInclude,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Product> {
     try {
-      return await this.prisma.product.create({ data, include });
+      return await db.product.create({ data, include });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException('A product with this SKU already exists');
@@ -17,9 +21,14 @@ export class ProductsRepository {
     }
   }
 
-  async update(id: string, data: Prisma.ProductUpdateInput, include?: Prisma.ProductInclude): Promise<Product> {
+  async update(
+    id: string,
+    data: Prisma.ProductUpdateInput,
+    include?: Prisma.ProductInclude,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Product> {
     try {
-      return await this.prisma.product.update({ where: { id }, data, include });
+      return await db.product.update({ where: { id }, data, include });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException('Product not found');
@@ -28,9 +37,9 @@ export class ProductsRepository {
     }
   }
 
-  async delete(id: string): Promise<Product> {
+  async delete(id: string, db: Prisma.TransactionClient = this.prisma): Promise<Product> {
     try {
-      return await this.prisma.product.delete({ where: { id } });
+      return await db.product.delete({ where: { id } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException('Product not found');
@@ -70,8 +79,13 @@ export class ProductsRepository {
     return this.prisma.product.count({ where });
   }
 
-  async updateTags(productId: string, operation: 'connect' | 'disconnect', tagId: string): Promise<Product> {
-    return this.prisma.product.update({
+  async updateTags(
+    productId: string,
+    operation: 'connect' | 'disconnect',
+    tagId: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Product> {
+    return db.product.update({
       where: { id: productId },
       data: { tags: { [operation]: { id: tagId } } },
       include: { tags: true },

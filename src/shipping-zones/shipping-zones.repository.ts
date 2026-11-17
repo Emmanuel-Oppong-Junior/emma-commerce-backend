@@ -6,9 +6,12 @@ import { PrismaService } from '../prisma/prisma.service';
 export class ShippingZonesRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: Prisma.ShippingZoneCreateInput): Promise<ShippingZone> {
+  async create(
+    data: Prisma.ShippingZoneCreateInput,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<ShippingZone> {
     try {
-      return await this.prisma.shippingZone.create({ data });
+      return await db.shippingZone.create({ data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException(`Shipping zone "${data.name}" already exists`);
@@ -45,9 +48,13 @@ export class ShippingZonesRepository {
     });
   }
 
-  async update(id: string, data: Prisma.ShippingZoneUpdateInput): Promise<ShippingZone> {
+  async update(
+    id: string,
+    data: Prisma.ShippingZoneUpdateInput,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<ShippingZone> {
     try {
-      return await this.prisma.shippingZone.update({ where: { id }, data });
+      return await db.shippingZone.update({ where: { id }, data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Shipping zone "${id}" not found`);
@@ -56,9 +63,9 @@ export class ShippingZonesRepository {
     }
   }
 
-  async delete(id: string): Promise<ShippingZone> {
+  async delete(id: string, db: Prisma.TransactionClient = this.prisma): Promise<ShippingZone> {
     try {
-      return await this.prisma.shippingZone.delete({ where: { id } });
+      return await db.shippingZone.delete({ where: { id } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Shipping zone "${id}" not found`);

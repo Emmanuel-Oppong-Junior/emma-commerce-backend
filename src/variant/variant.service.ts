@@ -3,19 +3,34 @@ import { Variant } from '@prisma/client';
 import { CreateVariantInput } from './dto/create-variant.input';
 import { UpdateVariantInput } from './dto/update-variant.input';
 import { VariantRepository } from './variant.repository';
+import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+
+const AUDITED_VARIANT_FIELDS = ['productId', 'size', 'color', 'price'] as const satisfies readonly (keyof Variant)[];
 
 @Injectable()
 export class VariantService {
-  constructor(private readonly variantRepository: VariantRepository) {}
+  constructor(
+    private readonly variantRepository: VariantRepository,
+    private readonly auditService: AuditService,
+  ) {}
 
   /**
    * Creates a new variant for a product.
    * @param data - The variant data to create.
    * @returns The created variant.
    */
-  async createVariant(data: CreateVariantInput) {
+  async createVariant(data: CreateVariantInput, actorId: string) {
     await this.ensureProductExists(data.productId);
-    return this.variantRepository.create(data);
+    return this.auditService.record(
+      (tx) => this.variantRepository.create(data, tx),
+      (variant) => ({
+        entity: 'Variant',
+        entityId: variant.id,
+        action: 'CREATE',
+        userId: actorId,
+        details: { after: fieldValues(variant, AUDITED_VARIANT_FIELDS) },
+      }),
+    );
   }
 
   /**
@@ -51,9 +66,18 @@ export class VariantService {
    * @param data - The variant data to update.
    * @returns The updated variant.
    */
-  async updateVariant(variantId: string, data: UpdateVariantInput): Promise<Variant> {
-    await this.retrieveVariant(variantId);
-    return this.variantRepository.update(variantId, data);
+  async updateVariant(variantId: string, data: UpdateVariantInput, actorId: string): Promise<Variant> {
+    const existing = await this.retrieveVariant(variantId);
+    return this.auditService.record(
+      (tx) => this.variantRepository.update(variantId, data, tx),
+      (updated) => ({
+        entity: 'Variant',
+        entityId: variantId,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges<Variant>(existing, updated, AUDITED_VARIANT_FIELDS) },
+      }),
+    );
   }
 
   /**
@@ -61,9 +85,18 @@ export class VariantService {
    * @param variantId - The ID of the variant.
    * @returns The deleted variant.
    */
-  async deleteVariant(variantId: string): Promise<Variant> {
+  async deleteVariant(variantId: string, actorId: string): Promise<Variant> {
     await this.retrieveVariant(variantId);
-    return this.variantRepository.delete(variantId);
+    return this.auditService.record(
+      (tx) => this.variantRepository.delete(variantId, tx),
+      (deleted) => ({
+        entity: 'Variant',
+        entityId: variantId,
+        action: 'DELETE',
+        userId: actorId,
+        details: { before: fieldValues(deleted, AUDITED_VARIANT_FIELDS) },
+      }),
+    );
   }
 
   private async ensureProductExists(productId: string): Promise<void> {

@@ -6,9 +6,9 @@ import { PrismaService } from '../prisma/prisma.service';
 export class TaxRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: Prisma.TaxCreateInput): Promise<Tax> {
+  async create(data: Prisma.TaxCreateInput, db: Prisma.TransactionClient = this.prisma): Promise<Tax> {
     try {
-      return await this.prisma.tax.create({ data });
+      return await db.tax.create({ data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException(`Tax "${data.name}" already exists`);
@@ -30,9 +30,9 @@ export class TaxRepository {
     return taxes.reduce((sum, t) => sum + Number(t.rate), 0);
   }
 
-  async update(id: string, data: Prisma.TaxUpdateInput): Promise<Tax> {
+  async update(id: string, data: Prisma.TaxUpdateInput, db: Prisma.TransactionClient = this.prisma): Promise<Tax> {
     try {
-      return await this.prisma.tax.update({ where: { id }, data });
+      return await db.tax.update({ where: { id }, data });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Tax "${id}" not found`);
@@ -41,9 +41,9 @@ export class TaxRepository {
     }
   }
 
-  async delete(id: string): Promise<Tax> {
+  async delete(id: string, db: Prisma.TransactionClient = this.prisma): Promise<Tax> {
     try {
-      return await this.prisma.tax.delete({ where: { id } });
+      return await db.tax.delete({ where: { id } });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException(`Tax "${id}" not found`);

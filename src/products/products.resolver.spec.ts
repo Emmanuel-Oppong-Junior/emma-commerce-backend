@@ -82,9 +82,9 @@ describe('ProductsResolver', () => {
       const product: Product = { id: 'prod1', ...input, images: [] } as unknown as Product;
       mockProductsService.create.mockResolvedValue(product);
 
-      const result = await resolver.createProduct(input);
+      const result = await resolver.createProduct('admin1', input);
 
-      expect(service.create).toHaveBeenCalledWith(input);
+      expect(service.create).toHaveBeenCalledWith(input, 'admin1');
       expect(result).toEqual(product);
     });
   });
@@ -102,9 +102,9 @@ describe('ProductsResolver', () => {
       } as unknown as Product;
       mockProductsService.update.mockResolvedValue(product);
 
-      const result = await resolver.updateProduct('prod1', input);
+      const result = await resolver.updateProduct('admin1', 'prod1', input);
 
-      expect(service.update).toHaveBeenCalledWith('prod1', input);
+      expect(service.update).toHaveBeenCalledWith('prod1', input, 'admin1');
       expect(result).toEqual(product);
     });
   });
@@ -112,8 +112,8 @@ describe('ProductsResolver', () => {
   describe('removeProduct', () => {
     it('should remove a product', async () => {
       mockProductsService.remove.mockResolvedValue(mockProduct);
-      const result = await resolver.permanentlyDeleteProduct('prod1');
-      expect(service.remove).toHaveBeenCalledWith('prod1');
+      const result = await resolver.permanentlyDeleteProduct('admin1', 'prod1');
+      expect(service.remove).toHaveBeenCalledWith('prod1', 'admin1');
       expect(result).toEqual(mockProduct);
     });
   });
@@ -122,8 +122,8 @@ describe('ProductsResolver', () => {
     it('should archive a product', async () => {
       const product: Product = { ...mockProduct, isActive: false } as unknown as Product;
       mockProductsService.archiveProduct.mockResolvedValue(product);
-      const result = await resolver.archiveProduct('prod1');
-      expect(service.archiveProduct).toHaveBeenCalledWith('prod1');
+      const result = await resolver.archiveProduct('admin1', 'prod1');
+      expect(service.archiveProduct).toHaveBeenCalledWith('prod1', 'admin1');
       expect(result).toEqual(product);
     });
   });
@@ -131,8 +131,8 @@ describe('ProductsResolver', () => {
   describe('restoreProduct', () => {
     it('should restore a product', async () => {
       mockProductsService.restoreProduct.mockResolvedValue(mockProduct);
-      const result = await resolver.restoreProduct('prod1');
-      expect(service.restoreProduct).toHaveBeenCalledWith('prod1');
+      const result = await resolver.restoreProduct('admin1', 'prod1');
+      expect(service.restoreProduct).toHaveBeenCalledWith('prod1', 'admin1');
       expect(result).toEqual(mockProduct);
     });
   });
