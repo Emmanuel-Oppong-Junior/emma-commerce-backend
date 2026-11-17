@@ -22,7 +22,7 @@ const mockReturnsRepository = {
 
 const mockPrisma = {
   order: { findUnique: jest.fn() },
-  payment: { findUnique: jest.fn() },
+  paymentAttempt: { findFirst: jest.fn() },
   $transaction: jest.fn(),
 };
 
@@ -47,7 +47,6 @@ const mockOrder = {
   id: 'order1',
   userId: 'user1',
   status: 'DELIVERED',
-  payment: { transactionId: 'txn_123' },
 };
 
 describe('ReturnsService', () => {
@@ -192,7 +191,7 @@ describe('ReturnsService', () => {
       const refundedReturn = { ...approvedReturn, status: 'REFUNDED' };
 
       mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
-      mockPrisma.payment.findUnique.mockResolvedValue({ transactionId: 'txn_123', orderId: 'order1' });
+      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ reference: 'txn_123' });
       mockedAxios.post.mockResolvedValue({ data: { status: true } });
       mockReturnsRepository.updateStatus.mockResolvedValue(refundedReturn);
 
@@ -231,7 +230,7 @@ describe('ReturnsService', () => {
         status: 'APPROVED',
         refundAmount: 50,
       });
-      mockPrisma.payment.findUnique.mockResolvedValue(null);
+      mockPrisma.paymentAttempt.findFirst.mockResolvedValue(null);
 
       await expect(service.processRefund('return1')).rejects.toThrow('No payment transaction found for this order');
     });
@@ -239,7 +238,7 @@ describe('ReturnsService', () => {
     it('should throw BadRequestException if Paystack refund fails', async () => {
       const approvedReturn = { ...mockReturnRequest, status: 'APPROVED', refundAmount: 50 };
       mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
-      mockPrisma.payment.findUnique.mockResolvedValue({ transactionId: 'txn_123', orderId: 'order1' });
+      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ reference: 'txn_123' });
       mockedAxios.post.mockRejectedValue(new Error('Network error'));
 
       await expect(service.processRefund('return1')).rejects.toThrow('Refund processing failed');

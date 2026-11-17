@@ -5,6 +5,7 @@ import {
   Order,
   OrderItem,
   OrderStatus,
+  PaymentIntentStatus,
   PaymentMethod,
   PaymentStatus,
   Prisma,
@@ -16,8 +17,8 @@ import { PrismaService } from '../prisma/prisma.service';
 type OrderWithItems = Order & { items: OrderItem[] };
 
 /**
- * Unpaid online orders older than `cutoff` with no payment attempt, or whose last attempt is still
- * pending or failed and was last touched before `cutoff`. Never matches an order with a completed payment.
+ * Unpaid online orders older than `cutoff` with no payment attempt, or whose attempts are all pending, failed
+ * or abandoned and were last touched before `cutoff`. Never matches an order with a completed payment.
  */
 export function abandonedOrderWhere(cutoff: Date): Prisma.OrderWhereInput {
   return {
@@ -26,8 +27,20 @@ export function abandonedOrderWhere(cutoff: Date): Prisma.OrderWhereInput {
     createdAt: { lt: cutoff },
     deleted: false,
     OR: [
-      { payment: { is: null } },
-      { payment: { is: { status: { in: [PaymentStatus.PENDING, PaymentStatus.FAILED] }, updatedAt: { lt: cutoff } } } },
+      { paymentIntent: { is: null } },
+      {
+        paymentIntent: {
+          is: {
+            status: PaymentIntentStatus.PENDING,
+            attempts: {
+              every: {
+                status: { in: [PaymentStatus.PENDING, PaymentStatus.FAILED, PaymentStatus.ABANDONED] },
+                updatedAt: { lt: cutoff },
+              },
+            },
+          },
+        },
+      },
     ],
   };
 }
@@ -202,8 +215,11 @@ export class OrdersRepository {
     return this.prisma.$transaction(fn);
   }
 
-  async findPaymentByOrderId(orderId: string) {
-    return this.prisma.payment.findUnique({ where: { orderId } });
+  async hasCompletedPayment(orderId: string): Promise<boolean> {
+    const completed = await this.prisma.paymentAttempt.count({
+      where: { intent: { orderId }, status: PaymentStatus.COMPLETED },
+    });
+    return completed > 0;
   }
 
   async findExpiredPendingOrders(cutoff: Date): Promise<OrderWithItems[]> {

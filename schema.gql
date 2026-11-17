@@ -757,7 +757,6 @@ type Mutation {
 
   """Removes a product from the user’s wishlist"""
   removeFromWishlist(productId: String!): Wishlist!
-  removePayment(id: String!): Payment!
 
   """Add products to a tag"""
   removeProductsFromTag(tagId: String!, updateDiscountInput: RemoveProductsFromTagDto!): Tag!
@@ -995,6 +994,7 @@ type Payment {
 }
 
 enum PaymentStatus {
+  ABANDONED
   COMPLETED
   FAILED
   PENDING

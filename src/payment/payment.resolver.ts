@@ -64,10 +64,4 @@ export class PaymentResolver {
   restorePayment(@Args('id', { type: () => String }) id: string) {
     return this.paymentService.restore(id);
   }
-
-  @Roles(Role.ADMIN)
-  @Mutation(() => Payment)
-  removePayment(@Args('id', { type: () => String }) id: string) {
-    return this.paymentService.remove(id);
-  }
 }

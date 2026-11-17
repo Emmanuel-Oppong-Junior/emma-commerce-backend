@@ -3,7 +3,7 @@ import { FulfillmentType, PaymentStatus } from '@prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ORDER_EXPIRY_LOCK_KEY, OrdersService } from '../../src/order/order.service';
 import { createTestApp } from '../helpers/app.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { clearPaymentLedger, resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 
 const PRODUCT_ID = 'seed_prod2';
 const USER_ID = 'seed_user';
@@ -42,17 +42,7 @@ describe('Abandoned order expiry (e2e)', () => {
   };
 
   const addPayment = async (orderId: string, status: PaymentStatus, touchedAt: Date) => {
-    await prisma.payment.create({
-      data: {
-        orderId,
-        amount: 100,
-        currency: 'GHS',
-        paymentMethod: 'card',
-        status,
-        transactionId: `ref-${orderId}`,
-        updatedAt: touchedAt,
-      },
-    });
+    await seedPaymentAttempt(prisma, { orderId, status, updatedAt: touchedAt });
   };
 
   beforeAll(async () => {
@@ -75,7 +65,7 @@ describe('Abandoned order expiry (e2e)', () => {
 
   beforeEach(async () => {
     await prisma.inventoryLog.deleteMany();
-    await prisma.payment.deleteMany();
+    await clearPaymentLedger(prisma);
     await prisma.orderItem.deleteMany();
     await prisma.order.deleteMany();
     await prisma.product.update({ where: { id: PRODUCT_ID }, data: { quantity: 100 } });

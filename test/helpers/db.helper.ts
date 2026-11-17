@@ -1,4 +1,4 @@
-import { Role } from '@prisma/client';
+import { PaymentProvider, PaymentStatus, Role } from '@prisma/client';
 import { genSalt, hash } from 'bcrypt';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
@@ -15,7 +15,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.returnRequest.deleteMany();
 
   // Payment and order hierarchy
-  await prisma.payment.deleteMany();
+  await clearPaymentLedger(prisma);
   await prisma.orderItem.deleteMany();
   await prisma.order.deleteMany();
 
@@ -52,6 +52,48 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
 
   // Users last (referenced by many tables above)
   await prisma.user.deleteMany();
+}
+
+/**
+ * Empties the payment ledger. A database trigger forbids deleting ledger rows, and TRUNCATE does not fire
+ * row-level delete triggers, so tests clear these tables with TRUNCATE.
+ */
+export async function clearPaymentLedger(prisma: PrismaService): Promise<void> {
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE "Refund", "CashCollection", "PaymentAttempt", "PaymentIntent", "WebhookEvent"',
+  );
+}
+
+/** Inserts a payment attempt (and the order's payment intent if it has none) directly into the database. */
+export async function seedPaymentAttempt(
+  prisma: PrismaService,
+  attempt: { orderId: string; status: PaymentStatus; reference?: string; amount?: number; updatedAt?: Date },
+): Promise<{ paymentId: string; reference: string }> {
+  const amount = attempt.amount ?? 100;
+  const reference = attempt.reference ?? `ref-${attempt.orderId}-${Date.now()}`;
+  const intent = await prisma.paymentIntent.upsert({
+    where: { orderId: attempt.orderId },
+    create: {
+      orderId: attempt.orderId,
+      amount,
+      status: attempt.status === PaymentStatus.COMPLETED ? 'PAID' : 'PENDING',
+    },
+    update: attempt.status === PaymentStatus.COMPLETED ? { status: 'PAID' } : {},
+  });
+  const created = await prisma.paymentAttempt.create({
+    data: {
+      intentId: intent.id,
+      provider: PaymentProvider.PAYSTACK,
+      reference,
+      amount,
+      currency: 'GHS',
+      channel: 'card',
+      status: attempt.status,
+      providerDetails: { reference },
+      updatedAt: attempt.updatedAt,
+    },
+  });
+  return { paymentId: created.id, reference };
 }
 
 /** Shape returned by `seedMinimal`, exposing the IDs of all seeded records. */

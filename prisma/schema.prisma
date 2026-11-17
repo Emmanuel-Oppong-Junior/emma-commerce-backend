@@ -332,7 +332,8 @@ model Order {
   deleted                 Boolean         @default(false)
   deletedAt               DateTime?
   items                   OrderItem[]
-  payment                 Payment?
+  paymentIntent           PaymentIntent?
+  cashCollections         CashCollection[]
   returnRequests          ReturnRequest[]
 
   @@index([userId, status])
@@ -362,20 +363,82 @@ model OrderItem {
   @@index([discountId])
 }
 
-model Payment {
-  id             String        @id @default(cuid())
-  orderId        String        @unique
-  order          Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  amount         Decimal       @db.Decimal(10, 2)
-  currency       String        @default("GHS")
-  paymentMethod  String
-  status         PaymentStatus @default(PENDING)
-  transactionId  String?
-  paymentDetails Json?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deleted        Boolean       @default(false)
-  deletedAt      DateTime?
+model PaymentIntent {
+  id        String              @id @default(cuid())
+  orderId   String              @unique
+  order     Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  amount    Decimal             @db.Decimal(10, 2)
+  currency  String              @default("GHS")
+  status    PaymentIntentStatus @default(PENDING)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  attempts  PaymentAttempt[]
+}
+
+model PaymentAttempt {
+  id              String          @id @default(cuid())
+  intentId        String
+  intent          PaymentIntent   @relation(fields: [intentId], references: [id], onDelete: Restrict)
+  provider        PaymentProvider
+  reference       String?         @unique
+  amount          Decimal         @db.Decimal(10, 2)
+  currency        String          @default("GHS")
+  status          PaymentStatus   @default(PENDING)
+  rawStatus       String?
+  channel         String
+  providerDetails Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  deleted         Boolean         @default(false)
+  deletedAt       DateTime?
+  refunds         Refund[]
+  cashCollection  CashCollection?
+
+  @@index([intentId])
+  @@index([status])
+}
+
+model Refund {
+  id             String         @id @default(cuid())
+  attemptId      String
+  attempt        PaymentAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  amount         Decimal        @db.Decimal(10, 2)
+  status         RefundStatus   @default(PENDING)
+  providerRef    String?
+  idempotencyKey String         @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([attemptId])
+}
+
+model WebhookEvent {
+  id          String          @id @default(cuid())
+  provider    PaymentProvider
+  eventKey    String
+  event       String
+  reference   String?
+  payload     Json
+  receivedAt  DateTime        @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, eventKey])
+}
+
+model CashCollection {
+  id           String          @id @default(cuid())
+  orderId      String
+  order        Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  attemptId    String?         @unique
+  attempt      PaymentAttempt? @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  riderId      String?
+  recordedById String?
+  amount       Decimal         @db.Decimal(10, 2)
+  currency     String          @default("GHS")
+  collectedAt  DateTime        @default(now())
+  createdAt    DateTime        @default(now())
+
+  @@index([orderId])
 }
 
 model WishList {
@@ -410,6 +473,23 @@ enum Role {
 enum PaymentStatus {
   PENDING
   COMPLETED
+  FAILED
+  ABANDONED
+}
+
+enum PaymentIntentStatus {
+  PENDING
+  PAID
+}
+
+enum PaymentProvider {
+  PAYSTACK
+  CASH_ON_DELIVERY
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSED
   FAILED
 }
 

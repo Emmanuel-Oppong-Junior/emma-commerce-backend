@@ -1338,7 +1338,7 @@ CANCELLED     — Order cancelled
   amount: Float;
   currency: string;
   paymentMethod: string;
-  status: PaymentStatus;     // PENDING | COMPLETED | FAILED
+  status: PaymentStatus;     // PENDING | COMPLETED | FAILED | ABANDONED
   transactionId?: string;
   paymentDetails?: string;   // JSON string with full Paystack response
   createdAt: DateTime;
@@ -1346,7 +1346,9 @@ CANCELLED     — Order cancelled
 }
 ```
 
-**`PaymentStatus` Enum**: `PENDING`, `COMPLETED`, `FAILED`
+**`PaymentStatus` Enum**: `PENDING`, `COMPLETED`, `FAILED`, `ABANDONED` (an attempt replaced by a retry before it was paid; a late payment on its reference is still accepted)
+
+Each call to `POST /payment/initialize` creates a new payment attempt with its own reference; earlier attempts are kept, never deleted. `getMyPayments` and `payments` therefore return one entry per attempt.
 
 ---
 
@@ -1372,9 +1374,10 @@ CANCELLED     — Order cancelled
 
 ---
 
-#### `softDeletePayment` / `restorePayment` / `removePayment` (ADMIN only)
+#### `softDeletePayment` / `restorePayment` (ADMIN only)
 - **Type**: Mutation
 - **Args**: `id: String!`
+- **Note**: `removePayment` was removed. Payment records are financial history and cannot be deleted; `softDeletePayment` only hides one.
 
 ---
 

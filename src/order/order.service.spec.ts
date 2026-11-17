@@ -32,7 +32,7 @@ const mockOrdersRepository = {
   transitionStatus: jest.fn(),
   softDelete: jest.fn(),
   findExpiredPendingOrders: jest.fn(),
-  findPaymentByOrderId: jest.fn(),
+  hasCompletedPayment: jest.fn(),
   findAddressForUser: jest.fn(),
   findUserById: jest.fn(),
   updateProductStock: jest.fn(),
@@ -542,7 +542,7 @@ describe('OrdersService', () => {
     it('cancels through the real cancel path so stock comes back', async () => {
       mockOrdersRepository.findById.mockResolvedValue(processingOrder);
       mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
-      mockOrdersRepository.findPaymentByOrderId.mockResolvedValue(null);
+      mockOrdersRepository.hasCompletedPayment.mockResolvedValue(false);
 
       await ordersService.updateOrderStatus('order1', OrderStatus.CANCELLED, 'admin1');
 

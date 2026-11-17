@@ -7,7 +7,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     updateProductStock: jest.fn().mockResolvedValue({ quantity: 10 }),
     updateStatus: jest.fn().mockResolvedValue({ ...order, status: 'CANCELLED' }),
     softDelete: jest.fn().mockResolvedValue({ ...order, deleted: true }),
-    findPaymentByOrderId: jest.fn().mockResolvedValue(null),
+    hasCompletedPayment: jest.fn().mockResolvedValue(false),
     findUserById: jest.fn().mockResolvedValue({ email: 'customer@test.local' }),
   };
   const inventory = { logInventoryChange: jest.fn() };

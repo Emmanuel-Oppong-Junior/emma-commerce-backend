@@ -27,10 +27,12 @@ const mockPaymentRepository = {
   findByOrderId: jest.fn(),
   findByUser: jest.fn(),
   update: jest.fn(),
-  delete: jest.fn(),
+  markAbandoned: jest.fn(),
+  recordCashCollection: jest.fn(),
   findOrderWithUser: jest.fn(),
   findOrderById: jest.fn(),
   updateOrderStatus: jest.fn(),
+  forceUpdateOrderStatus: jest.fn(),
   updatePaymentWithStatus: jest.fn(),
 };
 
@@ -152,7 +154,7 @@ describe('PaymentService', () => {
       );
     });
 
-    it('should replace a PENDING payment with a new one when payment is re-initiated', async () => {
+    it('keeps a PENDING attempt, marked abandoned, and opens a new attempt when payment is re-initiated', async () => {
       mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
       mockPaymentRepository.findByOrderId.mockResolvedValue(payment);
       mockPaystackTransaction.initialize.mockResolvedValue(transaction);
@@ -160,10 +162,24 @@ describe('PaymentService', () => {
 
       const result = await service.initiatePayment(userId, createPaymentDto);
 
-      expect(paymentRepository.delete).toHaveBeenCalledWith('pay1');
+      expect(paymentRepository.markAbandoned).toHaveBeenCalledWith('pay1');
       expect(mockPaystackTransaction.initialize).toHaveBeenCalled();
-      expect(paymentRepository.create).toHaveBeenCalled();
+      expect(paymentRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ orderId: 'order1', reference: 'order1-1234567890', status: PaymentStatus.PENDING }),
+      );
       expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/auth' });
+    });
+
+    it('opens a new attempt after a FAILED one and leaves the failed attempt as it is', async () => {
+      mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
+      mockPaymentRepository.findByOrderId.mockResolvedValue({ ...payment, status: PaymentStatus.FAILED });
+      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
+      mockPaymentRepository.create.mockResolvedValue(payment);
+
+      await service.initiatePayment(userId, createPaymentDto);
+
+      expect(paymentRepository.markAbandoned).not.toHaveBeenCalled();
+      expect(paymentRepository.create).toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if payment is already completed', async () => {
@@ -173,7 +189,7 @@ describe('PaymentService', () => {
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
         new BadRequestException('Payment for this order has already been completed'),
       );
-      expect(paymentRepository.delete).not.toHaveBeenCalled();
+      expect(paymentRepository.markAbandoned).not.toHaveBeenCalled();
       expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
     });
   });
@@ -514,25 +530,28 @@ describe('PaymentService', () => {
     });
   });
 
-  describe('remove', () => {
-    const paymentId = 'pay1';
-    const payment = { id: 'pay1', orderId: 'order1', status: PaymentStatus.PENDING, deleted: false };
+  describe('recordCodPayment', () => {
+    const codOrder = { id: 'order1', userId: 'user1', totalAmount: 250, paymentMethod: 'CASH_ON_DELIVERY' };
 
-    it('should remove payment successfully', async () => {
-      mockPaymentRepository.findById.mockResolvedValue(payment);
-      mockPaymentRepository.delete.mockResolvedValue(payment);
+    it('records the cash collection and marks the order DELIVERED', async () => {
+      const recorded = { id: 'pay1', orderId: 'order1', status: PaymentStatus.COMPLETED };
+      mockPaymentRepository.findOrderById.mockResolvedValue(codOrder);
+      mockPaymentRepository.findByOrderId.mockResolvedValue(null);
+      mockPaymentRepository.recordCashCollection.mockResolvedValue(recorded);
 
-      const result = await service.remove(paymentId);
+      const result = await service.recordCodPayment('order1', 'admin1');
 
-      expect(paymentRepository.findById).toHaveBeenCalledWith(paymentId);
-      expect(paymentRepository.delete).toHaveBeenCalledWith(paymentId);
-      expect(result).toEqual(payment);
+      expect(paymentRepository.recordCashCollection).toHaveBeenCalledWith('order1', 250, 'admin1');
+      expect(paymentRepository.forceUpdateOrderStatus).toHaveBeenCalledWith('order1', 'DELIVERED');
+      expect(result).toEqual(recorded);
     });
 
-    it('should throw NotFoundException if payment not found', async () => {
-      mockPaymentRepository.findById.mockResolvedValue(null);
+    it('refuses to record a second collection for the same order', async () => {
+      mockPaymentRepository.findOrderById.mockResolvedValue(codOrder);
+      mockPaymentRepository.findByOrderId.mockResolvedValue({ id: 'pay1', status: PaymentStatus.COMPLETED });
 
-      await expect(service.remove(paymentId)).rejects.toThrow(new NotFoundException('Payment Not found'));
+      await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(BadRequestException);
+      expect(paymentRepository.recordCashCollection).not.toHaveBeenCalled();
     });
   });
 });

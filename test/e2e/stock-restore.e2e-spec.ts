@@ -3,7 +3,7 @@ import axios from 'axios';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 
 describe('Stock is restored exactly once (e2e)', () => {
@@ -63,16 +63,7 @@ describe('Stock is restored exactly once (e2e)', () => {
     const paystackRefund = jest.spyOn(axios, 'post').mockResolvedValue({ data: { status: true } });
     const before = await stockOf();
     const orderId = await placeOrder();
-    await prisma.payment.create({
-      data: {
-        orderId,
-        amount: 100,
-        currency: 'GHS',
-        paymentMethod: 'card',
-        status: 'COMPLETED',
-        transactionId: `ref-${orderId}`,
-      },
-    });
+    await seedPaymentAttempt(prisma, { orderId, status: 'COMPLETED', reference: `ref-${orderId}` });
     await prisma.order.update({ where: { id: orderId }, data: { status: 'PROCESSING' } });
 
     const cancel = await gqlRequest(

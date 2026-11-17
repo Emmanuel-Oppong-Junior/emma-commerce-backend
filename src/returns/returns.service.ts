@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ReturnRequest } from '@prisma/client';
+import { PaymentStatus, ReturnRequest } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReturnsRepository } from './returns.repository';
 import { CreateReturnRequestInput } from './dto/create-return-request.input';
@@ -26,10 +26,7 @@ export class ReturnsService {
    * @throws BadRequestException if the order is not delivered or an active return request already exists.
    */
   async createReturnRequest(userId: string, input: CreateReturnRequestInput): Promise<ReturnRequest> {
-    const order = await this.prisma.order.findUnique({
-      where: { id: input.orderId },
-      include: { payment: true },
-    });
+    const order = await this.prisma.order.findUnique({ where: { id: input.orderId } });
     if (order?.userId !== userId) {
       throw new NotFoundException(`Order "${input.orderId}" not found`);
     }
@@ -96,14 +93,15 @@ export class ReturnsService {
       throw new BadRequestException('Refund amount not set');
     }
 
-    const payment = await this.prisma.payment.findUnique({
-      where: { orderId: returnRequest.orderId },
+    const payment = await this.prisma.paymentAttempt.findFirst({
+      where: { intent: { orderId: returnRequest.orderId }, status: PaymentStatus.COMPLETED, reference: { not: null } },
+      orderBy: { createdAt: 'desc' },
     });
-    if (!payment?.transactionId) {
+    if (!payment?.reference) {
       throw new BadRequestException('No payment transaction found for this order');
     }
 
-    await this.callPaystackRefund(payment.transactionId, Number(returnRequest.refundAmount));
+    await this.callPaystackRefund(payment.reference, Number(returnRequest.refundAmount));
 
     return this.returnsRepository.updateStatus(returnRequestId, 'REFUNDED');
   }

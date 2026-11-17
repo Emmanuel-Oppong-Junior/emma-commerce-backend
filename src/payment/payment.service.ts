@@ -8,13 +8,13 @@ import {
 import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
-import { Payment, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
+import { PaymentMethod, PaymentProvider, PaymentStatus, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'node:crypto';
 import { PaystackEvent } from './enums/paystack-event.enum';
 import { LoggerService } from '../commons/logger.service';
-import { PaymentRepository } from './payment.repository';
+import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CHARGE_CURRENCY } from './constant';
 
@@ -44,7 +44,7 @@ export class PaymentService {
   async initiatePayment(
     userId: string,
     createPaymentDto: CreatePaymentDto,
-  ): Promise<Payment & { authorizationUrl?: string }> {
+  ): Promise<PaymentRecord & { authorizationUrl?: string }> {
     const { orderId } = createPaymentDto;
     const order = await this.validateOrderOwnership(userId, orderId);
     if ((order as unknown as { paymentMethod: PaymentMethod }).paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
@@ -68,7 +68,7 @@ export class PaymentService {
    * @param reference - Paystack transaction reference.
    * @returns Updated payment record.
    */
-  async verifyPayment(reference: string): Promise<Payment> {
+  async verifyPayment(reference: string): Promise<PaymentRecord> {
     this.logger.log(`Verifying payment | reference: ${reference}`, 'PaymentService');
     const payment = await this.fetchPaymentByReference(reference);
     const verification = await this.verifyPaystackTransaction(reference);
@@ -82,7 +82,7 @@ export class PaymentService {
    * @param userId - ID of the requesting user.
    * @returns Updated payment record.
    */
-  async verifyPaymentAsUser(reference: string, userId: string): Promise<Payment> {
+  async verifyPaymentAsUser(reference: string, userId: string): Promise<PaymentRecord> {
     const payment = await this.fetchPaymentByReference(reference);
     const order = await this.paymentRepository.findOrderById(payment.orderId);
     if (order?.userId !== userId) {
@@ -100,7 +100,7 @@ export class PaymentService {
    * @param requestingUserRole - The role of the requesting user.
    * @returns Payment record.
    */
-  async getPayment(paymentId: string, requestingUserId: string, requestingUserRole: Role): Promise<Payment> {
+  async getPayment(paymentId: string, requestingUserId: string, requestingUserRole: Role): Promise<PaymentRecord> {
     const payment = await this.paymentRepository.findById(paymentId);
     if (!payment) throw new NotFoundException(`Payment "${paymentId}" not found`);
     const isAdmin = requestingUserRole === Role.ADMIN || requestingUserRole === Role.SUPER_ADMIN;
@@ -113,7 +113,7 @@ export class PaymentService {
     return payment;
   }
 
-  async getAllPayments(): Promise<Payment[]> {
+  async getAllPayments(): Promise<PaymentRecord[]> {
     return this.paymentRepository.findAll();
   }
 
@@ -122,18 +122,18 @@ export class PaymentService {
    * @param userId - The ID of the user.
    * @returns List of payments.
    */
-  async getUserPayments(userId: string): Promise<Payment[]> {
+  async getUserPayments(userId: string): Promise<PaymentRecord[]> {
     return this.paymentRepository.findByUser(userId);
   }
 
   /**
    * Records cash collection for a cash-on-delivery order (admin only).
-   * Creates a COMPLETED payment record and advances the order to DELIVERED.
+   * Records a COMPLETED attempt with its cash collection and advances the order to DELIVERED.
    * @param orderId - The ID of the COD order.
    * @param adminId - The ID of the admin recording the collection.
    * @returns The created payment record.
    */
-  async recordCodPayment(orderId: string, adminId: string): Promise<Payment> {
+  async recordCodPayment(orderId: string, adminId: string): Promise<PaymentRecord> {
     const order = await this.paymentRepository.findOrderById(orderId);
     if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
 
@@ -146,13 +146,7 @@ export class PaymentService {
 
     this.logger.log(`COD payment recorded | orderId: ${orderId} | adminId: ${adminId}`, 'PaymentService');
 
-    const payment = await this.paymentRepository.create({
-      order: { connect: { id: orderId } },
-      amount: order.totalAmount as unknown as number,
-      currency: 'GHS',
-      paymentMethod: 'CASH_ON_DELIVERY',
-      status: PaymentStatus.COMPLETED,
-    });
+    const payment = await this.paymentRepository.recordCashCollection(orderId, order.totalAmount, adminId);
 
     await this.paymentRepository.forceUpdateOrderStatus(orderId, 'DELIVERED');
 
@@ -225,17 +219,6 @@ export class PaymentService {
     return this.paymentRepository.update(id, { deleted: false, deletedAt: null });
   }
 
-  /**
-   * Permanently removes a payment record from the database.
-   * @param id - The ID of the payment to be removed.
-   * @returns The deleted payment record.
-   * @throws NotFoundException if the payment is not found.
-   */
-  async remove(id: string) {
-    await this.findPaymentOrThrow(id);
-    return this.paymentRepository.delete(id);
-  }
-
   private async findPaymentOrThrow(id: string) {
     const payment = await this.paymentRepository.findById(id);
     if (!payment) throw new NotFoundException('Payment Not found');
@@ -255,8 +238,7 @@ export class PaymentService {
         throw new BadRequestException('Payment for this order has already been completed');
       }
       if (existingPayment.status === PaymentStatus.PENDING) {
-        //delete the pending payment to allow re-initiation
-        await this.paymentRepository.delete(existingPayment.id);
+        await this.paymentRepository.markAbandoned(existingPayment.id);
       }
     }
   }
@@ -293,16 +275,17 @@ export class PaymentService {
     amount: number,
     input: CreatePaymentDto,
     transaction: Paystack.Response<Paystack.Transaction.InitializeResponse>,
-  ): Promise<Payment & { authorizationUrl?: string }> {
+  ): Promise<PaymentRecord & { authorizationUrl?: string }> {
     const { orderId, paymentMethod } = input;
     const payment = await this.paymentRepository.create({
-      order: { connect: { id: orderId } },
+      orderId,
+      provider: PaymentProvider.PAYSTACK,
       amount,
       currency: CHARGE_CURRENCY,
-      paymentMethod,
+      channel: paymentMethod,
       status: PaymentStatus.PENDING,
-      transactionId: transaction.data.reference,
-      paymentDetails: this.sanitizeInitializeDetails(transaction.data),
+      reference: transaction.data.reference,
+      providerDetails: this.sanitizeInitializeDetails(transaction.data),
     });
     return { ...payment, authorizationUrl: transaction.data.authorization_url };
   }
@@ -335,7 +318,7 @@ export class PaymentService {
     } as Prisma.InputJsonValue;
   }
 
-  private async fetchPaymentByReference(reference: string): Promise<Payment> {
+  private async fetchPaymentByReference(reference: string): Promise<PaymentRecord> {
     const payment = await this.paymentRepository.findByReference(reference);
     if (!payment) throw new NotFoundException(`Payment with reference "${reference}" not found`);
     return payment;
@@ -350,7 +333,7 @@ export class PaymentService {
   private async updatePaymentStatus(
     paymentId: string,
     verification: Paystack.Response<Paystack.Transaction.VerifyResponse>,
-  ): Promise<Payment> {
+  ): Promise<PaymentRecord> {
     const status = verification.data.status === 'success' ? PaymentStatus.COMPLETED : PaymentStatus.FAILED;
     const payment = await this.paymentRepository.updatePaymentWithStatus(
       paymentId,

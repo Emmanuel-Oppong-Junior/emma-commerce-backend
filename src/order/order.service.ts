@@ -10,7 +10,6 @@ import {
   OrderItem,
   OrderStatus,
   PaymentMethod,
-  PaymentStatus,
   Prisma,
   Product,
 } from '@prisma/client';
@@ -157,8 +156,8 @@ export class OrdersService {
   }
 
   /**
-   * Cancels PENDING online orders older than the window that have no payment attempt, or only a pending or
-   * failed one untouched for the window. Returns null when another instance is already running the job.
+   * Cancels PENDING online orders older than the window that have no payment attempt, or only pending,
+   * failed or abandoned ones untouched for the window. Returns null when another instance is already running the job.
    */
   async expireAbandonedOrders(expiryHours: number): Promise<number | null> {
     return this.ordersRepository.runWithAdvisoryLock(ORDER_EXPIRY_LOCK_KEY, ORDER_EXPIRY_MAX_RUN_MS, async () => {
@@ -502,8 +501,7 @@ export class OrdersService {
 
   private async requestReturnIfPaidOnline(order: Order & { items: OrderItem[] }): Promise<void> {
     if (order.paymentMethod !== PaymentMethod.ONLINE) return;
-    const payment = await this.ordersRepository.findPaymentByOrderId(order.id);
-    if (payment?.status !== PaymentStatus.COMPLETED) return;
+    if (!(await this.ordersRepository.hasCompletedPayment(order.id))) return;
     await this.returnsService.createSystemReturnRequest(
       order.id,
       order.userId,

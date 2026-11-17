@@ -12,7 +12,7 @@ import { GqlThrottlerGuard } from '../../src/commons/guards/gql-throttler.guard'
 import { PaymentService } from '../../src/payment/payment.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 
 /** Computes the HMAC-SHA512 webhook signature the same way the PaymentService does. */
@@ -49,21 +49,9 @@ describe('Payments & Returns (e2e)', () => {
     return res.body.data.createOrder.id as string;
   }
 
-  /** Inserts a Payment record directly into the DB and returns the transactionId. */
+  /** Inserts a payment attempt directly into the DB and returns its ID and reference. */
   async function seedPaymentRecord(orderId: string): Promise<{ paymentId: string; reference: string }> {
-    const reference = `test-ref-${Date.now()}`;
-    const payment = await prisma.payment.create({
-      data: {
-        orderId,
-        amount: 100,
-        currency: 'GHS',
-        paymentMethod: 'card',
-        status: PaymentStatus.PENDING,
-        transactionId: reference,
-        paymentDetails: { reference },
-      },
-    });
-    return { paymentId: payment.id, reference };
+    return seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.PENDING, reference: `test-ref-${Date.now()}` });
   }
 
   beforeAll(async () => {
