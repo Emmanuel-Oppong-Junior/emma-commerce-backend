@@ -116,11 +116,11 @@ Original scratch harnesses (outside the repo, not committed, may be cleared), ru
 | SEC-01 | Read `app.module.ts:91-104` (no `fieldResolverEnhancers`), `node_modules/@nestjs/graphql/dist/drivers/abstract-graphql.driver.js:12` (default `[]`), `users.resolver.ts:19-20,122-130`, `review.resolver.ts:88-91`. Repro test: a logged-in customer reads another customer's street address through `review.user.addresses`. | **Confirmed by test** (customer path); anonymous path confirmed by the reviewer's harness |
 | PLAT-01 | Ran the reviewer's probe against the baseline build, then wrote a jest repro: `TypeError: Cannot read properties of undefined (reading 'body')` | **Confirmed by test** |
 | IAM-07 | Same approach: `TypeError ... (reading 'headers')` from `AccessTokenGuard` in HTTP context | **Confirmed by test**. Upgraded to **Critical** in the summary, because together with PLAT-01 it makes online payment impossible |
-| IAM-05 | class-validator run on `SignInInput` with a 20-character password: `isLength` error | **Confirmed by test** |
+| IAM-05 | class-validator run on `SignInInput` with a 20-character password: `isLength` error | **Confirmed by test** **Status: Fixed in d2445ad (P0-I.1).** |
 | PLAT-02 | `sanitizeVariables` leaves `refreshToken`, `resetToken`, `token`, `newPassword`, `oldPassword` in clear | **Confirmed by test** |
 | IAM-01, IAM-02 | Read `users.service.ts:58-73` and `authentication.service.ts:87-122,162-181` | Confirmed by reading |
 | DOC-10 / IAM-03 | Read `users.repository.ts:122-138`: unconditional `update` on the old token, revoked check outside the transaction | Confirmed by reading (needs a DB for a concurrency test) |
-| DOC-09 | `TODO.md` MED-3 claims a constant-time delay in `forgotPassword`; `authentication.service.ts:142` returns immediately | Confirmed by reading: claimed fix absent |
+| DOC-09 | `TODO.md` MED-3 claims a constant-time delay in `forgotPassword`; `authentication.service.ts:142` returns immediately | Confirmed by reading: claimed fix absent **Status: Fixed in d11e961 (P0-I.6): forgotPassword returns before the lookup (work runs after the response, failures logged); per-email limit 3/h (`forgotPasswordEmail` throttler, hashed key) on top of per-IP 3/h.** |
 
 **Business-flow abuse (OWASP API6) found by other reviewers. These are security issues too, because any logged-in customer can trigger them.**
 

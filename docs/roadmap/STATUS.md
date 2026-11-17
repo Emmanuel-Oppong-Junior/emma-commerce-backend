@@ -7,7 +7,7 @@
 ## Active task
 **Parallel batch (in progress, 2026-11-17):** three sub-agents in their own git worktrees, each with its own e2e DB. Agents do not edit STATUS/audit; the orchestrator merges into `dev` and updates both.
 - **Fulfilment** (P0-B.4 shipping, P0-B.5 pickup, P0-B.6 currency) · DB `emma_wt_fulfil_test` · only agent allowed a migration
-- **Identity** (P0-I.1 password policy, P0-I.6 forgotPassword) · DB `emma_wt_identity_test`
+- ~~**Identity**~~ ✅ merged + pushed: P0-I.1 (`d2445ad`), P0-I.6 (`d11e961`). Gates on dev: unit 905/905, e2e 212/212 (Linux node:20), repro 12/21. Frontend: sign-in accepts up to 128 chars; reset/change/admin-create now follow the full policy; forgotPassword limited 3/h per email
 - **Ops** (P0-O.3 env validation, P0-O.5 health readiness, P0-O.7 email errors) · DB `emma_wt_ops_test`
 - **Next step:** wait for agent reports → review diff, run gates on the merged result, merge into `dev`, update STATUS/audit per task.
 
@@ -40,11 +40,11 @@
 | P0-A Request pipeline & access | **5 / 5** | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`), A.5 (`5e71ff2`) |
 | P0-B Orders & stock | 2 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`) |
 | P0-C Payments | 0 / 7 | |
-| P0-I Identity & sessions | 0 / 6 | |
+| P0-I Identity & sessions | 2 / 6 | I.1 (`d2445ad`), I.6 (`d11e961`); IAM-04 `jti` part of I.2 done in P0-F.7 |
 | P0-O Deployability & ops | 0 / 7 | |
 | P0-D Audit & analytics | 0 / 3 | |
 
-Repro tests turned green: **11 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **12 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks`, `e2e` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
@@ -61,7 +61,7 @@ Repro tests turned green: **11 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
-| 2026-11-17 | Working rules (Emmanuel): once all gates pass, commit and merge into `dev` without asking; ask only for real decisions or a phase change. Independent tasks run in parallel via worktree sub-agents grouped by module (one migration at a time). Overrides WORKING-AGREEMENT "commit only when Emmanuel asks" | STATUS, memory |
+| 2026-11-17 | Working rules (Emmanuel): once all gates pass, commit, merge into `dev` and push `dev` without asking; ask only for real decisions or a phase change. Independent tasks run in parallel via worktree sub-agents grouped by module (one migration at a time). Overrides WORKING-AGREEMENT "commit only when Emmanuel asks" | STATUS, memory |
 | 2026-11-17 | P0-B.2: refunds never restock; returned goods go back via admin `restockProduct` after inspection (Emmanuel). Soft delete limited to CANCELLED/DELIVERED (Claude, per ORD-03 fix) | STATUS |
 | 2026-11-17 | P0-B.1: unpaid ONLINE orders leave PENDING only via confirmed payment; admins cannot move them to PROCESSING by hand (Emmanuel). Missed webhooks wait for reconciliation (P0-C.5) | STATUS |
 | 2026-11-17 | P0-A.4: add `graphql-query-complexity` for cost limits (Emmanuel); depth/alias limits hand-written (no `graphql-depth-limit`, unmaintained) | STATUS |
