@@ -4,6 +4,7 @@ import { CartService } from '../cart/cart.service';
 import {
   Cart,
   CartItem,
+  Currency,
   FulfillmentType,
   Order,
   OrderItem,
@@ -374,6 +375,12 @@ export class OrdersService {
   private async checkProductAvailability(item: CartItem): Promise<Product> {
     const product = await this.ordersRepository.findProductById(item.productId);
     if (!product) throw new NotFoundException(`Product "${item.productId}" not found`);
+    // Prices are summed and charged as GHS; until multi-currency exists any other currency would be mis-charged.
+    if (product.currency !== Currency.GHS) {
+      throw new BadRequestException(
+        `"${product.name}" is priced in ${product.currency ?? 'no currency'}; only GHS products can be checked out`,
+      );
+    }
     if (product.quantity < item.quantity) {
       throw new BadRequestException(
         `Insufficient stock for "${product.name}": ${product.quantity} available, ${item.quantity} requested`,

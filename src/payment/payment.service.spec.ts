@@ -79,13 +79,13 @@ describe('PaymentService', () => {
 
   describe('initiatePayment', () => {
     const userId = 'user1';
-    const createPaymentDto: CreatePaymentDto = { orderId: 'order1', currency: 'NGN', paymentMethod: 'card' };
+    const createPaymentDto: CreatePaymentDto = { orderId: 'order1', currency: 'GHS', paymentMethod: 'card' };
     const order = { id: 'order1', userId: 'user1', totalAmount: 1000, user: { email: 'test@example.com' } };
     const payment = {
       id: 'pay1',
       orderId: 'order1',
       amount: 1000,
-      currency: 'NGN',
+      currency: 'GHS',
       paymentMethod: 'card',
       status: PaymentStatus.PENDING,
       transactionId: 'order1-1234567890',
@@ -113,11 +113,28 @@ describe('PaymentService', () => {
       expect(paymentRepository.findOrderWithUser).toHaveBeenCalledWith('order1');
       expect(paymentRepository.findByOrderId).toHaveBeenCalledWith('order1');
       expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'test@example.com', amount: 100000, currency: 'NGN' }),
+        expect.objectContaining({ email: 'test@example.com', amount: 100000, currency: 'GHS' }),
       );
       expect(paymentRepository.create).toHaveBeenCalled();
       expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/auth' });
     });
+
+    it.each([{ currency: 'NGN' }, { currency: undefined }])(
+      'charges and records GHS whatever currency the request carries (%o)',
+      async ({ currency }) => {
+        mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
+        mockPaymentRepository.findByOrderId.mockResolvedValue(null);
+        mockPaystackTransaction.initialize.mockResolvedValue(transaction);
+        mockPaymentRepository.create.mockResolvedValue(payment);
+
+        await service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency });
+
+        expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(
+          expect.objectContaining({ amount: 100000, currency: 'GHS' }),
+        );
+        expect(paymentRepository.create).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
+      },
+    );
 
     it('should throw NotFoundException if order not found', async () => {
       mockPaymentRepository.findOrderWithUser.mockResolvedValue(null);

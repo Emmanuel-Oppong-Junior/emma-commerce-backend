@@ -1246,7 +1246,7 @@ CANCELLED     — Order cancelled
 
 **Possible Errors**:
 - `NOT_FOUND` — Cart empty, shipping address not found.
-- `BAD_REQUEST` — Insufficient stock for one or more items, invalid/expired coupon, delivery city not covered by any active shipping zone (offer pickup or another address), `PICKUP` with a `pickupLocationId` that does not exist or is not active.
+- `BAD_REQUEST` — Insufficient stock for one or more items, invalid/expired coupon, a product priced in a currency other than GHS (only GHS is sold until multi-currency exists), delivery city not covered by any active shipping zone (offer pickup or another address), `PICKUP` with a `pickupLocationId` that does not exist or is not active.
 
 **Shipping zones (admin)**: `createShippingZone` / `updateShippingZone` reject (`CONFLICT`) a city that another zone already lists, active or not, so each city has exactly one fee. `getShippingFee(addressId)` returns `BAD_REQUEST` for an address whose city no active zone covers.
 
@@ -1994,7 +1994,7 @@ These endpoints are not in GraphQL. They use standard HTTP.
 {
   orderId: string;       // Required.
   paymentMethod: string; // Required. e.g., "card"
-  currency: string;      // Required. e.g., "GHS"
+  currency?: "GHS";      // Optional. Any other value is rejected (400). Payments are always charged in GHS.
 }
 ```
 
@@ -2780,7 +2780,7 @@ Authorization: Bearer <accessToken>
 ### Order Placement Flow
 
 1. Order is created (see Checkout Flow above).
-2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod, currency }`.
+2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod }` (`currency` may be omitted; if sent it must be `"GHS"`).
 3. Backend creates `Payment` record with `status = PENDING` and returns `authorizationUrl`.
 4. Frontend redirects user to `authorizationUrl`.
 5. After payment, Paystack redirects to `GET /payment/callback?reference=xxx`.

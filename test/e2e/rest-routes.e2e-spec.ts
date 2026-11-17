@@ -67,6 +67,16 @@ describe('REST routes (e2e)', () => {
     it('POST /payment/initialize reaches validation with a valid token', async () => {
       await request(server()).post('/payment/initialize').set(getAuthHeader(userToken)).send({}).expect(400);
     });
+
+    it('POST /payment/initialize rejects a client-chosen currency other than GHS', async () => {
+      const res = await request(server())
+        .post('/payment/initialize')
+        .set(getAuthHeader(userToken))
+        .send({ orderId: 'any-order', paymentMethod: 'card', currency: 'USD' })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain('currency must be GHS');
+    });
   });
 
   describe('upload', () => {

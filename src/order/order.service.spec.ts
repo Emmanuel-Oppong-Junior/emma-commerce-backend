@@ -54,6 +54,7 @@ const mockProduct = {
   id: 'prod1',
   name: 'T-Shirt',
   price: 19.99,
+  currency: 'GHS',
   quantity: 100,
   isActive: true,
   categoryId: 'cat1',
@@ -300,6 +301,20 @@ describe('OrdersService', () => {
       await expect(ordersService.createOrderFromCart(mockUserId, pickupParams)).rejects.toThrow(BadRequestException);
       expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
+    });
+
+    it.each(['USD', null])('rejects checkout of a product priced in %s, without reserving stock', async (currency) => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue({ ...mockProduct, currency });
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+        new BadRequestException(
+          `"T-Shirt" is priced in ${currency ?? 'no currency'}; only GHS products can be checked out`,
+        ),
+      );
+      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if cart is empty', async () => {

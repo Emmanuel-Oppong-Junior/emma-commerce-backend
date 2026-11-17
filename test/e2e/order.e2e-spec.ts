@@ -237,6 +237,39 @@ describe('Orders (e2e)', () => {
       });
     });
 
+    it('rejects checkout of a product priced in a currency other than GHS', async () => {
+      await prisma.product.create({
+        data: {
+          id: 'e2e_prod_usd',
+          name: 'Imported Camera',
+          price: 50,
+          currency: 'USD',
+          sku: 'E2E-CAM-USD',
+          quantity: 5,
+          images: [],
+          isActive: true,
+          status: 'PUBLISHED',
+          categoryId: 'seed_cat',
+          brandId: 'seed_brand',
+        },
+      });
+      await addItemToCart(userToken, 'e2e_prod_usd');
+
+      const res = await gqlRequest(
+        app,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+
+      expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+      expect(res.body.errors[0].message).toContain('only GHS products can be checked out');
+      const product = await prisma.product.findUniqueOrThrow({ where: { id: 'e2e_prod_usd' } });
+      expect(product.quantity).toBe(5);
+
+      await clearUserCart(userToken);
+    });
+
     it('decrements product stock after a successful order', async () => {
       // Arrange — record the current stock, add the product to cart, create an order
       const productBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod2' } });

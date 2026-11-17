@@ -16,6 +16,7 @@ import { PaystackEvent } from './enums/paystack-event.enum';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRepository } from './payment.repository';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CHARGE_CURRENCY } from './constant';
 
 @Injectable()
 export class PaymentService {
@@ -269,12 +270,12 @@ export class PaymentService {
     amount: number;
     input: CreatePaymentDto;
   }): Promise<Paystack.Response<Paystack.Transaction.InitializeResponse>> {
-    const { currency, orderId } = input;
+    const { orderId } = input;
     const amountInSubunit = this.convertToSubunit(amount);
     return this.paystack.transaction.initialize({
       email,
       amount: amountInSubunit,
-      currency,
+      currency: CHARGE_CURRENCY,
       reference: this.generateReference(orderId),
       callback_url: this.configService.get('PAYSTACK_CALLBACK_URL'),
     });
@@ -293,11 +294,11 @@ export class PaymentService {
     input: CreatePaymentDto,
     transaction: Paystack.Response<Paystack.Transaction.InitializeResponse>,
   ): Promise<Payment & { authorizationUrl?: string }> {
-    const { orderId, currency, paymentMethod } = input;
+    const { orderId, paymentMethod } = input;
     const payment = await this.paymentRepository.create({
       order: { connect: { id: orderId } },
       amount,
-      currency,
+      currency: CHARGE_CURRENCY,
       paymentMethod,
       status: PaymentStatus.PENDING,
       transactionId: transaction.data.reference,
