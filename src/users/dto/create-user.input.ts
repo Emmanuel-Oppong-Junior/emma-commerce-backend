@@ -1,7 +1,8 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, IsUrl, Length, Matches } from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, IsUrl, Length } from 'class-validator';
 import { Role } from '../enums/role.enum';
 import { Transform } from 'class-transformer';
+import { MeetsPasswordPolicy, PASSWORD_POLICY_DESCRIPTION } from '../../iam/authentication/password-policy';
 
 @InputType()
 export class CreateUserInput {
@@ -16,12 +17,9 @@ export class CreateUserInput {
   @Transform(({ value }) => value?.trim().toLowerCase())
   email: string;
 
-  @Field(() => String, { description: 'Password (required for manual signup)' })
+  @Field(() => String, { description: `Password (required for manual signup): ${PASSWORD_POLICY_DESCRIPTION}` })
   @IsOptional()
-  @Length(8, 16, { message: 'Password must be between 8 and 16 characters.' })
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, {
-    message: 'New password must contain at least one uppercase letter, one lowercase letter, and one number',
-  })
+  @MeetsPasswordPolicy()
   password?: string;
 
   @Field(() => String, { nullable: true, description: 'Phone number' })

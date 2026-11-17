@@ -142,7 +142,9 @@ type Category {
 }
 
 input ChangeUserPasswordInput {
-  """The new password to set"""
+  """
+  The new password to set: 8-128 characters, with at least one uppercase letter, one lowercase letter, one number and one special character (@$!%*?&_-#); no other characters
+  """
   newPassword: String!
 
   """The current password for verification"""
@@ -415,7 +417,9 @@ input CreateUserInput {
   """User’s name"""
   name: String!
 
-  """Password (required for manual signup)"""
+  """
+  Password (required for manual signup): 8-128 characters, with at least one uppercase letter, one lowercase letter, one number and one special character (@$!%*?&_-#); no other characters
+  """
   password: String!
 
   """Phone number"""
@@ -1338,6 +1342,9 @@ input RemoveProductsFromTagDto {
 }
 
 input ResetPasswordInput {
+  """
+  New password: 8-128 characters, with at least one uppercase letter, one lowercase letter, one number and one special character (@$!%*?&_-#); no other characters
+  """
   newPassword: String!
   resetToken: String!
 }
@@ -1427,7 +1434,7 @@ input SignInInput {
   """Email address"""
   email: String!
 
-  """Password (required for manual signup)"""
+  """Password"""
   password: String!
 }
 
@@ -1444,7 +1451,7 @@ input SignUpInput {
   name: String!
 
   """
-  Password - min 8 chars, must include uppercase, lowercase, number, and special character
+  Password: 8-128 characters, with at least one uppercase letter, one lowercase letter, one number and one special character (@$!%*?&_-#); no other characters
   """
   password: String!
 }

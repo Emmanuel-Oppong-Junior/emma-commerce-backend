@@ -1,6 +1,7 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsEmail, IsNotEmpty, IsString, Length } from 'class-validator';
+import { IsEmail } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { IsPasswordAttempt } from '../password-policy';
 
 @InputType()
 export class SignInInput {
@@ -9,9 +10,7 @@ export class SignInInput {
   @Transform(({ value }) => value?.trim().toLowerCase())
   email: string;
 
-  @Field(() => String, { description: 'Password (required for manual signup)' })
-  @IsNotEmpty()
-  @IsString()
-  @Length(8, 16, { message: 'Password must be between 8 and 16 characters.' })
+  @Field(() => String, { description: 'Password' })
+  @IsPasswordAttempt()
   password: string;
 }

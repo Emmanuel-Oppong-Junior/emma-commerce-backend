@@ -1,5 +1,6 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsString, MinLength } from 'class-validator';
+import { IsString } from 'class-validator';
+import { MeetsPasswordPolicy, PASSWORD_POLICY_DESCRIPTION } from '../password-policy';
 
 @InputType()
 export class ResetPasswordInput {
@@ -7,8 +8,7 @@ export class ResetPasswordInput {
   @IsString()
   resetToken: string;
 
-  @Field()
-  @IsString()
-  @MinLength(8)
+  @Field({ description: `New password: ${PASSWORD_POLICY_DESCRIPTION}` })
+  @MeetsPasswordPolicy()
   newPassword: string;
 }

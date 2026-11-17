@@ -152,7 +152,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 {
   name: string;      // Required. 2–50 chars. Trimmed and lowercased.
   email: string;     // Required. Valid email. Trimmed and lowercased.
-  password: string;  // Required. 8–64 chars. Must contain: uppercase, lowercase, digit, special char (@$!%*?&_-#).
+  password: string;  // Required. Password policy: 8–128 chars; uppercase, lowercase, digit and special char (@$!%*?&_-#); no other characters.
 }
 ```
 
@@ -191,7 +191,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 ```typescript
 {
   email: string;     // Required. Valid email.
-  password: string;  // Required. 8–16 chars.
+  password: string;  // Required. Non-empty, at most 128 chars (no complexity check at sign-in).
 }
 ```
 
@@ -320,7 +320,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 ```typescript
 {
   resetToken: string;  // The JWT token from the password reset email.
-  newPassword: string; // Min 8 chars.
+  newPassword: string; // Password policy (same as signUp).
 }
 ```
 
@@ -425,8 +425,8 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 ```typescript
 {
-  oldPassword: string; // 8–16 chars. Must verify against current password.
-  newPassword: string; // 8–16 chars. Must contain uppercase, lowercase, digit.
+  oldPassword: string; // Non-empty, at most 128 chars. Must verify against current password.
+  newPassword: string; // Password policy (same as signUp).
 }
 ```
 

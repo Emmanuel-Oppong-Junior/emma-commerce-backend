@@ -1,6 +1,7 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsEmail, IsNotEmpty, IsString, Length, Matches } from 'class-validator';
+import { IsEmail, IsString, Length } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { MeetsPasswordPolicy, PASSWORD_POLICY_DESCRIPTION } from '../password-policy';
 
 @InputType()
 export class SignUpInput {
@@ -15,15 +16,7 @@ export class SignUpInput {
   @Transform(({ value }) => value?.trim().toLowerCase())
   email: string;
 
-  @Field(() => String, {
-    description: 'Password - min 8 chars, must include uppercase, lowercase, number, and special character',
-  })
-  @IsNotEmpty()
-  @IsString()
-  @Length(8, 64, { message: 'Password must be between 8 and 64 characters.' })
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&_\-#])[A-Za-z\d@$!%*?&_\-#]{8,}$/, {
-    message:
-      'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&_-#).',
-  })
+  @Field(() => String, { description: `Password: ${PASSWORD_POLICY_DESCRIPTION}` })
+  @MeetsPasswordPolicy()
   password: string;
 }
