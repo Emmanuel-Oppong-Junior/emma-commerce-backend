@@ -5,20 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P0-B.2 — Restore stock exactly once (ORD-03, RET-01, INV-03, DB-06)
-- **Branch:** `fix/P0-B.2-stock-restore-once` (from `dev` @ `d560e6d`) · **State:** in progress
-- **Steps:**
-  - [x] Soft delete: only DELIVERED/CANCELLED (`FINAL_STATUSES`/`isFinal` in order-status.ts), once, conditional write, never moves stock; else CONFLICT
-  - [x] `processRefund` money only; `restoreOrderStock` + its 2 repo tests removed; refund test asserts no transaction
-  - [x] Order service delete tests rewritten (old one asserted the restore) + open/twice/race/log tests; repro ORD-01, ORD-03, ORD-04 green
-  - [x] `test/e2e/stock-restore.e2e-spec.ts` 3/3 (all fail on the B.1 code); frontend docs (delete, refund; refund doc wrongly said "handled externally")
-  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 861/861; repro 11/21; e2e Linux node:20 212/212
-  - [ ] Commit/merge/push (waiting on Emmanuel); mark ORD-03/RET-01/INV-03/DB-06 in audit; repro 11/21; clear Active task  ← **Next step**
-- **Uncommitted work:** STATUS.md only
+_None._ P0-B.2 done (`a54fded`), merged into `dev` and pushed; check its CI run. Take the first unblocked item in **Up next**.
 
-**Previously:** P0-B.1 done (`9028bb3`), CI green on `d560e6d`.
-
-**Last completed:** P0-B.1. Order transition table (`src/order/order-status.ts`) enforced everywhere; status/soft-delete writes are conditional `updateMany` claims inside the stock transaction; admin CANCELLED → real cancel; unpaid ONLINE orders leave PENDING only via payment. Invalid changes → `CONFLICT` (was BAD_REQUEST). Unit 859/859, e2e 209/209 (incl. concurrent cancel), repro 10/21. Left: ORD-03 / restore semantics → P0-B.2; `markOrderAsPaid` has no callers.
+**Last completed:** P0-B.2. Soft delete only for DELIVERED/CANCELLED, never moves stock; refunds move money only (returned goods restocked by admin via `restockProduct`); cancellation is the single automatic restore, one log per item. Unit 861/861, e2e 212/212, repro 11/21. **Admin UI:** open orders must be cancelled before deleting.
 
 <!-- Shape while a task is active (keep it current):
 - **Task:** P0-X.n — <title>
@@ -35,29 +24,28 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-B.2 Restore stock only on the transition that releases it; soft delete never restores; inventory log on every restore (repro ORD-03) | now | — (branch from `dev`) |
-| 2 | P0-B.4 Shipping: unmatched city rejected, no silent free delivery (repro SHZ-01) | ∥ with 1 | — |
-| 3 | P0-B.5 Pickup orders validate an active pickup location | ∥ | — |
-| 4 | P0-B.6 Charge currency fixed server-side to GHS | ∥ | — |
-| 5 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
+| 1 | P0-B.4 Shipping: unmatched city rejected, no silent free delivery (repro SHZ-01) | now | — (branch from `dev`) |
+| 2 | P0-B.5 Pickup orders validate an active pickup location | ∥ with 1 | — |
+| 3 | P0-B.6 Charge currency fixed server-side to GHS | ∥ | — |
+| 4 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
 | P0-F Safety rails | 5 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
 | P0-A Request pipeline & access | **5 / 5** | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`), A.5 (`5e71ff2`) |
-| P0-B Orders & stock | 1 / 11 | B.1 (`9028bb3`) |
+| P0-B Orders & stock | 2 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`) |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 0 / 6 | |
 | P0-O Deployability & ops | 0 / 7 | |
 | P0-D Audit & analytics | 0 / 3 | |
 
-Repro tests turned green: **10 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-04) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **11 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks`, `e2e` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
 - [ ] Decide what to do with `origin/main`: it shares no history with local `main`/`dev` (different root commits). Its history also contains a committed `.env` (`bcbae7b Delete .env`), so rotate whatever secrets it held.
-- [ ] Tell the frontend: review queries must select `user { displayName }` instead of `user { name }` (P0-A.2); admin draft listing must use `adminProducts`/`adminProduct` (P0-A.3).
+- [ ] Tell the frontend: review queries must select `user { displayName }` instead of `user { name }` (P0-A.2); admin draft listing must use `adminProducts`/`adminProduct` (P0-A.3); invalid order status changes now return `CONFLICT` (P0-B.1); open orders must be cancelled before deleting (P0-B.2).
 - [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
 - [ ] Rotate the DB password that was committed in `.claude/settings.local.json`. The file is untracked now, but the password is still in git history.
 - [ ] Decide the Phase 0 stop-gaps before these tasks start:
