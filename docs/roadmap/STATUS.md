@@ -5,9 +5,11 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ Next: P0-O.6 indexes (migration).
+_None._ All parallel-safe Phase 0 tasks are done. Remaining tasks need Emmanuel: P0-C.1 (ADR-0007 must be Accepted), P0-B.3/B.10/B.11 (stop-gap decisions), P0-O.2 (dependency approval), P0-F.3 (DB password rotation); see **Up next**.
 
-**Last completed:** P0-B.8 (`53b736f`, migration `20261117200000_add_stock_non_negative_checks`). `quantity` removed from UpdateProductInput/UpdateVariantInput (`stockStatus` stays editable, Emmanuel); new `adjustProductStock`/`adjustVariantStock` (signed delta, required reason, never below 0, ADJUSTMENT log); checkout decrement conditional on `quantity >= n`; DB CHECK `quantity >= 0` on Product and Variant. Unit 1050/1050, e2e 236/236 (Linux node:20, migration applied), repro 13/21. Deferred: initial stock on create is still unlogged; variant `price` still written directly. Changed existing tests: variant e2e update inputs no longer send `quantity` (admin update now asserts stock unchanged); order unit test mocks the new null-on-short-stock contract.
+**Last completed:** P0-O.6 (`26efe7d`, migration `20261117210000_add_hot_query_indexes_drop_redundant`): adds `OrderItem(orderId)`, `Order(createdAt)`, `Order(status, createdAt)`; drops 9 redundant/unused indexes; keeps `Product(isActive, status)` (used by the public catalogue since P0-A.3); Payment reference unique left for P0-C.1. New e2e `db-indexes` failed 5/5 before the migration; after deploy the schema/DB drift check is empty. Unit 1050/1050, e2e 240/240, repro 13/21.
+
+**Earlier:** P0-B.8 (`53b736f`, migration `20261117200000_add_stock_non_negative_checks`). `quantity` removed from UpdateProductInput/UpdateVariantInput (`stockStatus` stays editable, Emmanuel); new `adjustProductStock`/`adjustVariantStock` (signed delta, required reason, never below 0, ADJUSTMENT log); checkout decrement conditional on `quantity >= n`; DB CHECK `quantity >= 0` on Product and Variant. Unit 1050/1050, e2e 236/236 (Linux node:20, migration applied), repro 13/21. Deferred: initial stock on create is still unlogged; variant `price` still written directly. Changed existing tests: variant e2e update inputs no longer send `quantity` (admin update now asserts stock unchanged); order unit test mocks the new null-on-short-stock contract.
 
 **Last completed (batch 2):** P0-O.1 (`a98a123`), P0-O.4 (`c51ee81`), P0-I.5 (`fc59f37`), P0-B.7 (`97c1978`), P0-B.9 (`c38316c`). Combined gates on dev: typecheck/lint/format clean, unit 1041/1041, build → `dist/main.js`, e2e 228/228 (Linux node:20), repro 13/21 (no repro tests for these findings). New CI job `docker` builds the image and smoke-runs `/health/live`. CI on `d60f230`: checks, e2e, audit, docker ✓; repro fails as expected. Follow-ups noted: no migration release step/`migrate:deploy` script (OPS-20); liveness depends on DB (Prisma connects at boot); `OTEL_EXPORTER_OTLP_ENDPOINT` is also read as base URL so metrics go to a wrong path; payment-success vs expiry not atomic (PAY); FAILED payment row blocks retry (PAY-04); refunds don't release coupons (policy); CI test jobs still Node 20.
 
@@ -30,7 +32,6 @@ _None._ Next: P0-O.6 indexes (migration).
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 2 | P0-O.6 indexes (migration) | now | migrations |
 | 3 | P0-C.1 payment ledger schema (ADR-0007, big migration) → C.2 → C.3 | sequential | ADR-0007 still Proposed |
 | 4 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
 | 5 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
@@ -44,7 +45,7 @@ _None._ Next: P0-O.6 indexes (migration).
 | P0-B Orders & stock | 8 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`), B.4 (`53c3da4`), B.5 (`1d33fff`), B.6 (`ff15318`), B.7 (`97c1978`), B.8 (`53b736f`), B.9 (`c38316c`) |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 3 / 6 | I.1 (`d2445ad`), I.5 (`fc59f37`), I.6 (`d11e961`); IAM-04 `jti` part of I.2 done in P0-F.7 |
-| P0-O Deployability & ops | 5 / 7 | O.1 (`a98a123`), O.3 (`fd0543c`), O.4 (`c51ee81`), O.5 (`66eb517`), O.7 (`e18cf27`) |
+| P0-O Deployability & ops | 6 / 7 | O.1 (`a98a123`), O.3 (`fd0543c`), O.4 (`c51ee81`), O.5 (`66eb517`), O.6 (`26efe7d`), O.7 (`e18cf27`) |
 | P0-D Audit & analytics | 0 / 3 | |
 
 Repro tests turned green: **13 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05, SHZ-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
@@ -56,7 +57,7 @@ Repro tests turned green: **13 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD
 - [ ] Deployment (P0-O.1): image is now Node 24, runs as non-root, CMD `node dist/main.js`, HEALTHCHECK on `/health/live`. Add a release step that runs `npx prisma migrate deploy` once per release with the image (e.g. `docker run --rm -e DATABASE_URL=… <image> npx prisma migrate deploy`). Consider marking the new CI `docker` job as required too.
 - [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
 - [ ] Add `NODE_ENV=development` to your local `.env` if it is missing (now required, P0-O.3), and update `.env.example` with: NODE_ENV, PORT, ALLOWED_ORIGINS, LOG_LEVEL, DATABASE_URL, JWT_SECRET/JWT_REFRESH_SECRET/JWT_RESET_SECRET (≥32 chars, all different), JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER, JWT_ACCESS/REFRESH/RESET_TOKEN_TTL, GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET, PAYSTACK_SECRET_KEY, PAYSTACK_CALLBACK_URL, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET, REDIS_HOST (prod)/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL, OTEL_ENABLED (true|false), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, SUPER_ADMIN_EMAIL/PASSWORD.
-- [ ] On your machine: stop the dev server, run `npx prisma generate` (local generate hit the Windows DLL lock) and `npx prisma migrate dev` to apply `20261117111256_add_order_fee_breakdown_and_pickup_snapshot` and `20261117200000_add_stock_non_negative_checks` (fails if any product/variant has negative stock: fix those first). Dev seeder has no shipping zones: create zones (e.g. Greater Accra) or delivery orders will now be rejected.
+- [ ] On your machine: stop the dev server, run `npx prisma generate` (local generate hit the Windows DLL lock) and `npx prisma migrate dev` to apply `20261117111256_add_order_fee_breakdown_and_pickup_snapshot` `20261117200000_add_stock_non_negative_checks` and `20261117210000_add_hot_query_indexes_drop_redundant` (the stock one fails if any product/variant has negative stock: fix those first). Dev seeder has no shipping zones: create zones (e.g. Greater Accra) or delivery orders will now be rejected.
 - [ ] Rotate the DB password that was committed in `.claude/settings.local.json`. The file is untracked now, but the password is still in git history.
 - [ ] Decide the Phase 0 stop-gaps before these tasks start:
   - **P0-B.3:** fix discounts at checkout, or switch them off until Phase 2?
