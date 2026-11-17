@@ -1,0 +1,14 @@
+node_modules
+.git
+.github
+.claude
+dist
+tmp
+logs
+coverage
+.nyc_output
+upload
+docs
+test
+.env*
+*.log

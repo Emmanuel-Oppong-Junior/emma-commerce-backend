@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Matches the Dockerfile base image so CI tests what ships.
+  # The shipped image (Node 24) is exercised by the docker job; these jobs still run on Node 20.
   NODE_VERSION: '20'
 
 jobs:
@@ -71,6 +71,57 @@ jobs:
       - run: node scripts/write-test-env.js "$DATABASE_URL"
       - run: npx prisma migrate deploy
       - run: npm run test:e2e
+
+  docker:
+    name: Docker image build and smoke run
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: smoke
+          POSTGRES_PASSWORD: smoke
+          POSTGRES_DB: emma_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smoke -d emma_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t emma-backend:ci .
+      - run: docker run --rm --entrypoint npx emma-backend:ci prisma --version
+      # PrismaService connects on boot, so the app needs a reachable database even for liveness.
+      # Dummy, non-secret values that satisfy env validation outside production.
+      - name: Start container
+        run: >-
+          docker run -d --name emma-smoke --network host
+          -e NODE_ENV=development
+          -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/emma_smoke
+          -e JWT_SECRET=ci-smoke-access-secret-0123456789abcdef
+          -e JWT_REFRESH_SECRET=ci-smoke-refresh-secret-0123456789abcdef
+          -e JWT_RESET_SECRET=ci-smoke-reset-secret-0123456789abcdef
+          -e JWT_TOKEN_AUDIENCE=localhost
+          -e JWT_TOKEN_ISSUER=localhost
+          -e GOOGLE_CLIENT_ID=ci-smoke -e GOOGLE_CLIENT_SECRET=ci-smoke
+          -e FACEBOOK_APP_ID=ci-smoke -e FACEBOOK_APP_SECRET=ci-smoke
+          -e PAYSTACK_SECRET_KEY=ci-smoke
+          -e CLOUDINARY_CLOUD_NAME=ci-smoke -e CLOUDINARY_API_KEY=ci-smoke -e CLOUDINARY_API_SECRET=ci-smoke
+          emma-backend:ci
+      - name: Wait for /health/live
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/health/live; then exit 0; fi
+            sleep 2
+          done
+          docker logs emma-smoke
+          exit 1
+      - name: Container logs
+        if: always()
+        run: docker logs emma-smoke || true
 
   audit:
     name: Production dependency audit (critical, allowlisted)
