@@ -864,6 +864,9 @@ type Order {
   """Set when fulfillmentType is PICKUP"""
   pickupLocationId: ID
 
+  """Pickup location (name, address, city, state, country) at time of order"""
+  pickupLocationSnapshot: JSON
+
   """Set when fulfillmentType is DELIVERY"""
   shippingAddressId: ID
 

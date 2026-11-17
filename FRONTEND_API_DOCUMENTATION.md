@@ -1154,6 +1154,8 @@ All order operations require `Bearer` JWT.
   status: OrderStatus;                         // PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
   shippingAddressId: string;
   shippingAddressSnapshot?: JSON;              // Snapshot of address at order time
+  pickupLocationId?: string;                   // Set for PICKUP orders
+  pickupLocationSnapshot?: JSON;               // PICKUP: { name, address, city, state, country } at order time
   trackingNumber?: string;
   carrier?: string;
   createdAt: DateTime;
@@ -1244,7 +1246,7 @@ CANCELLED     — Order cancelled
 
 **Possible Errors**:
 - `NOT_FOUND` — Cart empty, shipping address not found.
-- `BAD_REQUEST` — Insufficient stock for one or more items, invalid/expired coupon, delivery city not covered by any active shipping zone (offer pickup or another address).
+- `BAD_REQUEST` — Insufficient stock for one or more items, invalid/expired coupon, delivery city not covered by any active shipping zone (offer pickup or another address), `PICKUP` with a `pickupLocationId` that does not exist or is not active.
 
 **Shipping zones (admin)**: `createShippingZone` / `updateShippingZone` reject (`CONFLICT`) a city that another zone already lists, active or not, so each city has exactly one fee. `getShippingFee(addressId)` returns `BAD_REQUEST` for an address whose city no active zone covers.
 

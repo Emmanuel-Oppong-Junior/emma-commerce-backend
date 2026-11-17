@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PickupLocation } from '@prisma/client';
 import { PickupLocationsRepository } from './pickup-locations.repository';
 import { CreatePickupLocationInput } from './dto/create-pickup-location.input';
@@ -34,9 +34,12 @@ export class PickupLocationsService {
     return location;
   }
 
+  /** Throws BadRequestException because callers use it to validate a location chosen in client input. */
   async findActiveById(id: string): Promise<PickupLocation> {
     const location = await this.repository.findById(id);
-    if (!location || !location.isActive) throw new NotFoundException(`Pickup location "${id}" not found or inactive`);
+    if (!location || !location.isActive) {
+      throw new BadRequestException(`Pickup location "${id}" does not exist or is not active`);
+    }
     return location;
   }
 }

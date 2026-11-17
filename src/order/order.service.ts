@@ -101,7 +101,7 @@ export class OrdersService {
     if (!params.pickupLocationId) {
       throw new BadRequestException('pickupLocationId is required for PICKUP orders');
     }
-
+    const location = await this.pickupLocationsService.findActiveById(params.pickupLocationId);
     const orderDetails = await this.buildOrderDetails(cart.items, userId, new Prisma.Decimal(0), params.couponCode);
 
     const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
@@ -111,6 +111,13 @@ export class OrdersService {
       contactPhone: params.contactPhone,
       fulfillmentType: FulfillmentType.PICKUP,
       pickupLocationId: params.pickupLocationId,
+      pickupLocationSnapshot: {
+        name: location.name,
+        address: location.address,
+        city: location.city,
+        state: location.state,
+        country: location.country,
+      },
     });
 
     this.sendOrderConfirmationEmail(userId, order);
@@ -396,6 +403,7 @@ export class OrdersService {
       shippingAddressId?: string;
       pickupLocationId?: string;
       shippingAddressSnapshot?: Record<string, unknown>;
+      pickupLocationSnapshot?: Record<string, unknown>;
     },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {

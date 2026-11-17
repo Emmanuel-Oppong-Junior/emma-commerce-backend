@@ -119,6 +119,17 @@ const pickupParams = {
   contactEmail: 'test@example.com',
   contactPhone: '+233244000000',
 };
+const mockPickupLocation = {
+  id: 'pickup1',
+  name: 'Osu Store',
+  address: '12 Oxford St',
+  city: 'Accra',
+  state: 'Greater Accra',
+  country: 'Ghana',
+  isActive: true,
+  createdAt: fixedDate,
+  updatedAt: fixedDate,
+};
 const mockUser = {
   id: mockUserId,
   isActive: true,
@@ -233,6 +244,7 @@ describe('OrdersService', () => {
 
     it('stores a zero shipping fee on a pickup order', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockPickupLocationsService.findActiveById.mockResolvedValue(mockPickupLocation);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
@@ -249,6 +261,45 @@ describe('OrdersService', () => {
           totalAmount: new Decimal('39.98'),
         }),
       );
+    });
+
+    it('snapshots the pickup location onto a pickup order', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockPickupLocationsService.findActiveById.mockResolvedValue(mockPickupLocation);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.create.mockResolvedValue(mockOrder);
+
+      await ordersService.createOrderFromCart(mockUserId, pickupParams);
+
+      expect(mockPickupLocationsService.findActiveById).toHaveBeenCalledWith('pickup1');
+      expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+        expect.anything(),
+        mockUserId,
+        expect.objectContaining({
+          pickupLocationId: 'pickup1',
+          pickupLocationSnapshot: {
+            name: 'Osu Store',
+            address: '12 Oxford St',
+            city: 'Accra',
+            state: 'Greater Accra',
+            country: 'Ghana',
+          },
+        }),
+      );
+    });
+
+    it('rejects a pickup order for an unknown or inactive location, without reserving stock', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockPickupLocationsService.findActiveById.mockRejectedValue(
+        new BadRequestException('Pickup location "pickup1" does not exist or is not active'),
+      );
+
+      await expect(ordersService.createOrderFromCart(mockUserId, pickupParams)).rejects.toThrow(BadRequestException);
+      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if cart is empty', async () => {

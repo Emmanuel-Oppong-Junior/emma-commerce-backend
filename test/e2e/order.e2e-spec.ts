@@ -163,6 +163,80 @@ describe('Orders (e2e)', () => {
       await clearUserCart(userToken);
     });
 
+    describe('pickup', () => {
+      const createPickupOrder = (pickupLocationId: string) =>
+        gqlRequest(
+          app,
+          `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "${pickupLocationId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id subtotal shippingFee totalAmount pickupLocationId pickupLocationSnapshot } }`,
+          undefined,
+          userToken,
+        ).expect(200);
+
+      beforeAll(async () => {
+        await prisma.pickupLocation.createMany({
+          data: [
+            {
+              id: 'e2e_pickup_osu',
+              name: 'Osu Store',
+              address: '12 Oxford St',
+              city: 'Accra',
+              state: 'Greater Accra',
+              country: 'Ghana',
+            },
+            {
+              id: 'e2e_pickup_closed',
+              name: 'Closed Branch',
+              address: '1 Old Rd',
+              city: 'Tema',
+              state: 'Greater Accra',
+              country: 'Ghana',
+              isActive: false,
+            },
+          ],
+        });
+      });
+
+      afterEach(() => clearUserCart(userToken));
+
+      it.each(['e2e_pickup_closed', 'no-such-location'])(
+        'rejects a pickup order for location %s and reserves no stock',
+        async (pickupLocationId) => {
+          await addItemToCart(userToken);
+          const stockBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+
+          const res = await createPickupOrder(pickupLocationId);
+
+          expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+          expect(res.body.errors[0].message).toContain(pickupLocationId);
+          const stockAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+          expect(stockAfter.quantity).toBe(stockBefore.quantity);
+        },
+      );
+
+      it('snapshots an active pickup location and charges no shipping', async () => {
+        await addItemToCart(userToken);
+
+        const res = await createPickupOrder('e2e_pickup_osu');
+
+        expect(res.body.errors).toBeUndefined();
+        const order = res.body.data.createOrder;
+        expect(order.pickupLocationId).toBe('e2e_pickup_osu');
+        expect(order.shippingFee).toBe(0);
+        expect(order.totalAmount).toBe(order.subtotal);
+        expect(order.pickupLocationSnapshot).toEqual({
+          name: 'Osu Store',
+          address: '12 Oxford St',
+          city: 'Accra',
+          state: 'Greater Accra',
+          country: 'Ghana',
+        });
+
+        await prisma.pickupLocation.update({ where: { id: 'e2e_pickup_osu' }, data: { name: 'Renamed Store' } });
+        const stored = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+        expect(stored.pickupLocationSnapshot).toMatchObject({ name: 'Osu Store' });
+      });
+    });
+
     it('decrements product stock after a successful order', async () => {
       // Arrange — record the current stock, add the product to cart, create an order
       const productBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod2' } });

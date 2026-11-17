@@ -62,6 +62,12 @@ export class Order {
   @Field(() => GraphQLJSON, { nullable: true, description: 'Address snapshot at time of order' })
   shippingAddressSnapshot?: Record<string, unknown>;
 
+  @Field(() => GraphQLJSON, {
+    nullable: true,
+    description: 'Pickup location (name, address, city, state, country) at time of order',
+  })
+  pickupLocationSnapshot?: Record<string, unknown>;
+
   @Field({ nullable: true, description: 'Shipment tracking number' })
   trackingNumber?: string;
 

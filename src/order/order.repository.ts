@@ -52,6 +52,7 @@ export class OrdersRepository {
       shippingAddressId?: string;
       pickupLocationId?: string;
       shippingAddressSnapshot?: Record<string, unknown>;
+      pickupLocationSnapshot?: Record<string, unknown>;
       couponId?: string;
       couponDiscount?: number;
       paymentMethod?: PaymentMethod;
@@ -70,6 +71,7 @@ export class OrdersRepository {
         shippingFee: orderDetails.shippingFee,
         totalAmount: orderDetails.totalAmount,
         shippingAddressSnapshot: (orderDetails.shippingAddressSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
+        pickupLocationSnapshot: (orderDetails.pickupLocationSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
         couponId: orderDetails.couponId,
         couponDiscount: orderDetails.couponDiscount,
         paymentMethod: orderDetails.paymentMethod ?? PaymentMethod.ONLINE,
