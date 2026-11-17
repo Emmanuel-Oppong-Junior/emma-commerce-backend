@@ -27,6 +27,7 @@ function buildPaymentService(
     repository as never,
     { get: () => 'sk_test_placeholder' } as never,
     { log: jest.fn(), warn: jest.fn(), error: jest.fn() } as never,
+    { sendPaymentConfirmation: jest.fn() } as never,
   );
   const paystack = {
     transaction: {

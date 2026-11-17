@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CartService } from '../cart/cart.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '@prisma/client';
 import { OrdersService } from './order.service';
 import { OrdersRepository } from './order.repository';
@@ -344,6 +344,21 @@ describe('OrdersService', () => {
         expect.objectContaining({ entity: 'Order', entityId: 'order1', action: 'STATUS_CHANGE', userId: 'admin1' }),
       );
       expect(result.status).toBe('SHIPPED');
+    });
+
+    it('logs a failed recipient lookup for the status email instead of leaving the rejection unhandled', async () => {
+      const loggerError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      mockOrdersRepository.findById.mockResolvedValue(processingOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: 'SHIPPED' as OrderStatus });
+      mockOrdersRepository.findUserById.mockRejectedValue(new Error('connection reset'));
+      mockAuditService.log.mockResolvedValue(undefined);
+
+      await ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(loggerError).toHaveBeenCalledWith(expect.stringContaining('order1'), expect.any(String));
+      expect(mockNotificationsService.sendOrderStatusUpdate).not.toHaveBeenCalled();
+      loggerError.mockRestore();
     });
 
     it('should throw NotFoundException if order does not exist', async () => {

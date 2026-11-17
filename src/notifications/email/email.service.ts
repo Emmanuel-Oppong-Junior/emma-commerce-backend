@@ -57,7 +57,16 @@ export class EmailService {
       return;
     }
     try {
-      await this.resend.emails.send({ from: this.fromEmail, to, subject, html });
+      // Resend reports API failures (quota, unverified sender, validation) in the result instead of throwing.
+      const { error } = await this.resend.emails.send({ from: this.fromEmail, to, subject, html });
+      if (error) {
+        this.logger.error(
+          `Failed to send email: ${subject} → ${recipient}`,
+          `${error.name}: ${error.message}`.split(to).join(recipient),
+          'EmailService',
+        );
+        return;
+      }
       this.logger.log(`Email sent: ${subject} → ${recipient}`, 'EmailService');
     } catch (error) {
       this.logger.error(

@@ -15,6 +15,7 @@ import { createHmac } from 'node:crypto';
 import { PaystackEvent } from './enums/paystack-event.enum';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRepository } from './payment.repository';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class PaymentService {
@@ -28,6 +29,7 @@ export class PaymentService {
     private readonly paymentRepository: PaymentRepository,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    private readonly notificationsService: NotificationsService,
   ) {
     this.paystack = Paystack(this.configService.get('PAYSTACK_SECRET_KEY'));
   }
@@ -357,7 +359,9 @@ export class PaymentService {
 
     if (status === PaymentStatus.COMPLETED) {
       const transitioned = await this.paymentRepository.updateOrderStatus(payment.orderId, 'PROCESSING');
-      if (!transitioned) {
+      if (transitioned) {
+        this.sendPaymentConfirmationEmail(payment.orderId, Number(payment.amount));
+      } else {
         this.logger.warn(
           `Payment completed but order was not PENDING, status left unchanged | orderId: ${payment.orderId} | paymentId: ${payment.id}`,
           'PaymentService',
@@ -366,6 +370,24 @@ export class PaymentService {
     }
 
     return payment;
+  }
+
+  // Sent only on the PENDING -> PROCESSING transition, so repeat webhooks and re-verifies do not email twice.
+  private sendPaymentConfirmationEmail(orderId: string, amount: number): void {
+    this.paymentRepository
+      .findOrderWithUser(orderId)
+      .then((order) => {
+        if (order?.user.email) {
+          this.notificationsService.sendPaymentConfirmation(order.user.email, orderId, amount);
+        }
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          `Could not send payment confirmation email | orderId: ${orderId}`,
+          error instanceof Error ? error.message : String(error),
+          'PaymentService',
+        );
+      });
   }
 
   private async processWebhookPayment(reference: string): Promise<boolean> {

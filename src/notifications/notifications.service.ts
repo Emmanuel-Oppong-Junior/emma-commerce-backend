@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { EmailService } from './email/email.service';
+import { LoggerService } from '../commons/logger.service';
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly emailService: EmailService) {}
+  constructor(
+    private readonly emailService: EmailService,
+    private readonly logger: LoggerService,
+  ) {}
 
   /**
    * Fires a welcome email to a newly registered user. Runs asynchronously — errors are not propagated to the caller.
@@ -11,7 +15,7 @@ export class NotificationsService {
    * @param name - The user's display name.
    */
   sendWelcomeEmail(to: string, name: string): void {
-    void this.emailService.sendWelcomeEmail(to, name);
+    this.fireAndForget('welcome', this.emailService.sendWelcomeEmail(to, name));
   }
 
   /**
@@ -21,7 +25,7 @@ export class NotificationsService {
    * @param totalAmount - The total amount charged for the order.
    */
   sendOrderConfirmation(to: string, orderId: string, totalAmount: number): void {
-    void this.emailService.sendOrderConfirmationEmail(to, orderId, totalAmount);
+    this.fireAndForget('order confirmation', this.emailService.sendOrderConfirmationEmail(to, orderId, totalAmount));
   }
 
   /**
@@ -32,7 +36,7 @@ export class NotificationsService {
    * @param trackingNumber - Optional shipment tracking number to include in the email.
    */
   sendOrderStatusUpdate(to: string, orderId: string, status: string, trackingNumber?: string): void {
-    void this.emailService.sendOrderStatusEmail(to, orderId, status, trackingNumber);
+    this.fireAndForget('order status', this.emailService.sendOrderStatusEmail(to, orderId, status, trackingNumber));
   }
 
   /**
@@ -42,7 +46,7 @@ export class NotificationsService {
    * @param amount - The amount that was charged.
    */
   sendPaymentConfirmation(to: string, orderId: string, amount: number): void {
-    void this.emailService.sendPaymentConfirmationEmail(to, orderId, amount);
+    this.fireAndForget('payment confirmation', this.emailService.sendPaymentConfirmationEmail(to, orderId, amount));
   }
 
   /**
@@ -51,6 +55,16 @@ export class NotificationsService {
    * @param resetToken - The one-time password reset token to include in the email.
    */
   sendPasswordReset(to: string, resetToken: string): void {
-    void this.emailService.sendPasswordResetEmail(to, resetToken);
+    this.fireAndForget('password reset', this.emailService.sendPasswordResetEmail(to, resetToken));
+  }
+
+  private fireAndForget(emailKind: string, send: Promise<void>): void {
+    send.catch((error: unknown) => {
+      this.logger.error(
+        `Email notification failed: ${emailKind}`,
+        error instanceof Error ? error.message : String(error),
+        'NotificationsService',
+      );
+    });
   }
 }

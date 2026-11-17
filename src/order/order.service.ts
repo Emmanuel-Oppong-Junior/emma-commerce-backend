@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { allowedFrom, assertTransition, FINAL_STATUSES, isFinal } from './order-status';
 import { CartService } from '../cart/cart.service';
 import {
@@ -473,19 +473,34 @@ export class OrdersService {
     );
   }
 
+  private readonly emailLogger = new Logger(OrdersService.name);
+
   private sendOrderConfirmationEmail(userId: string, order: Order): void {
-    void this.ordersRepository.findUserById(userId).then((user) => {
-      if (user?.email) {
-        this.notificationsService.sendOrderConfirmation(user.email, order.id, Number(order.totalAmount));
-      }
-    });
+    this.ordersRepository
+      .findUserById(userId)
+      .then((user) => {
+        if (user?.email) {
+          this.notificationsService.sendOrderConfirmation(user.email, order.id, Number(order.totalAmount));
+        }
+      })
+      .catch((error: unknown) => this.logEmailFailure('order confirmation', order.id, error));
   }
 
   private sendOrderStatusEmail(userId: string, orderId: string, status: string, trackingNumber?: string): void {
-    void this.ordersRepository.findUserById(userId).then((user) => {
-      if (user?.email) {
-        this.notificationsService.sendOrderStatusUpdate(user.email, orderId, status, trackingNumber);
-      }
-    });
+    this.ordersRepository
+      .findUserById(userId)
+      .then((user) => {
+        if (user?.email) {
+          this.notificationsService.sendOrderStatusUpdate(user.email, orderId, status, trackingNumber);
+        }
+      })
+      .catch((error: unknown) => this.logEmailFailure('order status', orderId, error));
+  }
+
+  private logEmailFailure(emailKind: string, orderId: string, error: unknown): void {
+    this.emailLogger.error(
+      `Could not send ${emailKind} email | orderId: ${orderId}`,
+      error instanceof Error ? error.message : String(error),
+    );
   }
 }

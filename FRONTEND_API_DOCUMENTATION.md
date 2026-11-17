@@ -3281,12 +3281,12 @@ All notifications are **email-only** via Resend. There are no in-app notificatio
 | Order created | Order confirmation | Order owner |
 | Order status → SHIPPED | Shipping update (with tracking number) | Order owner |
 | Order status → DELIVERED | Delivery confirmation | Order owner |
-| Payment webhook success | Payment confirmation | Order owner |
+| Online payment confirmed (webhook or `verifyPayment`), once per order | Payment confirmation | Order owner |
 | `forgotPassword` called | Password reset link | Requesting user |
 
 ### Asynchronous
 
-All emails fire asynchronously — they do **not** block the GraphQL response. Email failures are silently caught (logged but not propagated).
+All emails fire asynchronously — they do **not** block the GraphQL response. Email failures, including sends the email provider rejects, are logged as errors and not propagated.
 
 ### No GraphQL Mutations for Notifications
 

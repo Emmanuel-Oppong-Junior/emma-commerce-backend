@@ -10,6 +10,7 @@ import { createHmac } from 'node:crypto';
 import { PaymentStatus } from '@prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { Role } from '../users/enums/role.enum';
+import { NotificationsService } from '../notifications/notifications.service';
 
 // Stable mock instance shared between service constructor and test references
 const mockPaystackTransaction = {
@@ -43,6 +44,12 @@ const mockLoggerService = {
   warn: jest.fn(),
 };
 
+const mockNotificationsService = {
+  sendPaymentConfirmation: jest.fn(),
+};
+
+const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
+
 describe('PaymentService', () => {
   let service: PaymentService;
   let paymentRepository: jest.Mocked<PaymentRepository>;
@@ -54,6 +61,7 @@ describe('PaymentService', () => {
         { provide: PaymentRepository, useValue: mockPaymentRepository },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
+        { provide: NotificationsService, useValue: mockNotificationsService },
       ],
     }).compile();
 
@@ -213,6 +221,59 @@ describe('PaymentService', () => {
         expect.any(Object),
       );
       expect(result).toEqual(failedPayment);
+    });
+
+    it('emails a payment confirmation once the order moves from PENDING to PROCESSING', async () => {
+      mockPaymentRepository.findByReference.mockResolvedValue(payment);
+      mockPaystackTransaction.verify.mockResolvedValue(verification);
+      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue({ ...updatedPayment, amount: 250 });
+      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
+      mockPaymentRepository.findOrderWithUser.mockResolvedValue({ id: 'order1', user: { email: 'buyer@example.com' } });
+
+      await service.verifyPayment(reference);
+      await flushPromises();
+
+      expect(mockNotificationsService.sendPaymentConfirmation).toHaveBeenCalledWith('buyer@example.com', 'order1', 250);
+    });
+
+    it('does not email again when the order had already left PENDING (repeat webhook or re-verify)', async () => {
+      mockPaymentRepository.findByReference.mockResolvedValue(payment);
+      mockPaystackTransaction.verify.mockResolvedValue(verification);
+      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
+      mockPaymentRepository.updateOrderStatus.mockResolvedValue(false);
+
+      await service.verifyPayment(reference);
+      await flushPromises();
+
+      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
+    });
+
+    it('does not email when the payment failed', async () => {
+      mockPaymentRepository.findByReference.mockResolvedValue(payment);
+      mockPaystackTransaction.verify.mockResolvedValue({ data: { status: 'failed', reference: 'ref1' } });
+      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue({ ...payment, status: PaymentStatus.FAILED });
+
+      await service.verifyPayment(reference);
+      await flushPromises();
+
+      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
+    });
+
+    it('logs a failed recipient lookup without failing the verification', async () => {
+      mockPaymentRepository.findByReference.mockResolvedValue(payment);
+      mockPaystackTransaction.verify.mockResolvedValue(verification);
+      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
+      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
+      mockPaymentRepository.findOrderWithUser.mockRejectedValue(new Error('connection reset'));
+
+      await expect(service.verifyPayment(reference)).resolves.toEqual(updatedPayment);
+      await flushPromises();
+
+      expect(mockLoggerService.error).toHaveBeenCalledWith(
+        expect.stringContaining('order1'),
+        expect.any(String),
+        'PaymentService',
+      );
     });
 
     it('should throw NotFoundException if payment not found', async () => {
