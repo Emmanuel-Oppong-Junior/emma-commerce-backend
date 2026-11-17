@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
 import * as sharp from 'sharp';
 import { LoggerService } from './logger.service';
+import { MAX_IMAGE_PIXELS } from './image-upload-validation';
 
 @Injectable()
 export class CloudinaryService {
@@ -24,16 +25,18 @@ export class CloudinaryService {
    * @returns The Cloudinary upload result containing the public URL and asset metadata.
    */
   async uploadImage(file: Express.Multer.File, folder: string) {
-    let resizedBuffer = file.buffer;
+    let resizedBuffer: Buffer;
     try {
       resizedBuffer = await this.resizeImageBuffer(file.buffer);
     } catch (error) {
-      this.logger.error('Error resizing image', error instanceof Error ? error.message : String(error));
+      const reason = error instanceof Error ? error.message : String(error);
+      this.logger.error('Error resizing image', reason);
+      throw new BadRequestException(`File "${file.originalname}" could not be decoded as an image: ${reason}`);
     }
 
     return new Promise((resolve, reject) => {
       cloudinary.uploader
-        .upload_stream({ folder }, (error, result) => {
+        .upload_stream({ folder, resource_type: 'image', allowed_formats: ['jpg', 'png', 'webp'] }, (error, result) => {
           if (error) return reject(error);
           resolve(result);
         })
@@ -42,7 +45,7 @@ export class CloudinaryService {
   }
 
   private resizeImageBuffer(buffer: Buffer): Promise<Buffer> {
-    return sharp(buffer)
+    return sharp(buffer, { limitInputPixels: MAX_IMAGE_PIXELS })
       .resize(500, 500, {
         fit: 'contain',
         background: { r: 255, g: 255, b: 255, alpha: 1 },

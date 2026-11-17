@@ -11,6 +11,7 @@ import { Reflector } from '@nestjs/core';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { AddressesLoader } from './loaders/addresses.loader';
 import { OrdersLoader } from './loaders/orders.loader';
+import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';
 
 const mockUsersService = {
   createUserByCredentials: jest.fn(),
@@ -56,6 +57,15 @@ describe('UsersResolver', () => {
   });
 
   describe('createUser', () => {
+    it('is restricted to SUPER_ADMIN, since it is the only way to grant the ADMIN role', () => {
+      const roles = new Reflector().getAllAndOverride<Role[]>(ROLES_KEY, [
+        UsersResolver.prototype.createUser,
+        UsersResolver,
+      ]);
+
+      expect(roles).toEqual([Role.SUPER_ADMIN]);
+    });
+
     it('should create a user with credentials', async () => {
       const input: CreateUserInput = {
         email: 'test@example.com',
@@ -194,9 +204,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.adminUpdateUser.mockResolvedValue(updatedUser);
 
-      const result = await resolver.updateUser(id, input);
+      const result = await resolver.updateUser(id, input, Role.ADMIN);
 
-      expect(usersService.adminUpdateUser).toHaveBeenCalledWith(id, input);
+      expect(usersService.adminUpdateUser).toHaveBeenCalledWith(id, input, Role.ADMIN);
       expect(result).toEqual(updatedUser);
     });
   });
@@ -213,9 +223,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.remove.mockResolvedValue(removedUser);
 
-      const result = await resolver.removeUser(id);
+      const result = await resolver.removeUser(id, Role.ADMIN);
 
-      expect(usersService.remove).toHaveBeenCalledWith(id);
+      expect(usersService.remove).toHaveBeenCalledWith(id, Role.ADMIN);
       expect(result).toEqual(removedUser);
     });
   });
@@ -232,9 +242,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.archiveUser.mockResolvedValue(archivedUser);
 
-      const result = await resolver.archiveUser(id);
+      const result = await resolver.archiveUser(id, Role.ADMIN);
 
-      expect(usersService.archiveUser).toHaveBeenCalledWith(id);
+      expect(usersService.archiveUser).toHaveBeenCalledWith(id, Role.ADMIN);
       expect(result).toEqual(archivedUser);
     });
   });
@@ -251,9 +261,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.deArchiveUser.mockResolvedValue(restoredUser);
 
-      const result = await resolver.deArchiveUser(id);
+      const result = await resolver.deArchiveUser(id, Role.ADMIN);
 
-      expect(usersService.deArchiveUser).toHaveBeenCalledWith(id);
+      expect(usersService.deArchiveUser).toHaveBeenCalledWith(id, Role.ADMIN);
       expect(result).toEqual(restoredUser);
     });
   });

@@ -3,7 +3,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
-import { signInUser, signInAdmin, signUpUser } from '../helpers/auth.helper';
+import { signInUser, signInAdmin, signInSuperAdmin, signUpUser } from '../helpers/auth.helper';
 
 describe('User Account (e2e)', () => {
   let app: INestApplication;
@@ -309,6 +309,29 @@ describe('User Account (e2e)', () => {
       // Confirm deletion via Prisma (avoids extra GraphQL requests that count against throttle)
       const deleted = await prisma.address.findUnique({ where: { id: addressId } });
       expect(deleted).toBeNull();
+    });
+  });
+
+  // ─── admin account management ────────────────────────────────────────────────
+
+  describe('admin account management', () => {
+    const archive = (id: string) => `mutation { archiveUser(id: "${id}") { id isActive } }`;
+
+    it('rejects an ADMIN archiving a peer ADMIN and lets a SUPER_ADMIN do it', async () => {
+      // Arrange
+      const peer = await prisma.user.create({
+        data: { email: 'peer-admin@example.com', name: 'Peer Admin', role: 'ADMIN' },
+      });
+      const superAdminToken = await signInSuperAdmin(app);
+
+      // Act
+      const byAdmin = await gqlRequest(app, archive(peer.id), undefined, adminToken).expect(200);
+      const bySuperAdmin = await gqlRequest(app, archive(peer.id), undefined, superAdminToken).expect(200);
+
+      // Assert
+      expect(byAdmin.body.errors[0].extensions.code).toBe('FORBIDDEN');
+      expect(bySuperAdmin.body.errors).toBeUndefined();
+      expect(bySuperAdmin.body.data.archiveUser).toEqual({ id: peer.id, isActive: false });
     });
   });
 });

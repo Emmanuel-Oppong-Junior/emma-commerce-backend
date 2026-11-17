@@ -69,12 +69,16 @@ export class UsersResolver {
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
-  @Mutation(() => User, { description: 'Update an existing user (super admin accounts cannot be modified)' })
+  @Mutation(() => User, {
+    description:
+      'Update an existing user (super admin accounts cannot be modified; admin accounts only by a super admin)',
+  })
   updateUser(
     @Args('id', { type: () => String }) id: string,
     @Args('updateUserInput') updateUserInput: UpdateUserInput,
+    @ActiveUser('role') actorRole: Role,
   ) {
-    return this.usersService.adminUpdateUser(id, updateUserInput);
+    return this.usersService.adminUpdateUser(id, updateUserInput, actorRole);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
@@ -97,20 +101,20 @@ export class UsersResolver {
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Delete a user permanently' })
-  removeUser(@Args('id', { type: () => String }) id: string) {
-    return this.usersService.remove(id);
+  removeUser(@Args('id', { type: () => String }) id: string, @ActiveUser('role') actorRole: Role) {
+    return this.usersService.remove(id, actorRole);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Archive (soft delete) a user' })
-  archiveUser(@Args('id', { type: () => String }) id: string) {
-    return this.usersService.archiveUser(id);
+  archiveUser(@Args('id', { type: () => String }) id: string, @ActiveUser('role') actorRole: Role) {
+    return this.usersService.archiveUser(id, actorRole);
   }
 
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, { description: 'Restore an archived user' })
-  deArchiveUser(@Args('id', { type: () => String }) id: string) {
-    return this.usersService.deArchiveUser(id);
+  deArchiveUser(@Args('id', { type: () => String }) id: string, @ActiveUser('role') actorRole: Role) {
+    return this.usersService.deArchiveUser(id, actorRole);
   }
 
   @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)

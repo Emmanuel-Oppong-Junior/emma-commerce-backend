@@ -190,9 +190,9 @@ export class UsersService {
     return this.usersRepository.update(id, updateUserInput);
   }
 
-  async adminUpdateUser(id: string, updateUserInput: UpdateUserInput) {
+  async adminUpdateUser(id: string, updateUserInput: UpdateUserInput, actorRole: Role) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureNotSuperAdmin(user, 'updated');
+    this.ensureActorMayManage(user, actorRole, 'updated');
     return this.usersRepository.update(id, updateUserInput);
   }
 
@@ -206,36 +206,39 @@ export class UsersService {
   /**
    * Permanently deletes a user by ID.
    * @param id - The ID of the user to delete.
+   * @param actorRole - Role of the caller; only a SUPER_ADMIN may act on ADMIN accounts.
    * @returns The deleted user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async remove(id: string) {
+  async remove(id: string, actorRole: Role) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureNotSuperAdmin(user, 'deleted');
+    this.ensureActorMayManage(user, actorRole, 'deleted');
     return this.usersRepository.delete(id);
   }
 
   /**
    * Deactivates a user account by setting isActive to false.
    * @param id - The ID of the user to archive.
+   * @param actorRole - Role of the caller; only a SUPER_ADMIN may act on ADMIN accounts.
    * @returns The updated user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async archiveUser(id: string) {
+  async archiveUser(id: string, actorRole: Role) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureNotSuperAdmin(user, 'archived');
+    this.ensureActorMayManage(user, actorRole, 'archived');
     return this.usersRepository.update(id, { isActive: false });
   }
 
   /**
    * Reactivates a previously archived user account by setting isActive to true.
    * @param id - The ID of the user to restore.
+   * @param actorRole - Role of the caller; only a SUPER_ADMIN may act on ADMIN accounts.
    * @returns The updated user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async deArchiveUser(id: string) {
+  async deArchiveUser(id: string, actorRole: Role) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureNotSuperAdmin(user, 'restored');
+    this.ensureActorMayManage(user, actorRole, 'restored');
     return this.usersRepository.update(id, { isActive: true });
   }
 
@@ -286,9 +289,12 @@ export class UsersService {
     return user;
   }
 
-  private ensureNotSuperAdmin(user: User, action: string): void {
-    if (user.role === Role.SUPER_ADMIN) {
+  private ensureActorMayManage(target: User, actorRole: Role, action: string): void {
+    if (target.role === Role.SUPER_ADMIN) {
       throw new ForbiddenException(`Super admin accounts cannot be ${action}`);
+    }
+    if (target.role === Role.ADMIN && actorRole !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException(`Admin accounts can only be ${action} by a super admin`);
     }
   }
 }

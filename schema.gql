@@ -819,7 +819,9 @@ type Mutation {
   """Update a tax (admin only)"""
   updateTax(id: ID!, input: UpdateTaxInput!): TaxEntity!
 
-  """Update an existing user (super admin accounts cannot be modified)"""
+  """
+  Update an existing user (super admin accounts cannot be modified; admin accounts only by a super admin)
+  """
   updateUser(id: String!, updateUserInput: UpdateUserInput!): User!
 
   """Updates an existing variant"""

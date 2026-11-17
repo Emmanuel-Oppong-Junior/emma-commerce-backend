@@ -7,7 +7,7 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { User } from '@prisma/client';
 import { Role } from './enums/role.enum';
 import { UpdateUserInput } from './dto/update-user.input';
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 
 const mockUsersRepository = {
@@ -292,7 +292,7 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.delete.mockResolvedValue(mockUser);
 
-      const result = await service.remove('1');
+      const result = await service.remove('1', Role.ADMIN);
 
       expect(usersRepository.delete).toHaveBeenCalledWith('1');
       expect(result).toEqual(mockUser);
@@ -301,7 +301,7 @@ describe('UsersService', () => {
     it('should throw if user not found', async () => {
       mockUsersRepository.findById.mockResolvedValue(null);
 
-      await expect(service.remove('1')).rejects.toThrow(NotFoundException);
+      await expect(service.remove('1', Role.ADMIN)).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -312,7 +312,7 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.update.mockResolvedValue(archivedUser);
 
-      const result = await service.archiveUser('1');
+      const result = await service.archiveUser('1', Role.ADMIN);
 
       expect(usersRepository.update).toHaveBeenCalledWith('1', { isActive: false });
       expect(result).toEqual(archivedUser);
@@ -327,10 +327,55 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(inactiveUser);
       mockUsersRepository.update.mockResolvedValue(activeUser);
 
-      const result = await service.deArchiveUser('1');
+      const result = await service.deArchiveUser('1', Role.ADMIN);
 
       expect(usersRepository.update).toHaveBeenCalledWith('1', { isActive: true });
       expect(result).toEqual(activeUser);
+    });
+  });
+
+  describe('admin account management', () => {
+    const adminTarget: User = { ...mockUser, id: 'admin-2', role: Role.ADMIN };
+    const superAdminTarget: User = { ...mockUser, id: 'super-1', role: Role.SUPER_ADMIN };
+
+    const adminActions: Array<[string, (id: string, actorRole: Role) => Promise<unknown>]> = [
+      ['adminUpdateUser', (id, actorRole) => service.adminUpdateUser(id, { email: 'taken@example.com' }, actorRole)],
+      ['remove', (id, actorRole) => service.remove(id, actorRole)],
+      ['archiveUser', (id, actorRole) => service.archiveUser(id, actorRole)],
+      ['deArchiveUser', (id, actorRole) => service.deArchiveUser(id, actorRole)],
+    ];
+
+    it.each(adminActions)('%s rejects an ADMIN acting on another ADMIN account', async (_name, act) => {
+      mockUsersRepository.findById.mockResolvedValue(adminTarget);
+
+      await expect(act(adminTarget.id, Role.ADMIN)).rejects.toThrow(ForbiddenException);
+      expect(mockUsersRepository.update).not.toHaveBeenCalled();
+      expect(mockUsersRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it.each(adminActions)('%s lets a SUPER_ADMIN act on an ADMIN account', async (_name, act) => {
+      mockUsersRepository.findById.mockResolvedValue(adminTarget);
+      mockUsersRepository.update.mockResolvedValue(adminTarget);
+      mockUsersRepository.delete.mockResolvedValue(adminTarget);
+
+      await expect(act(adminTarget.id, Role.SUPER_ADMIN)).resolves.toEqual(adminTarget);
+    });
+
+    it.each(adminActions)('%s rejects any caller acting on a SUPER_ADMIN account', async (_name, act) => {
+      mockUsersRepository.findById.mockResolvedValue(superAdminTarget);
+
+      await expect(act(superAdminTarget.id, Role.ADMIN)).rejects.toThrow(ForbiddenException);
+      await expect(act(superAdminTarget.id, Role.SUPER_ADMIN)).rejects.toThrow(ForbiddenException);
+      expect(mockUsersRepository.update).not.toHaveBeenCalled();
+      expect(mockUsersRepository.delete).not.toHaveBeenCalled();
+    });
+
+    it.each(adminActions)('%s lets an ADMIN act on a customer account', async (_name, act) => {
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+      mockUsersRepository.update.mockResolvedValue(mockUser);
+      mockUsersRepository.delete.mockResolvedValue(mockUser);
+
+      await expect(act(mockUser.id, Role.ADMIN)).resolves.toEqual(mockUser);
     });
   });
 });

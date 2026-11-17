@@ -4,7 +4,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { CloudinaryService } from '../../src/commons/cloudinary.service';
 import { createTestApp } from '../helpers/app.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
-import { getAuthHeader, signInUser } from '../helpers/auth.helper';
+import { getAuthHeader, signInAdmin, signInUser } from '../helpers/auth.helper';
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -15,6 +15,7 @@ describe('REST routes (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let userToken: string;
+  let adminToken: string;
   const cloudinary = {
     uploadImage: jest.fn().mockResolvedValue({ secure_url: 'https://cdn.test/img.png', public_id: 'ecommerce/img' }),
   };
@@ -26,6 +27,7 @@ describe('REST routes (e2e)', () => {
     await resetDb(prisma);
     await seedMinimal(prisma);
     userToken = await signInUser(app);
+    adminToken = await signInAdmin(app);
   });
 
   afterAll(async () => {
@@ -84,20 +86,41 @@ describe('REST routes (e2e)', () => {
       await request(server()).post('/upload/single-image').attach('file', ONE_PIXEL_PNG, 'pixel.png').expect(401);
     });
 
-    it('POST /upload/single-image uploads with a valid token', async () => {
-      const res = await request(server())
+    it('POST /upload/single-image returns 403 for a customer', async () => {
+      await request(server())
         .post('/upload/single-image')
         .set(getAuthHeader(userToken))
+        .attach('file', ONE_PIXEL_PNG, 'pixel.png')
+        .expect(403);
+    });
+
+    it('POST /upload/single-image uploads with an admin token', async () => {
+      const res = await request(server())
+        .post('/upload/single-image')
+        .set(getAuthHeader(adminToken))
         .attach('file', ONE_PIXEL_PNG, 'pixel.png')
         .expect(201);
 
       expect(res.body).toEqual({ url: 'https://cdn.test/img.png', public_id: 'ecommerce/img' });
     });
 
-    it('POST /upload/multiple-images uploads with a valid token', async () => {
+    it('POST /upload/single-image rejects non-image content disguised as a PNG with 400', async () => {
+      const res = await request(server())
+        .post('/upload/single-image')
+        .set(getAuthHeader(adminToken))
+        .attach('file', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), {
+          filename: 'evil.png',
+          contentType: 'image/png',
+        })
+        .expect(400);
+
+      expect(JSON.stringify(res.body)).toContain('is not a JPEG, PNG or WebP image');
+    });
+
+    it('POST /upload/multiple-images uploads with an admin token', async () => {
       const res = await request(server())
         .post('/upload/multiple-images')
-        .set(getAuthHeader(userToken))
+        .set(getAuthHeader(adminToken))
         .attach('files', ONE_PIXEL_PNG, 'a.png')
         .attach('files', ONE_PIXEL_PNG, 'b.png')
         .expect(201);
