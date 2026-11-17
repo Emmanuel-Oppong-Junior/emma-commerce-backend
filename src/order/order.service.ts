@@ -71,7 +71,7 @@ export class OrdersService {
     }
     const address = await this.ensureValidShippingAddress(userId, params.shippingAddressId);
     const shippingFee = await this.shippingZonesService.getFeeForCity(address.city);
-    const orderDetails = await this.buildOrderDetails(cart.items, userId, Number(shippingFee), params.couponCode);
+    const orderDetails = await this.buildOrderDetails(cart.items, userId, shippingFee, params.couponCode);
 
     const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
       ...orderDetails,
@@ -102,7 +102,7 @@ export class OrdersService {
       throw new BadRequestException('pickupLocationId is required for PICKUP orders');
     }
 
-    const orderDetails = await this.buildOrderDetails(cart.items, userId, 0, params.couponCode);
+    const orderDetails = await this.buildOrderDetails(cart.items, userId, new Prisma.Decimal(0), params.couponCode);
 
     const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
       ...orderDetails,
@@ -318,10 +318,12 @@ export class OrdersService {
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
-    shippingFee: number,
+    shippingFee: Prisma.Decimal,
     couponCode?: string,
   ): Promise<{
     orderItems: OrderItem[];
+    subtotal: Prisma.Decimal;
+    shippingFee: Prisma.Decimal;
     totalAmount: Prisma.Decimal;
     couponId?: string;
     couponDiscount?: number;
@@ -337,8 +339,15 @@ export class OrdersService {
       couponDiscount = discountAmount;
     }
 
-    const totalAmount = new Prisma.Decimal(Math.max(0, subtotal + shippingFee - couponDiscount).toFixed(2));
-    return { orderItems, totalAmount, couponId, couponDiscount: couponDiscount || undefined };
+    const totalAmount = new Prisma.Decimal(Math.max(0, subtotal + Number(shippingFee) - couponDiscount).toFixed(2));
+    return {
+      orderItems,
+      subtotal: new Prisma.Decimal(subtotal.toFixed(2)),
+      shippingFee: new Prisma.Decimal(shippingFee.toFixed(2)),
+      totalAmount,
+      couponId,
+      couponDiscount: couponDiscount || undefined,
+    };
   }
 
   private async createOrderItems(cartItems: CartItem[]): Promise<OrderItem[]> {
@@ -375,6 +384,8 @@ export class OrdersService {
     cartId: string,
     orderDetails: {
       orderItems: OrderItem[];
+      subtotal: Prisma.Decimal;
+      shippingFee: Prisma.Decimal;
       totalAmount: Prisma.Decimal;
       couponId?: string;
       couponDiscount?: number;

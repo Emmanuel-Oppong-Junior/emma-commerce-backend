@@ -47,6 +47,8 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
 
   // Independent reference data
   await prisma.tax.deleteMany();
+  await prisma.shippingZone.deleteMany();
+  await prisma.pickupLocation.deleteMany();
 
   // Users last (referenced by many tables above)
   await prisma.user.deleteMany();
@@ -72,7 +74,8 @@ export interface SeedResult {
 /**
  * Seeds the minimum set of records required across all e2e test suites:
  * three users (super admin, admin, regular user), one brand, one category,
- * two published products, one DRAFT product and one inactive product.
+ * two published products, one DRAFT product, one inactive product and shipping zones
+ * covering Accra, Tema and Kumasi.
  *
  * Credentials used here mirror the constants in `auth.helper.ts`.
  *
@@ -176,6 +179,14 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
         categoryId: category.id,
         brandId: brand.id,
       },
+    ],
+  });
+
+  // Shipping zones covering the cities the e2e suites deliver to
+  await prisma.shippingZone.createMany({
+    data: [
+      { id: 'seed_zone_accra', name: 'Greater Accra', cities: ['accra', 'tema'], fee: 15 },
+      { id: 'seed_zone_ashanti', name: 'Ashanti', cities: ['kumasi'], fee: 30 },
     ],
   });
 

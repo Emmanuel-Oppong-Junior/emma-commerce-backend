@@ -1145,7 +1145,9 @@ All order operations require `Bearer` JWT.
 {
   id: string;
   userId: string;
-  totalAmount: Float;                          // Final total including tax
+  subtotal?: Float;                            // Sum of item prices at order time (null on older orders)
+  shippingFee?: Float;                         // Delivery fee charged; 0 for PICKUP (null on older orders)
+  totalAmount: Float;                          // Amount charged: subtotal + shippingFee - couponDiscount
   discountTotal?: Float;                       // Total discount from product/category discounts
   finalTotal?: Float;                          // totalAmount after all discounts
   couponDiscount?: Float;                      // Coupon discount applied at checkout
@@ -1229,7 +1231,7 @@ CANCELLED     — Order cancelled
 
 **What happens internally**:
 1. Cart is loaded and validated (must not be empty).
-2. Shipping address is verified (must belong to the user).
+2. Shipping address is verified (must belong to the user). For `DELIVERY`, the shipping fee comes from the active shipping zone whose cities include the address city (matched case-insensitively, ignoring extra spaces). If no zone covers the city the order is rejected; delivery is never free by default.
 3. Stock availability for each item is verified.
 4. Tax is calculated per item based on country from the shipping address.
 5. Coupon (if provided) is validated and applied.
@@ -1242,7 +1244,9 @@ CANCELLED     — Order cancelled
 
 **Possible Errors**:
 - `NOT_FOUND` — Cart empty, shipping address not found.
-- `BAD_REQUEST` — Insufficient stock for one or more items, invalid/expired coupon.
+- `BAD_REQUEST` — Insufficient stock for one or more items, invalid/expired coupon, delivery city not covered by any active shipping zone (offer pickup or another address).
+
+**Shipping zones (admin)**: `createShippingZone` / `updateShippingZone` reject (`CONFLICT`) a city that another zone already lists, active or not, so each city has exactly one fee. `getShippingFee(addressId)` returns `BAD_REQUEST` for an address whose city no active zone covers.
 
 ---
 

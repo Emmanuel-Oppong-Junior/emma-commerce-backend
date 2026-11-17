@@ -113,6 +113,8 @@ describe('OrdersRepository', () => {
 
       const result = await repository.create(mockTx as any, 'user1', {
         orderItems: [] as any,
+        subtotal: new Prisma.Decimal(90),
+        shippingFee: new Prisma.Decimal(10),
         totalAmount: new Prisma.Decimal(100),
         fulfillmentType: FulfillmentType.DELIVERY,
         shippingAddressId: 'addr1',
@@ -123,7 +125,12 @@ describe('OrdersRepository', () => {
       expect(result).toEqual(mockOrder);
       expect(mockTx.order.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ userId: 'user1', shippingAddressId: 'addr1' }),
+          data: expect.objectContaining({
+            userId: 'user1',
+            shippingAddressId: 'addr1',
+            subtotal: new Prisma.Decimal(90),
+            shippingFee: new Prisma.Decimal(10),
+          }),
         }),
       );
     });

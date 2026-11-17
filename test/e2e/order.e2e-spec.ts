@@ -66,6 +66,8 @@ describe('Orders (e2e)', () => {
           createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
             status
+            subtotal
+            shippingFee
             totalAmount
             items {
               id
@@ -83,6 +85,10 @@ describe('Orders (e2e)', () => {
       expect(res.body.errors).toBeUndefined();
       expect(res.body.data.createOrder.status).toBe('PENDING');
       expect(res.body.data.createOrder.items.length).toBeGreaterThanOrEqual(1);
+      // seed_prod1 (999.99) delivered to Accra, covered by the seeded Greater Accra zone (fee 15)
+      expect(res.body.data.createOrder.subtotal).toBe(999.99);
+      expect(res.body.data.createOrder.shippingFee).toBe(15);
+      expect(res.body.data.createOrder.totalAmount).toBe(1014.99);
 
       // Persist the order ID for subsequent tests
       createdOrderId = res.body.data.createOrder.id;
@@ -124,6 +130,36 @@ describe('Orders (e2e)', () => {
       expect(res.body.errors).toBeDefined();
 
       // Cleanup — clear the cart items that were re-added
+      await clearUserCart(userToken);
+    });
+
+    it('rejects delivery to a city no shipping zone covers and keeps the cart', async () => {
+      const addrRes = await gqlRequest(
+        app,
+        `mutation {
+          createAddress(input: { street: "9 Far St", city: "Tamale", state: "Northern", zipCode: "00300", country: "Ghana" }) { id }
+        }`,
+        undefined,
+        userToken,
+      ).expect(200);
+      const uncoveredAddressId = addrRes.body.data.createAddress.id;
+      await addItemToCart(userToken);
+      const stockBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+
+      const res = await gqlRequest(
+        app,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${uncoveredAddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+
+      expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+      expect(res.body.errors[0].message).toContain('Tamale');
+      const stockAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      expect(stockAfter.quantity).toBe(stockBefore.quantity);
+      const cart = await gqlRequest(app, `query { cart { items { id } } }`, undefined, userToken).expect(200);
+      expect(cart.body.data.cart.items).toHaveLength(1);
+
       await clearUserCart(userToken);
     });
 

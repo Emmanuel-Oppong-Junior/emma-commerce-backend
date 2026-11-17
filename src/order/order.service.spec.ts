@@ -98,6 +98,27 @@ const mockOrder = {
   deletedAt: null,
   items: [{ ...mockOrderItem, product: mockProduct }],
 };
+const mockAddress = {
+  id: mockAddressId,
+  userId: mockUserId,
+  country: 'GH',
+  street: '1 Main St',
+  city: 'Accra',
+  state: 'GA',
+  zipCode: '00233',
+};
+const deliveryParams = {
+  fulfillmentType: FulfillmentType.DELIVERY,
+  shippingAddressId: mockAddressId,
+  contactEmail: 'test@example.com',
+  contactPhone: '+233244000000',
+};
+const pickupParams = {
+  fulfillmentType: FulfillmentType.PICKUP,
+  pickupLocationId: 'pickup1',
+  contactEmail: 'test@example.com',
+  contactPhone: '+233244000000',
+};
 const mockUser = {
   id: mockUserId,
   isActive: true,
@@ -144,6 +165,7 @@ describe('OrdersService', () => {
     mockOrdersRepository.decrementProductStock.mockResolvedValue({ ...mockProduct, quantity: 98 });
     mockOrdersRepository.updateProductStock.mockResolvedValue(mockProduct);
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
+    mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
   });
 
   describe('createOrderFromCart', () => {
@@ -172,6 +194,61 @@ describe('OrdersService', () => {
       expect(cartService.getCartOrThrow).toHaveBeenCalledWith(mockUserId);
       expect(ordersRepository.create).toHaveBeenCalled();
       expect(result).toEqual(mockOrder);
+    });
+
+    it('stores the subtotal and the shipping fee of the covering zone on a delivery order', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.create.mockResolvedValue(mockOrder);
+
+      await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+      expect(mockShippingZonesService.getFeeForCity).toHaveBeenCalledWith('Accra');
+      expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+        expect.anything(),
+        mockUserId,
+        expect.objectContaining({
+          subtotal: new Decimal('39.98'),
+          shippingFee: new Decimal('5'),
+          totalAmount: new Decimal('44.98'),
+        }),
+      );
+    });
+
+    it('rejects delivery to a city no shipping zone covers, without reserving stock', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue({ ...mockAddress, city: 'Tamale' });
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockShippingZonesService.getFeeForCity.mockRejectedValue(
+        new BadRequestException('Delivery is not available to city "Tamale": no active shipping zone covers it'),
+      );
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(BadRequestException);
+      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('stores a zero shipping fee on a pickup order', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.create.mockResolvedValue(mockOrder);
+
+      await ordersService.createOrderFromCart(mockUserId, pickupParams);
+
+      expect(mockShippingZonesService.getFeeForCity).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+        expect.anything(),
+        mockUserId,
+        expect.objectContaining({
+          subtotal: new Decimal('39.98'),
+          shippingFee: new Decimal('0'),
+          totalAmount: new Decimal('39.98'),
+        }),
+      );
     });
 
     it('should throw NotFoundException if cart is empty', async () => {

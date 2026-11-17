@@ -29,10 +29,19 @@ export class ShippingZonesRepository {
     return this.prisma.shippingZone.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
   }
 
+  /** Expects an already-normalised city. The orderBy keeps the result stable if legacy rows overlap. */
   async findByCity(city: string): Promise<ShippingZone | null> {
-    const normalised = city.trim().toLowerCase();
     return this.prisma.shippingZone.findFirst({
-      where: { isActive: true, cities: { has: normalised } },
+      where: { isActive: true, cities: { has: city } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  /** Every zone, active or not, that lists any of the cities; `excludeId` skips the zone being updated. */
+  async findCoveringAnyCity(cities: string[], excludeId?: string): Promise<ShippingZone[]> {
+    return this.prisma.shippingZone.findMany({
+      where: { cities: { hasSome: cities }, ...(excludeId ? { id: { not: excludeId } } : {}) },
+      orderBy: { name: 'asc' },
     });
   }
 

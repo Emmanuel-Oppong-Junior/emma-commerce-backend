@@ -869,7 +869,17 @@ type Order {
 
   """Address snapshot at time of order"""
   shippingAddressSnapshot: JSON
+
+  """
+  Shipping fee charged at order time (0 for pickup); null on older orders
+  """
+  shippingFee: Float
   status: OrderStatus!
+
+  """Sum of item prices at order time; null on older orders"""
+  subtotal: Float
+
+  """Amount charged: subtotal + shippingFee - couponDiscount"""
   totalAmount: Float!
 
   """Shipment tracking number"""
