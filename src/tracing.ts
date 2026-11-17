@@ -14,15 +14,17 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
 
-if (process.env.OTEL_ENABLED === 'true') {
+export function startTracing(env: NodeJS.ProcessEnv): NodeSDK | undefined {
+  if (env.OTEL_ENABLED !== 'true') return undefined;
+
   const exporter = new OTLPTraceExporter({
-    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318/v1/traces',
+    url: env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318/v1/traces',
   });
 
   const sdk = new NodeSDK({
     resource: resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? 'emma-commerce-backend',
-      [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? '1.0.0',
+      [ATTR_SERVICE_NAME]: env.OTEL_SERVICE_NAME ?? 'emma-commerce-backend',
+      [ATTR_SERVICE_VERSION]: env.npm_package_version ?? '1.0.0',
     }),
     spanProcessor: new BatchSpanProcessor(exporter),
     instrumentations: [
@@ -33,8 +35,7 @@ if (process.env.OTEL_ENABLED === 'true') {
   });
 
   sdk.start();
-
-  process.on('SIGTERM', async () => {
-    await sdk.shutdown();
-  });
+  return sdk;
 }
+
+export const tracingSdk = startTracing(process.env);

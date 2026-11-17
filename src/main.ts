@@ -1,3 +1,4 @@
+import { tracingSdk } from './tracing';
 import { NestFactory } from '@nestjs/core';
 import { createValidationPipe } from './commons/validation-pipe';
 import { AppModule } from './app.module';
@@ -75,6 +76,7 @@ async function bootstrap() {
   const shutdown = async (signal: string) => {
     logger.log(`${signal} received — closing application gracefully`, 'Bootstrap');
     await app.close();
+    await tracingSdk?.shutdown();
     process.exit(0);
   };
 
