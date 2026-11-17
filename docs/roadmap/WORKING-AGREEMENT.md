@@ -12,7 +12,7 @@ How future Claude Code sessions (and humans) take work from `ROADMAP.md` to `mai
 1. Read `CLAUDE.md`, this file, the task in `ROADMAP.md`, the linked ADRs and the module report(s) in `docs/audit/modules/`.
 2. Confirm the ADRs the task depends on are **Accepted**. If an ADR is still Proposed, stop and ask.
 3. Restate the task's acceptance criteria and planned file list; for multi-file or design changes wait for go-ahead (global rule).
-4. Create the branch from up-to-date `main`.
+4. Create the branch from up-to-date `dev`.
 
 ## 2a. State tracking between sessions
 - `docs/roadmap/STATUS.md` is the single source of truth for progress: current phase, active task with its exact next step, up next, blockers and decisions.
@@ -36,7 +36,7 @@ How future Claude Code sessions (and humans) take work from `ROADMAP.md` to `mai
 A module moves to **CLOSED** only when every item in its "Definition of done to close this module" is satisfied and evidenced (test names/commits). Whoever closes it edits the verdict line to `Verdict: CLOSED (YYYY-MM-DD, <commit>)` and updates the verdict table in `docs/audit/SUMMARY.md`.
 
 ## 5. Commits and PRs
-- Commit only when Emmanuel asks (global rule). Message: short imperative subject focused on why, referencing the task ID: `Guard order cancel against repeat stock restore (P0-A.2)`.
+- Once every gate passes, commit, merge into `dev` and push `dev` without asking (Emmanuel, 2026-11-17). Ask only when a product or business decision is needed, or before moving to the next phase. Pushing `main` still needs Emmanuel's say-so. Message: short imperative subject focused on why, referencing the task ID: `Guard order cancel against repeat stock restore (P0-A.2)`.
 - PR description: task ID, findings closed (IDs), tests added, migration notes, rollback notes.
 - No `--no-verify`, no force-push to shared branches.
 
@@ -47,7 +47,7 @@ A module moves to **CLOSED** only when every item in its "Definition of done to 
 - Paystack: test keys only outside production.
 
 ## 7. Proposed `CLAUDE.md` for this repo
-(Proposal only; the existing `CLAUDE.md` is not overwritten. Adopt it in task P0-F.4.)
+(Adopted into `CLAUDE.md` in P0-F.4, adapted to what the code enforces today; kept here for reference.)
 
 ```markdown
 # CLAUDE.md

@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+NestJS 10 + Apollo GraphQL (code-first) + Prisma/PostgreSQL e-commerce backend, Ghana-first (GHS, Paystack, MoMo, COD).
+
 ## Working state (read first)
 
 Work follows a phased roadmap. **[`docs/roadmap/STATUS.md`](docs/roadmap/STATUS.md) is the live state of the work.** It holds the current phase, the active task and its exact next step, what's next, blockers and decisions. A session can be deleted at any moment, so never rely on "updating at the end": keep `STATUS.md` current **while** you work.
@@ -48,7 +50,10 @@ npm run start:prod      # Run compiled output
 # Build
 npm run build           # Compile TypeScript via NestJS CLI
 
-# Code quality
+# Code quality (the check-only variants are what CI runs)
+npm run typecheck       # tsc --noEmit incl. specs (npm run build excludes specs, so don't rely on it)
+npm run lint:check      # ESLint, no fixes
+npm run format:check    # Prettier check (src, test)
 npm run lint            # ESLint with auto-fix
 npm run format          # Prettier format
 
@@ -57,12 +62,27 @@ npm run test            # Run all unit tests
 npm run test:watch      # Watch mode
 npm run test:cov        # Coverage report
 npm run test:e2e        # End-to-end tests (test/jest-e2e.json, runs in band, separate .env.test DB)
+npm run test:repro      # Audit repro tests (test/jest-repro.json); failures are expected until each finding is fixed
 
 # Database
-npx prisma migrate dev  # Run migrations in development
+npx prisma migrate dev  # Run migrations in development (new migration: add --create-only and review the SQL first)
 npx prisma generate     # Regenerate Prisma Client after schema changes
 npx prisma db seed      # Seed the database (prisma/seeders/main.ts; needs SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD)
 ```
+
+## Non-negotiables
+
+These describe what the code enforces today. ADR-0004 (money), ADR-0008 (inventory) and ADR-0014 (order state machine) are still Proposed and will replace some of them.
+
+- **Stock** changes only through logged `restock*`/`adjust*Stock` mutations or the order/cancel transactions, using conditional updates. Never write an absolute quantity. The database rejects negative stock.
+- **Order status** changes only through the transition table in `src/order/order-status.ts`, applied with a conditional `updateMany` claim, never a plain update.
+- **Authorization:** every resolver, and every sensitive field resolver, has an explicit policy (`@Auth`, `@Roles`, field middleware). Never expose `User` on a public type; use `PublicProfile`.
+- Guards and interceptors must work in both `http` and `graphql` contexts.
+- **Money:** charges are in GHS. Never do float arithmetic on money in new code; use Prisma `Decimal`.
+- **Side effects** (email): never let one fail a request or vanish silently. Catch and log until the queue/outbox exists.
+- No secrets or PII in logs.
+- **Migrations:** create with `--create-only` and review the SQL. Never edit an applied migration. Backfills must be safe to re-run. `prisma migrate diff` must show no drift.
+- **API changes:** regenerate and commit `schema.gql`. List frontend-visible changes in `STATUS.md` until `FRONTEND_API_DOCUMENTATION.md` is brought in line (P0-D.3); after that, update it with every API change.
 
 ## Architecture
 
