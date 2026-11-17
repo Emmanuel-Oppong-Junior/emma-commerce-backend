@@ -23,4 +23,14 @@ describe('CreatePaymentDto', () => {
       'currency must be GHS; payments are charged in GHS only',
     ]);
   });
+
+  it('accepts an idempotency key', async () => {
+    await expect(errorsFor({ idempotencyKey: 'checkout-1' })).resolves.toEqual([]);
+  });
+
+  it.each(['', 'x'.repeat(256)])('rejects an empty or overlong idempotency key', async (idempotencyKey) => {
+    const errors = await errorsFor({ idempotencyKey });
+
+    expect(errors.map((e) => e.property)).toEqual(['idempotencyKey']);
+  });
 });

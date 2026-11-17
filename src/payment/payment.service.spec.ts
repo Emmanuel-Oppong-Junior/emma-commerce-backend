@@ -2,12 +2,18 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentService } from './payment.service';
 import { PaymentRepository } from './payment.repository';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
 import { PaystackEvent } from './enums/paystack-event.enum';
 import { createHmac } from 'node:crypto';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentStatus, Prisma } from '@prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { Role } from '../users/enums/role.enum';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -21,13 +27,14 @@ const mockPaystackTransaction = {
 jest.mock('paystack-api', () => jest.fn(() => ({ transaction: mockPaystackTransaction })));
 
 const mockPaymentRepository = {
-  create: jest.fn(),
+  openAttempt: jest.fn(),
+  recordCheckout: jest.fn(),
+  markInitializationFailed: jest.fn(),
   findById: jest.fn(),
   findByReference: jest.fn(),
   findByOrderId: jest.fn(),
   findByUser: jest.fn(),
   update: jest.fn(),
-  markAbandoned: jest.fn(),
   recordCashCollection: jest.fn(),
   findOrderWithUser: jest.fn(),
   findOrderById: jest.fn(),
@@ -82,115 +89,167 @@ describe('PaymentService', () => {
   describe('initiatePayment', () => {
     const userId = 'user1';
     const createPaymentDto: CreatePaymentDto = { orderId: 'order1', currency: 'GHS', paymentMethod: 'card' };
-    const order = { id: 'order1', userId: 'user1', totalAmount: 1000, user: { email: 'test@example.com' } };
+    const order = {
+      id: 'order1',
+      userId: 'user1',
+      status: 'PENDING',
+      deleted: false,
+      paymentMethod: 'ONLINE',
+      totalAmount: new Prisma.Decimal(1000),
+      user: { email: 'test@example.com' },
+      paymentIntent: null,
+    };
     const payment = {
       id: 'pay1',
       orderId: 'order1',
-      amount: 1000,
+      amount: new Prisma.Decimal('1000.50'),
       currency: 'GHS',
       paymentMethod: 'card',
       status: PaymentStatus.PENDING,
-      transactionId: 'order1-1234567890',
-      paymentDetails: {},
+      transactionId: 'order1-ref',
+      paymentDetails: null,
       deleted: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
     const transaction = {
       data: {
-        reference: 'order1-1234567890',
+        reference: 'order1-ref',
         authorization_url: 'http://paystack.test/auth',
         access_code: 'acc_test_123',
       },
     };
 
-    it('should initiate payment successfully', async () => {
-      mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
-      mockPaymentRepository.findByOrderId.mockResolvedValue(null);
-      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
-      mockPaymentRepository.create.mockResolvedValue(payment);
-
-      const result = await service.initiatePayment(userId, createPaymentDto);
-
-      expect(paymentRepository.findOrderWithUser).toHaveBeenCalledWith('order1');
-      expect(paymentRepository.findByOrderId).toHaveBeenCalledWith('order1');
-      expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'test@example.com', amount: 100000, currency: 'GHS' }),
+    const openAttemptAgainst = (current: unknown, opened: unknown) =>
+      mockPaymentRepository.openAttempt.mockImplementation(
+        async (_request: unknown, assertPayable: (order: unknown) => void) => {
+          assertPayable(current);
+          return opened;
+        },
       );
-      expect(paymentRepository.create).toHaveBeenCalled();
+
+    beforeEach(() => {
+      mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
+      openAttemptAgainst(order, { created: true, attempt: payment });
+      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
+    });
+
+    it('opens a pending attempt and a Paystack checkout for its reference, charging the attempt amount in GHS', async () => {
+      const result = await service.initiatePayment(userId, { ...createPaymentDto, idempotencyKey: 'key-1' });
+
+      expect(paymentRepository.openAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({ orderId: 'order1', idempotencyKey: 'key-1', provider: 'PAYSTACK', channel: 'card' }),
+        expect.any(Function),
+      );
+      const { reference } = mockPaymentRepository.openAttempt.mock.calls[0][0];
+      expect(reference).toMatch(/^order1-/);
+      expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'test@example.com', amount: 100050, currency: 'GHS', reference }),
+      );
+      expect(paymentRepository.recordCheckout).toHaveBeenCalledWith('pay1', 'http://paystack.test/auth', {
+        reference: 'order1-ref',
+        access_code: 'acc_test_123',
+      });
       expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/auth' });
     });
 
     it.each([{ currency: 'NGN' }, { currency: undefined }])(
-      'charges and records GHS whatever currency the request carries (%o)',
+      'charges GHS whatever currency the request carries (%o)',
       async ({ currency }) => {
-        mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
-        mockPaymentRepository.findByOrderId.mockResolvedValue(null);
-        mockPaystackTransaction.initialize.mockResolvedValue(transaction);
-        mockPaymentRepository.create.mockResolvedValue(payment);
-
         await service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency });
 
-        expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(
-          expect.objectContaining({ amount: 100000, currency: 'GHS' }),
-        );
-        expect(paymentRepository.create).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
+        expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
       },
     );
 
-    it('should throw NotFoundException if order not found', async () => {
+    it('gives each initiation a different reference', async () => {
+      await service.initiatePayment(userId, createPaymentDto);
+      await service.initiatePayment(userId, createPaymentDto);
+
+      const [first, second] = mockPaymentRepository.openAttempt.mock.calls.map(([request]) => request.reference);
+      expect(first).not.toEqual(second);
+    });
+
+    it('throws NotFoundException if the order does not exist', async () => {
       mockPaymentRepository.findOrderWithUser.mockResolvedValue(null);
 
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
         new NotFoundException('Order "order1" not found'),
       );
+      expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
     });
 
-    it('should throw ForbiddenException if order does not belong to user', async () => {
+    it('throws ForbiddenException if the order does not belong to the user', async () => {
       mockPaymentRepository.findOrderWithUser.mockResolvedValue({ ...order, userId: 'otherUser' });
 
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
         new ForbiddenException('Order does not belong to you'),
       );
+      expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
     });
 
-    it('keeps a PENDING attempt, marked abandoned, and opens a new attempt when payment is re-initiated', async () => {
-      mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
-      mockPaymentRepository.findByOrderId.mockResolvedValue(payment);
-      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
-      mockPaymentRepository.create.mockResolvedValue(payment);
+    it.each(['CANCELLED', 'PROCESSING', 'SHIPPED', 'DELIVERED'])(
+      'refuses a %s order before contacting Paystack',
+      async (status) => {
+        mockPaymentRepository.findOrderWithUser.mockResolvedValue({ ...order, status });
 
-      const result = await service.initiatePayment(userId, createPaymentDto);
+        await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(BadRequestException);
+        expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
+        expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+      },
+    );
 
-      expect(paymentRepository.markAbandoned).toHaveBeenCalledWith('pay1');
-      expect(mockPaystackTransaction.initialize).toHaveBeenCalled();
-      expect(paymentRepository.create).toHaveBeenCalledWith(
-        expect.objectContaining({ orderId: 'order1', reference: 'order1-1234567890', status: PaymentStatus.PENDING }),
+    it('refuses when the order was cancelled between the first check and the locked re-check', async () => {
+      openAttemptAgainst({ ...order, status: 'CANCELLED' }, { created: true, attempt: payment });
+
+      await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
+        new BadRequestException('Order "order1" is CANCELLED and can no longer be paid'),
       );
-      expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/auth' });
+      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
     });
 
-    it('opens a new attempt after a FAILED one and leaves the failed attempt as it is', async () => {
-      mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
-      mockPaymentRepository.findByOrderId.mockResolvedValue({ ...payment, status: PaymentStatus.FAILED });
-      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
-      mockPaymentRepository.create.mockResolvedValue(payment);
-
-      await service.initiatePayment(userId, createPaymentDto);
-
-      expect(paymentRepository.markAbandoned).not.toHaveBeenCalled();
-      expect(paymentRepository.create).toHaveBeenCalled();
-    });
-
-    it('should throw BadRequestException if payment is already completed', async () => {
-      mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
-      mockPaymentRepository.findByOrderId.mockResolvedValue({ ...payment, status: PaymentStatus.COMPLETED });
+    it('refuses an order found already paid when the attempt is opened', async () => {
+      openAttemptAgainst(
+        { ...order, paymentIntent: { status: 'PAID', attempts: [{ status: PaymentStatus.COMPLETED }] } },
+        { created: true, attempt: payment },
+      );
 
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
         new BadRequestException('Payment for this order has already been completed'),
       );
-      expect(paymentRepository.markAbandoned).not.toHaveBeenCalled();
       expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+    });
+
+    it('returns the checkout already opened under a repeated idempotency key without a new Paystack call', async () => {
+      openAttemptAgainst(order, { created: false, attempt: payment, authorizationUrl: 'http://paystack.test/first' });
+
+      const result = await service.initiatePayment(userId, { ...createPaymentDto, idempotencyKey: 'key-1' });
+
+      expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/first' });
+      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+      expect(paymentRepository.recordCheckout).not.toHaveBeenCalled();
+    });
+
+    it('rejects a repeated idempotency key whose attempt is no longer pending', async () => {
+      openAttemptAgainst(order, {
+        created: false,
+        attempt: { ...payment, status: PaymentStatus.ABANDONED },
+        authorizationUrl: 'http://paystack.test/first',
+      });
+
+      await expect(service.initiatePayment(userId, { ...createPaymentDto, idempotencyKey: 'key-1' })).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+    });
+
+    it('fails the attempt and frees its key when Paystack cannot open the checkout', async () => {
+      const paystackError = new Error('Paystack unavailable');
+      mockPaystackTransaction.initialize.mockRejectedValue(paystackError);
+
+      await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toBe(paystackError);
+      expect(paymentRepository.markInitializationFailed).toHaveBeenCalledWith('pay1');
+      expect(paymentRepository.recordCheckout).not.toHaveBeenCalled();
     });
   });
 
@@ -211,6 +270,7 @@ describe('PaymentService', () => {
       mockPaystackTransaction.verify.mockResolvedValue(verification);
       mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
       mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
+      mockPaymentRepository.findOrderWithUser.mockResolvedValue({ id: 'order1', user: { email: 'buyer@example.com' } });
 
       const result = await service.verifyPayment(reference);
 

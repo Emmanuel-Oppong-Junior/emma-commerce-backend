@@ -11,12 +11,12 @@ import { PaystackWebhookDto } from './dto/paystack.dto';
 import { PaymentMethod, PaymentProvider, PaymentStatus, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { PaystackEvent } from './enums/paystack-event.enum';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { NotificationsService } from '../notifications/notifications.service';
-import { CHARGE_CURRENCY } from './constant';
+import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
 
 @Injectable()
 export class PaymentService {
@@ -36,30 +36,38 @@ export class PaymentService {
   }
 
   /**
-   * Initiates a payment for an order using Paystack.
-   * @param userId - The ID of the user.
-   * @param createPaymentDto - Payment input data.
-   * @returns Payment record with Paystack authorization URL.
+   * Opens a Paystack checkout for a PENDING online order. The amount and currency come from the order's payment
+   * intent. Repeating an idempotency key returns the attempt already opened under it instead of a new one.
    */
   async initiatePayment(
     userId: string,
     createPaymentDto: CreatePaymentDto,
-  ): Promise<PaymentRecord & { authorizationUrl?: string }> {
-    const { orderId } = createPaymentDto;
-    const order = await this.validateOrderOwnership(userId, orderId);
-    if ((order as unknown as { paymentMethod: PaymentMethod }).paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
-      throw new BadRequestException('This order uses cash on delivery. Online payment is not available.');
+  ): Promise<PaymentRecord & { authorizationUrl: string }> {
+    const { orderId, idempotencyKey } = createPaymentDto;
+    const order = await this.paymentRepository.findOrderWithUser(orderId);
+    assertOrderPayable(order, orderId, userId);
+
+    const reference = this.generateReference(orderId);
+    const opened = await this.paymentRepository.openAttempt(
+      {
+        orderId,
+        idempotencyKey,
+        reference,
+        provider: PaymentProvider.PAYSTACK,
+        channel: createPaymentDto.paymentMethod,
+      },
+      (current) => assertOrderPayable(current, orderId, userId),
+    );
+    if (!opened.created) {
+      const authorizationUrl = checkoutUrlForReplay({
+        status: opened.attempt.status,
+        authorizationUrl: opened.authorizationUrl,
+      });
+      return { ...opened.attempt, authorizationUrl };
     }
-    const { totalAmount } = order;
-    const email = (order as unknown as { user: { email: string } }).user.email;
-    await this.ensurePaymentNotCompleted(orderId);
-    const totalAmountNumber = Number(totalAmount);
-    const transaction = await this.initializePaystackTransaction({
-      email,
-      amount: totalAmountNumber,
-      input: createPaymentDto,
-    });
-    return this.createPaymentRecord(totalAmountNumber, createPaymentDto, transaction);
+
+    const authorizationUrl = await this.openPaystackCheckout(opened.attempt, reference, order.user.email);
+    return { ...opened.attempt, authorizationUrl };
   }
 
   /**
@@ -224,75 +232,41 @@ export class PaymentService {
     if (!payment) throw new NotFoundException('Payment Not found');
   }
 
-  private async validateOrderOwnership(userId: string, orderId: string) {
-    const order = await this.paymentRepository.findOrderWithUser(orderId);
-    if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
-    if (order.userId !== userId) throw new ForbiddenException('Order does not belong to you');
-    return order;
-  }
-
-  private async ensurePaymentNotCompleted(orderId: string): Promise<void> {
-    const existingPayment = await this.paymentRepository.findByOrderId(orderId);
-    if (existingPayment) {
-      if (existingPayment.status === PaymentStatus.COMPLETED) {
-        throw new BadRequestException('Payment for this order has already been completed');
-      }
-      if (existingPayment.status === PaymentStatus.PENDING) {
-        await this.paymentRepository.markAbandoned(existingPayment.id);
-      }
+  private async openPaystackCheckout(attempt: PaymentRecord, reference: string, email: string): Promise<string> {
+    try {
+      const transaction = await this.paystack.transaction.initialize({
+        email,
+        amount: attempt.amount.mul(100).toNumber(),
+        currency: attempt.currency,
+        reference,
+        callback_url: this.configService.get('PAYSTACK_CALLBACK_URL'),
+      });
+      const authorizationUrl = transaction.data.authorization_url;
+      await this.paymentRepository.recordCheckout(
+        attempt.id,
+        authorizationUrl,
+        this.sanitizeInitializeDetails(transaction.data),
+      );
+      return authorizationUrl;
+    } catch (error) {
+      this.logger.error(
+        `Paystack checkout could not be opened | orderId: ${attempt.orderId} | paymentId: ${attempt.id}`,
+        error instanceof Error ? error.message : String(error),
+        'PaymentService',
+      );
+      await this.paymentRepository.markInitializationFailed(attempt.id);
+      throw error;
     }
   }
 
-  private async initializePaystackTransaction({
-    email,
-    amount,
-    input,
-  }: {
-    email: string;
-    amount: number;
-    input: CreatePaymentDto;
-  }): Promise<Paystack.Response<Paystack.Transaction.InitializeResponse>> {
-    const { orderId } = input;
-    const amountInSubunit = this.convertToSubunit(amount);
-    return this.paystack.transaction.initialize({
-      email,
-      amount: amountInSubunit,
-      currency: CHARGE_CURRENCY,
-      reference: this.generateReference(orderId),
-      callback_url: this.configService.get('PAYSTACK_CALLBACK_URL'),
-    });
-  }
-
-  private convertToSubunit(amount: number): number {
-    return Math.round(amount * 100);
-  }
-
+  // The random suffix keeps two initiations in the same millisecond from colliding on the unique reference.
   private generateReference(orderId: string): string {
-    return `${orderId}-${Date.now()}`;
-  }
-
-  private async createPaymentRecord(
-    amount: number,
-    input: CreatePaymentDto,
-    transaction: Paystack.Response<Paystack.Transaction.InitializeResponse>,
-  ): Promise<PaymentRecord & { authorizationUrl?: string }> {
-    const { orderId, paymentMethod } = input;
-    const payment = await this.paymentRepository.create({
-      orderId,
-      provider: PaymentProvider.PAYSTACK,
-      amount,
-      currency: CHARGE_CURRENCY,
-      channel: paymentMethod,
-      status: PaymentStatus.PENDING,
-      reference: transaction.data.reference,
-      providerDetails: this.sanitizeInitializeDetails(transaction.data),
-    });
-    return { ...payment, authorizationUrl: transaction.data.authorization_url };
+    return `${orderId}-${Date.now()}-${randomBytes(4).toString('hex')}`;
   }
 
   /**
    * Strips raw Paystack initialization data down to the minimum fields needed for audit.
-   * Never persist authorization_url or any field that could expose redirect tokens.
+   * The checkout URL is kept in its own column so an idempotent retry can hand it back.
    * [LOW-1] Null-coalesce each field to avoid storing `undefined` in the JSON column.
    */
   private sanitizeInitializeDetails(data: Paystack.Transaction.InitializeResponse): Prisma.InputJsonValue {

@@ -1998,8 +1998,18 @@ These endpoints are not in GraphQL. They use standard HTTP.
   orderId: string;       // Required.
   paymentMethod: string; // Required. e.g., "card"
   currency?: "GHS";      // Optional. Any other value is rejected (400). Payments are always charged in GHS.
+  idempotencyKey?: string; // Optional, 1-255 chars. Generate one per "Pay" click and resend it on network retries.
 }
 ```
+
+The amount is always the order total; any other field (e.g. `amount`) is rejected with 400.
+
+**Rules**:
+
+- Only the owner's `PENDING`, non-deleted, online-payment order can be paid. A cancelled, processing, shipped or delivered order returns 400, a cash-on-delivery order returns 400, an already paid order returns 400 (`Payment for this order has already been completed`), and a missing or deleted order returns 404.
+- Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `ABANDONED`; it is kept, and if the customer still completes that older checkout the payment is matched.
+- Repeating an `idempotencyKey` for the same order returns the same attempt and the same `authorizationUrl` without opening a new checkout. It returns **409** if that attempt is still being set up (retry shortly) or is no longer `PENDING` (use a new key).
+- If Paystack cannot open the checkout the request fails and the same key may be retried.
 
 **Response**:
 
@@ -2783,8 +2793,8 @@ Authorization: Bearer <accessToken>
 ### Order Placement Flow
 
 1. Order is created (see Checkout Flow above).
-2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod }` (`currency` may be omitted; if sent it must be `"GHS"`).
-3. Backend creates `Payment` record with `status = PENDING` and returns `authorizationUrl`.
+2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod, idempotencyKey }` (`currency` may be omitted; if sent it must be `"GHS"`). Only `PENDING` online orders can be paid.
+3. Backend opens a new payment attempt with `status = PENDING` (any earlier pending attempt becomes `ABANDONED`) and returns `authorizationUrl`.
 4. Frontend redirects user to `authorizationUrl`.
 5. After payment, Paystack redirects to `GET /payment/callback?reference=xxx`.
 6. Frontend calls `mutation verifyPayment({ reference })` to confirm status.
@@ -3549,7 +3559,7 @@ client.mutate({
 const { authorizationUrl, id: paymentId } = await fetch('/payment/initialize', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-  body: JSON.stringify({ orderId, paymentMethod: 'card', currency: 'GHS' }),
+  body: JSON.stringify({ orderId, paymentMethod: 'card', idempotencyKey: crypto.randomUUID() }),
 }).then(r => r.json());
 
 // 2. Store paymentId/reference for later verification

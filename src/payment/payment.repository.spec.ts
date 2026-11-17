@@ -76,11 +76,12 @@ const mockTx = {
   paymentAttempt: mockPrismaAttempt,
   paymentIntent: mockPrismaIntent,
   cashCollection: mockPrismaCashCollection,
+  order: mockPrismaOrder,
+  $queryRaw: jest.fn(),
 };
 
 const mockPrisma = {
   ...mockTx,
-  order: mockPrismaOrder,
   $transaction: jest.fn((work: (tx: typeof mockTx) => unknown) => work(mockTx)),
 };
 
@@ -96,33 +97,95 @@ describe('PaymentRepository', () => {
     jest.clearAllMocks();
   });
 
-  describe('create', () => {
-    it("opens the order's payment intent if needed and records the attempt under it", async () => {
-      mockPrismaIntent.upsert.mockResolvedValue({ id: 'intent1' });
-      mockPrismaAttempt.create.mockResolvedValue(mockAttempt);
+  describe('openAttempt', () => {
+    const request = {
+      orderId: 'order1',
+      provider: 'PAYSTACK' as const,
+      channel: 'CARD',
+      reference: 'txn_123',
+      idempotencyKey: 'key-1',
+    };
+    const payableOrder = { ...mockOrder, user: { email: 'user@example.com' }, paymentIntent: null };
+    const allowAll = jest.fn();
 
-      const result = await repository.create({
-        orderId: 'order1',
-        provider: 'PAYSTACK',
-        amount: 100,
-        currency: 'GHS',
-        channel: 'CARD',
-        status: 'PENDING',
-        reference: 'txn_123',
+    beforeEach(() => {
+      mockPrismaOrder.findUnique.mockResolvedValue(payableOrder);
+      mockPrismaAttempt.findFirst.mockResolvedValue(null);
+      mockPrismaIntent.upsert.mockResolvedValue({ id: 'intent1', amount: new Prisma.Decimal(100), currency: 'GHS' });
+      mockPrismaAttempt.create.mockResolvedValue(mockAttempt);
+    });
+
+    it('locks the order and re-checks it before writing anything', async () => {
+      const refusal = new Error('not payable');
+      const refuse = jest.fn(() => {
+        throw refusal;
       });
 
-      expect(result).toEqual(mockPayment);
+      await expect(repository.openAttempt(request, refuse)).rejects.toBe(refusal);
+
+      expect(mockTx.$queryRaw).toHaveBeenCalled();
+      expect(refuse).toHaveBeenCalledWith(payableOrder);
+      expect(mockPrismaAttempt.updateMany).not.toHaveBeenCalled();
+      expect(mockPrismaAttempt.create).not.toHaveBeenCalled();
+    });
+
+    it('abandons other pending attempts and records a new attempt priced from the intent', async () => {
+      const result = await repository.openAttempt(request, allowAll);
+
+      expect(result).toEqual({ created: true, attempt: mockPayment });
       expect(mockPrismaIntent.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { orderId: 'order1' },
-          create: { orderId: 'order1', amount: 100, currency: 'GHS' },
+          create: { orderId: 'order1', amount: mockOrder.totalAmount, currency: 'GHS' },
         }),
       );
+      expect(mockPrismaAttempt.updateMany).toHaveBeenCalledWith({
+        where: { intentId: 'intent1', status: 'PENDING' },
+        data: { status: 'ABANDONED' },
+      });
       expect(mockPrismaAttempt.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ intentId: 'intent1', reference: 'txn_123', channel: 'CARD' }),
+          data: expect.objectContaining({
+            intentId: 'intent1',
+            reference: 'txn_123',
+            idempotencyKey: 'key-1',
+            amount: new Prisma.Decimal(100),
+            currency: 'GHS',
+            status: 'PENDING',
+          }),
         }),
       );
+    });
+
+    it('returns the attempt already opened under the same idempotency key without writing', async () => {
+      mockPrismaAttempt.findFirst.mockResolvedValue({ ...mockAttempt, authorizationUrl: 'https://checkout.test/x' });
+
+      const result = await repository.openAttempt(request, allowAll);
+
+      expect(result).toEqual({ created: false, attempt: mockPayment, authorizationUrl: 'https://checkout.test/x' });
+      expect(mockPrismaAttempt.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { idempotencyKey: 'key-1', intent: { orderId: 'order1' } } }),
+      );
+      expect(mockPrismaAttempt.updateMany).not.toHaveBeenCalled();
+      expect(mockPrismaAttempt.create).not.toHaveBeenCalled();
+    });
+
+    it('does not look up a key when none was sent', async () => {
+      await repository.openAttempt({ ...request, idempotencyKey: undefined }, allowAll);
+
+      expect(mockPrismaAttempt.findFirst).not.toHaveBeenCalled();
+      expect(mockPrismaAttempt.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('recordCheckout', () => {
+    it('stores the checkout URL and provider details on the attempt', async () => {
+      await repository.recordCheckout('pay1', 'https://checkout.test/x', { reference: 'txn_123' });
+
+      expect(mockPrismaAttempt.update).toHaveBeenCalledWith({
+        where: { id: 'pay1' },
+        data: { authorizationUrl: 'https://checkout.test/x', providerDetails: { reference: 'txn_123' } },
+      });
     });
   });
 
@@ -263,15 +326,15 @@ describe('PaymentRepository', () => {
     });
   });
 
-  describe('markAbandoned', () => {
-    it('abandons the attempt only while it is still pending', async () => {
+  describe('markInitializationFailed', () => {
+    it('fails the attempt only while it is still pending and frees its idempotency key', async () => {
       mockPrismaAttempt.updateMany.mockResolvedValue({ count: 1 });
 
-      await repository.markAbandoned('pay1');
+      await repository.markInitializationFailed('pay1');
 
       expect(mockPrismaAttempt.updateMany).toHaveBeenCalledWith({
         where: { id: 'pay1', status: 'PENDING' },
-        data: { status: 'ABANDONED' },
+        data: { status: 'FAILED', rawStatus: 'initialize_failed', idempotencyKey: null },
       });
     });
   });

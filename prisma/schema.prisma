@@ -376,24 +376,27 @@ model PaymentIntent {
 }
 
 model PaymentAttempt {
-  id              String          @id @default(cuid())
-  intentId        String
-  intent          PaymentIntent   @relation(fields: [intentId], references: [id], onDelete: Restrict)
-  provider        PaymentProvider
-  reference       String?         @unique
-  amount          Decimal         @db.Decimal(10, 2)
-  currency        String          @default("GHS")
-  status          PaymentStatus   @default(PENDING)
-  rawStatus       String?
-  channel         String
-  providerDetails Json?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  deleted         Boolean         @default(false)
-  deletedAt       DateTime?
-  refunds         Refund[]
-  cashCollection  CashCollection?
+  id               String          @id @default(cuid())
+  intentId         String
+  intent           PaymentIntent   @relation(fields: [intentId], references: [id], onDelete: Restrict)
+  provider         PaymentProvider
+  reference        String?         @unique
+  amount           Decimal         @db.Decimal(10, 2)
+  currency         String          @default("GHS")
+  status           PaymentStatus   @default(PENDING)
+  rawStatus        String?
+  channel          String
+  providerDetails  Json?
+  idempotencyKey   String?
+  authorizationUrl String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  deleted          Boolean         @default(false)
+  deletedAt        DateTime?
+  refunds          Refund[]
+  cashCollection   CashCollection?
 
+  @@unique([intentId, idempotencyKey])
   @@index([intentId])
   @@index([status])
 }

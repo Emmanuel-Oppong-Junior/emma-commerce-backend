@@ -9,6 +9,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { CHARGE_CURRENCY } from './constant';
 
 /** A payment attempt in the shape the GraphQL `Payment` type exposes. */
 export interface PaymentRecord {
@@ -27,16 +28,24 @@ export interface PaymentRecord {
   deletedAt: Date | null;
 }
 
-export interface NewPaymentAttempt {
+export interface AttemptRequest {
   orderId: string;
   provider: PaymentProvider;
-  amount: number | Prisma.Decimal;
-  currency: string;
   channel: string;
-  status: PaymentStatus;
-  reference?: string;
-  providerDetails?: Prisma.InputJsonValue;
+  reference: string;
+  idempotencyKey?: string;
 }
+
+export type OpenedAttempt =
+  | { created: true; attempt: PaymentRecord }
+  | { created: false; attempt: PaymentRecord; authorizationUrl: string | null };
+
+const PAYABLE_ORDER = {
+  user: { select: { email: true } },
+  paymentIntent: { select: { status: true, attempts: { select: { status: true } } } },
+} as const;
+
+export type OrderForPayment = Prisma.OrderGetPayload<{ include: typeof PAYABLE_ORDER }>;
 
 type AttemptWithIntent = PaymentAttempt & { intent: { orderId: string; order?: Order } };
 
@@ -65,29 +74,66 @@ function toPaymentRecord(attempt: AttemptWithIntent): PaymentRecord {
 export class PaymentRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Records a new attempt, opening the order's payment intent on its first attempt. */
-  async create(input: NewPaymentAttempt): Promise<PaymentRecord> {
-    const attempt = await this.prisma.$transaction(async (tx) => {
+  /**
+   * Opens a new pending attempt for the order and abandons any other pending one, or returns the attempt already
+   * opened under the same idempotency key. `assertPayable` re-checks the order under the lock and throws to refuse.
+   */
+  async openAttempt(
+    request: AttemptRequest,
+    assertPayable: (order: OrderForPayment | null) => asserts order is OrderForPayment,
+  ): Promise<OpenedAttempt> {
+    return this.prisma.$transaction(async (tx) => {
+      // The row lock serialises initiations (and cancellation) of one order, so at most one attempt is live.
+      await tx.$queryRaw`SELECT 1 FROM "Order" WHERE "id" = ${request.orderId} FOR UPDATE`;
+      const order = await tx.order.findUnique({ where: { id: request.orderId }, include: PAYABLE_ORDER });
+      assertPayable(order);
+
+      if (request.idempotencyKey) {
+        const existing = await tx.paymentAttempt.findFirst({
+          where: { idempotencyKey: request.idempotencyKey, intent: { orderId: request.orderId } },
+          include: WITH_ORDER,
+        });
+        if (existing) {
+          return { created: false, attempt: toPaymentRecord(existing), authorizationUrl: existing.authorizationUrl };
+        }
+      }
+
       const intent = await tx.paymentIntent.upsert({
-        where: { orderId: input.orderId },
-        create: { orderId: input.orderId, amount: input.amount, currency: input.currency },
+        where: { orderId: request.orderId },
+        create: { orderId: request.orderId, amount: order.totalAmount, currency: CHARGE_CURRENCY },
         update: {},
       });
-      return tx.paymentAttempt.create({
+      await tx.paymentAttempt.updateMany({
+        where: { intentId: intent.id, status: PaymentStatus.PENDING },
+        data: { status: PaymentStatus.ABANDONED },
+      });
+      const attempt = await tx.paymentAttempt.create({
         data: {
           intentId: intent.id,
-          provider: input.provider,
-          reference: input.reference,
-          amount: input.amount,
-          currency: input.currency,
-          channel: input.channel,
-          status: input.status,
-          providerDetails: input.providerDetails,
+          provider: request.provider,
+          reference: request.reference,
+          idempotencyKey: request.idempotencyKey,
+          amount: intent.amount,
+          currency: intent.currency,
+          channel: request.channel,
+          status: PaymentStatus.PENDING,
         },
         include: WITH_ORDER,
       });
+      return { created: true, attempt: toPaymentRecord(attempt) };
     });
-    return toPaymentRecord(attempt);
+  }
+
+  async recordCheckout(id: string, authorizationUrl: string, providerDetails: Prisma.InputJsonValue): Promise<void> {
+    await this.prisma.paymentAttempt.update({ where: { id }, data: { authorizationUrl, providerDetails } });
+  }
+
+  /** Fails an attempt the provider never opened, and frees its idempotency key so the same request can be retried. */
+  async markInitializationFailed(id: string): Promise<void> {
+    await this.prisma.paymentAttempt.updateMany({
+      where: { id, status: PaymentStatus.PENDING },
+      data: { status: PaymentStatus.FAILED, rawStatus: 'initialize_failed', idempotencyKey: null },
+    });
   }
 
   /** Records cash collected for a cash-on-delivery order as a completed attempt plus a cash collection. */
@@ -170,14 +216,6 @@ export class PaymentRepository {
       }
       throw e;
     }
-  }
-
-  /** Marks a still-pending attempt as superseded by a retry. Its reference stays matchable for a late success. */
-  async markAbandoned(id: string): Promise<void> {
-    await this.prisma.paymentAttempt.updateMany({
-      where: { id, status: PaymentStatus.PENDING },
-      data: { status: PaymentStatus.ABANDONED },
-    });
   }
 
   async findOrderWithUser(orderId: string): Promise<(Order & { user: { email: string } }) | null> {

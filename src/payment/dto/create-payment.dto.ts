@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 import { CHARGE_CURRENCY } from '../constant';
 
 export class CreatePaymentDto {
@@ -16,4 +16,10 @@ export class CreatePaymentDto {
     message: `currency must be ${CHARGE_CURRENCY}; payments are charged in ${CHARGE_CURRENCY} only`,
   })
   currency?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  idempotencyKey?: string;
 }
