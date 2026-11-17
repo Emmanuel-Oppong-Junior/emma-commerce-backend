@@ -1,6 +1,6 @@
 # ADR-0007 — Payment provider abstraction and payment ledger
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-17) · Date: 2026-11-16
 
 ## Context
 - **One Payment per order.** `Payment.orderId @unique` allows only one payment per order. A retry hard-deletes the pending row, so a late success on the old reference is lost (PAY-03/DB-01). A retry after a failure collides with the unique key (PAY-04).

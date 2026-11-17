@@ -34,7 +34,7 @@ _None._ Next: parallel batch 3 (see **Up next** #1).
 |---|---|---|---|
 | 1 | Batch 3 candidates (∥, nothing pending): P0-I.2 refresh-token rotation/revocation then P0-I.3 social-login linking (one identity agent, same module), P0-D.2 revenue definition (analytics), P0-F.4 CLAUDE.md working-agreement parts (docs) | now | one agent per module |
 | 1b | P0-I.4 email verification (likely migration; after I.2, shares revoke-on-email-change), P0-D.1 audit log in privileged mutations (touches many modules: run alone) | after batch 3 | file overlap |
-| 3 | P0-C.1 payment ledger schema (ADR-0007, big migration) → C.2 → C.3 → C.4–C.7 (C.7 COD needs C.1's CashCollection) | sequential | ADR-0007 still Proposed |
+| 3 | P0-C.1 payment ledger schema (ADR-0007, big migration) → C.2 → C.3 → C.4–C.7 (C.7 COD needs C.1's CashCollection) | sequential; C.1 can run alongside batch 3 (payment module only) | — (ADR-0007 Accepted 2026-11-17) |
 | 4 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
 | 5 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
 | 6 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
@@ -70,6 +70,7 @@ Repro tests turned green: **13 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-17 | ADR-0007 (payment provider port + payment-attempt ledger + idempotent webhook inbox; Paystack first) **Accepted** (Emmanuel). Unblocks P0-C.1–C.7 | ADR-0007, STATUS |
 | 2026-11-17 | P0-B.8: `stockStatus` stays editable on product updates; only `quantity` leaves the update inputs (Emmanuel). Initial-stock logging on create deferred (Claude) | STATUS |
 | 2026-11-17 | Working rules (Emmanuel): once all gates pass, commit, merge into `dev` and push `dev` without asking; ask only for real decisions or a phase change. Independent tasks run in parallel via worktree sub-agents grouped by module (one migration at a time). Overrides WORKING-AGREEMENT "commit only when Emmanuel asks" | STATUS, memory |
 | 2026-11-17 | P0-B.2: refunds never restock; returned goods go back via admin `restockProduct` after inspection (Emmanuel). Soft delete limited to CANCELLED/DELIVERED (Claude, per ORD-03 fix) | STATUS |
