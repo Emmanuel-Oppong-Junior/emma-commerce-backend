@@ -3,6 +3,7 @@ import { PaymentService } from './payment.service';
 import { PaymentRepository } from './payment.repository';
 import { ConfigService } from '@nestjs/config';
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -38,9 +39,8 @@ const mockPaymentRepository = {
   recordCashCollection: jest.fn(),
   findOrderWithUser: jest.fn(),
   findOrderById: jest.fn(),
-  updateOrderStatus: jest.fn(),
   forceUpdateOrderStatus: jest.fn(),
-  updatePaymentWithStatus: jest.fn(),
+  settleAttempt: jest.fn(),
 };
 
 const mockConfigService = {
@@ -258,70 +258,119 @@ describe('PaymentService', () => {
     const payment = {
       id: 'pay1',
       orderId: 'order1',
+      amount: new Prisma.Decimal(250),
+      currency: 'GHS',
       transactionId: 'ref1',
       status: PaymentStatus.PENDING,
       deleted: false,
     };
-    const verification = { data: { status: 'success', reference: 'ref1' } };
-    const updatedPayment = { ...payment, status: PaymentStatus.COMPLETED, paymentDetails: verification.data };
+    const verification = { data: { status: 'success', reference: 'ref1', amount: 25000, currency: 'GHS' } };
+    const completed = { ...payment, status: PaymentStatus.COMPLETED };
+    const lockedState = {
+      status: PaymentStatus.PENDING,
+      amount: new Prisma.Decimal(250),
+      currency: 'GHS',
+      intentStatus: 'PENDING',
+      order: { status: 'PENDING', deleted: false },
+    };
 
-    it('should verify payment successfully', async () => {
+    /** Runs the service's decision against `state`, as the repository does under the order lock. */
+    const settleAgainst = (state: object, attempt: object, refundId?: string) =>
+      mockPaymentRepository.settleAttempt.mockImplementation(
+        async (_id: string, _verified: unknown, _details: unknown, decide: (s: object) => unknown) => ({
+          outcome: decide(state),
+          attempt,
+          refundId,
+        }),
+      );
+
+    beforeEach(() => {
       mockPaymentRepository.findByReference.mockResolvedValue(payment);
       mockPaystackTransaction.verify.mockResolvedValue(verification);
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
       mockPaymentRepository.findOrderWithUser.mockResolvedValue({ id: 'order1', user: { email: 'buyer@example.com' } });
+    });
+
+    it('settles a matching success as payment and returns the completed attempt', async () => {
+      settleAgainst(lockedState, completed);
 
       const result = await service.verifyPayment(reference);
 
       expect(paymentRepository.findByReference).toHaveBeenCalledWith('ref1');
       expect(mockPaystackTransaction.verify).toHaveBeenCalledWith({ reference: 'ref1' });
-      expect(paymentRepository.updatePaymentWithStatus).toHaveBeenCalledWith(
+      expect(paymentRepository.settleAttempt).toHaveBeenCalledWith(
         'pay1',
-        PaymentStatus.COMPLETED,
-        expect.any(Object),
+        { reference: 'ref1', status: 'success', amount: 25000, currency: 'GHS' },
+        expect.objectContaining({ reference: 'ref1', amount: 25000, currency: 'GHS' }),
+        expect.any(Function),
       );
-      expect(paymentRepository.updateOrderStatus).toHaveBeenCalledWith('order1', 'PROCESSING');
       expect(mockLoggerService.warn).not.toHaveBeenCalled();
-      expect(result).toEqual(updatedPayment);
+      expect(result).toEqual(completed);
     });
 
-    it('should not fail and should warn when the order is no longer PENDING', async () => {
-      mockPaymentRepository.findByReference.mockResolvedValue(payment);
-      mockPaystackTransaction.verify.mockResolvedValue(verification);
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(false);
+    it.each([PaymentStatus.COMPLETED, PaymentStatus.FAILED])(
+      'returns a %s attempt unchanged without asking Paystack again',
+      async (status) => {
+        mockPaymentRepository.findByReference.mockResolvedValue({ ...payment, status });
+
+        const result = await service.verifyPayment(reference);
+
+        expect(result).toEqual({ ...payment, status });
+        expect(mockPaystackTransaction.verify).not.toHaveBeenCalled();
+        expect(paymentRepository.settleAttempt).not.toHaveBeenCalled();
+      },
+    );
+
+    it('warns and leaves the order alone when a success arrives for an order that is no longer PENDING', async () => {
+      settleAgainst({ ...lockedState, order: { status: 'CANCELLED', deleted: false } }, completed, 'refund1');
 
       const result = await service.verifyPayment(reference);
+      await flushPromises();
 
-      expect(result).toEqual(updatedPayment);
-      expect(mockLoggerService.warn).toHaveBeenCalledWith(expect.stringContaining('order1'), 'PaymentService');
+      expect(result).toEqual(completed);
+      expect(mockLoggerService.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/ORDER_NOT_PAYABLE.*order1.*pay1.*refund1/),
+        'PaymentService',
+      );
+      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
+    });
+
+    it('does not count a success for a smaller amount as payment', async () => {
+      mockPaystackTransaction.verify.mockResolvedValue({ data: { ...verification.data, amount: 100 } });
+      settleAgainst(lockedState, { ...payment, status: PaymentStatus.FAILED }, 'refund1');
+
+      const result = await service.verifyPayment(reference);
+      await flushPromises();
+
+      expect(result.status).toBe(PaymentStatus.FAILED);
+      expect(mockLoggerService.warn).toHaveBeenCalledWith(expect.stringContaining('AMOUNT_MISMATCH'), 'PaymentService');
+      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
     });
 
     it('should handle failed payment', async () => {
-      const failedVerification = { data: { status: 'failed', reference: 'ref1' } };
       const failedPayment = { ...payment, status: PaymentStatus.FAILED };
-
-      mockPaymentRepository.findByReference.mockResolvedValue(payment);
-      mockPaystackTransaction.verify.mockResolvedValue(failedVerification);
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(failedPayment);
+      mockPaystackTransaction.verify.mockResolvedValue({ data: { status: 'failed', reference: 'ref1' } });
+      settleAgainst(lockedState, failedPayment);
 
       const result = await service.verifyPayment(reference);
 
-      expect(paymentRepository.updatePaymentWithStatus).toHaveBeenCalledWith(
+      expect(paymentRepository.settleAttempt).toHaveBeenCalledWith(
         'pay1',
-        PaymentStatus.FAILED,
+        expect.objectContaining({ status: 'failed' }),
         expect.any(Object),
+        expect.any(Function),
       );
       expect(result).toEqual(failedPayment);
     });
 
+    it('rejects a Paystack answer for a different reference without touching the attempt', async () => {
+      mockPaystackTransaction.verify.mockResolvedValue({ data: { ...verification.data, reference: 'other' } });
+
+      await expect(service.verifyPayment(reference)).rejects.toThrow(BadGatewayException);
+      expect(paymentRepository.settleAttempt).not.toHaveBeenCalled();
+    });
+
     it('emails a payment confirmation once the order moves from PENDING to PROCESSING', async () => {
-      mockPaymentRepository.findByReference.mockResolvedValue(payment);
-      mockPaystackTransaction.verify.mockResolvedValue(verification);
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue({ ...updatedPayment, amount: 250 });
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
-      mockPaymentRepository.findOrderWithUser.mockResolvedValue({ id: 'order1', user: { email: 'buyer@example.com' } });
+      settleAgainst(lockedState, completed);
 
       await service.verifyPayment(reference);
       await flushPromises();
@@ -329,11 +378,17 @@ describe('PaymentService', () => {
       expect(mockNotificationsService.sendPaymentConfirmation).toHaveBeenCalledWith('buyer@example.com', 'order1', 250);
     });
 
-    it('does not email again when the order had already left PENDING (repeat webhook or re-verify)', async () => {
-      mockPaymentRepository.findByReference.mockResolvedValue(payment);
-      mockPaystackTransaction.verify.mockResolvedValue(verification);
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(false);
+    it('does not email again when the attempt was already settled (repeat webhook or re-verify)', async () => {
+      mockPaymentRepository.findByReference.mockResolvedValue(completed);
+
+      await service.verifyPayment(reference);
+      await flushPromises();
+
+      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
+    });
+
+    it('does not email when a racing request settled the attempt first', async () => {
+      settleAgainst({ ...lockedState, status: PaymentStatus.COMPLETED }, completed);
 
       await service.verifyPayment(reference);
       await flushPromises();
@@ -342,9 +397,8 @@ describe('PaymentService', () => {
     });
 
     it('does not email when the payment failed', async () => {
-      mockPaymentRepository.findByReference.mockResolvedValue(payment);
       mockPaystackTransaction.verify.mockResolvedValue({ data: { status: 'failed', reference: 'ref1' } });
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue({ ...payment, status: PaymentStatus.FAILED });
+      settleAgainst(lockedState, { ...payment, status: PaymentStatus.FAILED });
 
       await service.verifyPayment(reference);
       await flushPromises();
@@ -353,13 +407,10 @@ describe('PaymentService', () => {
     });
 
     it('logs a failed recipient lookup without failing the verification', async () => {
-      mockPaymentRepository.findByReference.mockResolvedValue(payment);
-      mockPaystackTransaction.verify.mockResolvedValue(verification);
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue(updatedPayment);
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
+      settleAgainst(lockedState, completed);
       mockPaymentRepository.findOrderWithUser.mockRejectedValue(new Error('connection reset'));
 
-      await expect(service.verifyPayment(reference)).resolves.toEqual(updatedPayment);
+      await expect(service.verifyPayment(reference)).resolves.toEqual(completed);
       await flushPromises();
 
       expect(mockLoggerService.error).toHaveBeenCalledWith(
@@ -375,6 +426,27 @@ describe('PaymentService', () => {
       await expect(service.verifyPayment(reference)).rejects.toThrow(
         new NotFoundException('Payment with reference "ref1" not found'),
       );
+    });
+
+    it('applies the same rule when the owner verifies', async () => {
+      mockPaymentRepository.findOrderById.mockResolvedValue({ id: 'order1', userId: 'user1' });
+      mockPaystackTransaction.verify.mockResolvedValue({ data: { ...verification.data, currency: 'USD' } });
+      settleAgainst(lockedState, { ...payment, status: PaymentStatus.FAILED }, 'refund1');
+
+      const result = await service.verifyPaymentAsUser(reference, 'user1');
+
+      expect(result.status).toBe(PaymentStatus.FAILED);
+      expect(mockLoggerService.warn).toHaveBeenCalledWith(
+        expect.stringContaining('CURRENCY_MISMATCH'),
+        'PaymentService',
+      );
+    });
+
+    it('refuses a reference that belongs to another user', async () => {
+      mockPaymentRepository.findOrderById.mockResolvedValue({ id: 'order1', userId: 'someone-else' });
+
+      await expect(service.verifyPaymentAsUser(reference, 'user1')).rejects.toThrow(ForbiddenException);
+      expect(mockPaystackTransaction.verify).not.toHaveBeenCalled();
     });
   });
 
@@ -504,12 +576,21 @@ describe('PaymentService', () => {
       mockConfigService.get.mockReturnValue(secret);
       const validSig = createHmac('sha512', secret).update(JSON.stringify(dto)).digest('hex');
 
-      const payment = { id: 'pay1', transactionId: 'ref-valid', deleted: false, orderId: 'order1' };
-      const verifyData = { data: { status: 'success', reference: 'ref-valid' } };
+      const payment = {
+        id: 'pay1',
+        transactionId: 'ref-valid',
+        deleted: false,
+        orderId: 'order1',
+        status: PaymentStatus.PENDING,
+      };
+      const verifyData = { data: { status: 'success', reference: 'ref-valid', amount: 100, currency: 'GHS' } };
       mockPaymentRepository.findByReference.mockResolvedValue(payment);
       mockPaystackTransaction.verify.mockResolvedValue(verifyData);
-      mockPaymentRepository.updatePaymentWithStatus.mockResolvedValue({ ...payment, status: PaymentStatus.COMPLETED });
-      mockPaymentRepository.updateOrderStatus.mockResolvedValue(true);
+      mockPaymentRepository.settleAttempt.mockResolvedValue({
+        outcome: { kind: 'paid' },
+        attempt: { ...payment, status: PaymentStatus.COMPLETED },
+      });
+      mockPaymentRepository.findOrderWithUser.mockResolvedValue(null);
 
       const result = await service.handlePaystackWebhook(dto, validSig);
 

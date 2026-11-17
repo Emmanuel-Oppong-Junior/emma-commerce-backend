@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   Order,
   OrderStatus,
@@ -9,7 +9,15 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrdersRepository } from '../order/order.repository';
 import { CHARGE_CURRENCY } from './constant';
+import {
+  AttemptState,
+  autoRefundKey,
+  fromSubunits,
+  ProviderVerification,
+  VerificationOutcome,
+} from './payment-verification';
 
 /** A payment attempt in the shape the GraphQL `Payment` type exposes. */
 export interface PaymentRecord {
@@ -34,6 +42,12 @@ export interface AttemptRequest {
   channel: string;
   reference: string;
   idempotencyKey?: string;
+}
+
+export interface SettledAttempt {
+  outcome: VerificationOutcome;
+  attempt: PaymentRecord;
+  refundId?: string;
 }
 
 export type OpenedAttempt =
@@ -72,7 +86,10 @@ function toPaymentRecord(attempt: AttemptWithIntent): PaymentRecord {
 
 @Injectable()
 export class PaymentRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ordersRepository: OrdersRepository,
+  ) {}
 
   /**
    * Opens a new pending attempt for the order and abandons any other pending one, or returns the attempt already
@@ -229,14 +246,6 @@ export class PaymentRepository {
     return this.prisma.order.findUnique({ where: { id: orderId } });
   }
 
-  async updateOrderStatus(orderId: string, status: OrderStatus): Promise<boolean> {
-    const { count } = await this.prisma.order.updateMany({
-      where: { id: orderId, status: 'PENDING' },
-      data: { status },
-    });
-    return count > 0;
-  }
-
   async forceUpdateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {
     await this.prisma.order.update({
       where: { id: orderId },
@@ -244,22 +253,83 @@ export class PaymentRepository {
     });
   }
 
-  async updatePaymentWithStatus(
-    paymentId: string,
-    status: PaymentStatus,
-    paymentDetails: Prisma.InputJsonValue,
-  ): Promise<PaymentRecord> {
-    const attempt = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.paymentAttempt.update({
-        where: { id: paymentId },
-        data: { status, providerDetails: paymentDetails },
-        include: WITH_ORDER,
+  /**
+   * Applies a provider verdict to an attempt exactly once. The order row lock serialises this with initiation,
+   * cancellation and any other verification of the same order; `decide` sees the locked state. An attempt that is
+   * no longer open is returned unchanged, so replays have no side effects.
+   */
+  async settleAttempt(
+    attemptId: string,
+    verified: ProviderVerification,
+    providerDetails: Prisma.InputJsonValue,
+    decide: (state: AttemptState) => VerificationOutcome,
+  ): Promise<SettledAttempt> {
+    return this.prisma.$transaction(async (tx) => {
+      const { intent } = await tx.paymentAttempt.findUniqueOrThrow({
+        where: { id: attemptId },
+        select: { intent: { select: { orderId: true } } },
       });
-      if (status === PaymentStatus.COMPLETED) {
-        await tx.paymentIntent.update({ where: { id: updated.intentId }, data: { status: PaymentIntentStatus.PAID } });
+      await tx.$queryRaw`SELECT 1 FROM "Order" WHERE "id" = ${intent.orderId} FOR UPDATE`;
+      const attempt = await tx.paymentAttempt.findUniqueOrThrow({
+        where: { id: attemptId },
+        include: { intent: { include: { order: true } } },
+      });
+      const outcome = decide({
+        status: attempt.status,
+        amount: attempt.amount,
+        currency: attempt.currency,
+        intentStatus: attempt.intent.status,
+        order: attempt.intent.order,
+      });
+
+      if (outcome.kind === 'settled') return { outcome, attempt: toPaymentRecord(attempt) };
+      if (outcome.kind === 'unresolved') {
+        const updated = await tx.paymentAttempt.update({
+          where: { id: attemptId },
+          data: { rawStatus: verified.status },
+          include: WITH_ORDER,
+        });
+        return { outcome, attempt: toPaymentRecord(updated) };
       }
-      return updated;
+
+      const status =
+        outcome.kind === 'paid'
+          ? PaymentStatus.COMPLETED
+          : outcome.kind === 'failed'
+            ? PaymentStatus.FAILED
+            : outcome.attemptStatus;
+      const { count } = await tx.paymentAttempt.updateMany({
+        where: { id: attemptId, status: { in: [PaymentStatus.PENDING, PaymentStatus.ABANDONED] } },
+        data: {
+          status,
+          rawStatus: verified.status,
+          providerDetails,
+          ...(outcome.kind === 'review' && { reviewReason: outcome.reason }),
+        },
+      });
+      if (count === 0) throw new ConflictException(`Payment attempt "${attemptId}" was settled by another request`);
+
+      let refundId: string | undefined;
+      if (outcome.kind === 'paid') {
+        await tx.paymentIntent.update({ where: { id: attempt.intentId }, data: { status: PaymentIntentStatus.PAID } });
+        const moved = await this.ordersRepository.transitionStatus(tx, intent.orderId, OrderStatus.PROCESSING, [
+          OrderStatus.PENDING,
+        ]);
+        if (!moved) throw new ConflictException(`Order "${intent.orderId}" left PENDING while its payment settled`);
+      } else if (outcome.kind === 'review') {
+        const refund = await tx.refund.create({
+          data: {
+            attemptId,
+            amount: fromSubunits(verified.amount),
+            currency: verified.currency,
+            idempotencyKey: autoRefundKey(attemptId),
+          },
+        });
+        refundId = refund.id;
+      }
+
+      const settled = await tx.paymentAttempt.findUniqueOrThrow({ where: { id: attemptId }, include: WITH_ORDER });
+      return { outcome, attempt: toPaymentRecord(settled), refundId };
     });
-    return toPaymentRecord(attempt);
   }
 }

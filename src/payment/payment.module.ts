@@ -6,9 +6,10 @@ import { ConfigService } from '@nestjs/config';
 import { CommonsModule } from '../commons/commons.module';
 import { PaymentRepository } from './payment.repository';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OrderModule } from '../order/order.module';
 
 @Module({
-  imports: [CommonsModule, NotificationsModule],
+  imports: [CommonsModule, NotificationsModule, OrderModule],
   providers: [PaymentResolver, PaymentService, PaymentRepository, ConfigService],
   controllers: [PaymentController],
 })

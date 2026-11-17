@@ -8,7 +8,7 @@ import {
 import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
-import { PaymentMethod, PaymentProvider, PaymentStatus, Prisma } from '@prisma/client';
+import { PaymentMethod, PaymentProvider, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, randomBytes } from 'node:crypto';
@@ -17,6 +17,7 @@ import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
+import { decideVerification, isSettled, parseProviderVerification } from './payment-verification';
 
 @Injectable()
 export class PaymentService {
@@ -71,24 +72,16 @@ export class PaymentService {
   }
 
   /**
-   * Verifies a payment status using Paystack reference.
-   * For internal use by the webhook and REST callback only — no ownership check.
-   * @param reference - Paystack transaction reference.
-   * @returns Updated payment record.
+   * Verifies a payment by its Paystack reference. For the webhook only: no ownership check.
    */
   async verifyPayment(reference: string): Promise<PaymentRecord> {
     this.logger.log(`Verifying payment | reference: ${reference}`, 'PaymentService');
     const payment = await this.fetchPaymentByReference(reference);
-    const verification = await this.verifyPaystackTransaction(reference);
-    return this.updatePaymentStatus(payment.id, verification);
+    return this.settleWithProvider(payment, reference);
   }
 
   /**
-   * Verifies a payment on behalf of an authenticated user.
-   * Enforces ownership — the reference must belong to an order owned by the requesting user.
-   * @param reference - Paystack transaction reference.
-   * @param userId - ID of the requesting user.
-   * @returns Updated payment record.
+   * Verifies a payment on behalf of its owner; the reference must belong to one of the user's orders.
    */
   async verifyPaymentAsUser(reference: string, userId: string): Promise<PaymentRecord> {
     const payment = await this.fetchPaymentByReference(reference);
@@ -96,8 +89,7 @@ export class PaymentService {
     if (order?.userId !== userId) {
       throw new ForbiddenException('You do not have access to this payment');
     }
-    const verification = await this.verifyPaystackTransaction(reference);
-    return this.updatePaymentStatus(payment.id, verification);
+    return this.settleWithProvider(payment, reference);
   }
 
   /**
@@ -304,30 +296,31 @@ export class PaymentService {
     return this.paystack.transaction.verify({ reference });
   }
 
-  private async updatePaymentStatus(
-    paymentId: string,
-    verification: Paystack.Response<Paystack.Transaction.VerifyResponse>,
-  ): Promise<PaymentRecord> {
-    const status = verification.data.status === 'success' ? PaymentStatus.COMPLETED : PaymentStatus.FAILED;
-    const payment = await this.paymentRepository.updatePaymentWithStatus(
-      paymentId,
-      status,
-      this.sanitizeVerifyDetails(verification.data),
+  /**
+   * The one path from a provider verdict to the ledger and the order, shared by the customer verify and the
+   * webhook. A settled attempt is returned as it is, so replays and late events change nothing.
+   */
+  private async settleWithProvider(payment: PaymentRecord, reference: string): Promise<PaymentRecord> {
+    if (isSettled(payment.status)) return payment;
+    const response = await this.verifyPaystackTransaction(reference);
+    const verified = parseProviderVerification(reference, response.data);
+    const settled = await this.paymentRepository.settleAttempt(
+      payment.id,
+      verified,
+      this.sanitizeVerifyDetails(response.data),
+      (state) => decideVerification(state, verified),
     );
 
-    if (status === PaymentStatus.COMPLETED) {
-      const transitioned = await this.paymentRepository.updateOrderStatus(payment.orderId, 'PROCESSING');
-      if (transitioned) {
-        this.sendPaymentConfirmationEmail(payment.orderId, Number(payment.amount));
-      } else {
-        this.logger.warn(
-          `Payment completed but order was not PENDING, status left unchanged | orderId: ${payment.orderId} | paymentId: ${payment.id}`,
-          'PaymentService',
-        );
-      }
+    const { outcome, attempt } = settled;
+    if (outcome.kind === 'paid') {
+      this.sendPaymentConfirmationEmail(attempt.orderId, Number(attempt.amount));
+    } else if (outcome.kind === 'review') {
+      this.logger.warn(
+        `Payment needs review, order left unchanged and refund queued | reason: ${outcome.reason} | orderId: ${attempt.orderId} | paymentId: ${attempt.id} | refundId: ${settled.refundId} | provider amount: ${verified.amount} ${verified.currency}`,
+        'PaymentService',
+      );
     }
-
-    return payment;
+    return attempt;
   }
 
   // Sent only on the PENDING -> PROCESSING transition, so repeat webhooks and re-verifies do not email twice.

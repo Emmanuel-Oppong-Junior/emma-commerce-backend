@@ -1372,6 +1372,12 @@ CANCELLED     — Order cancelled
 - **Type**: Mutation (GraphQL)
 - **Roles**: `USER`
 - **Description**: Verify a Paystack payment by reference and update status. Enforces ownership — only the order owner can verify.
+- **Behaviour**:
+  - The payment counts only if Paystack reports `success` for exactly the attempt's amount and currency (GHS). Then the attempt becomes `COMPLETED` and the order moves `PENDING → PROCESSING`.
+  - A success for a different amount or currency returns `status: FAILED`; the order stays `PENDING` and can be paid again. The captured money is queued for refund.
+  - A success that arrives after the order was cancelled (or already paid by another attempt) returns `status: COMPLETED` but the order is **not** changed; the money is queued for refund and the payment flagged for staff. Read the order's own `status` to decide what to show.
+  - While Paystack has not decided yet (e.g. MoMo approval pending) the attempt stays `PENDING`; call again later.
+  - Verifying an attempt that is already `COMPLETED` or `FAILED` returns it unchanged (safe to repeat).
 
 **Input: `VerifyPaymentInput`**
 
@@ -2866,7 +2872,7 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 
 1. Paystack POSTs to `POST /payment/webhook`.
 2. Backend verifies HMAC-SHA512 signature using `PAYSTACK_SECRET_KEY`.
-3. On `charge.success`: payment `status → COMPLETED`, order `status → PROCESSING`, confirmation email sent.
+3. On `charge.success`: the same verification as `verifyPayment` runs (amount and currency must match; a payment for a cancelled or already-paid order never moves the order and is queued for refund). On a valid payment: payment `status → COMPLETED`, order `status → PROCESSING`, confirmation email sent once.
 4. On `charge.failed`: payment `status → FAILED`.
 5. Always responds `200 OK` to Paystack (even for unhandled events).
 
