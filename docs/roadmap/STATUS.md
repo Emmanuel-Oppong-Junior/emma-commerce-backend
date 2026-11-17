@@ -5,21 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P0-A.5 — Logging without secrets/PII (PLAT-02, OBS-01)
-- **Branch:** `fix/P0-A.5-log-redaction` (from `dev` @ `79668b6`) · **State:** in progress
-- **Steps:**
-  - [x] Interceptor: `mutation Name > rootField | Variables: {keys: "[redacted]"}`; no query text; errors via `describeErrorForLog`. `sanitizeVariables` redacts every value; `sanitizeQuery` removed
-  - [x] `describeErrorForLog` (error-classification.ts): Prisma → `Prisma P2002 on User.email`; used by both filter branches
-  - [x] `maskEmail` in email service (`k***@gmail.com`)
-  - [x] Tests: interceptor (no values/headers, Prisma by code), sanitizeVariables, describeErrorForLog, maskEmail; repro PLAT-02 ×5 green → 8/21
-  - [x] Deleted 4 local log files; `logs/` keeps the 2 rotation `-audit.json` index files (no log content)
-  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 818/818; repro 8/21; e2e Linux node:20 205/205
-  - [ ] Commit/merge/push (waiting on Emmanuel); mark PLAT-02/OBS-01 in audit; repro count 8/21; clear Active task  ← **Next step**
-- **Uncommitted work:** STATUS.md only
+_None._ P0-A.5 done (`5e71ff2`), merged into `dev` and pushed; check its CI run. **Epic P0-A complete (5/5).** Take the first unblocked item in **Up next**.
 
-**Previously:** P0-A.4 done (`c3000bf`), CI green on `79668b6`.
-
-**Last completed:** P0-A.4. Query limits: depth 8, aliases 15, cost 3000 (`graphql-query-complexity` 2.0.0, new dependency); landing page off in production; `error-classification.ts` gives real GraphQL codes incl. Prisma P2002/P2003 → CONFLICT, P2025 → NOT_FOUND; ValidationPipe → `BAD_USER_INPUT` via shared `createValidationPipe()`. Unit 808/808, e2e 205/205 (Linux node:20). Surfaced: deleting a category with sub-categories was a 500, now CONFLICT. **Frontend:** 401s are now `UNAUTHENTICATED` (token refresh starts working); 5xx messages always generic.
+**Last completed:** P0-A.5. GraphQL log lines: `op Name > rootField | Variables: {keys: "[redacted]"}`, no query text; Prisma errors logged by code (`Prisma P2002 on User.email`); email recipients masked; 4 local log files deleted. Unit 818/818, e2e 205/205, repro 8/21. Residual: GraphQL validation messages can quote a mistyped value (`formatError` logs them).
 
 <!-- Shape while a task is active (keep it current):
 - **Task:** P0-X.n — <title>
@@ -36,26 +24,30 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-A.5 Logging: no variable values or tokens in logs (repro PLAT-02) | now | — (branch from `dev`) |
-| 3 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
+| 1 | P0-B.1 Order status transition table + conditional writes in the transaction (ADR-0014; ORD-02, ORD-04) | now | — (branch from `dev`) |
+| 2 | P0-B.4 Shipping: unmatched city rejected, no silent free delivery (repro SHZ-01) | ∥ with 1 | — |
+| 3 | P0-B.5 Pickup orders validate an active pickup location | ∥ | — |
+| 4 | P0-B.6 Charge currency fixed server-side to GHS | ∥ | — |
+| 5 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
 | P0-F Safety rails | 5 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
-| P0-A Request pipeline & access | 4 / 5 | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`) |
+| P0-A Request pipeline & access | **5 / 5** | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`), A.5 (`5e71ff2`) |
 | P0-B Orders & stock | 0 / 11 | |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 0 / 6 | |
 | P0-O Deployability & ops | 0 / 7 | |
 | P0-D Audit & analytics | 0 / 3 | |
 
-Repro tests turned green: **3 / 21** (PLAT-01, IAM-07, SEC-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **8 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks`, `e2e` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
 - [ ] Decide what to do with `origin/main`: it shares no history with local `main`/`dev` (different root commits). Its history also contains a committed `.env` (`bcbae7b Delete .env`), so rotate whatever secrets it held.
 - [ ] Tell the frontend: review queries must select `user { displayName }` instead of `user { name }` (P0-A.2); admin draft listing must use `adminProducts`/`adminProduct` (P0-A.3).
+- [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
 - [ ] Rotate the DB password that was committed in `.claude/settings.local.json`. The file is untracked now, but the password is still in git history.
 - [ ] Decide the Phase 0 stop-gaps before these tasks start:
   - **P0-B.3:** fix discounts at checkout, or switch them off until Phase 2?
