@@ -5,11 +5,9 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-**Parallel batch (in progress, 2026-11-17):** three sub-agents in their own git worktrees, each with its own e2e DB. Agents do not edit STATUS/audit; the orchestrator merges into `dev` and updates both.
-- **Fulfilment** (P0-B.4 shipping, P0-B.5 pickup, P0-B.6 currency) · DB `emma_wt_fulfil_test` · only agent allowed a migration
-- ~~**Identity**~~ ✅ merged + pushed: P0-I.1 (`d2445ad`), P0-I.6 (`d11e961`). Gates on dev: unit 905/905, e2e 212/212 (Linux node:20), repro 12/21. Frontend: sign-in accepts up to 128 chars; reset/change/admin-create now follow the full policy; forgotPassword limited 3/h per email
-- ~~**Ops**~~ ✅ merged + pushed (rebased onto dev): P0-O.3 (`fd0543c`), P0-O.5 (`66eb517`), P0-O.7 (`e18cf27`). Gates on dev: unit 956/956, e2e 212/212 (Linux node:20), repro 12/21. **Local dev:** `NODE_ENV` is now required
-- **Next step:** wait for agent reports → review diff, run gates on the merged result, merge into `dev`, update STATUS/audit per task.
+_None._ Parallel batch 1 (2026-11-17) done: all three worktree agents merged into `dev` and pushed. Take the next batch from **Up next**.
+
+**Last completed (batch 1):** P0-I.1 (`d2445ad`), P0-I.6 (`d11e961`); P0-O.3 (`fd0543c`), P0-O.5 (`66eb517`), P0-O.7 (`e18cf27`); P0-B.4 (`53c3da4`, migration `20261117111256_add_order_fee_breakdown_and_pickup_snapshot`), P0-B.5 (`1d33fff`), P0-B.6 (`ff15318`). Combined gates on dev: unit 983/983, e2e 218/218 (Linux node:20, migration applied), repro 13/21. One rebase conflict (two imports in payment.service.ts), resolved by keeping both. Worktrees started from old `main`; agents re-based onto `dev` themselves — set the base explicitly next time.
 
 **Last completed:** P0-B.2. Soft delete only for DELIVERED/CANCELLED, never moves stock; refunds move money only (returned goods restocked by admin via `restockProduct`); cancellation is the single automatic restore, one log per item. Unit 861/861, e2e 212/212, repro 11/21. **Admin UI:** open orders must be cancelled before deleting.
 
@@ -28,30 +26,33 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-B.4 Shipping: unmatched city rejected, no silent free delivery (repro SHZ-01) | now | — (branch from `dev`) |
-| 2 | P0-B.5 Pickup orders validate an active pickup location | ∥ with 1 | — |
-| 3 | P0-B.6 Charge currency fixed server-side to GHS | ∥ | — |
-| 4 | P0-F.3 Environment inventory + gitleaks (credential file already untracked) | ∥ | Emmanuel rotates the DB password |
+| 1 | Batch 2 candidates (∥, no decisions pending): P0-B.7 expiry job + advisory lock, P0-B.9 coupons in the order tx, P0-I.5 admin safety + upload allowlist, P0-O.4 load tracing first, P0-O.1 build/Docker entry | now | group by module; at most one migration per batch |
+| 2 | P0-B.8 stock writes + `CHECK (quantity >= 0)` (migration), P0-O.6 indexes (migration) | after batch 2, one at a time | migrations |
+| 3 | P0-C.1 payment ledger schema (ADR-0007, big migration) → C.2 → C.3 | sequential | ADR-0007 still Proposed |
+| 4 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
+| 5 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
+| 6 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
 | P0-F Safety rails | 5 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
 | P0-A Request pipeline & access | **5 / 5** | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`), A.5 (`5e71ff2`) |
-| P0-B Orders & stock | 2 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`) |
+| P0-B Orders & stock | 5 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`), B.4 (`53c3da4`), B.5 (`1d33fff`), B.6 (`ff15318`) |
 | P0-C Payments | 0 / 7 | |
 | P0-I Identity & sessions | 2 / 6 | I.1 (`d2445ad`), I.6 (`d11e961`); IAM-04 `jti` part of I.2 done in P0-F.7 |
 | P0-O Deployability & ops | 3 / 7 | O.3 (`fd0543c`), O.5 (`66eb517`), O.7 (`e18cf27`) |
 | P0-D Audit & analytics | 0 / 3 | |
 
-Repro tests turned green: **12 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **13 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05, SHZ-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks`, `e2e` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
 - [ ] Decide what to do with `origin/main`: it shares no history with local `main`/`dev` (different root commits). Its history also contains a committed `.env` (`bcbae7b Delete .env`), so rotate whatever secrets it held.
-- [ ] Tell the frontend: review queries must select `user { displayName }` instead of `user { name }` (P0-A.2); admin draft listing must use `adminProducts`/`adminProduct` (P0-A.3); invalid order status changes now return `CONFLICT` (P0-B.1); open orders must be cancelled before deleting (P0-B.2).
+- [ ] Tell the frontend: review queries must select `user { displayName }` instead of `user { name }` (P0-A.2); admin draft listing must use `adminProducts`/`adminProduct` (P0-A.3); invalid order status changes now return `CONFLICT` (P0-B.1); open orders must be cancelled before deleting (P0-B.2); Order gains `subtotal`, `shippingFee`, `pickupLocationSnapshot`; createOrder rejects uncovered cities, inactive pickup locations and non-GHS products; zone city overlaps → CONFLICT; payment `currency` must be GHS if sent (P0-B.4–B.6).
 - [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
 - [ ] Add `NODE_ENV=development` to your local `.env` if it is missing (now required, P0-O.3), and update `.env.example` with: NODE_ENV, PORT, ALLOWED_ORIGINS, LOG_LEVEL, DATABASE_URL, JWT_SECRET/JWT_REFRESH_SECRET/JWT_RESET_SECRET (≥32 chars, all different), JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER, JWT_ACCESS/REFRESH/RESET_TOKEN_TTL, GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET, PAYSTACK_SECRET_KEY, PAYSTACK_CALLBACK_URL, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET, REDIS_HOST (prod)/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL, OTEL_ENABLED (true|false), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, SUPER_ADMIN_EMAIL/PASSWORD.
+- [ ] On your machine: stop the dev server, run `npx prisma generate` (local generate hit the Windows DLL lock) and `npx prisma migrate dev` to apply `20261117111256_add_order_fee_breakdown_and_pickup_snapshot`. Dev seeder has no shipping zones: create zones (e.g. Greater Accra) or delivery orders will now be rejected.
 - [ ] Rotate the DB password that was committed in `.claude/settings.local.json`. The file is untracked now, but the password is still in git history.
 - [ ] Decide the Phase 0 stop-gaps before these tasks start:
   - **P0-B.3:** fix discounts at checkout, or switch them off until Phase 2?
