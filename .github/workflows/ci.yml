@@ -39,6 +39,39 @@ jobs:
       - run: npm run format:check
       - run: npx jest --ci
 
+  e2e:
+    name: End-to-end tests (Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: e2e
+          POSTGRES_PASSWORD: e2e
+          POSTGRES_DB: emma_commerce_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U e2e -d emma_commerce_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://e2e:e2e@localhost:5432/emma_commerce_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      # Test-only values with random JWT secrets per run; no repository secrets involved.
+      - run: node scripts/write-test-env.js "$DATABASE_URL"
+      - run: npx prisma migrate deploy
+      - run: npm run test:e2e
+
   audit:
     name: Production dependency audit (critical, allowlisted)
     runs-on: ubuntu-latest

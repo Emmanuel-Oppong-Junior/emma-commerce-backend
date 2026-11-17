@@ -5,7 +5,20 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-A.2 done (`c788131`), fast-forward merged into `dev`, not pushed. Take the first unblocked item in **Up next**.
+- **Task:** P0-F.7 — E2E in CI against Postgres (QA-03, DOC-12, QA-10 e2e part)
+- **Branch:** `chore/P0-F.7-e2e-ci` (from `dev` @ `6a86890`) · **State:** in progress
+- **Steps:**
+  - [x] Local Postgres container `emma-e2e-pg` up; `.env.test` written by new `scripts/write-test-env.js` (random JWT secrets, dummy provider keys, refuses to overwrite)
+  - [x] `ConfigModule` `ignoreEnvFile` when `NODE_ENV=test` (src/app.module.ts)
+  - [x] `prisma migrate deploy` (✓ both migrations apply to empty DB) + `npm run test:e2e` run 1: 13/15 suites, 164/182 tests; all 18 failures = old `createOrder` input. REST-routes + review-privacy e2e pass (first real runs)
+  - [x] `createOrder` inputs fixed (9 order, 2 payment-return) → both suites 22/22. `refreshToken` success + `signOut` tests uncommented: signOut passes
+  - [x] IAM-04 (no `jti` → same-second tokens identical → refresh 401) fixed here per Emmanuel: `jwtid: randomUUID()` in `signToken`; unit test failed first, passes now. Rest of P0-I.2 still open
+  - [x] Full e2e run 2: 15/15 suites, 184/184 tests
+  - [x] CI `e2e` job (postgres:16 service, `write-test-env.js`, migrate deploy, test:e2e), blocking; YAML parses
+  - [ ] Commit (waiting on Emmanuel), push, confirm `e2e` job green on GitHub; mark QA-03/DOC-12/IAM-04 in audit; clear Active task  ← **Next step**
+- **Uncommitted work:** `ci.yml`, `src/app.module.ts`, auth service + spec, 3 e2e specs, new `scripts/write-test-env.js`, STATUS.md
+- **Last test run (2026-11-17):** typecheck 0; lint:check 0; format:check clean; `npx jest --ci` 775/775; `test:repro` 3/21; `npm run test:e2e` (local Postgres 16) 184/184
+- **Cleanup when done:** `docker rm -f emma-e2e-pg` (local `.env.test` stays, git-ignored)
 
 **Last completed:** P0-A.2. `Review.user` → `PublicProfile { displayName }` ("Kwame A."); owner-or-admin field middleware (`src/iam/authorization/`) on `User.email/phoneNumber/addresses/orders`, `Order.user`; `public-schema.spec.ts` fails if `User` is reachable from any `@Auth(None)` root. Unit 774/774; repro SEC-01 green (3/21). `schema.gql` + `FRONTEND_API_DOCUMENTATION.md` updated (**breaking for the frontend:** `user { name }` → `user { displayName }` on reviews). `test/e2e/review-privacy.e2e-spec.ts` **not run** (no `.env.test`).
 

@@ -41,7 +41,7 @@ describe('Payments & Returns (e2e)', () => {
     // Create the order
     const res = await gqlRequest(
       app,
-      `mutation { createOrder(input: { shippingAddressId: "${addressId}" }) { id } }`,
+      `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
       undefined,
       userToken,
     ).expect(200);
@@ -276,7 +276,7 @@ describe('Payments & Returns (e2e)', () => {
       ).expect(200);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { shippingAddressId: "${user2AddressId}" }) { id } }`,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${user2AddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         user2Token,
       ).expect(200);

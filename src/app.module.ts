@@ -50,6 +50,8 @@ import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      // Tests get their env from .env.test only; never fall through to a developer's .env (real email, Redis).
+      ignoreEnvFile: process.env.NODE_ENV === 'test',
       validationSchema: envValidationSchema,
       validationOptions: { abortEarly: false },
     }),

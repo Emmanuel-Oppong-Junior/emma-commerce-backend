@@ -63,7 +63,7 @@ describe('Orders (e2e)', () => {
       // Arrange — cart already has seed_prod1 (added in beforeAll)
       const mutation = `
         mutation {
-          createOrder(input: { shippingAddressId: "${addressId}" }) {
+          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
             status
             totalAmount
@@ -92,7 +92,7 @@ describe('Orders (e2e)', () => {
       // Arrange — cart was consumed by the previous test; no items remain
       const mutation = `
         mutation {
-          createOrder(input: { shippingAddressId: "${addressId}" }) {
+          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
           }
         }
@@ -111,7 +111,7 @@ describe('Orders (e2e)', () => {
 
       const mutation = `
         mutation {
-          createOrder(input: { shippingAddressId: "nonexistent-address-id" }) {
+          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "nonexistent-address-id", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
           }
         }
@@ -134,7 +134,7 @@ describe('Orders (e2e)', () => {
 
       const mutation = `
         mutation {
-          createOrder(input: { shippingAddressId: "${addressId}" }) {
+          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
           }
         }
@@ -163,7 +163,10 @@ describe('Orders (e2e)', () => {
       const mutation = `
         mutation {
           createOrder(input: {
+            fulfillmentType: DELIVERY
             shippingAddressId: "${addressId}"
+            contactEmail: "user@example.com"
+            contactPhone: "+233244000000"
             couponCode: "${coupon.code}"
           }) {
             id
@@ -257,7 +260,7 @@ describe('Orders (e2e)', () => {
       await addItemToCart(user2Token);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { shippingAddressId: "${user2AddressId}" }) { id } }`,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${user2AddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         user2Token,
       ).expect(200);
@@ -288,7 +291,7 @@ describe('Orders (e2e)', () => {
       await addItemToCart(userToken, 'seed_prod1', 1);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { shippingAddressId: "${addressId}" }) { id } }`,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);
@@ -322,7 +325,7 @@ describe('Orders (e2e)', () => {
       await addItemToCart(userToken, 'seed_prod1', 1);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { shippingAddressId: "${addressId}" }) { id } }`,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);
@@ -357,7 +360,7 @@ describe('Orders (e2e)', () => {
       await addItemToCart(userToken, 'seed_prod1', 1);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { shippingAddressId: "${addressId}" }) { id } }`,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);

@@ -186,6 +186,23 @@ describe('AuthenticationService', () => {
 
       expect(usersService.resetFailedLoginAttempts).toHaveBeenCalledWith(userWithAttempts.id);
     });
+
+    it('gives every token a unique jwtid so same-second tokens never collide', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(baseUser);
+      mockHashingService.compare.mockResolvedValue(true);
+      mockJwtService.signAsync.mockResolvedValue('token');
+      mockUsersRepository.deleteExpiredRefreshTokens.mockResolvedValue(undefined);
+      mockUsersRepository.createRefreshToken.mockResolvedValue(undefined);
+      mockUsersService.updateLastLogin.mockResolvedValue(undefined);
+
+      await service.signIn({ email: baseUser.email!, password: 'correct' });
+      await service.signIn({ email: baseUser.email!, password: 'correct' });
+
+      const jwtIds = jwtService.signAsync.mock.calls.map(([, options]) => (options as { jwtid?: string }).jwtid);
+      expect(jwtIds).toHaveLength(4);
+      jwtIds.forEach((id) => expect(id).toEqual(expect.any(String)));
+      expect(new Set(jwtIds).size).toBe(4);
+    });
   });
 
   describe('refreshToken', () => {

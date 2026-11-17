@@ -10,7 +10,7 @@ import { SignUpInput } from './dto/sign-up.input';
 import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
 import { UsersRepository } from '../../users/users.repository';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';
 
 @Injectable()
@@ -212,6 +212,8 @@ export class AuthenticationService {
         issuer: this.jwtConfiguration.issuer,
         secret,
         expiresIn,
+        // Without it, two tokens for one user in the same second are identical and collide on tokenHash.
+        jwtid: randomUUID(),
       },
     );
   }
