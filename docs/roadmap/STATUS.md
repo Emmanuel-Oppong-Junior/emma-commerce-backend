@@ -5,7 +5,19 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-A.4 done (`c3000bf`), merged into `dev` and pushed; check its CI run. Take the first unblocked item in **Up next**.
+- **Task:** P0-A.5 — Logging without secrets/PII (PLAT-02, OBS-01)
+- **Branch:** `fix/P0-A.5-log-redaction` (from `dev` @ `79668b6`) · **State:** in progress
+- **Steps:**
+  - [x] Interceptor: `mutation Name > rootField | Variables: {keys: "[redacted]"}`; no query text; errors via `describeErrorForLog`. `sanitizeVariables` redacts every value; `sanitizeQuery` removed
+  - [x] `describeErrorForLog` (error-classification.ts): Prisma → `Prisma P2002 on User.email`; used by both filter branches
+  - [x] `maskEmail` in email service (`k***@gmail.com`)
+  - [x] Tests: interceptor (no values/headers, Prisma by code), sanitizeVariables, describeErrorForLog, maskEmail; repro PLAT-02 ×5 green → 8/21
+  - [x] Deleted 4 local log files; `logs/` keeps the 2 rotation `-audit.json` index files (no log content)
+  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 818/818; repro 8/21; e2e Linux node:20 205/205
+  - [ ] Commit/merge/push (waiting on Emmanuel); mark PLAT-02/OBS-01 in audit; repro count 8/21; clear Active task  ← **Next step**
+- **Uncommitted work:** STATUS.md only
+
+**Previously:** P0-A.4 done (`c3000bf`), CI green on `79668b6`.
 
 **Last completed:** P0-A.4. Query limits: depth 8, aliases 15, cost 3000 (`graphql-query-complexity` 2.0.0, new dependency); landing page off in production; `error-classification.ts` gives real GraphQL codes incl. Prisma P2002/P2003 → CONFLICT, P2025 → NOT_FOUND; ValidationPipe → `BAD_USER_INPUT` via shared `createValidationPipe()`. Unit 808/808, e2e 205/205 (Linux node:20). Surfaced: deleting a category with sub-categories was a 500, now CONFLICT. **Frontend:** 401s are now `UNAUTHENTICATED` (token refresh starts working); 5xx messages always generic.
 

@@ -54,6 +54,19 @@ function httpMessage(exception: HttpException): string {
   return typeof message === 'string' ? message : exception.message;
 }
 
+// Safe for logs: Prisma's own message can contain the values being written, so only its code and target are kept.
+export function describeErrorForLog(exception: unknown): string {
+  if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+    const target = exception.meta?.target;
+    const fields = Array.isArray(target) ? target.join(',') : typeof target === 'string' ? target : undefined;
+    const model = typeof exception.meta?.modelName === 'string' ? exception.meta.modelName : undefined;
+    const where = [model, fields].filter(Boolean).join('.');
+    return `Prisma ${exception.code}${where ? ` on ${where}` : ''}`;
+  }
+  if (exception instanceof Prisma.PrismaClientValidationError) return 'Prisma validation error';
+  return exception instanceof Error ? exception.message : String(exception);
+}
+
 // Prisma's own messages include query and table details, so they are never returned to clients.
 export function classifyError(exception: unknown): ClassifiedError {
   if (exception instanceof Prisma.PrismaClientKnownRequestError) return classifyPrisma(exception);

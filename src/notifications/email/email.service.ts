@@ -10,6 +10,12 @@ import {
   passwordResetEmailHtml,
 } from './templates/email.templates';
 
+export function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return '***';
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
 @Injectable()
 export class EmailService {
   private readonly resend: Resend | null;
@@ -45,16 +51,17 @@ export class EmailService {
   }
 
   private async send(to: string, subject: string, html: string): Promise<void> {
+    const recipient = maskEmail(to);
     if (!this.resend) {
-      this.logger.warn(`Email not sent (RESEND_API_KEY not configured): ${subject} → ${to}`, 'EmailService');
+      this.logger.warn(`Email not sent (RESEND_API_KEY not configured): ${subject} → ${recipient}`, 'EmailService');
       return;
     }
     try {
       await this.resend.emails.send({ from: this.fromEmail, to, subject, html });
-      this.logger.log(`Email sent: ${subject} → ${to}`, 'EmailService');
+      this.logger.log(`Email sent: ${subject} → ${recipient}`, 'EmailService');
     } catch (error) {
       this.logger.error(
-        `Failed to send email: ${subject} → ${to}`,
+        `Failed to send email: ${subject} → ${recipient}`,
         error instanceof Error ? error.message : String(error),
         'EmailService',
       );

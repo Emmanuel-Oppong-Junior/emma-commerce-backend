@@ -2,7 +2,8 @@ import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nes
 import { Observable, tap } from 'rxjs';
 import { LoggerService } from '../logger.service';
 import { GqlContextType, GqlExecutionContext } from '@nestjs/graphql';
-import { sanitizeQuery, sanitizeVariables } from '../useful-functions';
+import { sanitizeVariables } from '../useful-functions';
+import { describeErrorForLog } from '../filters/error-classification';
 
 @Injectable()
 export class GraphqlLoggingInterceptor implements NestInterceptor {
@@ -18,11 +19,9 @@ export class GraphqlLoggingInterceptor implements NestInterceptor {
 
     const operationType = info.operation?.operation;
     const operationName = info.operation?.name?.value || 'Unnamed';
-    const rawQuery = req.body.query?.replace(/\s+/g, ' ').trim() || '';
-    const query = sanitizeQuery(rawQuery).substring(0, 100);
-    const rawVariables = req.body.variables || {};
-    const sanitizedVariables = sanitizeVariables(rawVariables);
-    const variables = JSON.stringify(sanitizedVariables);
+    // Never the query text or variable values: both can carry tokens, passwords and PII.
+    const variables = JSON.stringify(sanitizeVariables(req?.body?.variables ?? {}));
+    const summary = `${operationType} ${operationName} > ${info.fieldName} | Variables: ${variables}`;
 
     const correlationId = req?.correlationId ?? req?.headers?.['x-request-id'] ?? '-';
     const userId = req?.user?.id ?? 'anonymous';
@@ -32,15 +31,15 @@ export class GraphqlLoggingInterceptor implements NestInterceptor {
         next: () => {
           const duration = Date.now() - start;
           this.logger.log(
-            `${operationType} ${operationName} | Query: ${query} | Variables: ${variables} | Status: 200 | ${duration}ms | user:${userId} | cid:${correlationId}`,
+            `${summary} | Status: 200 | ${duration}ms | user:${userId} | cid:${correlationId}`,
             'GraphQL',
           );
         },
         error: (error) => {
           const duration = Date.now() - start;
           this.logger.error(
-            `${operationType} ${operationName} failed | Query: ${query} | Variables: ${variables} | Error: ${error.message} | ${duration}ms | user:${userId} | cid:${correlationId}`,
-            error.stack,
+            `${summary} failed | Error: ${describeErrorForLog(error)} | ${duration}ms | user:${userId} | cid:${correlationId}`,
+            error?.stack,
             'GraphQL',
           );
         },

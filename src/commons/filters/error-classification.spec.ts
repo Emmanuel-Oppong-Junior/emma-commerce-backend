@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { classifyError } from './error-classification';
+import { classifyError, describeErrorForLog } from './error-classification';
 import { InputValidationException } from '../validation-pipe';
 
 const prismaError = (code: string, meta?: Record<string, unknown>) =>
@@ -85,5 +85,29 @@ describe('classifyError', () => {
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Internal server error',
     });
+  });
+});
+
+describe('describeErrorForLog', () => {
+  it('describes a Prisma error by code, model and fields, without its message', () => {
+    const error = prismaError('P2002', { modelName: 'User', target: ['email'] });
+
+    expect(describeErrorForLog(error)).toBe('Prisma P2002 on User.email');
+  });
+
+  it('falls back to the bare code when Prisma gives no target', () => {
+    expect(describeErrorForLog(prismaError('P2025'))).toBe('Prisma P2025');
+  });
+
+  it('never repeats a Prisma validation error message, which echoes the arguments', () => {
+    const error = new Prisma.PrismaClientValidationError('Argument email: "kwame@test.local" is invalid', {
+      clientVersion: 'test',
+    });
+
+    expect(describeErrorForLog(error)).toBe('Prisma validation error');
+  });
+
+  it('keeps our own exception messages', () => {
+    expect(describeErrorForLog(new NotFoundException('Product not found'))).toBe('Product not found');
   });
 });

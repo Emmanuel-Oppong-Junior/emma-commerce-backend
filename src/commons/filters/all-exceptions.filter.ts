@@ -3,7 +3,7 @@ import { GqlArgumentsHost } from '@nestjs/graphql';
 import { Request, Response } from 'express';
 import { GraphQLError } from 'graphql';
 import { LoggerService } from '../logger.service';
-import { classifyError } from './error-classification';
+import { classifyError, describeErrorForLog } from './error-classification';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -18,8 +18,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     if (host.getType<'graphql' | 'http'>() === 'graphql') {
       const gqlHost = GqlArgumentsHost.create(host);
       const info = gqlHost.getInfo();
-      const originalMessage = exception instanceof Error ? exception.message : String(exception);
-      this.logger.error(`GraphQL Error: ${originalMessage} | Path: ${info?.path?.key}`, stack, 'ExceptionFilter');
+      this.logger.error(
+        `GraphQL Error: ${describeErrorForLog(exception)} | Path: ${info?.path?.key}`,
+        stack,
+        'ExceptionFilter',
+      );
       throw new GraphQLError(message, {
         extensions: { code, status },
       });
@@ -29,7 +32,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
 
-    this.logger.error(`Error: ${message} | Status: ${status} | URL: ${request?.url}`, stack, 'ExceptionFilter');
+    this.logger.error(
+      `Error: ${describeErrorForLog(exception)} | Status: ${status} | URL: ${request?.url}`,
+      stack,
+      'ExceptionFilter',
+    );
 
     response.status(status).json({
       statusCode: status,
