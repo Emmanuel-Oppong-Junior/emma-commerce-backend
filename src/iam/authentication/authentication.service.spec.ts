@@ -13,6 +13,7 @@ import { User } from '@prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { LoggerService } from '../../commons/logger.service';
 
 const mockUsersService = {
   findUserByEmail: jest.fn(),
@@ -62,6 +63,12 @@ const mockNotificationsService = {
   sendPasswordReset: jest.fn(),
 };
 
+const mockLogger = {
+  error: jest.fn(),
+};
+
+const flushBackgroundWork = () => new Promise((resolve) => setImmediate(resolve));
+
 const baseUser: Partial<User> = {
   id: '1',
   email: 'test@example.com',
@@ -90,6 +97,7 @@ describe('AuthenticationService', () => {
         { provide: JwtService, useValue: mockJwtService },
         { provide: jwtConfig.KEY, useValue: mockJwtConfig },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: LoggerService, useValue: mockLogger },
       ],
     }).compile();
 
@@ -284,35 +292,62 @@ describe('AuthenticationService', () => {
   });
 
   describe('forgotPassword', () => {
-    beforeEach(() => {
-      // Keep tests fast — override setTimeout so the 200ms delay resolves immediately
-      jest.useFakeTimers();
-    });
+    it('responds before the account lookup finishes, so response time cannot reveal whether the email exists', async () => {
+      mockUsersService.findUserByEmail.mockReturnValue(new Promise(() => undefined));
 
-    afterEach(() => {
-      jest.useRealTimers();
-    });
-
-    it('should return true without processing when email is not found (constant-time path)', async () => {
-      mockUsersService.findUserByEmail.mockResolvedValue(null);
-
-      const promise = service.forgotPassword('unknown@example.com');
-      jest.runAllTimers();
-      const result = await promise;
-
-      expect(result).toBe(true);
+      await expect(service.forgotPassword(baseUser.email!)).resolves.toBe(true);
       expect(mockNotificationsService.sendPasswordReset).not.toHaveBeenCalled();
     });
 
-    it('should generate reset token, persist it, and send email when user exists', async () => {
+    it('returns the same result for a known and an unknown email', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValueOnce(baseUser).mockResolvedValueOnce(null);
+      mockJwtService.signAsync.mockResolvedValueOnce('reset-token');
+
+      const known = await service.forgotPassword(baseUser.email!);
+      const unknown = await service.forgotPassword('unknown@example.com');
+
+      expect(known).toEqual(unknown);
+    });
+
+    it('stores a hashed reset token and emails the token when the account exists', async () => {
       mockUsersService.findUserByEmail.mockResolvedValue(baseUser);
       mockJwtService.signAsync.mockResolvedValueOnce('reset-token');
-      mockUsersRepository.savePasswordResetToken = jest.fn().mockResolvedValue(undefined);
+      mockUsersRepository.savePasswordResetToken.mockResolvedValue(undefined);
 
-      const result = await service.forgotPassword(baseUser.email!);
+      await service.forgotPassword(baseUser.email!);
+      await flushBackgroundWork();
 
-      expect(result).toBe(true);
+      expect(usersRepository.savePasswordResetToken).toHaveBeenCalledWith(
+        baseUser.id,
+        createHash('sha256').update('reset-token').digest('hex'),
+        expect.any(Date),
+      );
       expect(mockNotificationsService.sendPasswordReset).toHaveBeenCalledWith(baseUser.email, 'reset-token');
+    });
+
+    it('issues nothing when the email has no account', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(null);
+
+      await service.forgotPassword('unknown@example.com');
+      await flushBackgroundWork();
+
+      expect(jwtService.signAsync).not.toHaveBeenCalled();
+      expect(usersRepository.savePasswordResetToken).not.toHaveBeenCalled();
+      expect(mockNotificationsService.sendPasswordReset).not.toHaveBeenCalled();
+    });
+
+    it('logs a failure in the background work without the email address', async () => {
+      mockUsersService.findUserByEmail.mockRejectedValue(new Error('database unavailable'));
+
+      await expect(service.forgotPassword(baseUser.email!)).resolves.toBe(true);
+      await flushBackgroundWork();
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Password reset request failed',
+        expect.stringContaining('database unavailable'),
+        AuthenticationService.name,
+      );
+      expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain(baseUser.email);
     });
   });
 

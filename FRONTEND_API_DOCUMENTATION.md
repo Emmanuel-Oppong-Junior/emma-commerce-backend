@@ -292,18 +292,18 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 #### `forgotPassword`
 - **Type**: Mutation
 - **Auth Required**: No
-- **Rate Limit**: 3 requests/hour
-- **Description**: Send a password reset email. Always returns `true` even if the email is not found (prevents user enumeration).
+- **Rate Limit**: 3 requests/hour per IP, and 3 requests/hour per email address (trimmed, case-insensitive), whichever is hit first. Over either limit the request fails with the same throttling error whether or not the email has an account.
+- **Description**: Send a password reset email. Always returns `true` even if the email is not found (prevents user enumeration). The response is sent before the account lookup, so its timing is the same either way; the email itself follows shortly after.
 
 **Input: `ForgotPasswordInput`**
 
 ```typescript
 {
-  email: string; // Required. Valid email.
+  email: string; // Required. Valid email. Trimmed and lowercased.
 }
 ```
 
-**Response**: `Boolean` (always `true`)
+**Response**: `Boolean` (always `true`; a failure while issuing the reset is logged server-side, not returned)
 
 **Note**: The reset token is a signed JWT (15-minute TTL, `JWT_RESET_SECRET`) delivered in the email. The token is stored **hashed** in `User.passwordResetToken`.
 

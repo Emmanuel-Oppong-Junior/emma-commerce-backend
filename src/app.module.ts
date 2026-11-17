@@ -80,6 +80,11 @@ import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
         limit: 3,
       },
       {
+        name: 'forgotPasswordEmail',
+        ttl: 3600000, // 1 hour, per email address
+        limit: 3,
+      },
+      {
         name: 'payment',
         ttl: 60000, // 1 minute
         limit: 5, // 5 payment initiations per minute per user

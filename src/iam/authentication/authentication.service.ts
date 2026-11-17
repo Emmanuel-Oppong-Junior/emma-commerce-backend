@@ -12,6 +12,7 @@ import { RefreshTokenInput } from './dto/refresh-token.input';
 import { UsersRepository } from '../../users/users.repository';
 import { createHash, randomUUID } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { LoggerService } from '../../commons/logger.service';
 
 @Injectable()
 export class AuthenticationService {
@@ -21,6 +22,7 @@ export class AuthenticationService {
     private readonly jwtServices: JwtService,
     private readonly usersRepository: UsersRepository,
     private readonly notificationsService: NotificationsService,
+    private readonly logger: LoggerService,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
@@ -134,12 +136,20 @@ export class AuthenticationService {
   }
 
   /**
-   * Initiates a password reset by generating a signed reset token and emailing it.
-   * Silent success even if email not found (prevents user enumeration).
+   * Initiates a password reset and returns `true` at once whether or not the email has an account.
+   * The lookup, token and email run after the response, so neither its content nor its timing reveals which.
    */
-  async forgotPassword(email: string): Promise<boolean> {
+  forgotPassword(email: string): Promise<boolean> {
+    this.issuePasswordReset(email).catch((error: unknown) => {
+      const trace = error instanceof Error ? error.stack : String(error);
+      this.logger.error('Password reset request failed', trace, AuthenticationService.name);
+    });
+    return Promise.resolve(true);
+  }
+
+  private async issuePasswordReset(email: string): Promise<void> {
     const user = await this.userService.findUserByEmail(email);
-    if (!user) return true;
+    if (!user) return;
 
     const resetToken = await this.signToken(
       user.id,
@@ -152,7 +162,6 @@ export class AuthenticationService {
 
     await this.usersRepository.savePasswordResetToken(user.id, tokenHash, expiresAt);
     this.notificationsService.sendPasswordReset(email, resetToken);
-    return true;
   }
 
   /**

@@ -23,8 +23,10 @@ export function graphqlContext(
   request: object,
   handler: Handler = TestController.prototype.handle,
   cls: Controller = TestController,
+  args: object = {},
 ) {
-  const context = new ExecutionContextHost([{}, {}, { req: request }, {}], cls, handler);
+  const response = { header: () => undefined };
+  const context = new ExecutionContextHost([{}, args, { req: request, res: response }, {}], cls, handler);
   context.setType('graphql');
   return context;
 }

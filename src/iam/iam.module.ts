@@ -14,6 +14,7 @@ import { AccessTokenGuard } from './authentication/guards/access-token.guard';
 import { AuthenticationGuard } from './authentication/guards/authentication.guard';
 import { RolesGuard } from './authentication/guards/roles.guard';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CommonsModule } from '../commons/commons.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     UsersModule,
     ConfigModule.forFeature(jwtConfig),
     NotificationsModule,
+    CommonsModule,
   ],
   providers: [
     AuthenticationService,

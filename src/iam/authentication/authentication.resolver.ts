@@ -13,6 +13,7 @@ import { Auth } from './decorators/auth.decorator';
 import { GoogleAuthenticationService } from './social/google-authentication.service';
 import { FacebookAuthenticationService } from './social/facebook-authentication.service';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { trackForgotPasswordByEmail } from './forgot-password-email.tracker';
 
 @Auth(AuthType.None)
 @Resolver(() => AuthEntity)
@@ -69,7 +70,10 @@ export class AuthenticationResolver {
   }
 
   //1 hour to prevent abuse while allowing reasonable time for users to act on password reset emails
-  @Throttle({ forgotPassword: { ttl: 3600000, limit: 3 } })
+  @Throttle({
+    forgotPassword: { ttl: 3600000, limit: 3 },
+    forgotPasswordEmail: { ttl: 3600000, limit: 3, getTracker: trackForgotPasswordByEmail },
+  })
   @Mutation(() => Boolean, { description: 'Request a password reset email' })
   forgotPassword(@Args('input', { type: () => ForgotPasswordInput }) input: ForgotPasswordInput) {
     return this.authService.forgotPassword(input.email);
