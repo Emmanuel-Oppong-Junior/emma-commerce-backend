@@ -5,7 +5,11 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-B.2 done (`a54fded`), merged into `dev` and pushed; check its CI run. Take the first unblocked item in **Up next**.
+**Parallel batch (in progress, 2026-11-17):** three sub-agents in their own git worktrees, each with its own e2e DB. Agents do not edit STATUS/audit; the orchestrator merges into `dev` and updates both.
+- **Fulfilment** (P0-B.4 shipping, P0-B.5 pickup, P0-B.6 currency) · DB `emma_wt_fulfil_test` · only agent allowed a migration
+- **Identity** (P0-I.1 password policy, P0-I.6 forgotPassword) · DB `emma_wt_identity_test`
+- **Ops** (P0-O.3 env validation, P0-O.5 health readiness, P0-O.7 email errors) · DB `emma_wt_ops_test`
+- **Next step:** wait for agent reports → review diff, run gates on the merged result, merge into `dev`, update STATUS/audit per task.
 
 **Last completed:** P0-B.2. Soft delete only for DELIVERED/CANCELLED, never moves stock; refunds move money only (returned goods restocked by admin via `restockProduct`); cancellation is the single automatic restore, one log per item. Unit 861/861, e2e 212/212, repro 11/21. **Admin UI:** open orders must be cancelled before deleting.
 
@@ -57,6 +61,7 @@ Repro tests turned green: **11 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-17 | Working rules (Emmanuel): once all gates pass, commit and merge into `dev` without asking; ask only for real decisions or a phase change. Independent tasks run in parallel via worktree sub-agents grouped by module (one migration at a time). Overrides WORKING-AGREEMENT "commit only when Emmanuel asks" | STATUS, memory |
 | 2026-11-17 | P0-B.2: refunds never restock; returned goods go back via admin `restockProduct` after inspection (Emmanuel). Soft delete limited to CANCELLED/DELIVERED (Claude, per ORD-03 fix) | STATUS |
 | 2026-11-17 | P0-B.1: unpaid ONLINE orders leave PENDING only via confirmed payment; admins cannot move them to PROCESSING by hand (Emmanuel). Missed webhooks wait for reconciliation (P0-C.5) | STATUS |
 | 2026-11-17 | P0-A.4: add `graphql-query-complexity` for cost limits (Emmanuel); depth/alias limits hand-written (no `graphql-depth-limit`, unmaintained) | STATUS |
