@@ -479,6 +479,7 @@ export class OrdersService {
         claimGuard,
       );
       if (!cancelled) throw this.changedMeanwhile(order.id);
+      if (order.couponId) await this.couponsService.releaseUsage(tx, order.id);
       for (const item of order.items) {
         const product = await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
         await this.inventoryService.logInventoryChange(tx, {

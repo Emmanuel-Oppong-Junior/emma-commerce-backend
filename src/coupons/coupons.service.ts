@@ -108,14 +108,31 @@ export class CouponsService {
   }
 
   /**
-   * Records a coupon usage event within an existing database transaction.
+   * Records a coupon usage event within an existing database transaction, re-checking the coupon there.
    * @param tx - The active Prisma transaction client.
    * @param couponId - The ID of the coupon being used.
    * @param userId - The ID of the user using the coupon.
    * @param orderId - The ID of the order the coupon is applied to.
+   * @throws BadRequestException if the coupon became inactive, expired or used up since it was validated.
    */
   async recordUsage(tx: Prisma.TransactionClient, couponId: string, userId: string, orderId: string): Promise<void> {
-    await this.couponsRepository.recordUsage(tx, couponId, userId, orderId);
+    // The increment locks the coupon row, so the count read back includes every committed use and concurrent
+    // checkouts queue here instead of all passing the earlier validateCoupon check. Throwing rolls the order back.
+    const coupon = await this.couponsRepository.recordUsage(tx, couponId, userId, orderId);
+    if (!coupon.isActive) throw new BadRequestException('This coupon is no longer active');
+    if (coupon.expiresAt && coupon.expiresAt < new Date()) throw new BadRequestException('This coupon has expired');
+    if (coupon.usageLimit !== null && coupon.usedCount > coupon.usageLimit) {
+      throw new BadRequestException('This coupon has reached its usage limit');
+    }
+  }
+
+  /**
+   * Gives back the coupon use recorded for an order (when it is cancelled or expires), within the caller's transaction.
+   * @param tx - The active Prisma transaction client.
+   * @param orderId - The ID of the order whose coupon use is released.
+   */
+  async releaseUsage(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
+    await this.couponsRepository.releaseUsage(tx, orderId);
   }
 
   private async findCouponOrThrow(id: string): Promise<Coupon> {

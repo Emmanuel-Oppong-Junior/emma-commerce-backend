@@ -179,13 +179,14 @@ describe('CouponsRepository', () => {
   });
 
   describe('recordUsage', () => {
-    it('should create a usage record and increment usedCount', async () => {
+    it('should create a usage record, increment usedCount and return the updated coupon', async () => {
+      const updated = { id: 'coupon1', usedCount: 1 };
       const mockTx = {
         couponUsage: { create: jest.fn().mockResolvedValue(undefined) },
-        coupon: { update: jest.fn().mockResolvedValue(undefined) },
+        coupon: { update: jest.fn().mockResolvedValue(updated) },
       };
 
-      await repository.recordUsage(mockTx as any, 'coupon1', 'user1', 'order1');
+      const result = await repository.recordUsage(mockTx as any, 'coupon1', 'user1', 'order1');
 
       expect(mockTx.couponUsage.create).toHaveBeenCalledWith({
         data: { couponId: 'coupon1', userId: 'user1', orderId: 'order1' },
@@ -194,6 +195,38 @@ describe('CouponsRepository', () => {
         where: { id: 'coupon1' },
         data: { usedCount: { increment: 1 } },
       });
+      expect(result).toBe(updated);
+    });
+  });
+
+  describe('releaseUsage', () => {
+    const mockTx = {
+      couponUsage: { findUnique: jest.fn(), delete: jest.fn() },
+      coupon: { update: jest.fn() },
+    };
+
+    beforeEach(() => jest.resetAllMocks());
+
+    it("deletes the order's usage and decrements the coupon's usedCount", async () => {
+      mockTx.couponUsage.findUnique.mockResolvedValue({ id: 'usage1', couponId: 'coupon1', orderId: 'order1' });
+
+      await repository.releaseUsage(mockTx as any, 'order1');
+
+      expect(mockTx.couponUsage.findUnique).toHaveBeenCalledWith({ where: { orderId: 'order1' } });
+      expect(mockTx.couponUsage.delete).toHaveBeenCalledWith({ where: { id: 'usage1' } });
+      expect(mockTx.coupon.update).toHaveBeenCalledWith({
+        where: { id: 'coupon1' },
+        data: { usedCount: { decrement: 1 } },
+      });
+    });
+
+    it('does nothing when the order used no coupon', async () => {
+      mockTx.couponUsage.findUnique.mockResolvedValue(null);
+
+      await repository.releaseUsage(mockTx as any, 'order1');
+
+      expect(mockTx.couponUsage.delete).not.toHaveBeenCalled();
+      expect(mockTx.coupon.update).not.toHaveBeenCalled();
     });
   });
 });

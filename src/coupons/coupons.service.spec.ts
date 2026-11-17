@@ -15,6 +15,7 @@ const mockCouponsRepository = {
   delete: jest.fn(),
   hasUserUsedCoupon: jest.fn(),
   recordUsage: jest.fn(),
+  releaseUsage: jest.fn(),
 };
 
 const fixedDate = new Date('2026-12-31T00:00:00.000Z');
@@ -231,13 +232,61 @@ describe('CouponsService', () => {
   });
 
   describe('recordUsage', () => {
+    const mockTx = {} as Prisma.TransactionClient;
+    const afterIncrement = (overrides: Partial<Coupon>) => ({ ...mockCoupon, expiresAt: null, ...overrides });
+
     it('should delegate to the repository', async () => {
-      const mockTx = {} as Prisma.TransactionClient;
-      mockCouponsRepository.recordUsage.mockResolvedValue(undefined);
+      mockCouponsRepository.recordUsage.mockResolvedValue(afterIncrement({ usedCount: 1 }));
 
       await service.recordUsage(mockTx, 'coupon1', 'user1', 'order1');
 
       expect(couponsRepository.recordUsage).toHaveBeenCalledWith(mockTx, 'coupon1', 'user1', 'order1');
+    });
+
+    it('accepts the use that reaches the limit exactly', async () => {
+      mockCouponsRepository.recordUsage.mockResolvedValue(afterIncrement({ usageLimit: 10, usedCount: 10 }));
+
+      await expect(service.recordUsage(mockTx, 'coupon1', 'user1', 'order1')).resolves.toBeUndefined();
+    });
+
+    it('rejects the use when a concurrent checkout already took the last one', async () => {
+      mockCouponsRepository.recordUsage.mockResolvedValue(afterIncrement({ usageLimit: 10, usedCount: 11 }));
+
+      await expect(service.recordUsage(mockTx, 'coupon1', 'user1', 'order1')).rejects.toThrow(
+        new BadRequestException('This coupon has reached its usage limit'),
+      );
+    });
+
+    it('accepts any number of uses when the coupon has no limit', async () => {
+      mockCouponsRepository.recordUsage.mockResolvedValue(afterIncrement({ usageLimit: null, usedCount: 5000 }));
+
+      await expect(service.recordUsage(mockTx, 'coupon1', 'user1', 'order1')).resolves.toBeUndefined();
+    });
+
+    it('rejects the use when the coupon was deactivated after it was validated', async () => {
+      mockCouponsRepository.recordUsage.mockResolvedValue(afterIncrement({ isActive: false, usedCount: 1 }));
+
+      await expect(service.recordUsage(mockTx, 'coupon1', 'user1', 'order1')).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects the use when the coupon expired after it was validated', async () => {
+      mockCouponsRepository.recordUsage.mockResolvedValue(
+        afterIncrement({ expiresAt: new Date(Date.now() - 1000), usedCount: 1 }),
+      );
+
+      await expect(service.recordUsage(mockTx, 'coupon1', 'user1', 'order1')).rejects.toThrow(
+        new BadRequestException('This coupon has expired'),
+      );
+    });
+  });
+
+  describe('releaseUsage', () => {
+    it("delegates to the repository with the caller's transaction", async () => {
+      const mockTx = {} as Prisma.TransactionClient;
+
+      await service.releaseUsage(mockTx, 'order1');
+
+      expect(couponsRepository.releaseUsage).toHaveBeenCalledWith(mockTx, 'order1');
     });
   });
 });

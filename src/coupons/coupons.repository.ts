@@ -58,8 +58,17 @@ export class CouponsRepository {
     return !!usage;
   }
 
-  async recordUsage(tx: Prisma.TransactionClient, couponId: string, userId: string, orderId: string): Promise<void> {
+  /** Records the use and returns the coupon as it is after the increment (row-locked until the tx ends). */
+  async recordUsage(tx: Prisma.TransactionClient, couponId: string, userId: string, orderId: string): Promise<Coupon> {
     await tx.couponUsage.create({ data: { couponId, userId, orderId } });
-    await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } });
+    return tx.coupon.update({ where: { id: couponId }, data: { usedCount: { increment: 1 } } });
+  }
+
+  /** Deletes the usage recorded for the order, if any, and gives the use back to the coupon. */
+  async releaseUsage(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
+    const usage = await tx.couponUsage.findUnique({ where: { orderId } });
+    if (!usage) return;
+    await tx.couponUsage.delete({ where: { id: usage.id } });
+    await tx.coupon.update({ where: { id: usage.couponId }, data: { usedCount: { decrement: 1 } } });
   }
 }

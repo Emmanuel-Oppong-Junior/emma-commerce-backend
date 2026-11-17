@@ -16,7 +16,7 @@ import { FulfillmentType } from '@prisma/client';
 import { ReturnsService } from '../returns/returns.service';
 
 const mockAuditService = { log: jest.fn() };
-const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn() };
+const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
 const mockTaxService = { getRateForCountry: jest.fn().mockResolvedValue(new Decimal('0.1')) };
 const mockInventoryService = { logInventoryChange: jest.fn().mockResolvedValue(undefined) };
 const mockNotificationsService = { sendOrderConfirmation: jest.fn(), sendOrderStatusUpdate: jest.fn() };
@@ -660,6 +660,26 @@ describe('OrdersService', () => {
 
       await expect(ordersService.deleteOrder('order1', 'admin1')).rejects.toThrow(/changed by another request/);
       expect(mockAuditService.log).not.toHaveBeenCalled();
+    });
+
+    it('gives the coupon use back in the same transaction when the cancelled order used a coupon', async () => {
+      const couponOrder = { ...mockOrder, couponId: 'coupon1' };
+      const stubTx = { id: 'tx' };
+      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
+      mockOrdersRepository.findById.mockResolvedValue(couponOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...couponOrder, status: OrderStatus.CANCELLED });
+
+      await ordersService.cancelOrder(mockUserId, 'order1');
+
+      expect(mockCouponsService.releaseUsage).toHaveBeenCalledWith(stubTx, 'order1');
+    });
+
+    it('releases no coupon use when the cancel lost the race to another request', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, couponId: 'coupon1' });
+      mockOrdersRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
+      expect(mockCouponsService.releaseUsage).not.toHaveBeenCalled();
     });
 
     it('writes one inventory log per item when cancelling, the only automatic restore', async () => {
