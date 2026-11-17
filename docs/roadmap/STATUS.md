@@ -5,7 +5,16 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ Next: parallel batch 3 (see **Up next** #1).
+- **Task:** Parallel batch 3 (2026-11-17): P0-I.2 + P0-I.3 (identity agent), P0-C.1 (payments agent), P0-F.4 (orchestrator) · **State:** in progress
+- **Worktrees** (based on `dev` `da2c42a`, under `.claude/worktrees/`):
+  - `b3-identity` · `fix/p0-i2-i3-sessions-social-login` · e2e DB `emma_wt_identity_test`
+  - `b3-payments` · `feat/p0-c1-payment-ledger-schema` · e2e DB `emma_wt_fulfil_test` (only migration in this batch)
+- P0-D.2 moved after C.1 (revenue depends on the new payment/refund tables). I.3 without email verification: never auto-link to an existing local account; require sign-in to link (I.4 later allows verified linking).
+- **Steps:**
+  - [x] worktrees created
+  - [x] P0-F.4 done (`ab01fcd`, docs only): CLAUDE.md gains project line, check-only commands, Non-negotiables (matched to current code; ADR-0004/0008/0014 still Proposed); WORKING-AGREEMENT §5 now records the commit/merge/push rule, branches from `dev`
+  - [ ] agents implementing ← **Next step** (if a session died: check each worktree's `git log dev..HEAD`)
+  - [ ] review, rebase, gates (unit + Linux e2e + migrate deploy + drift), merge, audit, push
 
 **Last completed:** P0-O.6 (`26efe7d`, migration `20261117210000_add_hot_query_indexes_drop_redundant`): adds `OrderItem(orderId)`, `Order(createdAt)`, `Order(status, createdAt)`; drops 9 redundant/unused indexes; keeps `Product(isActive, status)` (used by the public catalogue since P0-A.3); Payment reference unique left for P0-C.1. New e2e `db-indexes` failed 5/5 before the migration; after deploy the schema/DB drift check is empty. Unit 1050/1050, e2e 240/240, repro 13/21.
 
@@ -32,7 +41,7 @@ _None._ Next: parallel batch 3 (see **Up next** #1).
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | Batch 3 candidates (∥, nothing pending): P0-I.2 refresh-token rotation/revocation then P0-I.3 social-login linking (one identity agent, same module), P0-D.2 revenue definition (analytics), P0-F.4 CLAUDE.md working-agreement parts (docs) | now | one agent per module |
+| 1 | Batch 3 candidates (∥, nothing pending): P0-I.2 refresh-token rotation/revocation then P0-I.3 social-login linking (one identity agent, same module), P0-D.2 revenue definition (analytics; now after P0-C.1) | now | one agent per module |
 | 1b | P0-I.4 email verification (likely migration; after I.2, shares revoke-on-email-change), P0-D.1 audit log in privileged mutations (touches many modules: run alone) | after batch 3 | file overlap |
 | 3 | P0-C.1 payment ledger schema (ADR-0007, big migration) → C.2 → C.3 → C.4–C.7 (C.7 COD needs C.1's CashCollection) | sequential; C.1 can run alongside batch 3 (payment module only) | — (ADR-0007 Accepted 2026-11-17) |
 | 4 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
@@ -42,7 +51,7 @@ _None._ Next: parallel batch 3 (see **Up next** #1).
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
 |---|---|---|
-| P0-F Safety rails | 5 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
+| P0-F Safety rails | 6 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.4 (`ab01fcd`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
 | P0-A Request pipeline & access | **5 / 5** | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`), A.5 (`5e71ff2`) |
 | P0-B Orders & stock | 8 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`), B.4 (`53c3da4`), B.5 (`1d33fff`), B.6 (`ff15318`), B.7 (`97c1978`), B.8 (`53b736f`), B.9 (`c38316c`) |
 | P0-C Payments | 0 / 7 | |
