@@ -115,14 +115,17 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 Validated at startup by `src/config/env.validation.ts` (Joi); see `.env.example` for the full list.
 
 ```
-Required:  DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, JWT_RESET_SECRET (each >= 32 chars),
+Required:  NODE_ENV (development | test | production; no default),
+           DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, JWT_RESET_SECRET (each >= 32 chars),
            JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER,
            GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET,
            PAYSTACK_SECRET_KEY, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET
-Optional:  PORT, NODE_ENV, ALLOWED_ORIGINS, LOG_LEVEL, PAYSTACK_CALLBACK_URL,
+Production: ALLOWED_ORIGINS and REDIS_HOST are also required; placeholder secrets
+           (change-me, your-..., xxx, ...) and a JWT secret reused across the three are rejected
+Optional:  PORT, ALLOWED_ORIGINS, LOG_LEVEL, PAYSTACK_CALLBACK_URL,
            JWT_ACCESS_TOKEN_TTL, JWT_REFRESH_TOKEN_TTL, JWT_RESET_TOKEN_TTL,
            REDIS_HOST/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL,
-           OTEL_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT
+           OTEL_ENABLED ('true' | 'false'), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT (http(s) URI)
 Seeding:   SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD
 ```
 
