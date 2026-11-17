@@ -5,7 +5,7 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ All parallel-safe Phase 0 tasks are done. Remaining tasks need Emmanuel: P0-C.1 (ADR-0007 must be Accepted), P0-B.3/B.10/B.11 (stop-gap decisions), P0-O.2 (dependency approval), P0-F.3 (DB password rotation); see **Up next**.
+_None._ Next: parallel batch 3 (see **Up next** #1).
 
 **Last completed:** P0-O.6 (`26efe7d`, migration `20261117210000_add_hot_query_indexes_drop_redundant`): adds `OrderItem(orderId)`, `Order(createdAt)`, `Order(status, createdAt)`; drops 9 redundant/unused indexes; keeps `Product(isActive, status)` (used by the public catalogue since P0-A.3); Payment reference unique left for P0-C.1. New e2e `db-indexes` failed 5/5 before the migration; after deploy the schema/DB drift check is empty. Unit 1050/1050, e2e 240/240, repro 13/21.
 
@@ -32,7 +32,9 @@ _None._ All parallel-safe Phase 0 tasks are done. Remaining tasks need Emmanuel:
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 3 | P0-C.1 payment ledger schema (ADR-0007, big migration) → C.2 → C.3 | sequential | ADR-0007 still Proposed |
+| 1 | Batch 3 candidates (∥, nothing pending): P0-I.2 refresh-token rotation/revocation then P0-I.3 social-login linking (one identity agent, same module), P0-D.2 revenue definition (analytics), P0-F.4 CLAUDE.md working-agreement parts (docs) | now | one agent per module |
+| 1b | P0-I.4 email verification (likely migration; after I.2, shares revoke-on-email-change), P0-D.1 audit log in privileged mutations (touches many modules: run alone) | after batch 3 | file overlap |
+| 3 | P0-C.1 payment ledger schema (ADR-0007, big migration) → C.2 → C.3 → C.4–C.7 (C.7 COD needs C.1's CashCollection) | sequential | ADR-0007 still Proposed |
 | 4 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
 | 5 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
 | 6 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
