@@ -1,5 +1,6 @@
 import { Field, Float, InputType } from '@nestjs/graphql';
-import { IsBoolean, IsDateString, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { ProductStatusEnum } from '../enums/product.enum';
 
 @InputType()
 export class ProductFilterArgs {
@@ -25,6 +26,14 @@ export class ProductFilterArgs {
   @IsOptional()
   @IsString()
   subcategoryId?: string;
+
+  @Field(() => ProductStatusEnum, {
+    nullable: true,
+    description: 'Filter by publishing status (admin queries only; public queries always return PUBLISHED)',
+  })
+  @IsOptional()
+  @IsEnum(ProductStatusEnum)
+  status?: ProductStatusEnum;
 
   @Field(() => Boolean, {
     nullable: true,

@@ -42,7 +42,8 @@ export class BrandResolver {
   @Query(() => [Brand], { nullable: 'itemsAndList' })
   async brands(@Info() requestInfo?: GraphQLResolveInfo) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
-      excludedFields: [],
+      // products is resolved by BrandProductsResolver (published only, capped), never via this select.
+      excludedFields: ['products'],
       level: 1,
     });
     return this.brandService.getAllBrands(requestedFields);

@@ -64,13 +64,15 @@ export interface SeedResult {
   productIds: {
     prod1: string;
     prod2: string;
+    draft: string;
+    inactive: string;
   };
 }
 
 /**
  * Seeds the minimum set of records required across all e2e test suites:
  * three users (super admin, admin, regular user), one brand, one category,
- * and two products.
+ * two published products, one DRAFT product and one inactive product.
  *
  * Credentials used here mirror the constants in `auth.helper.ts`.
  *
@@ -134,6 +136,7 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
         quantity: 50,
         images: ['laptop.jpg'],
         isActive: true,
+        status: 'PUBLISHED',
         categoryId: category.id,
         brandId: brand.id,
       },
@@ -145,6 +148,31 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
         quantity: 100,
         images: ['phone.jpg'],
         isActive: true,
+        status: 'PUBLISHED',
+        categoryId: category.id,
+        brandId: brand.id,
+      },
+      {
+        id: 'seed_prod_draft',
+        name: 'Unreleased Tablet',
+        price: 299.99,
+        sku: 'SEED-TAB-DRAFT',
+        quantity: 10,
+        images: [],
+        isActive: true,
+        status: 'DRAFT',
+        categoryId: category.id,
+        brandId: brand.id,
+      },
+      {
+        id: 'seed_prod_inactive',
+        name: 'Discontinued Watch',
+        price: 199.99,
+        sku: 'SEED-WAT-OFF',
+        quantity: 5,
+        images: [],
+        isActive: false,
+        status: 'PUBLISHED',
         categoryId: category.id,
         brandId: brand.id,
       },
@@ -159,6 +187,6 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
     },
     categoryId: category.id,
     brandId: brand.id,
-    productIds: { prod1: 'seed_prod1', prod2: 'seed_prod2' },
+    productIds: { prod1: 'seed_prod1', prod2: 'seed_prod2', draft: 'seed_prod_draft', inactive: 'seed_prod_inactive' },
   };
 }

@@ -21,6 +21,15 @@ import { ReviewsLoader } from './loaders/reviews.loader';
 import { Variant } from '../variant/entities/variant.entity';
 import { Review } from '../review/entities/review.entity';
 
+// Field resolvers and nested product lists must never be loaded through the Prisma select.
+const RESOLVED_FIELDS = ['discountedPrice', 'appliedDiscount', 'variants', 'reviews', 'products'];
+
+const connectionSelect = (info?: GraphQLResolveInfo) =>
+  extractRequestedFieldsFromQuery(info!, { excludedFields: ['edges', 'cursor', 'node', ...RESOLVED_FIELDS], level: 3 });
+
+const productSelect = (info?: GraphQLResolveInfo) =>
+  extractRequestedFieldsFromQuery(info!, { excludedFields: [...RESOLVED_FIELDS] });
+
 @Resolver(() => Product)
 export class ProductsResolver {
   constructor(
@@ -87,7 +96,10 @@ export class ProductsResolver {
   }
 
   @Auth(AuthType.None)
-  @Query(() => ProductConnection, { name: 'products' })
+  @Query(() => ProductConnection, {
+    name: 'products',
+    description: 'Public catalogue: only active, PUBLISHED products, whatever filter is sent',
+  })
   findAll(
     @Args('paginationArgs', { type: () => PaginationArgs, nullable: true })
     paginationArgs: PaginationArgs = { first: 10 },
@@ -97,20 +109,44 @@ export class ProductsResolver {
     sortArgs: ProductSortArgs = {},
     @Info() requestInfo?: GraphQLResolveInfo,
   ) {
-    const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
-      excludedFields: ['edges', 'cursor', 'node', 'discountedPrice', 'appliedDiscount', 'variants', 'reviews'],
-      level: 3,
-    });
-    return this.productsService.findAll(paginationArgs, filterArgs, sortArgs, requestedFields);
+    return this.productsService.findAllPublished(paginationArgs, filterArgs, sortArgs, connectionSelect(requestInfo));
   }
 
   @Auth(AuthType.None)
-  @Query(() => Product, { name: 'product', nullable: true })
+  @Query(() => Product, {
+    name: 'product',
+    nullable: true,
+    description: 'Public catalogue: null unless the product is active and PUBLISHED',
+  })
   findOne(@Args('productId', { type: () => String }) productId: string, @Info() requestInfo?: GraphQLResolveInfo) {
-    const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
-      excludedFields: ['discountedPrice', 'appliedDiscount', 'variants', 'reviews'],
-    });
-    return this.productsService.findOne(productId, requestedFields);
+    return this.productsService.findPublishedById(productId, productSelect(requestInfo));
+  }
+
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Query(() => ProductConnection, {
+    name: 'adminProducts',
+    description: 'Admin: all products in any status, including DRAFT, ARCHIVED and inactive',
+  })
+  adminFindAll(
+    @Args('paginationArgs', { type: () => PaginationArgs, nullable: true })
+    paginationArgs: PaginationArgs = { first: 10 },
+    @Args('filterArgs', { type: () => ProductFilterArgs, nullable: true })
+    filterArgs: ProductFilterArgs = {},
+    @Args('sortArgs', { type: () => ProductSortArgs, nullable: true })
+    sortArgs: ProductSortArgs = {},
+    @Info() requestInfo?: GraphQLResolveInfo,
+  ) {
+    return this.productsService.findAll(paginationArgs, filterArgs, sortArgs, connectionSelect(requestInfo));
+  }
+
+  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @Query(() => Product, {
+    name: 'adminProduct',
+    nullable: true,
+    description: 'Admin: a product in any status',
+  })
+  adminFindOne(@Args('productId', { type: () => String }) productId: string, @Info() requestInfo?: GraphQLResolveInfo) {
+    return this.productsService.findOne(productId, productSelect(requestInfo));
   }
 
   @ResolveField(() => [Variant], { nullable: true })

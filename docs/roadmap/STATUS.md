@@ -5,7 +5,19 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-F.7 done and pushed (`9b3747b`, CI fix `2c8ac5c`). CI on `2c8ac5c`: `checks` ✓, `e2e` ✓ (first green run), `audit` ✓, `repro` ✗ as intended. The first e2e CI run had failed because the old `clearDatabase` (`test/e2e.utils.ts`) skipped `ReturnRequest`; it now delegates to `resetDb`. Take the first unblocked item in **Up next**.
+- **Task:** P0-A.3 — Public catalogue visibility (PRD-02, CAT-01, BRD-01)
+- **Branch:** `fix/P0-A.3-catalogue-visibility` (from `dev` @ `0fda172`) · **State:** in progress
+- **Steps:**
+  - [x] `PUBLIC_PRODUCT_WHERE` + `findAllPublished` / `findPublishedById` / `findPublishedIn` in products service; repo `findFirst` takes a select
+  - [x] `adminProducts` / `adminProduct`; `status` filter on `ProductFilterArgs`; resolver spec updated + admin tests
+  - [x] `src/products/nested-products.resolver.ts` (Category/SubCategory/Brand); `products` excluded from all product/category/brand selects; categories select forces `id`
+  - [x] Seeds: e2e + dev seeder products `PUBLISHED`; e2e seed adds DRAFT + inactive. Service visibility unit tests; `test/e2e/catalogue-visibility.e2e-spec.ts` 13/13
+  - [x] `schema.gql` regenerated; frontend docs (visibility note, admin queries, `status` filter)
+  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 784/784; repro 3/21; e2e in Linux node:20 container 197/197
+  - [ ] Commit/merge/push (waiting on Emmanuel); mark PRD-02/CAT-01/BRD-01 in audit; clear Active task  ← **Next step**
+- **Uncommitted work:** STATUS.md only
+
+**Previously:** P0-F.7 done and pushed (`9b3747b`, CI fix `2c8ac5c`). CI on `2c8ac5c`: `checks` ✓, `e2e` ✓ (first green run), `audit` ✓, `repro` ✗ as intended. The first e2e CI run had failed because the old `clearDatabase` (`test/e2e.utils.ts`) skipped `ReturnRequest`; it now delegates to `resetDb`. Take the first unblocked item in **Up next**.
 
 **Last completed:** P0-F.7. CI `e2e` job (Postgres 16 service, `scripts/write-test-env.js`, migrate deploy, test:e2e). Specs: 11 `createOrder` calls updated; `refreshToken` + `signOut` e2e restored. IAM-04 fixed (`jwtid` on tokens). `ConfigModule` ignores `.env` when `NODE_ENV=test`. Local e2e 184/184, unit 775/775. Local container `emma-e2e-pg` left running (`docker rm -f emma-e2e-pg` to remove).
 
@@ -54,6 +66,7 @@ Repro tests turned green: **3 / 21** (PLAT-01, IAM-07, SEC-01) (`test/repro/` on
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-17 | P0-A.3: admins see drafts via new `adminProducts`/`adminProduct` queries; public `products`/`product` always filtered (Emmanuel). Admin UI must switch its draft listing | STATUS |
 | 2026-11-16 | P0-A.2: public reviewer name = first name + last initial ("Kwame A."), "Customer" when no name (Emmanuel). Field name stays `Review.user`, type becomes `PublicProfile`; field middleware, not `fieldResolverEnhancers` (Claude, per ADR-0012) | STATUS |
 | 2026-11-16 | Force-pushed local `dev` over `origin/dev` (was `9f98050`, whose commits all remain in `origin/main`); local and remote histories are unrelated (Emmanuel) | git, STATUS |
 | 2026-11-16 | P0-F.6: npm audit gate blocks at critical with a checked-in allowlist of today's 6 known advisories (Emmanuel); CI on Node 20 to match the Dockerfile; unused `adminToken` deleted now so lint can be a gate (overrides the P0-F.1 deferral) | STATUS |

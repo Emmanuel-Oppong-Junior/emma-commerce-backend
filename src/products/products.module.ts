@@ -10,10 +10,18 @@ import { ProductsLoader } from './loaders/products.loader';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ProductsRepository } from './products.repository';
 import { TaxModule } from '../tax/tax.module';
+import {
+  BrandProductsResolver,
+  CategoryProductsResolver,
+  SubCategoryProductsResolver,
+} from './nested-products.resolver';
 
 @Module({
   providers: [
     ProductsResolver,
+    CategoryProductsResolver,
+    SubCategoryProductsResolver,
+    BrandProductsResolver,
     ProductsService,
     ProductsRepository,
     DiscountLoader,

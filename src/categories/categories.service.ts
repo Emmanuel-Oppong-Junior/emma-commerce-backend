@@ -44,7 +44,7 @@ export class CategoriesService {
     }
 
     const queryOption: Prisma.CategoryFindManyArgs = { orderBy: { name: 'asc' } };
-    if (hasSelectFilter) queryOption.select = requestedFields;
+    if (hasSelectFilter) queryOption.select = { ...requestedFields, id: true };
     const categories = await this.categoriesRepository.findAll(queryOption);
 
     if (!hasSelectFilter) {

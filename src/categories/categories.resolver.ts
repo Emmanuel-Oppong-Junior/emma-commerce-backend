@@ -32,7 +32,8 @@ export class CategoriesResolver {
   })
   findAll(@Info() requestInfo?: GraphQLResolveInfo) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {
-      excludedFields: [],
+      // products is resolved by CategoryProductsResolver (published only, capped), never via this select.
+      excludedFields: ['products'],
       level: 1,
     });
     return this.categoriesService.findAll(requestedFields);

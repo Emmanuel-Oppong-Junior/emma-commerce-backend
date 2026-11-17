@@ -8,7 +8,8 @@ import { SortOrder } from '../commons/enums/sort-order.enum';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
 import { PaginationArgs } from '../commons/dto/paginate.args';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { ProductStatusEnum } from './enums/product.enum';
 
 const mockProductsRepository = {
   create: jest.fn(),
@@ -224,6 +225,64 @@ describe('ProductsService', () => {
         expect.any(Object),
         undefined,
       );
+    });
+  });
+
+  describe('public visibility', () => {
+    const published = { isActive: true, status: 'PUBLISHED' };
+
+    it('forces active and PUBLISHED on the public list, overriding the client filter', async () => {
+      mockProductsRepository.findMany.mockResolvedValue([]);
+      mockProductsRepository.count.mockResolvedValue(0);
+
+      await service.findAllPublished(
+        { first: 5 },
+        { categoryId: 'cat1', isActive: false, status: ProductStatusEnum.DRAFT },
+      );
+
+      const where = { categoryId: 'cat1', ...published };
+      expect(productsRepository.findMany).toHaveBeenCalledWith(
+        expect.any(Object),
+        where,
+        expect.any(Object),
+        undefined,
+      );
+      expect(productsRepository.count).toHaveBeenCalledWith(where);
+    });
+
+    it('lets the admin list filter by any status and inactive products', async () => {
+      mockProductsRepository.findMany.mockResolvedValue([]);
+      mockProductsRepository.count.mockResolvedValue(0);
+
+      await service.findAll({ first: 5 }, { isActive: false, status: ProductStatusEnum.ARCHIVED });
+
+      expect(productsRepository.count).toHaveBeenCalledWith({ isActive: false, status: 'ARCHIVED' });
+    });
+
+    it('looks up a single public product only among published ones', async () => {
+      mockProductsRepository.findFirst.mockResolvedValue(null);
+
+      const result = await service.findPublishedById('draft-1', { name: true });
+
+      expect(productsRepository.findFirst).toHaveBeenCalledWith({ id: 'draft-1', ...published }, { name: true });
+      expect(result).toBeNull();
+    });
+
+    it('returns the newest published products of a parent, capped by first', async () => {
+      mockProductsRepository.findMany.mockResolvedValue([]);
+
+      await service.findPublishedIn({ brandId: 'brand-1' }, 20);
+
+      expect(productsRepository.findMany).toHaveBeenCalledWith(
+        { take: 20 },
+        { brandId: 'brand-1', ...published },
+        { createdAt: 'desc' },
+      );
+    });
+
+    it.each([0, 101, 2.5])('rejects first = %p', async (first) => {
+      await expect(service.findPublishedIn({ categoryId: 'cat1' }, first)).rejects.toThrow(BadRequestException);
+      expect(productsRepository.findMany).not.toHaveBeenCalled();
     });
   });
 

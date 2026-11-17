@@ -129,6 +129,7 @@ async function createProducts() {
       price: new Prisma.Decimal(faker.number.int({ min: 10, max: 1000 })),
       quantity: faker.number.int({ max: 1000 }),
       isActive: true,
+      status: 'PUBLISHED',
       description: faker.lorem.paragraph({ min: 3, max: 10 }),
       categoryId,
       subcategoryId:

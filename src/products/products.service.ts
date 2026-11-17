@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
@@ -10,6 +10,9 @@ import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { ProductsRepository } from './products.repository';
 import { TaxService } from '../tax/tax.service';
+
+export const PUBLIC_PRODUCT_WHERE = { isActive: true, status: 'PUBLISHED' } satisfies Prisma.ProductWhereInput;
+export const MAX_NESTED_PRODUCTS = 100;
 
 @Injectable()
 export class ProductsService {
@@ -68,8 +71,43 @@ export class ProductsService {
     sort: ProductSortArgs = {},
     requestedData?: Prisma.ProductSelect,
   ): Promise<ProductConnection> {
+    return this.findPage(paginate, this.buildWhereClause(filter), sort, requestedData);
+  }
+
+  async findAllPublished(
+    paginate: PaginationArgs,
+    filter: ProductFilterArgs = {},
+    sort: ProductSortArgs = {},
+    requestedData?: Prisma.ProductSelect,
+  ): Promise<ProductConnection> {
+    return this.findPage(paginate, { ...this.buildWhereClause(filter), ...PUBLIC_PRODUCT_WHERE }, sort, requestedData);
+  }
+
+  async findPublishedById(id: string, requestedFields: Prisma.ProductSelect = {}): Promise<Product | null> {
+    return this.productsRepository.findFirst({ id, ...PUBLIC_PRODUCT_WHERE }, requestedFields);
+  }
+
+  async findPublishedIn(
+    parent: Pick<Prisma.ProductWhereInput, 'categoryId' | 'subcategoryId' | 'brandId'>,
+    first: number,
+  ): Promise<Product[]> {
+    if (!Number.isInteger(first) || first < 1 || first > MAX_NESTED_PRODUCTS) {
+      throw new BadRequestException(`first must be an integer from 1 to ${MAX_NESTED_PRODUCTS}, got ${first}`);
+    }
+    return this.productsRepository.findMany(
+      { take: first },
+      { ...parent, ...PUBLIC_PRODUCT_WHERE },
+      { createdAt: 'desc' },
+    );
+  }
+
+  private async findPage(
+    paginate: PaginationArgs,
+    whereClause: Prisma.ProductWhereInput,
+    sort: ProductSortArgs,
+    requestedData?: Prisma.ProductSelect,
+  ): Promise<ProductConnection> {
     const paginationOptions = this.buildPaginationOptions(paginate);
-    const whereClause = this.buildWhereClause(filter);
     const orderBy = this.buildOrderByClause(sort);
 
     const [products, totalCount] = await Promise.all([
@@ -185,6 +223,7 @@ export class ProductsService {
       categoryId,
       subcategoryId,
       isActive,
+      status,
       search,
       createdAfter,
       priceMin,
@@ -202,6 +241,7 @@ export class ProductsService {
       ...(categoryId && { categoryId }),
       ...(subcategoryId && { subcategoryId }),
       ...(isActive !== undefined && { isActive }),
+      ...(status && { status }),
       ...(search && {
         OR: [
           { name: { search: search.trim().split(/\s+/).join(' & ') } },

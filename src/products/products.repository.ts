@@ -45,8 +45,10 @@ export class ProductsRepository {
     return this.prisma.product.findUnique(opts);
   }
 
-  async findFirst(where: Prisma.ProductWhereInput): Promise<Product | null> {
-    return this.prisma.product.findFirst({ where });
+  async findFirst(where: Prisma.ProductWhereInput, select?: Prisma.ProductSelect): Promise<Product | null> {
+    const opts: Prisma.ProductFindFirstArgs = { where };
+    if (select && Object.keys(select).length) opts.select = { ...select, id: true };
+    return this.prisma.product.findFirst(opts);
   }
 
   async findMany(

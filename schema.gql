@@ -47,7 +47,10 @@ type Brand {
   id: ID!
   logo: String
   name: String!
-  products: [Product!]
+  products(
+    """Maximum number of products to return (1–100), newest first"""
+    first: Int! = 20
+  ): [Product!]
   updatedAt: DateTime!
 }
 
@@ -126,7 +129,10 @@ type Category {
   name: String!
 
   """List of products belonging to this category (empty if none)"""
-  products: [Product!]!
+  products(
+    """Maximum number of products to return (1–100), newest first"""
+    first: Int! = 20
+  ): [Product!]!
 
   """List of subcategories under this category (empty if none)"""
   subcategories: [SubCategory!]!
@@ -1089,6 +1095,11 @@ input ProductFilterArgs {
   """Filter by name, description, or tags (partial match)"""
   search: String
 
+  """
+  Filter by publishing status (admin queries only; public queries always return PUBLISHED)
+  """
+  status: ProductStatus
+
   """Filter by subcategory name"""
   subCategoryName: String
 
@@ -1156,6 +1167,14 @@ type Query {
   Admin: retrieves addresses. SUPER_ADMIN may omit userId to get all; ADMIN must supply userId.
   """
   addresses(userId: String): [Address!]!
+
+  """Admin: a product in any status"""
+  adminProduct(productId: String!): Product
+
+  """
+  Admin: all products in any status, including DRAFT, ARCHIVED and inactive
+  """
+  adminProducts(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs, sortArgs: ProductSortArgs): ProductConnection!
   brand(id: String!): Brand
   brands: [Brand]
 
@@ -1204,6 +1223,8 @@ type Query {
 
   """Get all pickup locations (admin only)"""
   pickupLocations: [PickupLocationEntity!]!
+
+  """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
 
   """Get inventory logs for a product (admin only)"""
@@ -1214,6 +1235,10 @@ type Query {
 
   """Retrieves all variants for a product"""
   productVariants(productId: String!): [Variant!]!
+
+  """
+  Public catalogue: only active, PUBLISHED products, whatever filter is sent
+  """
   products(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs, sortArgs: ProductSortArgs): ProductConnection!
 
   """Get all return requests (admin only)"""
@@ -1462,7 +1487,10 @@ type SubCategory {
 
   """Name of the category"""
   name: String!
-  products: [Product!]
+  products(
+    """Maximum number of products to return (1–100), newest first"""
+    first: Int! = 20
+  ): [Product!]
 
   """Timestamp when the sub category was last updated"""
   updatedAt: DateTime!

@@ -465,12 +465,14 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 ### 2.3 Products
 
+> **Visibility:** the public `products` and `product` queries only ever return products that are active **and** `PUBLISHED`; `isActive`/`status` sent in `filterArgs` cannot widen that. `product` returns `null` for a draft, archived or inactive product. Admins list and open products in any state with `adminProducts` / `adminProduct`. Nested `products` on `Category`, `SubCategory` and `Brand` also return published products only, newest first, capped by `first` (default 20, 1–100; anything else is an error).
+
 ---
 
 #### `products`
 - **Type**: Query
 - **Auth Required**: No
-- **Description**: Cursor-paginated, filtered product list.
+- **Description**: Cursor-paginated, filtered list of **published, active** products only.
 
 **Input: `PaginationArgs` + `ProductFilterArgs`**
 
@@ -489,7 +491,8 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
   categoryName?: string;
   subCategoryName?: string;
   subcategoryId?: string;
-  isActive?: boolean;         // Default true
+  isActive?: boolean;         // Default true; ignored by public queries
+  status?: ProductStatus;     // DRAFT | PUBLISHED | ARCHIVED; ignored by public queries
   search?: string;            // Partial match against name, description, tags
   createdAfter?: string;      // ISO date string
   priceMin?: number;          // Inclusive minimum price
@@ -583,7 +586,24 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 - **Type**: Query
 - **Auth Required**: No
 - **Args**: `productId: String!`
-- **Response**: `Product | null`
+- **Response**: `Product | null` (`null` unless the product is active and `PUBLISHED`)
+
+---
+
+#### `adminProducts` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Roles**: `ADMIN`, `SUPER_ADMIN`
+- **Args**: same as `products` (`paginationArgs`, `filterArgs`, `sortArgs`)
+- **Description**: Products in any status, including `DRAFT`, `ARCHIVED` and inactive. Use `filterArgs.status` / `filterArgs.isActive` to narrow. Omit `filterArgs` entirely to get every product.
+- **Response**: `ProductConnection`
+
+---
+
+#### `adminProduct` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Roles**: `ADMIN`, `SUPER_ADMIN`
+- **Args**: `productId: String!`
+- **Response**: `Product | null` (any status)
 
 ---
 
