@@ -602,6 +602,64 @@ describe('Authentication (e2e)', () => {
     });
   });
 
+  // ─── Social login account linking (provider HTTP mocked) ─────────────────────
+
+  describe('social login account linking', () => {
+    let fetchMock: jest.SpyInstance;
+    const GOOGLE_SIGN_IN = `
+      mutation Google($input: SocialLoginInput!) {
+        signInWithGoogle(input: $input) {
+          accessToken
+          refreshToken
+        }
+      }
+    `;
+
+    const googleVouchesFor = (sub: string, email: string) =>
+      fetchMock.mockImplementation((url: URL) => {
+        const body =
+          url.hostname === 'oauth2.googleapis.com'
+            ? { sub, aud: process.env.GOOGLE_CLIENT_ID }
+            : { sub, email, email_verified: true };
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+      });
+
+    beforeEach(() => {
+      fetchMock = jest.spyOn(global, 'fetch');
+    });
+
+    afterEach(() => fetchMock.mockRestore());
+
+    it('does not let a Google sign-in enter an account someone pre-registered with that email', async () => {
+      await signUpUser(app, { name: 'Attacker', email: 'victim@gmail.com', password: 'Password@1' });
+      googleVouchesFor('google-victim', 'victim@gmail.com');
+
+      const res = await gqlRequest(app, GOOGLE_SIGN_IN, { input: { token: 'victim-google-token' } }).expect(200);
+
+      expect(res.body.data).toBeNull();
+      expect(res.body.errors[0].extensions.code).toBe('CONFLICT');
+      expect(res.body.errors[0].message).toMatch(/sign in with your email and password/i);
+      expect(await prisma.authProvider.count({ where: { providerId: 'google-victim' } })).toBe(0);
+    });
+
+    it('creates and links a new account for a Google user with no existing account', async () => {
+      googleVouchesFor('google-newcomer', 'newcomer@gmail.com');
+
+      const res = await gqlRequest(app, GOOGLE_SIGN_IN, { input: { token: 'newcomer-google-token' } }).expect(200);
+
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.signInWithGoogle.refreshToken).toEqual(expect.any(String));
+      const link = await prisma.authProvider.findUniqueOrThrow({
+        where: { providerId: 'google-newcomer' },
+        include: { user: true },
+      });
+      expect(link.user.email).toBe('newcomer@gmail.com');
+
+      const again = await gqlRequest(app, GOOGLE_SIGN_IN, { input: { token: 'newcomer-google-token' } }).expect(200);
+      expect(again.body.errors).toBeUndefined();
+    });
+  });
+
   // ─── Social login (mocked providers) ─────────────────────────────────────────
 
   describe('signInWithGoogle', () => {

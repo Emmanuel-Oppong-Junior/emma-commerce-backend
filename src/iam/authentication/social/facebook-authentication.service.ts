@@ -1,22 +1,25 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHmac } from 'crypto';
 import { AuthenticationService } from '../authentication.service';
 import { UsersService } from '../../../users/users.service';
 import { PROVIDERS } from '../../iam.constants';
+import { fetchProviderJson } from './fetch-provider-json';
+
+const GRAPH_API_URL = 'https://graph.facebook.com';
+const INVALID_TOKEN = 'Invalid or expired Facebook token';
 
 interface FacebookDebugTokenResponse {
-  data: {
-    app_id: string;
-    is_valid: boolean;
-    user_id: string;
-    error?: { message: string };
+  data?: {
+    app_id?: string;
+    is_valid?: boolean;
+    user_id?: string;
   };
 }
 
 interface FacebookUserResponse {
-  id: string;
+  id?: string;
   email?: string;
-  error?: { message: string };
 }
 
 @Injectable()
@@ -34,10 +37,7 @@ export class FacebookAuthenticationService {
   }
 
   async authenticate(token: string) {
-    const { facebookId, email } = await this.getUserDetailsFromToken(token);
-    if (!email) {
-      throw new UnauthorizedException('Facebook account must have an email address to sign in');
-    }
+    const { facebookId, email } = await this.getVerifiedProfile(token);
     const user = await this.userService.findUserByProviderId(facebookId);
     if (user) {
       return this.authService.generateTokens(user);
@@ -46,28 +46,34 @@ export class FacebookAuthenticationService {
     return this.authService.generateTokens(newUser);
   }
 
-  private async getUserDetailsFromToken(token: string) {
-    await this.verifyToken(token);
+  private async getVerifiedProfile(token: string) {
+    const facebookUserId = await this.verifyTokenWasIssuedToThisApp(token);
 
-    const response = await fetch(`https://graph.facebook.com/me?fields=id,email&access_token=${token}`);
-    const userData: FacebookUserResponse = await response.json();
-
-    if (userData.error || !userData.id) {
-      throw new UnauthorizedException('Could not retrieve Facebook user data');
+    const meUrl = new URL(`${GRAPH_API_URL}/me`);
+    meUrl.searchParams.set('fields', 'id,email');
+    meUrl.searchParams.set('access_token', token);
+    meUrl.searchParams.set('appsecret_proof', createHmac('sha256', this.appSecret).update(token).digest('hex'));
+    const me = await fetchProviderJson<FacebookUserResponse>(
+      PROVIDERS.facebook,
+      meUrl,
+      'Could not retrieve Facebook user data',
+    );
+    if (me.id !== facebookUserId) throw new UnauthorizedException(INVALID_TOKEN);
+    if (!me.email) {
+      throw new UnauthorizedException('Facebook account must have an email address to sign in');
     }
 
-    return { facebookId: userData.id, email: userData.email };
+    return { facebookId: me.id, email: me.email };
   }
 
-  private async verifyToken(token: string) {
-    const appToken = `${this.appId}|${this.appSecret}`;
-    const response = await fetch(
-      `https://graph.facebook.com/debug_token?input_token=${token}&access_token=${appToken}`,
-    );
-    const debugData: FacebookDebugTokenResponse = await response.json();
-
-    if (!debugData.data.is_valid || debugData.data.app_id !== this.appId) {
-      throw new UnauthorizedException('Invalid or expired Facebook token');
+  private async verifyTokenWasIssuedToThisApp(token: string): Promise<string> {
+    const debugUrl = new URL(`${GRAPH_API_URL}/debug_token`);
+    debugUrl.searchParams.set('input_token', token);
+    debugUrl.searchParams.set('access_token', `${this.appId}|${this.appSecret}`);
+    const { data } = await fetchProviderJson<FacebookDebugTokenResponse>(PROVIDERS.facebook, debugUrl, INVALID_TOKEN);
+    if (data?.is_valid !== true || data.app_id !== this.appId || !data.user_id) {
+      throw new UnauthorizedException(INVALID_TOKEN);
     }
+    return data.user_id;
   }
 }

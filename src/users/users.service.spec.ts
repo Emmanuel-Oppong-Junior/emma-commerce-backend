@@ -7,7 +7,7 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { User } from '@prisma/client';
 import { Role } from './enums/role.enum';
 import { UpdateUserInput } from './dto/update-user.input';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 
 const mockUsersRepository = {
@@ -112,18 +112,26 @@ describe('UsersService', () => {
       expect(result.email).toEqual(email);
     });
 
-    it('should link auth provider to existing user when email already exists', async () => {
-      const provider = 'google';
-      const providerId = 'google123';
-      const email = 'test@example.com';
-
+    it('refuses to attach a social identity to an existing account with the same email (pre-hijack)', async () => {
       mockUsersRepository.findByEmail.mockResolvedValue(mockUser);
-      mockUsersRepository.createAuthProvider.mockResolvedValue(undefined);
 
-      const result = await service.createUserByAuthProvider(providerId, provider, email);
+      await expect(service.createUserByAuthProvider('google123', 'Google', mockUser.email)).rejects.toThrow(
+        new ConflictException(
+          'An account with this email already exists. Sign in with your email and password, then link Google from your account.',
+        ),
+      );
+      expect(usersRepository.createAuthProvider).not.toHaveBeenCalled();
+      expect(usersRepository.createWithAuthProvider).not.toHaveBeenCalled();
+    });
 
-      expect(usersRepository.createAuthProvider).toHaveBeenCalledWith(mockUser.id, providerId, provider);
-      expect(result).toEqual(mockUser);
+    it('matches the existing account regardless of the case the provider uses for the email', async () => {
+      mockUsersRepository.findByEmail.mockResolvedValue(mockUser);
+
+      await expect(service.createUserByAuthProvider('google123', 'Google', ' John@Example.COM ')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(usersRepository.findByEmail).toHaveBeenCalledWith('john@example.com');
+      expect(usersRepository.createWithAuthProvider).not.toHaveBeenCalled();
     });
   });
 

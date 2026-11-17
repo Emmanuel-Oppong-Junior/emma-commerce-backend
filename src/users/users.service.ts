@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateUserInput } from './dto/create-user.input';
 import { UpdateUserInput } from './dto/update-user.input';
 import { HashingService } from '../iam/hashing/hashing.service';
@@ -47,29 +47,32 @@ export class UsersService {
   }
 
   /**
-   * Creates a user via an OAuth provider, or links the provider to an existing account if the email already exists.
+   * Creates a new user for a social identity that is not linked to any account yet.
+   * Never attaches the identity to an existing account with the same email: local emails are not verified,
+   * so anyone could have registered the address first and would then share the account with its owner.
    * @param providerId - The unique identifier assigned by the OAuth provider.
-   * @param provider - The OAuth provider name (e.g., "google", "facebook").
-   * @param email - Optional email address from the provider.
+   * @param provider - The OAuth provider name (e.g., "Google", "Facebook").
+   * @param email - The email address the provider vouches for.
    * @param name - Optional display name from the provider.
    * @param profilePicture - Optional profile picture URL from the provider.
-   * @returns The created or existing user record.
+   * @returns The created user record.
+   * @throws ConflictException if an account with this email already exists.
    */
   async createUserByAuthProvider(
     providerId: string,
     provider: string,
-    email?: string,
+    email: string,
     name?: string,
     profilePicture?: string,
   ) {
-    if (email) {
-      const existingUser = await this.findUserByEmail(email);
-      if (existingUser) {
-        await this.usersRepository.createAuthProvider(existingUser.id, providerId, provider);
-        return existingUser;
-      }
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingUser = await this.findUserByEmail(normalizedEmail);
+    if (existingUser) {
+      throw new ConflictException(
+        `An account with this email already exists. Sign in with your email and password, then link ${provider} from your account.`,
+      );
     }
-    return this.usersRepository.createWithAuthProvider(email, name, profilePicture, providerId, provider);
+    return this.usersRepository.createWithAuthProvider(normalizedEmail, name, profilePicture, providerId, provider);
   }
 
   /**

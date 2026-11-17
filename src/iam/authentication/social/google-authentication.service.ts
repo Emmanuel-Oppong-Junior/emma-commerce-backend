@@ -3,34 +3,39 @@ import { ConfigService } from '@nestjs/config';
 import { AuthenticationService } from '../authentication.service';
 import { UsersService } from '../../../users/users.service';
 import { PROVIDERS } from '../../iam.constants';
+import { fetchProviderJson } from './fetch-provider-json';
+
+const GOOGLE_TOKENINFO_URL = 'https://oauth2.googleapis.com/tokeninfo';
+const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
+const INVALID_TOKEN = 'Invalid Google token';
 
 interface GoogleTokenInfo {
   sub?: string;
   aud?: string;
-  error_description?: string;
 }
 
 interface GoogleUserInfo {
   sub?: string;
   email?: string;
+  email_verified?: boolean;
   name?: string;
   picture?: string;
-  error?: { message: string };
 }
 
 @Injectable()
 export class GoogleAuthenticationService {
+  private readonly clientId: string;
+
   constructor(
     private readonly configService: ConfigService,
     private readonly authService: AuthenticationService,
     private readonly userService: UsersService,
-  ) {}
+  ) {
+    this.clientId = this.configService.getOrThrow<string>('GOOGLE_CLIENT_ID');
+  }
 
   async authenticate(token: string) {
-    const { email, googleId, name, picture } = await this.getUserDetailsFromToken(token);
-    if (!email) {
-      throw new UnauthorizedException('Google account must have an email address to sign in');
-    }
+    const { googleId, email, name, picture } = await this.getVerifiedProfile(token);
     const user = await this.userService.findUserByProviderId(googleId);
     if (user) {
       return this.authService.generateTokens(user);
@@ -39,31 +44,29 @@ export class GoogleAuthenticationService {
     return this.authService.generateTokens(newUser);
   }
 
-  private async getUserDetailsFromToken(token: string) {
-    const [tokenInfoRes, userInfoRes] = await Promise.all([
-      fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${token}`),
-      fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${token}`),
-    ]);
-
-    const [tokenInfo, userInfo]: [GoogleTokenInfo, GoogleUserInfo] = await Promise.all([
-      tokenInfoRes.json(),
-      userInfoRes.json(),
-    ]);
-
-    if (tokenInfo.error_description || !tokenInfo.sub) {
-      throw new UnauthorizedException('Invalid Google token');
-    }
-
-    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
-    if (tokenInfo.aud !== clientId) {
+  private async getVerifiedProfile(token: string) {
+    const tokenInfoUrl = new URL(GOOGLE_TOKENINFO_URL);
+    tokenInfoUrl.searchParams.set('access_token', token);
+    const tokenInfo = await fetchProviderJson<GoogleTokenInfo>(PROVIDERS.google, tokenInfoUrl, INVALID_TOKEN);
+    if (!tokenInfo.sub) throw new UnauthorizedException(INVALID_TOKEN);
+    if (tokenInfo.aud !== this.clientId) {
       throw new UnauthorizedException('Google token was not issued for this application');
     }
 
-    return {
-      googleId: tokenInfo.sub,
-      email: userInfo.email,
-      name: userInfo.name,
-      picture: userInfo.picture,
-    };
+    const userInfo = await fetchProviderJson<GoogleUserInfo>(
+      PROVIDERS.google,
+      new URL(GOOGLE_USERINFO_URL),
+      INVALID_TOKEN,
+      { Authorization: `Bearer ${token}` },
+    );
+    if (userInfo.sub !== tokenInfo.sub) throw new UnauthorizedException(INVALID_TOKEN);
+    if (!userInfo.email) {
+      throw new UnauthorizedException('Google account must have an email address to sign in');
+    }
+    if (userInfo.email_verified !== true) {
+      throw new UnauthorizedException('Google account email address is not verified');
+    }
+
+    return { googleId: tokenInfo.sub, email: userInfo.email, name: userInfo.name, picture: userInfo.picture };
   }
 }
