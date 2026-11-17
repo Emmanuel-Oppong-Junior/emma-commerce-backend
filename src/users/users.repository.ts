@@ -4,6 +4,9 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type RefreshRotationOutcome = 'rotated' | 'reused' | 'invalid';
 
+// A replay this soon after the token was rotated is a simultaneous refresh (two tabs), not theft.
+const CONCURRENT_REFRESH_GRACE_MS = 10_000;
+
 @Injectable()
 export class UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -137,6 +140,10 @@ export class UsersRepository {
       if (count === 0) {
         const presented = await tx.refreshToken.findUnique({ where: { tokenHash: oldTokenHash } });
         if (!presented?.revoked || presented.userId !== userId) return 'invalid';
+        const justRotated = await tx.refreshToken.count({
+          where: { userId, revoked: false, createdAt: { gte: new Date(now.getTime() - CONCURRENT_REFRESH_GRACE_MS) } },
+        });
+        if (justRotated > 0) return 'invalid';
         await tx.refreshToken.updateMany({ where: { userId, revoked: false }, data: { revoked: true } });
         return 'reused';
       }

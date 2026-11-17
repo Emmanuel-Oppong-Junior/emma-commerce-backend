@@ -40,6 +40,7 @@ const mockPrismaRefreshToken = {
   updateMany: jest.fn(),
   deleteMany: jest.fn(),
   create: jest.fn(),
+  count: jest.fn(),
 };
 
 const mockPrisma = {
@@ -318,6 +319,7 @@ describe('UsersRepository', () => {
         runTransactionInline();
         mockPrismaRefreshToken.updateMany.mockResolvedValue({ count: 0 });
         mockPrismaRefreshToken.findUnique.mockResolvedValue({ tokenHash: 'old-hash', userId: 'user1', revoked: true });
+        mockPrismaRefreshToken.count.mockResolvedValue(0);
 
         const outcome = await repository.rotateRefreshToken('old-hash', 'user1', 'new-hash', expiresAt);
 
@@ -326,6 +328,22 @@ describe('UsersRepository', () => {
           where: { userId: 'user1', revoked: false },
           data: { revoked: true },
         });
+        expect(mockPrismaRefreshToken.create).not.toHaveBeenCalled();
+      });
+
+      it('treats a revoked token as a lost concurrent refresh, not reuse, while its replacement is seconds old', async () => {
+        runTransactionInline();
+        mockPrismaRefreshToken.updateMany.mockResolvedValue({ count: 0 });
+        mockPrismaRefreshToken.findUnique.mockResolvedValue({ tokenHash: 'old-hash', userId: 'user1', revoked: true });
+        mockPrismaRefreshToken.count.mockResolvedValue(1);
+
+        const outcome = await repository.rotateRefreshToken('old-hash', 'user1', 'new-hash', expiresAt);
+
+        expect(outcome).toBe('invalid');
+        expect(mockPrismaRefreshToken.count).toHaveBeenCalledWith({
+          where: { userId: 'user1', revoked: false, createdAt: { gte: expect.any(Date) } },
+        });
+        expect(mockPrismaRefreshToken.updateMany).toHaveBeenCalledTimes(1);
         expect(mockPrismaRefreshToken.create).not.toHaveBeenCalled();
       });
 

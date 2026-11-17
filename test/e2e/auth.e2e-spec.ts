@@ -290,15 +290,22 @@ describe('Authentication (e2e)', () => {
       responses
         .filter((res) => res.body.errors !== undefined)
         .forEach((res) => expect(res.body.errors[0].message).toMatch(/invalid or expired/i));
-      // The losing duplicates count as reuse, so the whole session (including the winner's new token) is revoked.
-      expect(await prisma.refreshToken.count({ where: { userId, revoked: false } })).toBe(0);
+      // Losers of a simultaneous refresh (e.g. two tabs) are refused without ending the winner's session.
+      expect(await prisma.refreshToken.count({ where: { userId, revoked: false } })).toBe(1);
+      const next = await refresh(succeeded[0].body.data.refreshToken.refreshToken);
+      expect(next.body.errors).toBeUndefined();
     });
 
     it('kills the session when an already-rotated token is presented again', async () => {
-      const { refreshToken: original } = await newAccount();
+      const { refreshToken: original, userId } = await newAccount();
       const rotated = await refresh(original);
       expect(rotated.body.errors).toBeUndefined();
       const current = rotated.body.data.refreshToken.refreshToken as string;
+      // Move the rotation outside the concurrent-refresh grace window, as a later replay would be.
+      await prisma.refreshToken.updateMany({
+        where: { userId, revoked: false },
+        data: { createdAt: new Date(Date.now() - 60_000) },
+      });
 
       const replay = await refresh(original);
       expect(replay.body.errors[0].message).toMatch(/invalid or expired/i);
