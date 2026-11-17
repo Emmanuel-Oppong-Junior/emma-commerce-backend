@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CartService } from '../cart/cart.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '@prisma/client';
 import { OrdersService } from './order.service';
 import { OrdersRepository } from './order.repository';
@@ -29,8 +29,10 @@ const mockOrdersRepository = {
   findByUser: jest.fn(),
   findAll: jest.fn(),
   create: jest.fn(),
-  updateStatus: jest.fn(),
+  transitionStatus: jest.fn(),
   softDelete: jest.fn(),
+  findExpiredPendingOrders: jest.fn(),
+  findPaymentByOrderId: jest.fn(),
   findAddressForUser: jest.fn(),
   findUserById: jest.fn(),
   updateProductStock: jest.fn(),
@@ -324,16 +326,20 @@ describe('OrdersService', () => {
   });
 
   describe('updateOrderStatus', () => {
+    const processingOrder = { ...mockOrder, status: OrderStatus.PROCESSING, paymentMethod: 'ONLINE' };
+
     it('should update order status and write audit log', async () => {
       const updatedOrder = { ...mockOrder, status: 'SHIPPED' as OrderStatus };
-      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
-      mockOrdersRepository.updateStatus.mockResolvedValue(updatedOrder);
+      mockOrdersRepository.findById.mockResolvedValue(processingOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue(updatedOrder);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockAuditService.log.mockResolvedValue(undefined);
 
       const result = await ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1');
 
-      expect(ordersRepository.updateStatus).toHaveBeenCalledWith('order1', OrderStatus.SHIPPED);
+      expect(ordersRepository.transitionStatus).toHaveBeenCalledWith(expect.anything(), 'order1', OrderStatus.SHIPPED, [
+        OrderStatus.PROCESSING,
+      ]);
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Order', entityId: 'order1', action: 'STATUS_CHANGE', userId: 'admin1' }),
       );
@@ -345,24 +351,93 @@ describe('OrdersService', () => {
 
       await expect(ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED)).rejects.toThrow(NotFoundException);
     });
+
+    it('rejects a transition the table does not allow, without writing', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+
+      await expect(ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1')).rejects.toThrow(
+        new ConflictException('Order "order1" cannot move from CANCELLED to SHIPPED'),
+      );
+      expect(ordersRepository.transitionStatus).not.toHaveBeenCalled();
+    });
+
+    it('does not let an admin mark an unpaid online order as PROCESSING', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, paymentMethod: 'ONLINE' });
+
+      await expect(ordersService.updateOrderStatus('order1', OrderStatus.PROCESSING, 'admin1')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(ordersRepository.transitionStatus).not.toHaveBeenCalled();
+    });
+
+    it('lets an admin move a cash-on-delivery order out of PENDING', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, paymentMethod: 'CASH_ON_DELIVERY' });
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.PROCESSING });
+
+      await ordersService.updateOrderStatus('order1', OrderStatus.PROCESSING, 'admin1');
+
+      expect(ordersRepository.transitionStatus).toHaveBeenCalled();
+    });
+
+    it('cancels through the real cancel path so stock comes back', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(processingOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+      mockOrdersRepository.findPaymentByOrderId.mockResolvedValue(null);
+
+      await ordersService.updateOrderStatus('order1', OrderStatus.CANCELLED, 'admin1');
+
+      expect(ordersRepository.updateProductStock).toHaveBeenCalledWith(expect.anything(), 'prod1', 2);
+    });
+
+    it('reports a conflict when another request changed the order first', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(processingOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1')).rejects.toThrow(
+        /changed by another request/,
+      );
+      expect(mockAuditService.log).not.toHaveBeenCalled();
+    });
   });
 
   describe('cancelOrder', () => {
     it('should cancel an order and restore stock', async () => {
       const cancelledOrder = { ...mockOrder, status: 'CANCELLED' as OrderStatus };
       mockOrdersRepository.findById.mockResolvedValue(mockOrder);
-      mockOrdersRepository.updateStatus.mockResolvedValue(cancelledOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue(cancelledOrder);
 
       const result = await ordersService.cancelOrder(mockUserId, 'order1');
 
+      expect(ordersRepository.transitionStatus).toHaveBeenCalledWith(
+        expect.anything(),
+        'order1',
+        OrderStatus.CANCELLED,
+        [OrderStatus.PENDING, OrderStatus.PROCESSING],
+      );
       expect(ordersRepository.updateProductStock).toHaveBeenCalledWith(expect.anything(), 'prod1', 2);
       expect(result.status).toBe('CANCELLED');
     });
 
-    it('should throw BadRequestException if order is already shipped', async () => {
+    it('should throw ConflictException if order is already shipped', async () => {
       mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: 'SHIPPED' as OrderStatus });
 
-      await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(BadRequestException);
+      await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
+      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
+    });
+
+    it('rejects cancelling an already cancelled order without restoring stock', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+
+      await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
+      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
+    });
+
+    it('restores no stock when a concurrent request cancelled the order first', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(/changed by another request/);
+      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
     });
 
     it("should not allow cancelling another user's order", async () => {
@@ -381,7 +456,7 @@ describe('OrdersService', () => {
 
       const result = await ordersService.deleteOrder('order1', 'admin1');
 
-      expect(ordersRepository.softDelete).toHaveBeenCalledWith('order1');
+      expect(ordersRepository.softDelete).toHaveBeenCalledWith(expect.anything(), 'order1');
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Order', action: 'DELETE', userId: 'admin1' }),
       );
@@ -392,6 +467,21 @@ describe('OrdersService', () => {
       mockOrdersRepository.findById.mockResolvedValue(null);
 
       await expect(ordersService.deleteOrder('order1')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('expireAbandonedOrders', () => {
+    it('skips orders that were paid or cancelled since they were selected and expires the rest', async () => {
+      const second = { ...mockOrder, id: 'order2' };
+      mockOrdersRepository.findExpiredPendingOrders.mockResolvedValue([mockOrder, second]);
+      mockOrdersRepository.transitionStatus
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...second, status: OrderStatus.CANCELLED });
+
+      const expired = await ordersService.expireAbandonedOrders(24);
+
+      expect(expired).toBe(1);
+      expect(ordersRepository.updateProductStock).toHaveBeenCalledTimes(1);
     });
   });
 });

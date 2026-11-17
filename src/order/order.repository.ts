@@ -97,25 +97,36 @@ export class OrdersRepository {
     }
   }
 
-  async updateStatus(orderId: string, status: OrderStatus): Promise<OrderWithItems> {
-    try {
-      return (await this.prisma.order.update({
-        where: { id: orderId },
-        data: { status },
-        include: { items: { include: { product: true } } },
-      })) as unknown as OrderWithItems;
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
-        throw new NotFoundException(`Order "${orderId}" not found`);
-      }
-      throw e;
-    }
+  /**
+   * Moves the order to `to` only if it is still in one of `from` (and not deleted).
+   * Returns null when another request changed it first, so callers can report a conflict.
+   */
+  async transitionStatus(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    to: OrderStatus,
+    from: OrderStatus[],
+  ): Promise<OrderWithItems | null> {
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, status: { in: from }, deleted: false },
+      data: { status: to },
+    });
+    if (count === 0) return null;
+    return this.findInTransaction(tx, orderId);
   }
 
-  async softDelete(id: string): Promise<OrderWithItems> {
-    return this.prisma.order.update({
-      where: { id },
+  async softDelete(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems | null> {
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, deleted: false },
       data: { deleted: true, deletedAt: new Date() },
+    });
+    if (count === 0) return null;
+    return this.findInTransaction(tx, orderId);
+  }
+
+  private async findInTransaction(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems> {
+    return tx.order.findUniqueOrThrow({
+      where: { id: orderId },
       include: { items: { include: { product: true } } },
     }) as unknown as OrderWithItems;
   }

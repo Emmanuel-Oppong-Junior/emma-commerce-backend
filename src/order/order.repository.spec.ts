@@ -175,47 +175,73 @@ describe('OrdersRepository', () => {
     });
   });
 
-  describe('updateStatus', () => {
-    it('should update order status', async () => {
-      const updated = { ...mockOrder, status: 'CONFIRMED' };
-      mockPrismaOrder.update.mockResolvedValue(updated);
+  describe('transitionStatus', () => {
+    const tx = { order: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() } };
 
-      const result = await repository.updateStatus('order1', 'CONFIRMED' as any);
+    beforeEach(() => jest.resetAllMocks());
 
+    it('moves the order only from the allowed statuses and returns it', async () => {
+      const updated = { ...mockOrder, status: 'CANCELLED' };
+      tx.order.updateMany.mockResolvedValue({ count: 1 });
+      tx.order.findUniqueOrThrow.mockResolvedValue(updated);
+
+      const result = await repository.transitionStatus(
+        tx as any,
+        'order1',
+        'CANCELLED' as any,
+        ['PENDING', 'PROCESSING'] as any,
+      );
+
+      expect(tx.order.updateMany).toHaveBeenCalledWith({
+        where: { id: 'order1', status: { in: ['PENDING', 'PROCESSING'] }, deleted: false },
+        data: { status: 'CANCELLED' },
+      });
       expect(result).toEqual(updated);
     });
 
-    it('should throw NotFoundException on P2025', async () => {
-      const prismaError = new Prisma.PrismaClientKnownRequestError('Not found', {
-        code: 'P2025',
-        clientVersion: '5.0',
-      });
-      mockPrismaOrder.update.mockRejectedValue(prismaError);
+    it('returns null and reads nothing when the order was no longer in an allowed status', async () => {
+      tx.order.updateMany.mockResolvedValue({ count: 0 });
 
-      await expect(repository.updateStatus('nonexistent', 'CONFIRMED' as any)).rejects.toThrow(NotFoundException);
+      const result = await repository.transitionStatus(tx as any, 'order1', 'CANCELLED' as any, ['PENDING'] as any);
+
+      expect(result).toBeNull();
+      expect(tx.order.findUniqueOrThrow).not.toHaveBeenCalled();
     });
 
-    it('should rethrow unknown errors', async () => {
-      mockPrismaOrder.update.mockRejectedValue(new Error('DB error'));
+    it('rethrows database errors', async () => {
+      tx.order.updateMany.mockRejectedValue(new Error('DB error'));
 
-      await expect(repository.updateStatus('order1', 'CONFIRMED' as any)).rejects.toThrow('DB error');
+      await expect(repository.transitionStatus(tx as any, 'order1', 'SHIPPED' as any, [] as any)).rejects.toThrow(
+        'DB error',
+      );
     });
   });
 
   describe('softDelete', () => {
-    it('should soft delete an order', async () => {
-      const deleted = { ...mockOrder, deleted: true, deletedAt: fixedDate };
-      mockPrismaOrder.update.mockResolvedValue(deleted);
+    const tx = { order: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() } };
 
-      const result = await repository.softDelete('order1');
+    beforeEach(() => jest.resetAllMocks());
+
+    it('should soft delete an order that is not already deleted', async () => {
+      const deleted = { ...mockOrder, deleted: true, deletedAt: fixedDate };
+      tx.order.updateMany.mockResolvedValue({ count: 1 });
+      tx.order.findUniqueOrThrow.mockResolvedValue(deleted);
+
+      const result = await repository.softDelete(tx as any, 'order1');
 
       expect(result).toEqual(deleted);
-      expect(mockPrismaOrder.update).toHaveBeenCalledWith(
+      expect(tx.order.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'order1' },
+          where: { id: 'order1', deleted: false },
           data: expect.objectContaining({ deleted: true }),
         }),
       );
+    });
+
+    it('returns null when the order was already deleted', async () => {
+      tx.order.updateMany.mockResolvedValue({ count: 0 });
+
+      expect(await repository.softDelete(tx as any, 'order1')).toBeNull();
     });
   });
 

@@ -5,7 +5,18 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-A.5 done (`5e71ff2`), merged into `dev` and pushed; check its CI run. **Epic P0-A complete (5/5).** Take the first unblocked item in **Up next**.
+- **Task:** P0-B.1 — Order status state machine (ORD-02, ORD-04; ADR-0014 subset on current enum)
+- **Branch:** `fix/P0-B.1-order-state-machine` (from `dev` @ `d5b0962`) · **State:** in progress
+- **Steps:**
+  - [x] `src/order/order-status.ts` table + `order-status.spec.ts` (all 25 pairs)
+  - [x] Repository: `transitionStatus(tx, id, to, from)` / `softDelete(tx, id)` conditional `updateMany`, return null if lost; old `updateStatus` removed (its 3 repo tests replaced by equivalent transitionStatus tests)
+  - [x] Service: admin `updateOrderStatus` via table, CANCELLED → `adminCancelOrder`, ONLINE PENDING→PROCESSING refused; cancel claims before restoring stock; `markOrderAsPaid` (no callers) conditional; expiry skips CONFLICTs. Invalid → `CONFLICT` (was BAD_REQUEST)
+  - [x] Service spec 26/26; `test/e2e/order-status.e2e-spec.ts` 4/4 (concurrent cancel fails on old code); repro ORD-01 + ORD-04 green (ORD-03 is B.2); frontend docs
+  - [x] Gates (2026-11-17): typecheck 0; lint:check 0; format clean; `npx jest --ci` 859/859; repro 10/21; e2e Linux node:20 209/209
+  - [ ] Commit/merge/push (waiting on Emmanuel); mark ORD-02/ORD-04 (+ORD-01 partly) in audit; repro 10/21; clear Active task  ← **Next step**
+- **Uncommitted work:** STATUS.md only
+
+**Previously:** P0-A.5 done (`5e71ff2`), CI green on `d5b0962`; epic P0-A complete.
 
 **Last completed:** P0-A.5. GraphQL log lines: `op Name > rootField | Variables: {keys: "[redacted]"}`, no query text; Prisma errors logged by code (`Prisma P2002 on User.email`); email recipients masked; 4 local log files deleted. Unit 818/818, e2e 205/205, repro 8/21. Residual: GraphQL validation messages can quote a mistyped value (`formatError` logs them).
 
@@ -58,6 +69,7 @@ Repro tests turned green: **8 / 21** (PLAT-01, IAM-07, SEC-01, PLAT-02 ×5) (`te
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-17 | P0-B.1: unpaid ONLINE orders leave PENDING only via confirmed payment; admins cannot move them to PROCESSING by hand (Emmanuel). Missed webhooks wait for reconciliation (P0-C.5) | STATUS |
 | 2026-11-17 | P0-A.4: add `graphql-query-complexity` for cost limits (Emmanuel); depth/alias limits hand-written (no `graphql-depth-limit`, unmaintained) | STATUS |
 | 2026-11-17 | P0-A.3: admins see drafts via new `adminProducts`/`adminProduct` queries; public `products`/`product` always filtered (Emmanuel). Admin UI must switch its draft listing | STATUS |
 | 2026-11-16 | P0-A.2: public reviewer name = first name + last initial ("Kwame A."), "Customer" when no name (Emmanuel). Field name stays `Review.user`, type becomes `PublicProfile`; field middleware, not `fieldResolverEnhancers` (Claude, per ADR-0012) | STATUS |

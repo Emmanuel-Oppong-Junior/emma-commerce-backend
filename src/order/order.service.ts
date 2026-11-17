@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { allowedFrom, assertTransition } from './order-status';
 import { CartService } from '../cart/cart.service';
 import {
   Cart,
@@ -150,10 +151,17 @@ export class OrdersService {
   async expireAbandonedOrders(expiryHours: number): Promise<number> {
     const cutoff = new Date(Date.now() - expiryHours * 60 * 60 * 1000);
     const orders = await this.ordersRepository.findExpiredPendingOrders(cutoff);
+    let expired = 0;
     for (const order of orders) {
-      await this.cancelOrderAndRestoreStock(order);
+      try {
+        await this.cancelOrderAndRestoreStock(order);
+        expired += 1;
+      } catch (error) {
+        // Paid or cancelled since it was selected: leave it alone and expire the rest.
+        if (!(error instanceof ConflictException)) throw error;
+      }
     }
-    return orders.length;
+    return expired;
   }
 
   /**
@@ -164,8 +172,18 @@ export class OrdersService {
     status: OrderStatus,
     adminUserId?: string,
   ): Promise<Order & { items: OrderItem[] }> {
+    if (status === OrderStatus.CANCELLED) return this.adminCancelOrder(orderId, adminUserId);
     const order = await this.retrieveOrder(orderId);
-    const updated = await this.ordersRepository.updateStatus(orderId, status);
+    assertTransition(orderId, order.status, status);
+    if (status === OrderStatus.PROCESSING && order.paymentMethod === PaymentMethod.ONLINE) {
+      throw new ConflictException(
+        `Order "${orderId}" is awaiting online payment; only a confirmed payment can move it to PROCESSING`,
+      );
+    }
+    const updated = await this.ordersRepository.runTransaction((tx) =>
+      this.ordersRepository.transitionStatus(tx, orderId, status, [order.status]),
+    );
+    if (!updated) throw this.changedMeanwhile(orderId);
     await this.auditService.log({
       entity: 'Order',
       entityId: orderId,
@@ -181,9 +199,6 @@ export class OrdersService {
         (updated as Order & { trackingNumber?: string | null }).trackingNumber ?? undefined,
       );
     }
-    if (status === OrderStatus.CANCELLED) {
-      await this.requestReturnIfPaidOnline(order);
-    }
     return updated;
   }
 
@@ -192,7 +207,7 @@ export class OrdersService {
    */
   async cancelOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
-    this.ensureOrderCanBeCancelled(order);
+    assertTransition(orderId, order.status, OrderStatus.CANCELLED);
     const cancelled = await this.cancelOrderAndRestoreStock(order);
     await this.requestReturnIfPaidOnline(order);
     return cancelled;
@@ -203,13 +218,13 @@ export class OrdersService {
    */
   async adminCancelOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
-    this.ensureOrderCanBeCancelled(order);
+    assertTransition(orderId, order.status, OrderStatus.CANCELLED);
     const cancelled = await this.cancelOrderAndRestoreStock(order);
     await this.auditService.log({
       entity: 'Order',
       entityId: orderId,
       action: 'STATUS_CHANGE',
-      details: { to: 'CANCELLED' },
+      details: { from: order.status as string, to: 'CANCELLED' },
       userId: adminUserId,
     });
     await this.requestReturnIfPaidOnline(order);
@@ -224,8 +239,12 @@ export class OrdersService {
     if ((order as Order & { paymentMethod: PaymentMethod }).paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
       throw new BadRequestException(`Order "${orderId}" uses cash on delivery and cannot be marked as paid online`);
     }
-    this.ensureOrderCanBePaid(order);
-    return this.ordersRepository.updateStatus(orderId, 'PROCESSING');
+    assertTransition(orderId, order.status, OrderStatus.PROCESSING);
+    const paid = await this.ordersRepository.runTransaction((tx) =>
+      this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.PROCESSING, [OrderStatus.PENDING]),
+    );
+    if (!paid) throw this.changedMeanwhile(orderId);
+    return paid;
   }
 
   /**
@@ -398,16 +417,22 @@ export class OrdersService {
     return order;
   }
 
-  private ensureOrderCanBeCancelled(order: Order & { items: OrderItem[] }): void {
-    if (order.status === 'SHIPPED' || order.status === 'DELIVERED') {
-      throw new BadRequestException(`Order "${order.id}" cannot be cancelled; current status: ${order.status}`);
-    }
+  private changedMeanwhile(orderId: string): ConflictException {
+    return new ConflictException(`Order "${orderId}" was changed by another request; reload it and try again`);
   }
 
+  /** Claims the order (conditional status write) before returning stock, so stock comes back exactly once. */
   private async cancelOrderAndRestoreStock(
     order: Order & { items: OrderItem[] },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
+      const cancelled = await this.ordersRepository.transitionStatus(
+        tx,
+        order.id,
+        OrderStatus.CANCELLED,
+        allowedFrom(OrderStatus.CANCELLED),
+      );
+      if (!cancelled) throw this.changedMeanwhile(order.id);
       for (const item of order.items) {
         const product = await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
         await this.inventoryService.logInventoryChange(tx, {
@@ -418,14 +443,8 @@ export class OrdersService {
           reason: `Order ${order.id} cancelled`,
         });
       }
-      return this.ordersRepository.updateStatus(order.id, 'CANCELLED');
+      return cancelled;
     });
-  }
-
-  private ensureOrderCanBePaid(order: Order & { items: OrderItem[] }): void {
-    if (order.status !== 'PENDING') {
-      throw new BadRequestException(`Order "${order.id}" cannot be paid; current status: ${order.status}`);
-    }
   }
 
   private async retrieveOrder(orderId: string): Promise<Order & { items: OrderItem[] }> {
@@ -436,10 +455,12 @@ export class OrdersService {
 
   private async softDeleteOrder(order: Order & { items: OrderItem[] }): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
+      const deleted = await this.ordersRepository.softDelete(tx, order.id);
+      if (!deleted) throw this.changedMeanwhile(order.id);
       for (const item of order.items) {
         await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
       }
-      return this.ordersRepository.softDelete(order.id);
+      return deleted;
     });
   }
 

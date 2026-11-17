@@ -1126,6 +1126,8 @@ All wishlist operations require `Bearer` JWT.
 
 ### 2.11 Orders
 
+> **Status rules:** an order can only move `PENDING → PROCESSING | CANCELLED`, `PROCESSING → SHIPPED | CANCELLED`, `SHIPPED → DELIVERED`. `DELIVERED` and `CANCELLED` are final. Any other change, including cancelling an order twice, fails with `CONFLICT`. If two requests change the same order at once, one succeeds and the other gets `CONFLICT` ("was changed by another request; reload it and try again"). An unpaid `ONLINE` order leaves `PENDING` only through a confirmed payment.
+
 All order operations require `Bearer` JWT.
 
 ---
@@ -1248,7 +1250,7 @@ CANCELLED     — Order cancelled
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `orderId: String!`
-- **Description**: Cancel the order. Restores reserved stock. Users can only cancel their own orders.
+- **Description**: Cancel the order. Restores reserved stock exactly once. Users can only cancel their own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`.
 - **Response**: `Order`
 
 ---
@@ -1264,6 +1266,8 @@ CANCELLED     — Order cancelled
   status: OrderStatus;    // Required. PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
 }
 ```
+
+**Rules**: the change must follow the status rules above, otherwise `CONFLICT`. Admins cannot move an unpaid `ONLINE` order to `PROCESSING` (only a confirmed payment can); cash-on-delivery orders are not affected. Setting `CANCELLED` performs a full cancel (stock restored, refund request for paid online orders), the same as `adminCancelOrder`.
 
 **Side effects**: When status transitions to `SHIPPED` or `DELIVERED`, a status update email is sent to the customer.
 
