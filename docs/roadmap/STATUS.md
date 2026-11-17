@@ -5,7 +5,7 @@
 **Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ P0-F.7 done (`9b3747b`), merged into `dev` and pushed; check the first CI `e2e` run. Take the first unblocked item in **Up next**.
+**Follow-up on P0-F.7 (in progress):** CI run #5 on `3886cab`: `checks` ✓, `audit` ✓, **`e2e` ✗** (`npm run test:e2e` exit 1; logs need GitHub sign-in). Reproduced in a Linux `node:20` container (tag + category, 35 tests): old `clearDatabase` (`test/e2e.utils.ts`) skips `ReturnRequest`, so after payment-return runs, `order.deleteMany` hits `ReturnRequest_orderId_fkey`; Windows ran those suites first. Fix on `fix/P0-F.7-ci-e2e`: `clearDatabase` delegates to `resetDb`. Confirmed: Linux node:20 container 184/184; Windows clearDatabase suites 95/95. Next: commit/merge/push with Emmanuel's OK, then confirm CI `e2e` green.
 
 **Last completed:** P0-F.7. CI `e2e` job (Postgres 16 service, `scripts/write-test-env.js`, migrate deploy, test:e2e). Specs: 11 `createOrder` calls updated; `refreshToken` + `signOut` e2e restored. IAM-04 fixed (`jwtid` on tokens). `ConfigModule` ignores `.env` when `NODE_ENV=test`. Local e2e 184/184, unit 775/775. Local container `emma-e2e-pg` left running (`docker rm -f emma-e2e-pg` to remove).
 

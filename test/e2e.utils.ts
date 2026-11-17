@@ -7,6 +7,7 @@ import { ConfigModule } from '@nestjs/config';
 import { genSalt, hash } from 'bcrypt';
 import { Role, User } from '@prisma/client';
 import { ThrottlerStorage } from '@nestjs/throttler';
+import { resetDb } from './helpers/db.helper';
 
 const noopThrottlerStorage = {
   increment: async () => ({ totalHits: 1, timeToExpire: 0, isBlocked: false, timeToBlockExpire: 0 }),
@@ -48,23 +49,7 @@ export async function createTestApp(): Promise<{
 }
 
 export async function clearDatabase(prisma: PrismaService) {
-  await prisma.payment.deleteMany();
-  await prisma.orderItem.deleteMany();
-  await prisma.order.deleteMany();
-  await prisma.cartItem.deleteMany();
-  await prisma.cart.deleteMany();
-  await prisma.wishList.deleteMany();
-  await prisma.review.deleteMany();
-  await prisma.variant.deleteMany();
-  await prisma.product.deleteMany();
-  await prisma.subCategory.deleteMany();
-  await prisma.category.deleteMany();
-  await prisma.discount.deleteMany();
-  await prisma.address.deleteMany();
-  await prisma.authProvider.deleteMany();
-  await prisma.auditLog.deleteMany();
-  await prisma.tag.deleteMany();
-  await prisma.user.deleteMany();
+  await resetDb(prisma);
 }
 
 export async function insertUserIntoDatabase(userData: User, prisma: PrismaService) {
