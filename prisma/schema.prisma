@@ -52,7 +52,6 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([tokenHash])
 }
 
 model AuthProvider {
@@ -201,7 +200,6 @@ model Product {
   brandId       String?
   inventoryLogs InventoryLog[]
 
-  @@index([sku])
   @@index([brandId])
   @@index([categoryId])
   @@index([subcategoryId])
@@ -337,10 +335,9 @@ model Order {
   payment                 Payment?
   returnRequests          ReturnRequest[]
 
-  @@index([userId])
   @@index([userId, status])
-  @@index([deleted])
-  @@index([trackingNumber])
+  @@index([createdAt])
+  @@index([status, createdAt])
 }
 
 model OrderItem {
@@ -359,6 +356,7 @@ model OrderItem {
   discount       Discount? @relation(fields: [discountId], references: [id])
   discountId     String?
 
+  @@index([orderId])
   @@index([productId, orderId])
   @@index([variantId])
   @@index([discountId])
@@ -467,7 +465,6 @@ model Coupon {
   usages             CouponUsage[]
   orders             Order[]
 
-  @@index([code])
   @@index([isActive, expiresAt])
 }
 
@@ -482,7 +479,6 @@ model CouponUsage {
 
   @@unique([couponId, userId])
   @@index([userId])
-  @@index([couponId])
 }
 
 model ReturnRequest {
@@ -500,7 +496,6 @@ model ReturnRequest {
 
   @@index([orderId])
   @@index([userId])
-  @@index([status])
 }
 
 model InventoryLog {
@@ -518,7 +513,6 @@ model InventoryLog {
 
   @@index([productId])
   @@index([variantId])
-  @@index([action])
   @@index([createdAt])
 }
 
