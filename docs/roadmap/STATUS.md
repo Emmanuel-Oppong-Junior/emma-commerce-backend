@@ -2,12 +2,14 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-16 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-17 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ Next: P0-C.3 (verify rules) → C.4 → C.5/C.6/C.7, and P0-D.1 audit log (run alone); then P0-D.2, P0-D.3.
+_None._ Next: P0-C.4 (webhook raw body/HMAC/dedupe) ∥ P0-C.7 (COD), then C.5/C.6, then P0-D.2, P0-D.3.
 
-**Last completed (batch 4, 2026-11-17):** P0-C.2 (`24b246f`, migration `20261117233000_payment_attempt_idempotency`); P0-I.4 (`d52eb01` + `749e369`, migration `20261117234000_add_email_verification`). Combined gates on dev: unit 1154/1154, e2e 282/282, repro 15/21 (PAY-02 green), drift 0. Both agents survived a network drop (resumed). Follow-ups: `updateMyProfile`/`changeUserPassword` lack a per-route throttle; no "cancel pending email change"; `PaymentAttempt @@index([intentId])` now redundant; checkout stays PENDING without URL if the process dies between commit and Paystack call (C.5 reconciles); ADR-0007's `Idempotency-Key` header/24 h expiry not implemented (body field, no expiry).
+**Last completed (batch 5, 2026-11-17):** P0-C.3 (`01f3f13`, migration `20261118000000_payment_verification_review`); P0-D.1 (`90b6bb8`, no migration). Combined gates on dev: unit 1253/1253, e2e 292/292 (Linux node:20), repro 17/21 (PAY-01, PAY-05 green), drift 0. C.3: verify + webhook share one idempotent settle path under an order row lock; success needs matching pesewa amount and currency; late/duplicate/mismatched successes never move the order, set `PaymentAttempt.reviewReason` and queue one PENDING Refund (`auto-refund:<attemptId>`, sent to Paystack by C.6); non-final Paystack statuses keep the attempt open. D.1: `AuditService.log(entry, tx)`/`record()` in the change's transaction; admin user, return/refund, product, variant, coupon, discount, tax, zone, pickup and stock mutations audited; `audit-coverage.spec.ts` fails on unclassified admin mutations. Follow-ups: brand/category/tag/review admin mutations listed NOT_AUDITED; approve/reject return is read-then-write (no conditional claim); tax reprice outside the tax tx; admin email-change notice sent inside the tx; `updateUser` cannot change role (no field); AUD-05/AUD-07 open; C.6 must reconcile auto-refunds with system return requests; webhook still returns 200 on processing failure (C.4).
+
+**Earlier (batch 4, 2026-11-17):** P0-C.2 (`24b246f`, migration `20261117233000_payment_attempt_idempotency`); P0-I.4 (`d52eb01` + `749e369`, migration `20261117234000_add_email_verification`). Combined gates on dev: unit 1154/1154, e2e 282/282, repro 15/21 (PAY-02 green), drift 0. Both agents survived a network drop (resumed). Follow-ups: `updateMyProfile`/`changeUserPassword` lack a per-route throttle; no "cancel pending email change"; `PaymentAttempt @@index([intentId])` now redundant; checkout stays PENDING without URL if the process dies between commit and Paystack call (C.5 reconciles); ADR-0007's `Idempotency-Key` header/24 h expiry not implemented (body field, no expiry).
 
 **Earlier (batch 3):** P0-F.4 (`ab01fcd`); P0-C.1 (`ddc81cb`, migration `20261117220000_payment_ledger`); P0-I.2 (`dfac978` + grace fix `029fbce`); P0-I.3 (`eed1ce9`). Combined gates on dev: unit 1089/1089, e2e 256/256 (Linux node:20), repro 14/21. Follow-ups: "link provider while signed in" mutation (existing password users can't add Google/Facebook yet); unused `findRefreshToken`/`revokeRefreshToken`/`createAuthProvider`; IAM-14/15/17 still open; `sessionMaxTtl` (30 d) is a constant; order-service interactive transactions hit the 5 s timeout under DB contention (flaky e2e risk); `signInWithGoogle` description says ID token but code expects an OAuth access token.
 
@@ -36,11 +38,10 @@ _None._ Next: P0-C.3 (verify rules) → C.4 → C.5/C.6/C.7, and P0-D.1 audit lo
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-D.1 audit log in privileged mutations (touches many modules: run alone) ∥ nothing else outside payments | now | file overlap |
-| 3 | P0-C.3 → C.4 → C.5–C.7, then P0-D.2 (revenue on the new ledger) | sequential (payment module); can run alongside D.1 only if D.1 skips payment files | — |
-| 4 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
-| 5 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
-| 6 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
+| 1 | P0-C.4 ∥ P0-C.7, then C.5/C.6, then P0-D.2 (revenue on the new ledger) | payment module: C.4 webhook path vs C.7 COD path; C.5/C.6 after | — |
+| 2 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
+| 3 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
+| 4 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -48,12 +49,12 @@ _None._ Next: P0-C.3 (verify rules) → C.4 → C.5/C.6/C.7, and P0-D.1 audit lo
 | P0-F Safety rails | 6 / 7 | F.1 (`f2b323a`), F.2 (`758068c`), F.4 (`ab01fcd`), F.5 (`bcc995b`), F.6 (`b94e75b`), F.7 (`9b3747b`); (`TODO.md` retirement, part of F.4, done 2026-11-16) |
 | P0-A Request pipeline & access | **5 / 5** | A.1 (`e42d16e`), A.2 (`c788131`), A.3 (`c6f5fe5`), A.4 (`c3000bf`), A.5 (`5e71ff2`) |
 | P0-B Orders & stock | 8 / 11 | B.1 (`9028bb3`), B.2 (`a54fded`), B.4 (`53c3da4`), B.5 (`1d33fff`), B.6 (`ff15318`), B.7 (`97c1978`), B.8 (`53b736f`), B.9 (`c38316c`) |
-| P0-C Payments | 2 / 7 | C.1 (`ddc81cb`), C.2 (`24b246f`) |
+| P0-C Payments | 3 / 7 | C.1 (`ddc81cb`), C.2 (`24b246f`), C.3 (`01f3f13`) |
 | P0-I Identity & sessions | **6 / 6** | I.1 (`d2445ad`), I.2 (`dfac978`, `029fbce`), I.3 (`eed1ce9`), I.4 (`d52eb01`), I.5 (`fc59f37`), I.6 (`d11e961`) |
 | P0-O Deployability & ops | 6 / 7 | O.1 (`a98a123`), O.3 (`fd0543c`), O.4 (`c51ee81`), O.5 (`66eb517`), O.6 (`26efe7d`), O.7 (`e18cf27`) |
-| P0-D Audit & analytics | 0 / 3 | |
+| P0-D Audit & analytics | 1 / 3 | D.1 (`90b6bb8`) |
 
-Repro tests turned green: **15 / 21** (PAY-02, PAY-03, PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05, SHZ-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
+Repro tests turned green: **17 / 21** (PAY-01, PAY-05, PAY-02, PAY-03, PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05, SHZ-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
 ## Waiting on Emmanuel
 - [ ] In GitHub branch protection for `main` and `dev`, mark the `checks`, `e2e` and `audit` jobs as required (`dev` pushed 2026-11-16; CI run #1 on `43052f2` green: `checks` ✓, `audit` ✓, `repro` failed as expected).
@@ -63,6 +64,8 @@ Repro tests turned green: **15 / 21** (PAY-02, PAY-03, PLAT-01, IAM-07, SEC-01, 
 - [ ] **Frontend, sessions (P0-I.2/I.3):** serialise refresh calls per client (one in flight across tabs; a replay more than 10 s after rotation logs the user out everywhere); sessions end 30 days after sign-in ("Session has expired, please sign in again"); password change/reset, email change and archive sign the user out everywhere (access tokens live up to 1 h); social sign-in with an already-registered email → CONFLICT (sign in with password; linking from the account isn't built yet); unverified Google email → 401; provider outage → INTERNAL_SERVER_ERROR. Confirm whether the frontend sends a Google **access token** (what the code validates) or an ID token (what the description says).
 - [ ] **Confirm P0-I.4 defaults:** (1) unverified users can still sign in and check out; (2) welcome email now sent after first verification, not at sign-up; (3) admins can change a customer's email (pending until the new address verifies, old address notified) — or forbid admin email changes entirely?; (4) Google sign-ups start verified, Facebook ones unverified; (5) verification email carries a raw token (no frontend URL config yet).
 - [ ] **Frontend (P0-C.2/I.4):** `POST /payment/initialize` takes optional `idempotencyKey` (one per Pay click), rejects non-PENDING/COD/deleted orders and any client `amount`; new `verifyEmail(input: { token })`, `resendVerificationEmail`; `updateMyProfile` needs `currentPassword` to change email and returns `pendingEmail` until verified; `User.emailVerified`, `User.pendingEmail` (owner/admin). `FRONTEND_API_DOCUMENTATION.md` updated for these.
+- [ ] **Frontend (P0-C.3):** GraphQL unchanged; `verifyPayment` behaviour: wrong amount/currency → `FAILED` and the order stays PENDING/payable; a late success on a cancelled or already-paid order → `COMPLETED` but the order doesn't move (read `order.status`; refund queued); undecided Paystack status → stays `PENDING`; repeat verify returns current state.
+- [ ] **P0-C.3 questions:** (1) distinct customer signal for "paid after cancel, refund queued" (API change) or keep `COMPLETED`? (2) expose `reviewReason` on `Payment` for staff now? (3) final intent state after an auto-refund is processed (C.6/P1-O.2)?
 - [ ] Deployment (P0-O.1): image is now Node 24, runs as non-root, CMD `node dist/main.js`, HEALTHCHECK on `/health/live`. Add a release step that runs `npx prisma migrate deploy` once per release with the image (e.g. `docker run --rm -e DATABASE_URL=… <image> npx prisma migrate deploy`). Consider marking the new CI `docker` job as required too.
 - [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
 - [ ] Add `NODE_ENV=development` to your local `.env` if it is missing (now required, P0-O.3), and update `.env.example` with: NODE_ENV, PORT, ALLOWED_ORIGINS, LOG_LEVEL, DATABASE_URL, JWT_SECRET/JWT_REFRESH_SECRET/JWT_RESET_SECRET (≥32 chars, all different), JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER, JWT_ACCESS/REFRESH/RESET_TOKEN_TTL, GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET, PAYSTACK_SECRET_KEY, PAYSTACK_CALLBACK_URL, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET, REDIS_HOST (prod)/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL, OTEL_ENABLED (true|false), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, SUPER_ADMIN_EMAIL/PASSWORD.
