@@ -11,7 +11,7 @@ Work follows a phased roadmap. **[`docs/roadmap/STATUS.md`](docs/roadmap/STATUS.
 | File | Purpose |
 |---|---|
 | [`docs/roadmap/STATUS.md`](docs/roadmap/STATUS.md) | **Where we are and what to do next.** Single source of truth for progress. |
-| [`docs/roadmap/ROADMAP.md`](docs/roadmap/ROADMAP.md) | The plan: phases, epics, tasks (`P<phase>-<epic>.<n>`), acceptance criteria. Not used for progress. |
+| [`docs/roadmap/ROADMAP.md`](docs/roadmap/ROADMAP.md) | The plan: phases, epics, tasks (`P<phase>-<epic>.<n>`), acceptance criteria, as a checklist with a Progress table: the at-a-glance view of what is done, in progress and to do. Detail stays in `STATUS.md`. |
 | [`docs/roadmap/WORKING-AGREEMENT.md`](docs/roadmap/WORKING-AGREEMENT.md) | Branching, definition of done, safety rails |
 | [`docs/roadmap/ADRs/`](docs/roadmap/ADRs/README.md) | Architecture decisions. Implement only **Accepted** ones. |
 | [`docs/audit/`](docs/audit/SUMMARY.md) | Audit findings by ID. `docs/audit/modules/<module>.md` lists each module's open defects and definition of done. |
@@ -19,12 +19,12 @@ Work follows a phased roadmap. **[`docs/roadmap/STATUS.md`](docs/roadmap/STATUS.
 **Resuming ("continue", or any new session):**
 1. Read `STATUS.md`. If there is an **Active task**, its **Next step** is where to pick up. Otherwise take the first **Up next** task whose blockers are clear.
 2. Check it against reality, because the last checkpoint may be one step behind. Run `git branch --show-current`, `git status --short` and `git log --oneline -5`. If git shows work that `STATUS.md` doesn't mention (uncommitted files, newer commits), work out what was done, update `STATUS.md` first, then continue.
-3. Read the task's row in `ROADMAP.md`, the ADRs it links, and the module report(s) for the code it touches.
+3. Read the task's entry in `ROADMAP.md`, the ADRs it links, and the module report(s) for the code it touches.
 4. Tell the user which task and step you are resuming and your plan. Wait for go-ahead on multi-file or design changes.
 5. If the task needs something listed under "Waiting on Emmanuel", ask instead of guessing.
 
 **Checkpoint: update `STATUS.md` immediately whenever any of these happens:**
-- **Starting a task:** set the Active task, branch, state, and a step checklist with the **Next step** marked.
+- **Starting a task:** set the Active task, branch, state, and a step checklist with the **Next step** marked. In `ROADMAP.md`, mark the task `- [ ] 🔄`.
 - **Finishing a step:** tick it, note the files touched or the commit, and move the **Next step** marker.
 - **Running tests:** record the command and the result under "Last test run".
 - **Committing:** record the hash on the step.
@@ -33,6 +33,7 @@ Work follows a phased roadmap. **[`docs/roadmap/STATUS.md`](docs/roadmap/STATUS.
   - Clear the Active task.
   - Update the epic progress counts and the repro-test count.
   - Move the task off "Up next".
+  - In `ROADMAP.md`, tick the task (`- [x]`, commit hash in brackets), add `✅ complete` to its epic heading when every task is ticked, and update the Progress table counts.
   - In each fixed finding's module report, mark the finding `Fixed in <commit>`, and change the verdict if the module's definition of done is met.
 
 Make each checkpoint a small edit to `STATUS.md` in the same turn as the work, never batched for later. Before starting a long-running command, make sure `STATUS.md` already says what you are about to do.

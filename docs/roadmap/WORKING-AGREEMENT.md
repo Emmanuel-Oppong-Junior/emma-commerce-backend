@@ -17,7 +17,7 @@ How future Claude Code sessions (and humans) take work from `ROADMAP.md` to `mai
 ## 2a. State tracking between sessions
 - `docs/roadmap/STATUS.md` is the single source of truth for progress: current phase, active task with its exact next step, up next, blockers and decisions.
 - It is updated **continuously at checkpoints** (task start, each finished step, each test run, each commit, blockers and decisions, task completion), never only at session end, because sessions can be deleted without warning. On resume it is cross-checked against git. See `CLAUDE.md` → Working state.
-- `ROADMAP.md` is the plan. Change it only to re-plan (split or reorder tasks, with Emmanuel's OK), never to track progress.
+- `ROADMAP.md` is the plan and the at-a-glance checklist: each task is `- [ ]` to do, `- [ ] 🔄` in progress or `- [x]` done (with its commit), and a Progress table counts tasks per phase. Update the marks when a task starts and completes; change the plan itself (split or reorder tasks) only with Emmanuel's OK.
 - Scratch and local-only files go in the gitignored `tmp/` folder.
 
 ## 3. Definition of done (every task)
@@ -29,7 +29,7 @@ How future Claude Code sessions (and humans) take work from `ROADMAP.md` to `mai
 - [ ] **Security checklist:** object-level authz on every new resolver/field; no `User`/PII on public types; DTO whitelist; rate limit on sensitive mutations; no secrets/PII in logs; errors mapped to standard codes.
 - [ ] **API:** `schema.gql` regenerated and committed; breaking changes called out (CI `graphql-inspector`); `FRONTEND_API_DOCUMENTATION.md` updated for every changed operation (docs must match code — they were 40 discrepancies behind).
 - [ ] **Docs:** module report in `docs/audit/modules/<module>.md` updated: findings fixed get `Status: Fixed in <commit>`; verdict changed if the definition of done is now met; ADR status updated if the task implements one.
-- [ ] `docs/roadmap/STATUS.md` shows the task completed: Active task cleared, progress counts updated (see §2a). `ROADMAP.md` is the plan and is not used for progress.
+- [ ] `docs/roadmap/STATUS.md` shows the task completed: Active task cleared, progress counts updated (see §2a); the task ticked in `ROADMAP.md` with its commit and the Progress table updated.
 - [ ] Report what ran (commands), what passed, what failed, what wasn't run.
 
 ## 4. Updating verdicts
