@@ -214,6 +214,14 @@ export class OrdersRepository {
     return tx.product.findUnique({ where: { id: productId } });
   }
 
+  async findNamesOfProductsWithVariants(tx: Prisma.TransactionClient, productIds: string[]): Promise<string[]> {
+    const products = await tx.product.findMany({
+      where: { id: { in: productIds }, variants: { some: {} } },
+      select: { name: true },
+    });
+    return products.map((product) => product.name);
+  }
+
   async clearCartItems(tx: Prisma.TransactionClient, cartId: string): Promise<void> {
     await tx.cartItem.deleteMany({ where: { cartId } });
   }

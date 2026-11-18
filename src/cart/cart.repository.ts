@@ -25,6 +25,10 @@ export class CartRepository {
     return this.prisma.product.findUnique({ where: { id: productId } });
   }
 
+  async countVariants(productId: string): Promise<number> {
+    return this.prisma.variant.count({ where: { productId } });
+  }
+
   async findCartItem(cartId: string, productId: string): Promise<Pick<CartItem, 'id' | 'quantity'> | null> {
     return this.prisma.cartItem.findFirst({
       where: { cartId, productId },

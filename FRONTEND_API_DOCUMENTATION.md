@@ -1122,7 +1122,7 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user.
 
 ### 2.8 Variants
 
-Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user. Variants cannot be put in the cart or bought yet: cart and order items reference the product only, and stock is taken from the product.
+Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user. Variants cannot be put in the cart or bought yet: cart and order items reference the product only, and stock is taken from the product. Until variant checkout exists, a product with at least one variant cannot be sold at all: `addToCart` and `createOrder` reject it with `BAD_REQUEST` naming the product. Products without variants sell normally. Adding the first variant to a product takes it off sale; deleting its last variant puts it back.
 
 ---
 
@@ -1277,11 +1277,11 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
 }
 ```
 
-There is no `variantId`: variants cannot be added to the cart.
+There is no `variantId`: variants cannot be added to the cart, and a product that has any variant is rejected (see [Variants](#28-variants)).
 
 **Possible Errors**:
 - `NOT_FOUND` — Product not found.
-- `BAD_REQUEST` — Product not active, or the resulting cart quantity exceeds stock.
+- `BAD_REQUEST` — Product not active, the product has variants ("... comes in variants and cannot be bought until variant checkout is available"), or the resulting cart quantity exceeds stock.
 
 ---
 
@@ -1518,7 +1518,7 @@ No tax is added at checkout; tax is already inside each product's `price`.
 
 **Possible Errors**:
 - `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, product no longer exists, unknown coupon code.
-- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; more than 50 items; account inactive; insufficient stock; product not priced in GHS or without a price; delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; more than 50 items; account inactive; insufficient stock; product not priced in GHS or without a price; a product in the cart has variants (the message names it; remove it from the cart); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
 - `BAD_USER_INPUT` — Invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:

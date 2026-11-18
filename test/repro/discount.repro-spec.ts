@@ -69,6 +69,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       decrementProductStock: jest.fn().mockResolvedValue({ ...product, quantity: 4 }),
       create: jest.fn().mockImplementation((_tx, _userId, details) => ({ id: 'order-1', ...details, items: [] })),
       clearCartItems: jest.fn(),
+      findNamesOfProductsWithVariants: jest.fn().mockResolvedValue([]),
     };
     const cart = { id: 'cart-1', items: [{ productId: 'product-1', quantity: 1 }] };
     const discounts = {

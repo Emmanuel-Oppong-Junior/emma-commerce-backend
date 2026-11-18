@@ -346,6 +346,20 @@ describe('OrdersRepository', () => {
     });
   });
 
+  describe('findNamesOfProductsWithVariants', () => {
+    it('returns the names of the given products that have at least one variant', async () => {
+      const mockTx = { product: { findMany: jest.fn().mockResolvedValue([{ name: 'Linen Shirt' }]) } };
+
+      const result = await repository.findNamesOfProductsWithVariants(mockTx as any, ['p1', 'p2']);
+
+      expect(result).toEqual(['Linen Shirt']);
+      expect(mockTx.product.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['p1', 'p2'] }, variants: { some: {} } },
+        select: { name: true },
+      });
+    });
+  });
+
   describe('clearCartItems', () => {
     it('should clear all cart items via transaction', async () => {
       const mockTx = { cartItem: { deleteMany: jest.fn().mockResolvedValue({ count: 3 }) } };

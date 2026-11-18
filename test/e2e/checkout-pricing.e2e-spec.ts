@@ -176,4 +176,69 @@ describe('Checkout pricing (e2e)', () => {
 
     expect(res.body.errors[0].extensions.code).toBe('GRAPHQL_VALIDATION_FAILED');
   });
+
+  describe('products with variants', () => {
+    beforeAll(async () => {
+      await prisma.product.create({
+        data: {
+          id: 'pricing_shirt',
+          name: 'Linen Shirt',
+          price: 150,
+          quantity: 20,
+          images: [],
+          isActive: true,
+          status: 'PUBLISHED',
+          variants: { create: { size: 'M', price: 180, quantity: 5 } },
+        },
+      });
+    });
+
+    it('refuses to add a product that has variants to the cart', async () => {
+      const res = await gqlRequest(
+        app,
+        `mutation { addToCart(input: { productId: "pricing_shirt", quantity: 1 }) { id } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+
+      expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+      expect(res.body.errors[0].message).toContain('"Linen Shirt"');
+      expect(await prisma.cartItem.count({ where: { productId: 'pricing_shirt' } })).toBe(0);
+    });
+
+    it('refuses to check out a cart that already holds a product with variants, without taking stock', async () => {
+      const cart = await prisma.cart.upsert({
+        where: { userId: 'seed_user' },
+        create: { userId: 'seed_user' },
+        update: {},
+      });
+      await prisma.cartItem.createMany({
+        data: [
+          { cartId: cart.id, productId: 'seed_prod2', quantity: 1 },
+          { cartId: cart.id, productId: 'pricing_shirt', quantity: 1 },
+        ],
+      });
+
+      const res = await createPickupOrder();
+
+      expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+      expect(res.body.errors[0].message).toContain('"Linen Shirt"');
+      const [shirt, phone] = await Promise.all([
+        prisma.product.findUniqueOrThrow({ where: { id: 'pricing_shirt' } }),
+        prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod2' } }),
+      ]);
+      expect(shirt.quantity).toBe(20);
+      expect(phone.quantity).toBe(100);
+      expect(await prisma.order.count({ where: { items: { some: { productId: 'pricing_shirt' } } } })).toBe(0);
+    });
+
+    it('still sells a product without variants', async () => {
+      await addToCart('seed_prod2', 1);
+
+      const res = await createPickupOrder();
+
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.createOrder).toMatchObject({ totalAmount: 499.99 });
+    });
+  });
 });

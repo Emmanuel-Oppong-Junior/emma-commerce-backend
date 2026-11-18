@@ -10,6 +10,7 @@ const mockCartRepository = {
   findByUser: jest.fn(),
   findOrCreate: jest.fn(),
   findProductById: jest.fn(),
+  countVariants: jest.fn(),
   findCartItem: jest.fn(),
   upsertCartItem: jest.fn(),
   updateCartItem: jest.fn(),
@@ -59,6 +60,7 @@ describe('CartService', () => {
     service = module.get<CartService>(CartService);
     cartRepository = module.get<CartRepository>(CartRepository) as jest.Mocked<CartRepository>;
     jest.resetAllMocks();
+    mockCartRepository.countVariants.mockResolvedValue(0);
   });
 
   describe('getCart', () => {
@@ -108,6 +110,18 @@ describe('CartService', () => {
       await service.addToCart(mockUserId, addInput);
 
       expect(cartRepository.upsertCartItem).toHaveBeenCalledWith('item1', 'cart1', 'prod1', mockProduct.price, 3, 2);
+    });
+
+    it('refuses a product that has variants, without touching the cart', async () => {
+      mockCartRepository.findProductById.mockResolvedValue(mockProduct);
+      mockCartRepository.countVariants.mockResolvedValue(2);
+
+      await expect(service.addToCart(mockUserId, addInput)).rejects.toThrow(
+        new BadRequestException('"T-Shirt" comes in variants and cannot be bought until variant checkout is available'),
+      );
+      expect(cartRepository.countVariants).toHaveBeenCalledWith('prod1');
+      expect(cartRepository.findOrCreate).not.toHaveBeenCalled();
+      expect(cartRepository.upsertCartItem).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if product does not exist', async () => {

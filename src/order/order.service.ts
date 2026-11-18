@@ -433,6 +433,10 @@ export class OrdersService {
     },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
+      await this.ensureSoldWithoutVariants(
+        tx,
+        orderDetails.orderItems.map((item) => item.productId),
+      );
       for (const item of orderDetails.orderItems) {
         const product = await this.ordersRepository.decrementProductStock(tx, item.productId, item.quantity);
         if (!product) {
@@ -461,6 +465,16 @@ export class OrdersService {
       await this.ordersRepository.clearCartItems(tx, cartId);
       return newOrder;
     });
+  }
+
+  /** Checked in the order transaction: the cart may predate the variant, and a variant may be added meanwhile. */
+  private async ensureSoldWithoutVariants(tx: Prisma.TransactionClient, productIds: string[]): Promise<void> {
+    const names = await this.ordersRepository.findNamesOfProductsWithVariants(tx, productIds);
+    if (names.length > 0) {
+      throw new BadRequestException(
+        `${names.map((name) => `"${name}"`).join(', ')} comes in variants and cannot be bought until variant checkout is available; remove it from the cart`,
+      );
+    }
   }
 
   private async retrieveUserOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {

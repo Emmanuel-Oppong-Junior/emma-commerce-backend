@@ -33,6 +33,7 @@ export class CartService {
   async addToCart(userId: string, input: AddToCartInput): Promise<Cart & { items: CartItem[] }> {
     const { productId, quantity } = input;
     const product = await this.validateProductAndStock(productId, quantity);
+    await this.ensureSoldWithoutVariants(product);
     const cart = await this.cartRepository.findOrCreate(userId);
     await this.upsertCartItem(cart.id, product, quantity);
     return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
@@ -100,6 +101,15 @@ export class CartService {
       );
     }
     return product;
+  }
+
+  private async ensureSoldWithoutVariants(product: Product): Promise<void> {
+    // Cart and checkout price and stock the product only, so a variant would be sold at the wrong price (VAR-01).
+    if ((await this.cartRepository.countVariants(product.id)) > 0) {
+      throw new BadRequestException(
+        `"${product.name}" comes in variants and cannot be bought until variant checkout is available`,
+      );
+    }
   }
 
   /**

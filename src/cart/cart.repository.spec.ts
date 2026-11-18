@@ -35,6 +35,7 @@ const mockCartItem = {
 
 const mockPrismaCart = { findUnique: jest.fn(), create: jest.fn() };
 const mockPrismaProduct = { findUnique: jest.fn() };
+const mockPrismaVariant = { count: jest.fn() };
 const mockPrismaCartItem = {
   findFirst: jest.fn(),
   upsert: jest.fn(),
@@ -46,6 +47,7 @@ const mockPrismaCartItem = {
 const mockPrisma = {
   cart: mockPrismaCart,
   product: mockPrismaProduct,
+  variant: mockPrismaVariant,
   cartItem: mockPrismaCartItem,
 };
 
@@ -116,6 +118,17 @@ describe('CartRepository', () => {
       const result = await repository.findProductById('nonexistent');
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('countVariants', () => {
+    it("counts the product's variants", async () => {
+      mockPrismaVariant.count.mockResolvedValue(2);
+
+      const result = await repository.countVariants('prod1');
+
+      expect(result).toBe(2);
+      expect(mockPrismaVariant.count).toHaveBeenCalledWith({ where: { productId: 'prod1' } });
     });
   });
 

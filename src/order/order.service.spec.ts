@@ -43,6 +43,7 @@ const mockOrdersRepository = {
   findProductById: jest.fn(),
   findProduct: jest.fn(),
   clearCartItems: jest.fn(),
+  findNamesOfProductsWithVariants: jest.fn(),
   runTransaction: jest.fn(),
   runWithAdvisoryLock: jest.fn(),
 };
@@ -185,6 +186,7 @@ describe('OrdersService', () => {
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
     mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
     mockDiscountService.findActiveDiscountsByProduct.mockResolvedValue(new Map());
+    mockOrdersRepository.findNamesOfProductsWithVariants.mockResolvedValue([]);
   });
 
   describe('createOrderFromCart', () => {
@@ -292,6 +294,23 @@ describe('OrdersService', () => {
           }),
         );
       });
+    });
+
+    it('rejects a cart holding a product that has variants, inside the transaction and before taking stock', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findNamesOfProductsWithVariants.mockResolvedValue(['T-Shirt']);
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+        new BadRequestException(
+          '"T-Shirt" comes in variants and cannot be bought until variant checkout is available; remove it from the cart',
+        ),
+      );
+      expect(mockOrdersRepository.findNamesOfProductsWithVariants).toHaveBeenCalledWith({}, ['prod1']);
+      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
     it('rejects checkout of a product without a price, without reserving stock', async () => {
