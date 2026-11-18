@@ -1,6 +1,6 @@
 # ADR-0017 — Prisma 7 timing and migration baseline
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18; re-baseline path, done right after Phase 0) · Date: 2026-11-16
 
 ## Context
 - **Prisma version and config.** The project is on Prisma 6.19, and the latest is 7.10. `package.json#prisma` config is deprecated in Prisma 7 in favour of `prisma.config.ts`, and the generator output path and driver adapters change (05-deps DEP-05).

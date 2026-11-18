@@ -2,10 +2,14 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise (**all 46 tasks done**, awaiting Emmanuel's sign-off to start Phase 1) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise done (46/46); now the dependency upgrades (P1-P Prisma 7, P1-U NestJS/tooling), approved by Emmanuel 2026-11-18 · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ Phase 0 is complete (46/46). Next: Emmanuel's go-ahead for the major-dependency task and Phase 1 (needs ADR decisions).
+**Dependency upgrades (approved 2026-11-18),** done in sequence on `dev` (all touch package.json/lock):
+  - [ ] Step 1: Node 24 everywhere (CI, engines) + Prisma 7.10 (`prisma.config.ts`, driver adapter) + migration re-baseline with order numbers from 10001 + CI check rejecting edits to existing migration folders (P1-P.1/P.2, ADR-0017) ← **Next step** (agent, branch `chore/p1-p-prisma7`, worktree `.claude/worktrees/p7`, DB `emma_wt_deps_test`)
+  - [ ] Step 2: NestJS 12, @nestjs/graphql + apollo 14, Apollo Server 5, graphql 17 and the other @nestjs/* (P1-U.1)
+  - [ ] Step 3: tooling and the rest: ESLint 10 flat config + typescript-eslint 8, Jest 30, TypeScript 5.9 (not 7), bcrypt 6 (clears the tar critical), cloudinary 2, sharp 0.35, OpenTelemetry, faker, supertest, types (P1-U.2)
+  - [ ] Step 4: combined gates, clean Linux e2e, push, CI; you reset your local DB once after the re-baseline
 
 **Last completed (batch 8, 2026-11-18):** P0-B.3 (`94a9596`), P0-B.11 (`f132a62`), P0-B.10 (`cade6c8`), P0-O.2 (`2549d67`), P0-F.3 (`b246bf5`), plus `075ad29` (schema.gql descriptions regenerated). Rebased onto `dev` with no conflicts. Combined gates on dev: typecheck/lint/format/build clean, unit 1404/1404, repro **21/21**, e2e **342/342** in one clean Linux run, drift 0. B.3: one Decimal pricing function (`src/discount/pricing.ts`) for product pages, `cartWithDiscount` and `createOrder`; best discount = biggest money saving, capped at price; coupon applies to the discounted subtotal before shipping; `minimumPurchase` is an eligibility filter on the list-price cart total; `finalizeOrder` removed (DISC-01 repro rewritten to assert it is gone and createOrder charges 480). B.11: products with any Variant row rejected by addToCart/createOrder. B.10: tax write + Decimal reprice + audit in one transaction; one rounding rule (`taxInclusivePrice`); TAX-02's float8 error did not reproduce, the defect was non-atomicity (audit text corrected). O.2: @nestjs 10.4.22, joi, sharp, in-range audit fix; 7 unused packages removed; prod audit 4 → 1 critical (tar via bcrypt 5, allowlisted until bcrypt 6). F.3: `docs/roadmap/environments.md`, gitleaks 8.30.1 `secrets` CI job on new commits with `.gitleaksignore` for 16 historical findings (the old settings.local.json password is too low-entropy for gitleaks to flag). Follow-ups: DISC-03 update validation, DISC-06 (query writes cart rows), coupon maths still float in CouponsService, `Order.totalWithOutDiscount` no longer written, `appliedDiscount` fields always null, TAX-06/07/08/10, npm install-script approval warnings (bcrypt, sharp).
 
@@ -51,8 +55,7 @@ _None._ Phase 0 is complete (46/46). Next: Emmanuel's go-ahead for the major-dep
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | Major dependency upgrades (NestJS 11, Prisma 7 with ADR-0017 re-baseline, Apollo 5, bcrypt 6, OpenTelemetry, cloudinary 2, …), one framework at a time | — | Emmanuel's go-ahead (phase change) |
-| 2 | Phase 1 | — | ADR decisions (all 17 Proposed) |
+| 1 | Phase 1 (remaining epics) | — | ADR decisions (16 still Proposed) |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -96,6 +99,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-18 | Dependency upgrades (Emmanuel): ADR-0017 **Accepted** with the re-baseline path (replace migration folders with one baseline, order numbers from 10001, reset dev/test DBs); targets = latest stable (NestJS 12, graphql/apollo 14, Apollo 5, Prisma 7, ESLint 10, Jest 30, bcrypt 6, cloudinary 2, graphql 17) except TypeScript stays 5.9; Node 24 in CI, Docker and engines | ADR-0017, STATUS |
 | 2026-11-18 | Phase 0 stop-gaps (Emmanuel): P0-B.3 charge product/category discounts at checkout with the cart's logic (remove `finalizeOrder`); P0-B.10 fix repricing, no freeze; P0-B.11 reject products with active variants in addToCart/createOrder; P0-O.2 in-range upgrades + remove unused deps now, majors (NestJS 11, Prisma 7, …) as a dedicated task right after Phase 0; P0-F.3 DB was local-only (no rotation), gitleaks scans new commits with a baseline for old leaks; open questions from I.4/C.3–C.7/D.2: no preference, shipped defaults stand | STATUS |
 | 2026-11-17 | P0-C.1 (Claude, within ADR-0007): one PaymentIntent per order (`orderId` unique; drop it if a MoMo deposit ever needs a second intent); legacy refunds backfilled as Refund PENDING; WebhookEvent stays deletable for pruning; expand+contract in one guarded, lossless migration | STATUS |
 | 2026-11-17 | ADR-0007 (payment provider port + payment-attempt ledger + idempotent webhook inbox; Paystack first) **Accepted** (Emmanuel). Unblocks P0-C.1–C.7 | ADR-0007, STATUS |
@@ -116,4 +120,4 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | 2026-11-16 | Workflow: untracked `tmp/` for scratch files; `STATUS.md` is the only state file, updated at every checkpoint | `CLAUDE.md`, WORKING-AGREEMENT §2a |
 
 ## ADR status
-All 17 ADRs are **Proposed**. See [`ADRs/README.md`](ADRs/README.md).
+ADR-0007 and ADR-0017 are **Accepted**; the other 15 are **Proposed**. See [`ADRs/README.md`](ADRs/README.md).
