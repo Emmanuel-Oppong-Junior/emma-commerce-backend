@@ -55,7 +55,7 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | Phase 1 (remaining epics) | — | ADR decisions (16 still Proposed) |
+| 1 | Phase 1 (remaining epics) | — | ADR decisions (15 still Proposed) |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
