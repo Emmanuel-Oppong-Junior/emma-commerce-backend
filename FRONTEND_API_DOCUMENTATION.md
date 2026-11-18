@@ -1,6 +1,6 @@
 # Emma Commerce Backend — Complete Frontend Technical Documentation
 
-> Generated from actual source code. Every type, field name, enum value, validation rule, and flow described here is extracted directly from the codebase.
+> `schema.gql` (generated from the resolvers) is the source of truth for operation names, arguments, types, nullability and enum values. This document adds what the schema cannot say: who may call each operation, validation rules, errors and behaviour. If the two disagree, `schema.gql` wins; report the difference.
 
 ---
 
@@ -28,8 +28,9 @@
    - [Tax](#218-tax)
    - [Analytics](#219-analytics)
    - [Addresses](#220-addresses)
+   - [Shipping Zones & Pickup Locations](#221-shipping-zones--pickup-locations)
 3. [REST API Reference](#3-rest-api-reference)
-4. [Prisma Data Models](#4-prisma-data-models)
+4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
 6. [Commerce Flows](#6-commerce-flows)
 7. [Order Lifecycle](#7-order-lifecycle)
@@ -71,7 +72,7 @@ feature/
 | Runtime | Node.js |
 | Framework | NestJS v10+ |
 | API | GraphQL (code-first) via Apollo Server v4 |
-| ORM | Prisma v5 |
+| ORM | Prisma v6 |
 | Database | PostgreSQL |
 | Auth | JWT (Access + Refresh Tokens) stored in `RefreshToken` table |
 | Hashing | bcrypt |
@@ -81,14 +82,14 @@ feature/
 | Email | Resend |
 | Logging | Winston (via custom `LoggerService`) |
 | Tracing | OpenTelemetry (OTLP/HTTP exporter, opt-in via `OTEL_ENABLED=true`) |
-| Scheduling | `@nestjs/schedule` (cron jobs for low-stock checks every 6 hours) |
+| Scheduling | `@nestjs/schedule`: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), low-stock log check (every 6 hours) |
 | Rate Limiting | `@nestjs/throttler` with per-named-throttler rules |
 
 ### GraphQL Approach
 
 **Code-first.** The schema is auto-generated to `schema.gql` on startup. NestJS `@ObjectType()` and `@InputType()` decorators define the schema. Apollo Server v4 is the driver.
 
-- Playground: **disabled in production**, Apollo Sandbox served in development.
+- Landing page: Apollo Sandbox outside production, disabled in production.
 - Introspection: **disabled in production**.
 - Error formatting: internal errors are masked in production; validation/auth/business logic errors are always forwarded.
 
@@ -97,7 +98,8 @@ feature/
 - **Default**: all routes require Bearer JWT unless decorated with `@Auth(AuthType.None)`.
 - Access token: short-lived (default 1 hour, `JWT_ACCESS_TOKEN_TTL`).
 - Refresh token: longer-lived (default 24 hours, `JWT_REFRESH_TOKEN_TTL`), stored **hashed** in the `RefreshToken` database table.
-- Refresh tokens are **rotated** on use — old token is revoked, new pair is issued atomically.
+- Refresh tokens are **rotated** on use — old token is revoked, new pair is issued atomically. Replaying a used refresh token signs the user out everywhere (see [Section 5](#5-authentication--authorization)).
+- A session can be refreshed for at most **30 days** after sign-in; then the user must sign in again.
 - Password reset tokens: 15-minute TTL signed with separate secret (`JWT_RESET_SECRET`).
 - **Account lockout**: 5 consecutive failed logins trigger a 15-minute lockout (tracked in `User.failedLoginAttempts` and `User.lockedUntil`).
 
@@ -106,12 +108,12 @@ feature/
 - Paystack is used exclusively.
 - Payment is initiated via a **REST POST** endpoint (`POST /payment/initialize`).
 - Frontend redirects user to Paystack's `authorizationUrl`.
-- Paystack calls the **webhook** (`POST /payment/webhook`) with `charge.success` or `charge.failed` events.
-- Frontend can also poll/call `verifyPayment` GraphQL mutation after redirect callback.
+- After payment Paystack redirects the browser to `PAYSTACK_CALLBACK_URL`, which must be a **frontend page** (the backend has no callback route). That page calls the `verifyPayment` GraphQL mutation with the `reference` query parameter.
+- Paystack also calls the **webhook** (`POST /payment/webhook`) with `charge.success` or `charge.failed` events, and a background sweep re-checks open payments every 5 minutes.
 
 ### File Storage (Cloudinary)
 
-All images are uploaded via authenticated REST endpoints (`POST /upload/single-image`, `POST /upload/multiple-images`). Images are resized to **500×500** pixels (contain mode, white background) before upload. Folder: `ecommerce`.
+Images are uploaded via REST endpoints for ADMIN/SUPER_ADMIN only (`POST /upload/single-image`, `POST /upload/multiple-images`). Images are resized to **500×500** pixels (contain mode, white background) before upload. Folder: `ecommerce`.
 
 ### Observability
 
@@ -128,9 +130,41 @@ PostgreSQL via Prisma. Full-text search is enabled (`fullTextSearchPostgres` pre
 
 **GraphQL Endpoint**: `POST /graphql`
 
-**Default Auth**: All operations require `Authorization: Bearer <accessToken>` unless marked **Auth Required: No**.
+### Platform rules
 
-**Rate Limiting**: Global limit — 120 requests/minute per IP.
+**Auth.** Every operation requires `Authorization: Bearer <accessToken>` unless marked **Auth Required: No** (public). A missing, invalid or expired token, or a deactivated account, gives `UNAUTHENTICATED`. The account (and its role) is re-read from the database on every request.
+
+**Roles** are checked by exact membership, not hierarchy: an operation listed as `ADMIN` only (e.g. `getUserPayment`, `updateSubCategory`) refuses a `SUPER_ADMIN` with `FORBIDDEN`. "Any signed-in user" means `USER`, `ADMIN` or `SUPER_ADMIN`.
+
+**Query limits** (checked before execution; a violation is a `GRAPHQL_VALIDATION_FAILED` error, HTTP 400):
+
+| Limit | Value |
+|---|---|
+| Selection depth | 8 |
+| Aliases per document | 15 |
+| Estimated cost | 3000 (each field 1; a list costs its `first`/`paginationArgs.first`, or 10, times its fields) |
+
+Introspection does not count towards the limits and is disabled in production.
+
+**Rate limits** (`@nestjs/throttler`, counted per client IP unless stated):
+
+| Scope | Limit |
+|---|---|
+| Every request (GraphQL and REST) | 120 / minute |
+| `signUp`, `signIn`, `signInWithGoogle`, `signInWithFacebook` | 5 / minute |
+| `verifyEmail` | 10 / minute |
+| `forgotPassword` | 3 / hour per IP and 3 / hour per email address |
+| `resetPassword` | 3 / hour |
+| `resendVerificationEmail` | 5 / hour (plus one email per minute per account) |
+| `POST /payment/initialize` | 5 / minute |
+| `POST /upload/*` | 10 / minute |
+| `refreshToken`, `signOut` | exempt from all limits |
+
+Over a limit the request fails with HTTP status 429; in GraphQL that is `extensions.code: "BAD_REQUEST"` with `extensions.status: 429` (see [Section 12](#12-error-handling-standard)).
+
+**Tokens**: access 1 hour, refresh 24 hours (rotated, session capped at 30 days), password reset 15 minutes. Details in [Section 5](#5-authentication--authorization).
+
+**Errors** use `extensions.code` and `extensions.status`; the mapping is in [Section 12](#12-error-handling-standard). Validation failures on input types are `BAD_USER_INPUT`; unknown input fields are rejected.
 
 ---
 
@@ -142,6 +176,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 #### `signUp`
 - **Type**: Mutation
+- **Args**: `input: SignUpInput!`
 - **Auth Required**: No
 - **Rate Limit**: 5 requests/minute
 - **Description**: Register a new user account with email and password. Returns a token pair immediately; the account starts unverified (`User.emailVerified: false`) and a verification email with a one-time token is sent shortly after. The welcome email is sent only once the address is verified with `verifyEmail`. Unverified accounts can sign in and check out as usual.
@@ -182,6 +217,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 #### `signIn`
 - **Type**: Mutation
+- **Args**: `input: SignInInput!`
 - **Auth Required**: No
 - **Rate Limit**: 5 requests/minute
 - **Description**: Authenticate with email and password. Account lockout enforced after 5 failed attempts (15-minute cooldown).
@@ -205,9 +241,14 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 #### `refreshToken`
 - **Type**: Mutation
+- **Args**: `input: RefreshTokenInput!`
 - **Auth Required**: No (uses refresh token)
 - **Rate Limit**: Not throttled (gated by token validity)
 - **Description**: Issue new access + refresh token pair. Old refresh token is immediately revoked (rotation). Account must be active.
+- **Rules**:
+  - Send each refresh token once. Serialise refresh calls per client (one in flight, shared across tabs) and store the new pair before using it.
+  - Presenting an already-rotated token is treated as theft: if no other token of the user was issued in the last 10 seconds, **every session of the user is revoked**. Inside those 10 seconds (two tabs racing) the late call just fails.
+  - The new refresh token never outlives the session: 30 days after the original sign-in, refresh fails with "Session has expired, please sign in again".
 
 **Input: `RefreshTokenInput`**
 
@@ -220,15 +261,16 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 **Response: `AuthEntity`**
 
 **Possible Errors**:
-- `UNAUTHENTICATED` — Token invalid, revoked, expired, or account inactive.
+- `UNAUTHENTICATED` — "Invalid or expired refresh token" (unknown, revoked, reused or expired), "Session has expired, please sign in again", "Account is inactive", "User not found".
 
 ---
 
 #### `signOut`
 - **Type**: Mutation
+- **Args**: `input: SignOutInput!`
 - **Auth Required**: Yes (Bearer)
 - **Rate Limit**: Not throttled
-- **Description**: Revoke the provided refresh token. Idempotent — succeeds even if token not found.
+- **Description**: Revoke the provided refresh token. Idempotent — succeeds even if token not found. The access token stays valid until it expires (up to 1 hour); discard it client-side.
 
 **Input: `SignOutInput`**
 
@@ -244,9 +286,10 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 #### `signInWithGoogle`
 - **Type**: Mutation
+- **Args**: `input: SocialLoginInput!`
 - **Auth Required**: No
 - **Rate Limit**: 5 requests/minute
-- **Description**: Authenticate via Google OAuth access token. If the user does not exist, a new account is created automatically.
+- **Description**: Authenticate via a Google OAuth **access token** (the code calls Google's `tokeninfo?access_token=` and `userinfo` endpoints; the schema description says "ID token", which is inaccurate). If no account is linked to the Google identity, a new account is created.
 
 **Input: `SocialLoginInput`**
 
@@ -260,22 +303,24 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 **Flow**:
 1. Backend validates token against Google's tokeninfo endpoint.
-2. Verifies `aud` matches `GOOGLE_CLIENT_ID`.
-3. Looks up existing user by provider ID.
-4. Creates account if new (no password required).
+2. Verifies `aud` matches `GOOGLE_CLIENT_ID` and that `userinfo` belongs to the same Google user.
+3. Looks up the account linked to that Google ID.
+4. If none: creates a new account (no password; email starts verified). If an account with the same email already exists (e.g. registered with a password), the call is refused; there is no account linking yet.
 5. Returns token pair.
 
 **Possible Errors**:
-- `UNAUTHENTICATED` — Invalid Google token or token not issued for this app.
-- `UNAUTHENTICATED` — Google account has no email.
+- `UNAUTHENTICATED` — Invalid Google token, token not issued for this app, Google account has no email, or "Google account email address is not verified".
+- `CONFLICT` — "An account with this email already exists. Sign in with your email and password, …".
+- `INTERNAL_SERVER_ERROR` (`status: 503`) — Google could not be reached or answered with an error.
 
 ---
 
 #### `signInWithFacebook`
 - **Type**: Mutation
+- **Args**: `input: SocialLoginInput!`
 - **Auth Required**: No
 - **Rate Limit**: 5 requests/minute
-- **Description**: Authenticate via Facebook access token. Same upsert behavior as Google.
+- **Description**: Authenticate via Facebook access token. Same behaviour as Google (new account if not linked, `CONFLICT` if the email is already registered), except that new Facebook accounts start with an unverified email.
 
 **Input: `SocialLoginInput`**
 
@@ -287,10 +332,13 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 **Response: `AuthEntity`**
 
+**Possible Errors**: `UNAUTHENTICATED` (invalid token, no email on the Facebook account), `CONFLICT` (email already registered), `INTERNAL_SERVER_ERROR` with `status: 503` (Facebook unreachable).
+
 ---
 
 #### `forgotPassword`
 - **Type**: Mutation
+- **Args**: `input: ForgotPasswordInput!`
 - **Auth Required**: No
 - **Rate Limit**: 3 requests/hour per IP, and 3 requests/hour per email address (trimmed, case-insensitive), whichever is hit first. Over either limit the request fails with the same throttling error whether or not the email has an account.
 - **Description**: Send a password reset email. Always returns `true` even if the email is not found (prevents user enumeration). The response is sent before the account lookup, so its timing is the same either way; the email itself follows shortly after.
@@ -311,6 +359,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 #### `resetPassword`
 - **Type**: Mutation
+- **Args**: `input: ResetPasswordInput!`
 - **Auth Required**: No
 - **Rate Limit**: 3 requests/hour
 - **Description**: Reset password using the token from the email.
@@ -324,15 +373,16 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 }
 ```
 
-**Response**: `Boolean`
+**Response**: `Boolean`. On success every session of the user is revoked (they sign in again with the new password).
 
 **Possible Errors**:
-- `UNAUTHENTICATED` — Token invalid, expired, or already used.
+- `UNAUTHENTICATED` — "Invalid or expired reset token" (invalid, expired, or already used).
 
 ---
 
 #### `verifyEmail`
 - **Type**: Mutation
+- **Args**: `input: VerifyEmailInput!`
 - **Auth Required**: No
 - **Rate Limit**: 10 requests/minute
 - **Description**: Verify an email address with the token from a verification email (the frontend page that receives the token calls this). Without a pending change it marks the account's current email verified. With a pending email change it replaces `email` with `pendingEmail` and **revokes every refresh token of the user** (all sessions end; the user signs in again with the new email).
@@ -371,51 +421,75 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 ### 2.2 Users
 
-Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN)` (unless overridden).
+Resolver default: `SUPER_ADMIN` only, overridden per operation below. Super admin accounts are never listed by `users` and can never be created, changed, archived or deleted through the API. An `ADMIN` may manage `USER` accounts only; acting on any `ADMIN` account (including their own via `updateUser`/`removeUser`) is `FORBIDDEN`, only a `SUPER_ADMIN` may.
 
 ---
 
 #### `createUser` (SUPER_ADMIN only)
 - **Type**: Mutation
-- **Roles**: `SUPER_ADMIN`
-- **Description**: Manually create a user account.
+- **Args**: `createUserInput: CreateUserInput!`
+- **Response**: `User!`
+- **Description**: Create a user account with a password.
 
-**Input: `CreateUserInput`** (inherits `SignUpInput` fields + `role`)
-
----
-
-#### `usersConnection` (ADMIN, SUPER_ADMIN)
-- **Type**: Query
-- **Roles**: `ADMIN`, `SUPER_ADMIN`
-- **Description**: Paginated, filtered list of users.
-
-**Input: `UserPaginateArgs`** (extends `PaginationArgs`)
+**Input: `CreateUserInput`**
 
 ```typescript
 {
-  first?: number;         // Page size, 1–100, default 12
-  after?: string;         // Cursor (product ID)
-  orderBy?: string;       // Field to order by
-  orderInAsc?: boolean;   // Ascending order? Default true
-  email?: string;         // Partial match, case-insensitive
-  phoneNumber?: string;   // Exact match
-  role?: Role;            // USER | ADMIN | SUPER_ADMIN
-  isActive?: boolean;     // Active status filter
-  name?: string;          // Partial match, case-insensitive
-  createdAfter?: Date;    // Filter users created after this date
+  name: string;            // Required. 2–50 chars. Trimmed and lowercased.
+  email: string;           // Required. Valid email. Trimmed and lowercased.
+  password: string;        // Required. Password policy (same as signUp).
+  phoneNumber?: string;
+  profilePicture?: string; // Valid URL.
+  isActive: boolean;       // Default true.
+  role: Role;              // Default USER. USER or ADMIN; SUPER_ADMIN is refused.
 }
 ```
+
+**Possible Errors**: `FORBIDDEN` ("Super admin accounts cannot be created through the API"), `CONFLICT` (email or phone number already used), `BAD_USER_INPUT`.
+
+---
+
+#### `users` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Args**: `filter: UserPaginateArgs!`
+- **Response**: `UserConnection!`
+- **Description**: Cursor-paginated, filtered list of users. `SUPER_ADMIN` accounts are never included.
+
+**Input: `UserPaginateArgs`** (`PaginationArgs` fields plus filters)
+
+```typescript
+{
+  first: number;          // Default 12, 1–100
+  after?: string;         // Cursor (user ID from the previous page)
+  orderBy?: string;       // One of: id, name, email, phoneNumber, role, isActive, createdAt, updatedAt, lastLoginAt, profilePicture (also accepts "password")
+  orderInAsc?: boolean;   // Default true
+  email?: string;         // Partial match, case-insensitive
+  phoneNumber?: string;   // Exact match
+  role?: Role;            // USER | ADMIN (SUPER_ADMIN is always excluded)
+  isActive?: boolean;
+  name?: string;          // Partial match, case-insensitive
+  createdAfter?: DateTime;// Users created on or after this date
+}
+```
+
+An `orderBy` outside the list fails with `INTERNAL_SERVER_ERROR` (masked in production).
 
 **Response: `UserConnection`**
 
 ```typescript
 {
   edges: [{ node: User, cursor: string }];
-  pageInfo: {
-    hasNextPage: boolean;
-    hasPreviousPage: boolean;
-    pageSize: number;
-  };
+  pageInfo: PageInfo; // { hasNextPage, hasPreviousPage, pageSize, totalCount }
+}
+```
+
+**Example**:
+```graphql
+query {
+  users(filter: { first: 20, role: USER, isActive: true }) {
+    edges { cursor node { id name email role isActive createdAt } }
+    pageInfo { hasNextPage totalCount }
+  }
 }
 ```
 
@@ -424,14 +498,28 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 #### `userById` (ADMIN, SUPER_ADMIN)
 - **Type**: Query
 - **Args**: `id: String!`
-- **Response**: `User`
+- **Response**: `User!`. An unknown ID returns an error (the resolver returns null for a non-null field), not `NOT_FOUND`.
 
 ---
 
 #### `userByEmail` (ADMIN, SUPER_ADMIN)
 - **Type**: Query
 - **Args**: `email: String!`
-- **Response**: `User`
+- **Response**: `User!`. Same unknown-value behaviour as `userById`.
+
+---
+
+#### `userByProviderId` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Args**: `providerId: String!` (the Google or Facebook user ID)
+- **Response**: `User!` linked to that social identity. Same unknown-value behaviour as `userById`.
+
+---
+
+#### `userProfile`
+- **Type**: Query
+- **Auth Required**: Yes (any signed-in user)
+- **Response**: `User!` for the caller, with `addresses` and `orders` available.
 
 ---
 
@@ -465,6 +553,7 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 #### `updateUser` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `id: String!`, `updateUserInput: UpdateUserInput!`
+- **Response**: `User!`
 - **Description**: Update another user's profile (super admin accounts cannot be modified; admin accounts only by a super admin). A new `email` goes through the same verification as `updateMyProfile` (stored as `pendingEmail`, verification email to the new address, notice to the old one, switch on `verifyEmail`), without a password.
 - **Possible Errors**: `FORBIDDEN`, `NOT_FOUND`, `CONFLICT` ("This email address is already in use").
 
@@ -473,6 +562,8 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 #### `changeUserPassword` (USER, ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Auth Required**: Yes
+- **Args**: `input: ChangeUserPasswordInput!`
+- **Response**: `User!`. On success every session of the user is revoked; the current access token keeps working until it expires (up to 1 hour), but the next refresh fails, so sign the user in again.
 
 **Input: `ChangeUserPasswordInput`**
 
@@ -483,14 +574,34 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 }
 ```
 
-**Response**: `User`
+**Possible Errors**: `FORBIDDEN` ("Old password is incorrect", "New password must be different from old password"), `BAD_USER_INPUT`.
 
 ---
 
 #### `removeUser` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `id: String!`
-- **Description**: Permanently deletes a user.
+- **Response**: `User!`
+- **Description**: Permanently deletes a user (addresses, cart, wishlist, reviews, sessions go with it). A user who has orders or return requests cannot be deleted (`CONFLICT`); archive them instead.
+- **Possible Errors**: `NOT_FOUND`, `FORBIDDEN` (super admin target, or an ADMIN acting on an ADMIN), `CONFLICT`.
+
+---
+
+#### `archiveUser` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `id: String!`
+- **Response**: `User!`
+- **Description**: Deactivates the account (`isActive = false`) and revokes all its sessions. A deactivated user cannot sign in, refresh, or use an existing access token.
+- **Possible Errors**: `NOT_FOUND`, `FORBIDDEN` (same target rules as `removeUser`).
+
+---
+
+#### `deArchiveUser` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `id: String!`
+- **Response**: `User!`
+- **Description**: Reactivates an archived account (`isActive = true`). The user signs in again.
+- **Possible Errors**: `NOT_FOUND`, `FORBIDDEN` (same target rules as `removeUser`).
 
 ---
 
@@ -500,21 +611,24 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 {
   id: string;
   name: string | null;
-  email: string;
+  email: string;           // Owner or admin only.
   emailVerified: boolean;  // Owner or admin only. False until the current email is verified.
   pendingEmail?: string;   // Owner or admin only. New email awaiting verification.
-  phoneNumber?: string;
-  authProvider?: string;
+  phoneNumber?: string;    // Owner or admin only.
+  authProvider?: string;   // Not populated today (always null).
+  facebookId?: string;     // Not populated today (always null).
   isActive: boolean;
   profilePicture?: string;
-  role: string;           // "USER" | "ADMIN" | "SUPER_ADMIN"
+  role: string;            // "USER" | "ADMIN" | "SUPER_ADMIN"
   createdAt: DateTime;
   updatedAt: DateTime;
   lastLoginAt?: DateTime;
-  addresses?: Address[];
-  orders?: Order[];
+  addresses?: Address[];   // Owner or admin only.
+  orders?: Order[];        // Owner or admin only.
 }
 ```
+
+Reading an "owner or admin only" field of another user as a `USER` gives `FORBIDDEN` for that field.
 
 ---
 
@@ -522,56 +636,59 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 > **Visibility:** the public `products` and `product` queries only ever return products that are active **and** `PUBLISHED`; `isActive`/`status` sent in `filterArgs` cannot widen that. `product` returns `null` for a draft, archived or inactive product. Admins list and open products in any state with `adminProducts` / `adminProduct`. Nested `products` on `Category`, `SubCategory` and `Brand` also return published products only, newest first, capped by `first` (default 20, 1–100; anything else is an error).
 
+> **Price:** admins enter `basePrice`. `price` is what customers pay and what checkout charges: `basePrice × (1 + sum of active tax rates)` when `isTaxable`, otherwise `basePrice`. It is recomputed when `basePrice`/`isTaxable` change and whenever a tax is created, updated or deleted. Product discounts are shown via `discountedPrice` but are **not** applied at checkout (see [Section 10](#10-discounts-system)).
+
 ---
 
 #### `products`
 - **Type**: Query
 - **Auth Required**: No
-- **Description**: Cursor-paginated, filtered list of **published, active** products only.
-
-**Input: `PaginationArgs` + `ProductFilterArgs`**
+- **Args**: `paginationArgs: PaginationArgs`, `filterArgs: ProductFilterArgs`, `sortArgs: ProductSortArgs` (all optional)
+- **Response**: `ProductConnection!`
+- **Description**: Cursor-paginated, filtered, sorted list of **published, active** products only.
 
 ```typescript
-// PaginationArgs
+// PaginationArgs (when the argument is omitted entirely, the page size is 10)
 {
-  first?: number;       // Default 12, max 100
+  first: number;        // Default 12, 1–100
   after?: string;       // Cursor (product ID from previous page)
-  orderBy?: string;     // Field to sort by
-  orderInAsc?: boolean; // Default true
+  orderBy?: string;     // Ignored for products; use sortArgs
+  orderInAsc?: boolean; // Ignored for products; use sortArgs
 }
 
 // ProductFilterArgs
 {
   categoryId?: string;
-  categoryName?: string;
-  subCategoryName?: string;
+  categoryName?: string;      // Exact, case-insensitive
+  subCategoryName?: string;   // See note below
   subcategoryId?: string;
   isActive?: boolean;         // Default true; ignored by public queries
   status?: ProductStatus;     // DRAFT | PUBLISHED | ARCHIVED; ignored by public queries
-  search?: string;            // Partial match against name, description, tags
+  search?: string;            // Full-text match on name/description, or partial tag name
   createdAfter?: string;      // ISO date string
-  priceMin?: number;          // Inclusive minimum price
-  priceMax?: number;          // Inclusive maximum price
-  brand?: string;             // Exact brand name match
-  inStock?: boolean;          // Filter by in-stock status
+  priceMin?: number;          // Inclusive, compared with price
+  priceMax?: number;          // Inclusive, compared with price
+  brand?: string;             // Brand name, exact, case-insensitive
+  inStock?: boolean;          // See note below
   tagId?: string;
-  tagName?: string;
+  tagName?: string;           // Exact, case-insensitive
+}
+
+// ProductSortArgs
+{
+  sortBy: ProductSortField;   // CREATED_AT (default) | NAME | PRICE | QUANTITY | UPDATED_AT
+  sortOrder: SortOrder;       // DESC (default) | ASC
 }
 ```
+
+Known filter defects (do not rely on them yet): `subCategoryName` compares the subcategory name with the `categoryName` value, and `inStock: true` does not exclude out-of-stock products. Use `subcategoryId` instead.
 
 **Response: `ProductConnection`**
 
 ```typescript
 {
-  edges: [{
-    cursor: string;
-    node: Product;
-  }];
-  pageInfo: {
-    hasNextPage: boolean;
-    hasPreviousPage: boolean;
-    pageSize: number;
-  };
+  edges: [{ cursor: string; node: Product }];
+  pageInfo: { hasNextPage: boolean; hasPreviousPage: boolean; pageSize: number; totalCount: number };
 }
 ```
 
@@ -581,56 +698,53 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 {
   id: string;
   name: string;
-  images: string[];             // Array of HTTPS URLs
+  shortDescription?: string;
   description?: string;
-  price: Float;                 // Base price (Decimal, rendered as Float)
-  currentPrice?: Float;         // Current selling price (may differ after manual update)
-  currency?: string;            // Default "GHS"
-  discountedPrice?: Float;      // Resolved field: price after active discount, or null
-  appliedDiscount?: Discount;   // Resolved field: the active Discount object, or null
-  sku?: string;
-  quantity: number;             // Total stock count
-  isActive: boolean;
-  categoryId: string;
-  subcategoryId?: string;
-  category?: Category;
-  subcategory?: SubCategory;
-  brand?: Brand;
-  variants?: Variant[];         // Resolved via DataLoader
+  images?: string[];            // HTTPS URLs
+  attachments?: string[];
+  basePrice?: Float;            // Admin-entered price before tax
+  price?: Float;                // Tax-inclusive selling price (charged at checkout)
+  currentPrice?: Float;         // Not set by any API operation (null unless set in the database)
+  currency?: Currency;          // Default GHS; only GHS products can be checked out
+  isTaxable: boolean;
+  discountedPrice?: Float;      // price after the best active discount; null when no discount applies
+  appliedDiscount?: Discount;   // The discount behind discountedPrice, or null
   discounts?: Discount[];
-  reviews?: Review[];           // Resolved via DataLoader
+  sku?: string;
+  barcode?: string;
+  quantity: number;             // Stock
+  lowStockAlert?: number;
+  stockStatus?: StockStatus;    // Stored as entered; not updated automatically from quantity
+  status?: ProductStatus;       // DRAFT | PUBLISHED | ARCHIVED
+  isActive: boolean;
+  publishedAt?: DateTime;       // Not set by any API operation
+  deliveryOptions?: DeliveryOptions[];
+  selectedDeliveryRegions?: string[];
+  expiryDate?: DateTime;
+  categoryId?: string;
+  category?: Category;
+  subcategoryId?: string;
+  subcategory?: SubCategory;
+  brandId?: string;
+  brand?: Brand;
   tags?: Tag[];
+  variants?: Variant[];
+  reviews?: Review[];
   createdAt: DateTime;
   updatedAt: DateTime;
 }
 ```
 
-**Example Response**:
-```json
-{
-  "data": {
-    "products": {
-      "edges": [
-        {
-          "cursor": "clx1234abc",
-          "node": {
-            "id": "clx1234abc",
-            "name": "Cotton T-Shirt",
-            "price": 29.99,
-            "discountedPrice": 24.99,
-            "isActive": true,
-            "quantity": 50,
-            "images": ["https://res.cloudinary.com/..."],
-            "currency": "GHS"
-          }
-        }
-      ],
-      "pageInfo": {
-        "hasNextPage": true,
-        "hasPreviousPage": false,
-        "pageSize": 12
-      }
-    }
+**Example**:
+```graphql
+query {
+  products(
+    paginationArgs: { first: 12 }
+    filterArgs: { categoryId: "clx_cat" }
+    sortArgs: { sortBy: PRICE, sortOrder: ASC }
+  ) {
+    edges { cursor node { id name price discountedPrice currency images } }
+    pageInfo { hasNextPage totalCount }
   }
 }
 ```
@@ -648,9 +762,9 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 #### `adminProducts` (ADMIN, SUPER_ADMIN)
 - **Type**: Query
 - **Roles**: `ADMIN`, `SUPER_ADMIN`
-- **Args**: same as `products` (`paginationArgs`, `filterArgs`, `sortArgs`)
-- **Description**: Products in any status, including `DRAFT`, `ARCHIVED` and inactive. Use `filterArgs.status` / `filterArgs.isActive` to narrow. Omit `filterArgs` entirely to get every product.
-- **Response**: `ProductConnection`
+- **Args**: same as `products`: `paginationArgs: PaginationArgs`, `filterArgs: ProductFilterArgs`, `sortArgs: ProductSortArgs`
+- **Description**: Products in any status, including `DRAFT`, `ARCHIVED` and inactive. Use `filterArgs.status` / `filterArgs.isActive` to narrow. Omit `filterArgs` entirely to get every product (sending `filterArgs` without `isActive` applies its default `true`).
+- **Response**: `ProductConnection!`
 
 ---
 
@@ -664,61 +778,74 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 #### `createProduct` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
-- **Roles**: `ADMIN`, `SUPER_ADMIN`
+- **Args**: `createProductInput: CreateProductInput!`
+- **Response**: `Product!`
 
 **Input: `CreateProductInput`**
 
 ```typescript
 {
-  name: string;          // Required. 1–255 chars.
-  images?: string[];     // Optional. Max 10 HTTPS URLs.
-  description?: string;  // Optional. Max 5000 chars.
-  price: string;         // Required. Decimal string e.g. "29.99". Avoids float rounding.
-  sku?: string;          // Optional. 1–50 chars, alphanumeric + hyphens only.
-  quantity: number;      // Required. Positive integer.
-  isActive: boolean;     // Default false.
-  categoryId?: string;   // Required. Parent category ID.
-  subcategoryId?: string;// Optional. Subcategory ID.
-  brandId?: string;      // Optional. Brand ID.
+  name: string;                  // Required. 1–255 chars.
+  basePrice: string;             // Required. Decimal string, e.g. "29.99". There is no `price` input.
+  quantity: number;              // Required. Integer >= 0 (initial stock).
+  isActive: boolean;             // Default false.
+  isTaxable: boolean;            // Default false.
+  status?: ProductStatus;        // Default DRAFT. Must be PUBLISHED (and isActive true) to appear publicly.
+  shortDescription?: string;     // Max 500 chars.
+  description?: string;          // Max 5000 chars.
+  images?: string[];             // Max 10 HTTPS URLs.
+  attachments?: string[];        // URLs.
+  currency?: Currency;           // Default GHS.
+  sku?: string;                  // 1–50 chars, letters, digits and hyphens. Unique.
+  barcode?: string;              // 1–100 chars. Unique.
+  lowStockAlert?: number;        // Integer 0–10000. Default 5.
+  stockStatus?: StockStatus;     // Default IN_STOCK.
+  deliveryOptions?: DeliveryOptions[];   // Default [LOCAL_DELIVERY].
+  selectedDeliveryRegions?: string[];    // Region names when deliveryOptions includes SELECTED_REGIONS.
+  expiryDate?: DateTime;
+  categoryId?: string;           // Optional.
+  subcategoryId?: string;        // Must belong to categoryId.
+  brandId?: string;
 }
 ```
 
-**Response**: `Product`
-
 **Possible Errors**:
 - `BAD_USER_INPUT` — Validation failure.
-- `NOT_FOUND` — Category or brand not found.
+- `NOT_FOUND` — Category or subcategory not found.
+- `CONFLICT` — SKU already in use, subcategory does not belong to the category, or another unique value (barcode) already used.
 
 ---
 
 #### `updateProduct` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
-- **Args**: `productId: String!`, `updateProductInput: UpdateProductInput`
-- **Response**: `Product`
+- **Args**: `productId: String!`, `updateProductInput: UpdateProductInput!`
+- **Response**: `Product!`
 
-`UpdateProductInput` has the same fields as `CreateProductInput`, all optional.
+`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `quantity`**: stock cannot be set here (sending it is a schema error, HTTP 400). Change stock with `restockProduct` or `adjustProductStock`. Note that `isActive` and `isTaxable` default to `false` in this input, so always send them explicitly.
 
 ---
 
 #### `permanentlyDeleteProduct` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `productId: String!`
-- **Response**: `Product`
+- **Response**: `Product!`
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` ("Cannot delete product referenced in active carts or orders").
 
 ---
 
 #### `archiveProduct` / `restoreProduct` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `productId: String!`
-- **Description**: `archiveProduct` sets `status = ARCHIVED`, `isActive = false`. `restoreProduct` sets `status = PUBLISHED`, `isActive = true`.
-- **Response**: `Product`
+- **Description**: `archiveProduct` sets `isActive = false`; `restoreProduct` sets `isActive = true`. Neither changes `status`; use `updateProduct` to set `status` (e.g. `ARCHIVED` or `PUBLISHED`).
+- **Response**: `Product!`
 
 ---
 
 #### `addTagToProduct` / `removeTagFromProduct` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `productId: String!`, `tagId: String!`
-- **Response**: `Product`
+- **Response**: `Product!`
+- **Possible Errors**: `NOT_FOUND` (product or tag).
 
 ---
 
@@ -740,7 +867,7 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
   name: string;
   description?: string;
   image?: string;
-  products: Product[];
+  products: Product[];          // products(first: Int! = 20): published products only, newest first, 1–100
   subcategories: SubCategory[];
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -751,7 +878,7 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 #### `category`
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Auth Required**: Yes (any signed-in user; unlike `categories`, this one is not public)
 - **Args**: `id: String!`
 - **Response**: `Category | null`
 
@@ -759,37 +886,49 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 #### `createCategory` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
+- **Args**: `input: CreateCategoryInput!`
+- **Response**: `Category!`
 
 **Input: `CreateCategoryInput`**
 
 ```typescript
 {
-  name: string;          // Required. 2–50 chars. Alphanumeric, spaces, hyphens only.
+  name: string;          // Required. 2–50 chars after trimming. Letters, digits, spaces, hyphens only. Unique.
   image?: string;        // Optional. HTTPS URL.
   description?: string;  // Optional. Max 500 chars.
 }
 ```
 
+**Possible Errors**: `CONFLICT` (name already exists), `BAD_USER_INPUT`.
+
 ---
 
 #### `updateCategory` (ADMIN, SUPER_ADMIN)
-- **Args**: `id: String!`, `input: UpdateCategoryInput` (all fields optional)
+- **Type**: Mutation
+- **Args**: `id: String!`, `input: UpdateCategoryInput!` (all fields optional, same rules)
+- **Response**: `Category!`
+- **Possible Errors**: `NOT_FOUND`, `CONFLICT` (name taken).
 
 ---
 
 #### `removeCategory` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
 - **Args**: `id: String!`
+- **Response**: `Category!`
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` if the category still has products or subcategories.
 
 ---
 
 ### 2.5 SubCategories
 
+Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user.
+
 ---
 
 #### `subCategories`
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Response**: `[SubCategory!]!`
+- **Auth Required**: Yes (any signed-in user)
+- **Response**: `[SubCategory!]!`, sorted by name
 
 **`SubCategory` Object Type**:
 
@@ -800,6 +939,8 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
   description?: string;
   image?: string;
   categoryId: string;
+  category?: SubCategory;   // Typed SubCategory in schema.gql (schema defect); use categoryId
+  products?: Product[];     // products(first: Int! = 20): published only, newest first, 1–100
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -809,24 +950,47 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 #### `subCategory`
 - **Type**: Query
+- **Auth Required**: Yes (any signed-in user)
 - **Args**: `id: String!`
+- **Response**: `SubCategory | null`
 
 ---
 
 #### `createSubCategory` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: CreateSubCategoryInput!`
+- **Response**: `SubCategory!`
 
 **Input: `CreateSubCategoryInput`**
 
 ```typescript
 {
-  name: string;          // Required. 2–50 chars. Alphanumeric, spaces, hyphens.
+  name: string;          // Required. 2–50 chars after trimming. Letters, digits, spaces, hyphens.
   categoryId: string;    // Required. Parent category ID.
   image?: string;        // Optional. HTTPS URL.
   description?: string;  // Optional. Max 500 chars.
 }
 ```
 
-**Constraint**: `(name, categoryId)` must be unique.
+**Constraint**: `(name, categoryId)` must be unique (`CONFLICT`).
+
+---
+
+#### `updateSubCategory` (ADMIN only)
+- **Type**: Mutation
+- **Roles**: `ADMIN` only; a `SUPER_ADMIN` gets `FORBIDDEN` (method-level role overrides the resolver default)
+- **Args**: `id: String!`, `input: UpdateSubCategoryInput!` (all `CreateSubCategoryInput` fields optional)
+- **Response**: `SubCategory!`
+- **Possible Errors**: `NOT_FOUND`, `CONFLICT` (name already used in that category).
+
+---
+
+#### `removeSubCategory` (ADMIN only)
+- **Type**: Mutation
+- **Roles**: `ADMIN` only (as `updateSubCategory`)
+- **Args**: `id: String!`
+- **Response**: `SubCategory!`
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` ("Cannot delete SubCategory with associated products").
 
 ---
 
@@ -837,7 +1001,7 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 #### `brands`
 - **Type**: Query
 - **Auth Required**: No
-- **Response**: `[Brand]`
+- **Response**: `[Brand]` (list and items nullable)
 
 **`Brand` Object Type**:
 
@@ -847,7 +1011,7 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
   name: string;
   description?: string;
   logo?: string;              // HTTPS URL
-  products?: Product[];
+  products?: Product[];       // products(first: Int! = 20): published only, newest first, 1–100
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -864,12 +1028,15 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 ---
 
 #### `createBrand` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: CreateBrandInput!`
+- **Response**: `Brand!`
 
 **Input: `CreateBrandInput`**
 
 ```typescript
 {
-  name: string;          // Required. Max 255 chars.
+  name: string;          // Required. Max 255 chars. Unique.
   description?: string;  // Optional.
   logo?: string;         // Optional. HTTPS URL with TLD.
 }
@@ -878,17 +1045,22 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 ---
 
 #### `updateBrand` / `deleteBrand` (ADMIN, SUPER_ADMIN)
-- **Args**: `id: String!`, `input: UpdateBrandInput` (all optional)
+- **Type**: Mutation
+- **Args**: `updateBrand(id: String!, input: UpdateBrandInput!)` (all fields optional); `deleteBrand(id: String!)`
+- **Response**: `Brand!`
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` on a duplicate name. Deleting a brand leaves its products without a brand.
 
 ---
 
 ### 2.7 Tags
 
+Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user.
+
 ---
 
 #### `tags`
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Auth Required**: Yes (any signed-in user)
 - **Response**: `[Tag!]!`
 
 **`Tag` Object Type**:
@@ -906,39 +1078,43 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 #### `tag`
 - **Type**: Query
+- **Auth Required**: Yes (any signed-in user)
 - **Args**: `tagId: String!`
+- **Response**: `Tag!` (`NOT_FOUND` if unknown)
 
 ---
 
 #### `createTag` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
 - **Args**: `name: String!`
-- **Response**: `Tag`
+- **Response**: `Tag!`
+- **Possible Errors**: `BAD_REQUEST` ("Tag name … is already in use").
 
 ---
 
 #### `updateTag` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
 - **Args**: `tagId: String!`, `name: String!`
+- **Response**: `Tag!`
 
 ---
 
 #### `deleteTag` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
 - **Args**: `tagId: String!`
+- **Response**: `Tag!`
 
 ---
 
 #### `addProductsToTag` / `removeProductsFromTag` (ADMIN, SUPER_ADMIN)
-
-**Input** (second arg name is `updateDiscountInput` — this is the actual arg name in GraphQL):
+- **Type**: Mutation
+- **Args**: `tagId: String!`, `updateDiscountInput: AddProductsToTagDto!` / `updateDiscountInput: RemoveProductsFromTagDto!` (the second argument really is named `updateDiscountInput`)
+- **Response**: `Tag!`
 
 ```typescript
-// AddProductsToTagDto
+// AddProductsToTagDto / RemoveProductsFromTagDto
 {
-  productIds: string[]; // Array of product IDs to add
-}
-
-// RemoveProductsFromTagDto
-{
-  productIds: string[]; // Array of product IDs to remove
+  productIds?: string[]; // Default []
 }
 ```
 
@@ -946,13 +1122,15 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 ### 2.8 Variants
 
+Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user. Variants cannot be put in the cart or bought yet: cart and order items reference the product only, and stock is taken from the product.
+
 ---
 
 #### `variant`
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Auth Required**: Yes (any signed-in user)
 - **Args**: `variantId: String!`
-- **Response**: `Variant`
+- **Response**: `Variant!` (`NOT_FOUND` if unknown)
 
 **`Variant` Object Type**:
 
@@ -961,7 +1139,7 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
   id: string;
   size?: string;
   color?: string;
-  quantity: number;
+  quantity: Float;
   price: Float;
   productId: string;
   product: Product;
@@ -973,7 +1151,7 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 #### `productVariants`
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Auth Required**: Yes (any signed-in user)
 - **Args**: `productId: String!`
 - **Response**: `[Variant!]!`
 
@@ -981,56 +1159,73 @@ Default resolver-level auth: `@Auth(AuthType.Bearer)` + `@Roles(Role.SUPER_ADMIN
 
 #### `variants`
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Description**: All variants (admin use).
+- **Auth Required**: Yes (any signed-in user; the schema description says "admin only", but `USER` is allowed)
+- **Response**: `[Variant!]!`, all variants
 
 ---
 
 #### `createVariant` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: CreateVariantInput!`
+- **Response**: `Variant!`
 
 **Input: `CreateVariantInput`**
 
 ```typescript
 {
-  size?: string;       // Optional.
-  color?: string;      // Optional.
-  quantity: number;    // Required. Min 0.
-  price: Float;        // Required. Min 0.
   productId: string;   // Required.
-  discountId?: string; // Optional.
+  price: Float;        // Required. Min 0.
+  quantity: Float;     // Required. Min 0 (initial stock).
+  size?: string;
+  color?: string;
+  discountId?: string;
 }
 ```
+
+**Possible Errors**: `NOT_FOUND` (product).
 
 ---
 
 #### `updateVariant` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: UpdateVariantInput!`
+- **Response**: `Variant!`
 
-**Input: `UpdateVariantInput`**: all `CreateVariantInput` fields optional, plus:
+**Input: `UpdateVariantInput`**
 
 ```typescript
 {
-  id: string; // Required. ID of the variant to update.
+  id: string;          // Required. Variant to update.
+  price?: Float;
+  size?: string;
+  color?: string;
+  productId?: string;
+  discountId?: string;
 }
 ```
+
+There is no `quantity` (sending it is a schema error, HTTP 400). Change stock with `restockVariant` or `adjustVariantStock`.
 
 ---
 
 #### `deleteVariant` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
 - **Args**: `variantId: String!`
+- **Response**: `Variant!`
 
 ---
 
 ### 2.9 Cart
 
-All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) can access.
+All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) can access; each user has one cart.
 
 ---
 
 #### `cart`
 - **Type**: Query
 - **Auth Required**: Yes
-- **Description**: Retrieve the current user's cart.
-- **Response**: `Cart | null`
+- **Description**: Retrieve the current user's cart. Item prices are the product `price`; discounts are not applied here (use `cartWithDiscount`).
+- **Response**: `Cart | null` (`null` until the first item is added)
 
 **`Cart` Object Type**:
 
@@ -1039,9 +1234,9 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
   id: string;
   userId: string;
   items: CartItem[];
-  total?: Float;           // Sum of originalPrice × quantity for all items
-  discountTotal?: Float;   // Sum of discounts applied
-  finalTotal?: Float;      // total - discountTotal
+  total?: Float;           // Set by cartWithDiscount: sum of price × quantity
+  discountTotal?: Float;   // Set by cartWithDiscount
+  finalTotal?: Float;      // Set by cartWithDiscount: total - discountTotal
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -1054,9 +1249,9 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
   id: string;
   productId: string;
   product: Product;
-  variant?: Variant;
-  originalPrice?: Float;     // Price per unit at time of add
-  discountedPrice?: Float;   // Discounted price per unit, if applicable
+  variant?: Variant;         // Always null today (variants cannot be added)
+  originalPrice?: Float;
+  discountedPrice?: Float;
   appliedDiscount?: Discount;
   quantity: number;
   createdAt: DateTime;
@@ -1069,6 +1264,9 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
 #### `addToCart`
 - **Type**: Mutation
 - **Auth Required**: Yes
+- **Args**: `input: AddToCartInput!`
+- **Response**: `Cart!`
+- **Description**: Adds the product, or increases the quantity if it is already in the cart. Creates the cart if needed. Stock is checked but not reserved.
 
 **Input: `AddToCartInput`**
 
@@ -1079,30 +1277,30 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
 }
 ```
 
-**Note**: To add a product **variant** to the cart, use `productId` of the parent product. If the product has variants that need to be differentiated (size/color), the current `AddToCartInput` does **not** include `variantId` — the variant association is stored in `CartItem.variantId` but the input only takes `productId`. Check the cart service for variant resolution logic.
-
-**Response**: `Cart`
+There is no `variantId`: variants cannot be added to the cart.
 
 **Possible Errors**:
 - `NOT_FOUND` — Product not found.
-- `BAD_REQUEST` — Insufficient stock.
+- `BAD_REQUEST` — Product not active, or the resulting cart quantity exceeds stock.
 
 ---
 
 #### `updateCartItem`
 - **Type**: Mutation
 - **Auth Required**: Yes
+- **Args**: `input: UpdateCartItemInput!`
+- **Response**: `Cart!`
 
 **Input: `UpdateCartItemInput`**
 
 ```typescript
 {
   cartItemId: string; // Required.
-  quantity: number;   // Required. Integer. Min 0. Setting to 0 removes the item.
+  quantity: number;   // Required. Integer >= 0. 0 removes the item.
 }
 ```
 
-**Response**: `Cart`
+**Possible Errors**: `NOT_FOUND` (item not in the caller's cart), `BAD_REQUEST` (exceeds stock).
 
 ---
 
@@ -1110,28 +1308,30 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
 - **Type**: Mutation
 - **Auth Required**: Yes
 - **Args**: `cartItemId: String!`
-- **Response**: `Cart`
+- **Response**: `Cart!`
+- **Possible Errors**: `NOT_FOUND` (item not in the caller's cart).
 
 ---
 
 #### `clearCart`
 - **Type**: Mutation
 - **Auth Required**: Yes
-- **Response**: `Cart` (empty)
+- **Response**: `Cart!` (empty)
 
 ---
 
 #### `cartWithDiscount`
 - **Type**: Query
 - **Auth Required**: Yes
-- **Description**: Returns the cart with all active discounts applied to items.
-- **Response**: `Cart`
+- **Description**: Returns the cart with the best active discount applied to each item, and `total`, `discountTotal`, `finalTotal` filled in. Display only: checkout charges the undiscounted `price` (see [Section 10](#10-discounts-system)).
+- **Response**: `Cart!`
+- **Possible Errors**: `NOT_FOUND` (no cart yet); `BAD_REQUEST` when the cart total is below a matching discount's `minimumPurchase`.
 
 ---
 
 ### 2.10 Wishlist
 
-All wishlist operations require `Bearer` JWT.
+All wishlist operations require `Bearer` JWT (any role).
 
 ---
 
@@ -1139,7 +1339,7 @@ All wishlist operations require `Bearer` JWT.
 - **Type**: Query
 - **Auth Required**: Yes
 - **Description**: Get or lazily create the user's wishlist.
-- **Response**: `Wishlist`
+- **Response**: `Wishlist!`
 
 **`Wishlist` Object Type**:
 
@@ -1160,7 +1360,8 @@ All wishlist operations require `Bearer` JWT.
 - **Type**: Mutation
 - **Auth Required**: Yes
 - **Args**: `productId: String!`
-- **Response**: `Wishlist`
+- **Response**: `Wishlist!`
+- **Possible Errors**: `NOT_FOUND` (product), `BAD_REQUEST` (already in the wishlist; or full at 100 products, which is HTTP 422 with code `BAD_REQUEST`).
 
 ---
 
@@ -1168,20 +1369,23 @@ All wishlist operations require `Bearer` JWT.
 - **Type**: Mutation
 - **Auth Required**: Yes
 - **Args**: `productId: String!`
-- **Response**: `Wishlist`
+- **Response**: `Wishlist!`
+- **Possible Errors**: `NOT_FOUND` (not in the wishlist).
 
 ---
 
 #### `clearWishlist`
 - **Type**: Mutation
 - **Auth Required**: Yes
-- **Response**: `Wishlist` (empty products array)
+- **Response**: `Wishlist!` (empty products array)
 
 ---
 
 ### 2.11 Orders
 
-> **Status rules:** an order can only move `PENDING → PROCESSING | CANCELLED`, `PROCESSING → SHIPPED | CANCELLED`, `SHIPPED → DELIVERED`. `DELIVERED` and `CANCELLED` are final. Any other change, including cancelling an order twice, fails with `CONFLICT`. If two requests change the same order at once, one succeeds and the other gets `CONFLICT` ("was changed by another request; reload it and try again"). An unpaid `ONLINE` order leaves `PENDING` only through a confirmed payment.
+> **Status rules:** an order can only move `PENDING → PROCESSING | CANCELLED`, `PROCESSING → SHIPPED | CANCELLED`, `SHIPPED → DELIVERED`. `DELIVERED` and `CANCELLED` are final. Any other change, including cancelling an order twice, fails with `CONFLICT`. If two requests change the same order at once, one succeeds and the other gets `CONFLICT` ("was changed by another request; reload it and try again"). An unpaid `ONLINE` order leaves `PENDING` only through a confirmed payment. Cash-on-delivery orders start in `PROCESSING`.
+
+> **Unpaid orders expire:** every hour, `PENDING` `ONLINE` orders older than 1 hour are cancelled (stock and coupon use given back) if they have no payment attempt, or only pending/failed/abandoned attempts untouched for 1 hour.
 
 All order operations require `Bearer` JWT.
 
@@ -1191,24 +1395,30 @@ All order operations require `Bearer` JWT.
 - **Type**: Query
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `orderId: String!`
-- **Description**: Retrieve a specific order. Users can only see their own orders.
-- **Response**: `Order`
+- **Description**: Retrieve one of the caller's own orders. Someone else's order gives `NOT_FOUND` (for admins too; they use `viewOrder`).
+- **Response**: `Order!`
 
 **`Order` Object Type**:
 
 ```typescript
 {
   id: string;
+  orderNumber: number;                         // Sequential order reference
   userId: string;
+  user?: User;                                 // Owner or admin only (FORBIDDEN otherwise)
+  status: OrderStatus;                         // PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
+  fulfillmentType: FulfillmentType;            // DELIVERY | PICKUP
+  paymentMethod: OrderPaymentMethod;           // ONLINE | CASH_ON_DELIVERY
+  contactEmail: string;
+  contactPhone: string;
   subtotal?: Float;                            // Sum of item prices at order time (null on older orders)
   shippingFee?: Float;                         // Delivery fee charged; 0 for PICKUP (null on older orders)
-  totalAmount: Float;                          // Amount charged: subtotal + shippingFee - couponDiscount
-  discountTotal?: Float;                       // Total discount from product/category discounts
-  finalTotal?: Float;                          // totalAmount after all discounts
   couponDiscount?: Float;                      // Coupon discount applied at checkout
-  status: OrderStatus;                         // PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
-  shippingAddressId: string;
-  shippingAddressSnapshot?: JSON;              // Snapshot of address at order time
+  totalAmount: Float;                          // Amount charged: subtotal + shippingFee - couponDiscount (see finalizeOrder)
+  discountTotal?: Float;                       // Set only by finalizeOrder
+  finalTotal?: Float;                          // Never populated (always null)
+  shippingAddressId?: string;                  // Set for DELIVERY orders
+  shippingAddressSnapshot?: JSON;              // DELIVERY: { street, city, state, zipCode, country } at order time
   pickupLocationId?: string;                   // Set for PICKUP orders
   pickupLocationSnapshot?: JSON;               // PICKUP: { name, address, city, state, country } at order time
   trackingNumber?: string;
@@ -1226,11 +1436,11 @@ All order operations require `Bearer` JWT.
   id: string;
   orderId: string;
   productId: string;
-  variantId?: string;
-  quantity: number;
-  priceAtOrder: Float;        // Price per unit at the time of the order
+  variantId?: string;         // Always null today
+  quantity: Float;
+  priceAtOrder: Float;        // Product price per unit at the time of the order
   originalPrice?: Float;
-  discountAmount?: Float;
+  discountAmount?: Float;     // Set only by finalizeOrder
   appliedDiscount?: Discount;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -1241,11 +1451,11 @@ All order operations require `Bearer` JWT.
 **`OrderStatus` Enum**:
 
 ```
-PENDING       — Order created, awaiting payment
-PROCESSING    — Payment received, order is being processed
-SHIPPED       — Order has been dispatched
-DELIVERED     — Order delivered to customer
-CANCELLED     — Order cancelled
+PENDING       — Order created, awaiting online payment
+PROCESSING    — Paid online, or a cash-on-delivery order being prepared
+SHIPPED       — Dispatched, or ready at the pickup counter
+DELIVERED     — Delivered or collected (for COD: cash recorded)
+CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 ```
 
 ---
@@ -1253,14 +1463,14 @@ CANCELLED     — Order cancelled
 #### `userOrders`
 - **Type**: Query
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Description**: All orders for the current user.
+- **Description**: All orders of the current user.
 - **Response**: `[Order!]!`
 
 ---
 
 #### `orders` (ADMIN, SUPER_ADMIN only)
 - **Type**: Query
-- **Description**: All orders in the system.
+- **Description**: All orders in the system (not paginated).
 - **Response**: `[Order!]!`
 
 ---
@@ -1269,55 +1479,88 @@ CANCELLED     — Order cancelled
 - **Type**: Query
 - **Args**: `id: String!`
 - **Description**: Retrieve any order by ID (no ownership check).
+- **Response**: `Order!`. An unknown ID returns an error (null for a non-null field), not `NOT_FOUND`.
 
 ---
 
 #### `createOrder`
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Description**: Create an order from the user's current cart. Validates stock. Applies tax. Optionally applies coupon. Clears cart on success.
+- **Args**: `input: CreateOrderInput!`
+- **Response**: `Order!`
+- **Description**: Create an order from the caller's cart, for delivery to a saved address or for pickup. Stock is taken immediately; the cart is emptied.
 
 **Input: `CreateOrderInput`**
 
 ```typescript
 {
-  shippingAddressId: string; // Required. Must be one of the user's saved addresses.
-  couponCode?: string;       // Optional. Coupon to apply.
+  fulfillmentType: FulfillmentType;       // Required. DELIVERY | PICKUP
+  shippingAddressId?: string;             // Required for DELIVERY: one of the caller's addresses
+  pickupLocationId?: string;              // Required for PICKUP: an active pickup location
+  contactEmail: string;                   // Required. Valid email.
+  contactPhone: string;                   // Required. Valid phone number in international format (e.g. +233…).
+  couponCode?: string;                    // Optional. Case-insensitive.
+  paymentMethod?: OrderPaymentMethod;     // Default ONLINE (Paystack). CASH_ON_DELIVERY to pay on delivery/pickup.
 }
 ```
 
-**What happens internally**:
-1. Cart is loaded and validated (must not be empty).
-2. Shipping address is verified (must belong to the user). For `DELIVERY`, the shipping fee comes from the active shipping zone whose cities include the address city (matched case-insensitively, ignoring extra spaces). If no zone covers the city the order is rejected; delivery is never free by default.
-3. Stock availability for each item is verified.
-4. Tax is calculated per item based on country from the shipping address.
-5. Coupon (if provided) is validated and applied.
-6. Order rows are created in a transaction.
-7. Inventory is decremented atomically.
-8. Cart is cleared.
-9. Confirmation email is sent asynchronously.
+**What happens**:
+1. The cart must exist and hold 1–50 items; the account must be active.
+2. `DELIVERY`: the address must belong to the caller. The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
+3. Each item is priced at the product's current `price` (tax-inclusive; product discounts are **not** applied). Every product must be priced in GHS and have enough stock.
+4. A coupon, if given, is validated against the subtotal and its use is recorded.
+5. `totalAmount = max(0, subtotal + shippingFee - couponDiscount)`.
+6. Stock is decremented (logged as `ORDER_DEDUCTION`), the order is saved and the cart emptied, all in one transaction.
+7. Status: `PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`.
+8. A confirmation email goes to the account's email (not `contactEmail`) after the response.
 
-**Response**: `Order`
+No tax is added at checkout; tax is already inside each product's `price`.
 
 **Possible Errors**:
-- `NOT_FOUND` — Cart empty, shipping address not found.
-- `BAD_REQUEST` — Insufficient stock for one or more items, invalid/expired coupon, a product priced in a currency other than GHS (only GHS is sold until multi-currency exists), delivery city not covered by any active shipping zone (offer pickup or another address), `PICKUP` with a `pickupLocationId` that does not exist or is not active.
+- `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, product no longer exists, unknown coupon code.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; more than 50 items; account inactive; insufficient stock; product not priced in GHS; delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
+- `BAD_USER_INPUT` — Invalid `contactEmail`/`contactPhone` or enum value.
 
-**Shipping zones (admin)**: `createShippingZone` / `updateShippingZone` reject (`CONFLICT`) a city that another zone already lists, active or not, so each city has exactly one fee. `getShippingFee(addressId)` returns `BAD_REQUEST` for an address whose city no active zone covers.
+**Example**:
+```graphql
+mutation {
+  createOrder(input: {
+    fulfillmentType: DELIVERY
+    shippingAddressId: "clx_address_xyz"
+    contactEmail: "jane@example.com"
+    contactPhone: "+233201234567"
+    couponCode: "SAVE10"
+  }) {
+    id orderNumber status paymentMethod subtotal shippingFee couponDiscount totalAmount
+  }
+}
+```
 
 ---
 
 #### `cancelOrder`
 - **Type**: Mutation
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Roles**: `USER` only (admins use `adminCancelOrder`; an ADMIN token gets `FORBIDDEN`)
 - **Args**: `orderId: String!`
-- **Description**: Cancel the order. Restores reserved stock exactly once. Users can only cancel their own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`.
-- **Response**: `Order`
+- **Description**: Cancel one of the caller's own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`. Stock and the coupon use are given back exactly once. If the order was paid online, a refund request (return request) is opened automatically for staff to process.
+- **Response**: `Order!`
+- **Possible Errors**: `NOT_FOUND` (not the caller's order), `CONFLICT`.
+
+---
+
+#### `adminCancelOrder` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `orderId: String!`
+- **Description**: Cancel any order. Same rules and effects as `cancelOrder` (only `PENDING`/`PROCESSING`, stock and coupon restored once, refund request for paid online orders), plus an audit entry.
+- **Response**: `Order!`
+- **Possible Errors**: `NOT_FOUND`, `CONFLICT`.
 
 ---
 
 #### `updateOrderStatus` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
+- **Args**: `input: UpdateOrderStatusInput!`
+- **Response**: `Order!`
 
 **Input: `UpdateOrderStatusInput`**
 
@@ -1328,7 +1571,7 @@ CANCELLED     — Order cancelled
 }
 ```
 
-**Rules**: the change must follow the status rules above, otherwise `CONFLICT`. Admins cannot move an unpaid `ONLINE` order to `PROCESSING` (only a confirmed payment can); cash-on-delivery orders are not affected. Setting `CANCELLED` performs a full cancel (stock restored, refund request for paid online orders), the same as `adminCancelOrder`.
+**Rules**: the change must follow the status rules above, otherwise `CONFLICT`. Admins cannot move an unpaid `ONLINE` order to `PROCESSING` (only a confirmed payment can); cash-on-delivery orders are not affected. Setting `CANCELLED` performs a full cancel (stock restored, refund request for paid online orders), the same as `adminCancelOrder`. For cash-on-delivery orders use `recordCodPayment` to reach `DELIVERED`.
 
 **Side effects**: When status transitions to `SHIPPED` or `DELIVERED`, a status update email is sent to the customer.
 
@@ -1336,6 +1579,9 @@ CANCELLED     — Order cancelled
 
 #### `updateShipping` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
+- **Args**: `input: UpdateShippingInput!`
+- **Response**: `Order!`
+- **Description**: Sets carrier and tracking number. Does not change the status. When a `trackingNumber` is sent, a "shipped" email with the tracking number goes to the customer.
 
 **Input: `UpdateShippingInput`**
 
@@ -1352,26 +1598,32 @@ CANCELLED     — Order cancelled
 #### `deleteOrder` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `orderId: String!`
+- **Response**: `Order!`
 - **Description**: Soft-delete a finished order (`DELIVERED` or `CANCELLED` only). Sets `deleted = true`, `deletedAt = now()`. **Never moves stock.** An open order returns `CONFLICT` (cancel it first, which restores its stock); deleting twice also returns `CONFLICT`.
 
 ---
 
 #### `finalizeOrder`
 - **Type**: Mutation
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN` (own orders only; otherwise `NOT_FOUND`)
 - **Args**: `id: String!`
-- **Description**: Snapshot and apply active discounts to the order as permanent `OrderItem.discountAmount` values. Call this after `createOrder` to lock in discount values.
+- **Response**: `Order!`
+- **Description**: Records the best active discount per item as `OrderItem.discountAmount`/`appliedDiscount`, sets `Order.discountTotal`, and **overwrites `Order.totalAmount` with the undiscounted item total (price × quantity), dropping the shipping fee and coupon discount**. If this runs before the first `POST /payment/initialize`, that changed total is what Paystack charges. The status is not checked. Do not call it from the storefront; it is a known defect (discounts at checkout are an open product decision).
 
 ---
 
 ### 2.12 Payment
+
+> Each `Payment` returned by the API is one **payment attempt**. Each call to `POST /payment/initialize` creates a new attempt with its own reference (`transactionId`); earlier attempts are kept, never deleted, so `getMyPayments`, `getUserPayment` and `payments` return one entry per attempt. A cash-on-delivery collection also appears as a `COMPLETED` attempt.
 
 ---
 
 #### `verifyPayment`
 - **Type**: Mutation (GraphQL)
 - **Roles**: `USER`
-- **Description**: Verify a Paystack payment by reference and update status. Enforces ownership — only the order owner can verify.
+- **Args**: `verifyPaymentInput: VerifyPaymentInput!`
+- **Response**: `Payment!`
+- **Description**: Verify a Paystack payment by reference and update status. Only the order owner can verify (`FORBIDDEN` otherwise).
 - **Behaviour**:
   - The payment counts only if Paystack reports `success` for exactly the attempt's amount and currency (GHS). Then the attempt becomes `COMPLETED` and the order moves `PENDING → PROCESSING`.
   - A success for a different amount or currency returns `status: FAILED`; the order stays `PENDING` and can be paid again. The captured money is queued for refund.
@@ -1383,11 +1635,11 @@ CANCELLED     — Order cancelled
 
 ```typescript
 {
-  reference: string; // Paystack transaction reference (from callback URL query param).
+  reference: string; // Paystack transaction reference (the `reference` query parameter on your callback page).
 }
 ```
 
-**Response**: `Payment`
+**Possible Errors**: `NOT_FOUND` (unknown reference), `FORBIDDEN` (not the caller's order).
 
 **`Payment` Object Type**:
 
@@ -1397,11 +1649,11 @@ CANCELLED     — Order cancelled
   orderId: string;
   order: Order;
   amount: Float;
-  currency: string;
-  paymentMethod: string;
+  currency: string;          // "GHS"
+  paymentMethod: string;     // Channel sent at initialize (e.g. "card"), or "CASH_ON_DELIVERY"
   status: PaymentStatus;     // PENDING | COMPLETED | FAILED | ABANDONED
-  transactionId?: string;
-  paymentDetails?: string;   // JSON string with full Paystack response
+  transactionId?: string;    // Paystack reference of this attempt
+  paymentDetails?: JSON;     // Sanitised provider data: { reference, access_code } after initialize; { reference, status, amount, currency, channel, paid_at, gateway_response } after verification
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -1409,21 +1661,26 @@ CANCELLED     — Order cancelled
 
 **`PaymentStatus` Enum**: `PENDING`, `COMPLETED`, `FAILED`, `ABANDONED` (an attempt replaced by a retry before it was paid; a late payment on its reference is still accepted)
 
-Each call to `POST /payment/initialize` creates a new payment attempt with its own reference; earlier attempts are kept, never deleted. `getMyPayments` and `payments` therefore return one entry per attempt.
-
 ---
 
 #### `getMyPayments`
 - **Type**: Query
 - **Roles**: `USER`
-- **Response**: `[Payment!]!`
+- **Response**: `[Payment!]!` (the caller's attempts)
 
 ---
 
 #### `getUserPayment` (ADMIN only)
 - **Type**: Query
+- **Roles**: `ADMIN` only (a `SUPER_ADMIN` gets `FORBIDDEN`)
 - **Args**: `userId: String!`
 - **Response**: `[Payment!]!`
+
+---
+
+#### `payments` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Response**: `[Payment!]!`, every attempt (not paginated)
 
 ---
 
@@ -1431,7 +1688,9 @@ Each call to `POST /payment/initialize` creates a new payment attempt with its o
 - **Type**: Query
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `id: String!`
+- **Response**: `Payment!`
 - **Description**: Users can only access their own payments. Admins can access any.
+- **Possible Errors**: `NOT_FOUND`; `UNAUTHENTICATED` (status 401, not 403) when a `USER` asks for someone else's payment.
 
 ---
 
@@ -1440,7 +1699,7 @@ Each call to `POST /payment/initialize` creates a new payment attempt with its o
 - **Args**: `orderId: String!`
 - **Description**: Records that the order total was collected in cash. In one step it marks the payment `COMPLETED` (provider `CASH_ON_DELIVERY`, amount = order total, GHS), stores who recorded it, moves the order to `DELIVERED` and writes an audit entry.
 - **Rules**: only a non-deleted cash-on-delivery order in `SHIPPED` (out for delivery, or ready at the pickup counter). A pickup order must be moved to `SHIPPED` with `updateOrderStatus` before cash is recorded; `PROCESSING` → `DELIVERED` is not an allowed step. Repeating the call for the same order (double click) records nothing more.
-- **Response**: `Payment`
+- **Response**: `Payment!`
 
 **Possible Errors**:
 - `NOT_FOUND` — order does not exist or is deleted.
@@ -1451,12 +1710,16 @@ Each call to `POST /payment/initialize` creates a new payment attempt with its o
 
 #### `softDeletePayment` / `restorePayment` (ADMIN only)
 - **Type**: Mutation
+- **Roles**: `ADMIN` only (a `SUPER_ADMIN` gets `FORBIDDEN`)
 - **Args**: `id: String!`
-- **Note**: `removePayment` was removed. Payment records are financial history and cannot be deleted; `softDeletePayment` only hides one.
+- **Response**: `Payment!`
+- **Note**: There is no `removePayment`. Payment records are financial history and cannot be deleted; `softDeletePayment` only hides one, `restorePayment` un-hides it. `NOT_FOUND` for an unknown ID.
 
 ---
 
 ### 2.13 Coupons
+
+Coupon codes are stored upper-case and matched case-insensitively.
 
 ---
 
@@ -1470,9 +1733,9 @@ Each call to `POST /payment/initialize` creates a new payment attempt with its o
 {
   id: string;
   code: string;
-  discountType: DiscountType;    // PERCENTAGE | FLAT
+  discountType: DiscountTypeEnum; // PERCENTAGE | FLAT
   value: Float;
-  usageLimit?: number;           // null = unlimited
+  usageLimit?: number;            // null = unlimited
   usedCount: number;
   expiresAt?: DateTime;
   isActive: boolean;
@@ -1487,21 +1750,25 @@ Each call to `POST /payment/initialize` creates a new payment attempt with its o
 #### `coupon` (ADMIN, SUPER_ADMIN)
 - **Type**: Query
 - **Args**: `id: ID!`
+- **Response**: `Coupon!` (`NOT_FOUND` if unknown)
 
 ---
 
 #### `createCoupon` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: CreateCouponInput!`
+- **Response**: `Coupon!`
 
 **Input: `CreateCouponInput`**
 
 ```typescript
 {
-  code: string;                   // Required. Max 50 chars.
-  discountType: DiscountType;     // Required. PERCENTAGE | FLAT
-  value: Float;                   // Required. Min 0.
+  code: string;                   // Required. Max 50 chars. Stored upper-case; unique (CONFLICT).
+  discountType: DiscountTypeEnum; // Required. PERCENTAGE | FLAT
+  value: Float;                   // Required. Min 0. Percent (PERCENTAGE) or GHS amount (FLAT).
   usageLimit?: number;            // Optional. Min 1 if provided.
   expiresAt?: DateTime;           // Optional.
-  isActive?: boolean;             // Default true.
+  isActive: boolean;              // Default true.
   minimumOrderAmount?: Float;     // Optional. Min 0.
 }
 ```
@@ -1509,74 +1776,95 @@ Each call to `POST /payment/initialize` creates a new payment attempt with its o
 ---
 
 #### `updateCoupon` (ADMIN, SUPER_ADMIN)
-- **Args**: `id: ID!`, `input: UpdateCouponInput` (all fields optional)
+- **Type**: Mutation
+- **Args**: `id: ID!`, `input: UpdateCouponInput!` (all `CreateCouponInput` fields optional)
+- **Response**: `Coupon!`
 
 ---
 
 #### `deleteCoupon` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
 - **Args**: `id: ID!`
+- **Response**: `Coupon!`
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` once the coupon has been used (deactivate it with `updateCoupon` instead).
 
 ---
 
 #### `validateCoupon`
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Description**: Validate a coupon code before applying to order. Checks: existence, active status, expiry, usage limit, per-user usage, minimum order amount.
+- **Args**: `input: ValidateCouponInput!`
+- **Response**: `CouponValidation!`
+- **Description**: Check a coupon before checkout. Checks: existence, active status, expiry, usage limit, minimum order amount, and that the caller has not used it. It does not reserve the coupon; `createOrder` checks again (a coupon that reached its limit in the meantime fails there with `BAD_REQUEST`). A use is given back when its order is cancelled or expires.
 
 **Input: `ValidateCouponInput`**
 
 ```typescript
 {
   code: string;        // Required.
-  orderTotal: Float;   // Required. Current order total to check minimumOrderAmount.
+  orderTotal: Float;   // Required. Min 0. Use the cart subtotal (createOrder applies the coupon to the subtotal, before shipping).
 }
 ```
 
-**Response: `CouponValidation`**
+**Response: `CouponValidation`** (only returned when valid; failures are errors)
 
 ```typescript
 {
-  valid: boolean;
-  discountAmount?: Float;   // Amount that will be deducted
+  valid: boolean;           // Always true when returned
+  discountAmount?: Float;   // PERCENTAGE: orderTotal × value / 100; FLAT: min(value, orderTotal)
   message?: string;         // e.g., "Coupon applied. You save 10."
 }
 ```
 
-**Possible Errors** (thrown as GraphQL errors):
-- `BAD_REQUEST` — Coupon not found, expired, inactive, usage limit reached, already used by this user, order total below minimum.
+**Possible Errors**:
+- `NOT_FOUND` — Unknown coupon code.
+- `BAD_REQUEST` — Inactive, expired, usage limit reached, order total below minimum, already used by this user.
 
 ---
 
 ### 2.14 Discounts
 
-Discounts are applied automatically to products/variants/categories. They differ from coupons: discounts are backend-configured, category/product-wide; coupons are user-applied codes.
+Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). They are shown on products (`discountedPrice`, `appliedDiscount`) and in `cartWithDiscount`, but **not charged at checkout** (see [Section 10](#10-discounts-system)).
+
+---
+
+#### `discounts` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Response**: `[Discount!]!`
 
 ---
 
 #### `discount` (ADMIN, SUPER_ADMIN)
-- **Type**: Query (returns `[Discount!]!`)
+- **Type**: Query
+- **Args**: `id: ID!`
+- **Response**: `Discount!` (`NOT_FOUND` if unknown)
 
 ---
 
 #### `createDiscount` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `createDiscountInput: CreateDiscountInput!`
+- **Response**: `Discount!`
 
 **Input: `CreateDiscountInput`**
 
 ```typescript
 {
   name: string;               // Required.
-  description?: string;       // Optional.
+  description?: string;
   type: DiscountType;         // Required. PERCENTAGE | FLAT
-  value: Float;               // Required. Positive number.
-  startDate: DateTime;        // Required. ISO datetime.
+  value: Float;               // Required. >= 0; at most 100 for PERCENTAGE.
+  startDate: DateTime;        // Required.
   endDate: DateTime;          // Required. Must be after startDate.
   isActive: boolean;          // Default false.
-  products?: string[];        // Optional. Array of product IDs.
-  variants?: string[];        // Optional. Array of variant IDs.
-  categories?: string[];      // Optional. Array of category IDs.
-  minimumPurchase?: Float;    // Optional. Minimum cart value to qualify.
+  products?: string[];        // Product IDs. Default [].
+  variants?: string[];        // Variant IDs. Default [].
+  categories?: string[];      // Category IDs. Default [].
+  minimumPurchase?: Float;    // Minimum cart total for cartWithDiscount.
 }
 ```
+
+**Possible Errors**: `BAD_REQUEST` (end before start, percentage over 100, negative value, unknown product/variant/category IDs).
 
 **`Discount` Object Type**:
 
@@ -1590,56 +1878,68 @@ Discounts are applied automatically to products/variants/categories. They differ
   startDate: DateTime;
   endDate: DateTime;
   isActive: boolean;
-  products: Product[];
-  variants: Variant[];
-  categories: Category[];
+  products?: Product[];
+  variants?: Variant[];
+  categories?: Category[];
   minimumPurchase?: Float;
+  createdAt: DateTime;
+  updatedAt: DateTime;
 }
 ```
 
 ---
 
 #### `updateDiscount` (ADMIN, SUPER_ADMIN)
-- **Input: `UpdateDiscountInput`** — all fields from `CreateDiscountInput` optional, plus `id: string` (required).
+- **Type**: Mutation
+- **Args**: `updateDiscountInput: UpdateDiscountInput!`
+- **Response**: `Discount!`
+- **Input: `UpdateDiscountInput`** — `id: ID!` plus the `CreateDiscountInput` fields, all optional. Note the schema defaults: an omitted `isActive` is sent as `false` and omitted `products`/`variants`/`categories` as `[]`, so send them explicitly.
 
 ---
 
 #### `addToDiscount` / `removeFromDiscount` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `modifyDiscountItemsInput: ModifyDiscountItemsInput!`
+- **Response**: `Discount!`
 
 **Input: `ModifyDiscountItemsInput`**
 
 ```typescript
 {
   discountId: string;        // Required.
-  products?: string[];       // Optional. Product IDs to add/remove.
-  variants?: string[];       // Optional. Variant IDs to add/remove.
-  categories?: string[];     // Optional. Category IDs to add/remove.
+  products?: string[];       // Product IDs to add/remove. Default [].
+  variants?: string[];       // Variant IDs to add/remove. Default [].
+  categories?: string[];     // Category IDs to add/remove. Default [].
 }
 ```
 
 ---
 
 #### `removeDiscount` (ADMIN, SUPER_ADMIN)
-- **Args**: `id: String!`
+- **Type**: Mutation
+- **Args**: `id: ID!`
+- **Response**: `Discount!`
 
 ---
 
 ### 2.15 Inventory
 
-All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
+All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes an `InventoryLogEntity`. Stock can never go below zero.
 
 ---
 
 #### `restockProduct`
 - **Type**: Mutation
+- **Args**: `input: RestockProductInput!`
+- **Response**: `InventoryLogEntity!` (action `RESTOCK`)
 
 **Input: `RestockProductInput`**
 
 ```typescript
 {
   productId: string;  // Required.
-  quantity: number;   // Required. Integer. Min 1.
-  reason?: string;    // Optional.
+  quantity: number;   // Required. Integer >= 1.
+  reason?: string;
 }
 ```
 
@@ -1650,43 +1950,80 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
   id: string;
   productId: string;
   variantId?: string;
-  action: InventoryAction;     // RESTOCK | ORDER_DEDUCTION | RETURN_RESTORE | ADJUSTMENT
-  quantityChange: number;
-  quantityAfter: number;
+  action: InventoryActionEnum; // RESTOCK | ORDER_DEDUCTION | RETURN_RESTORE | ADJUSTMENT
+  quantityChange: number;      // Signed
+  quantityAfter: number;       // Stock after the change
   reason?: string;
   actorId?: string;
   createdAt: DateTime;
 }
 ```
 
+**Possible Errors**: `NOT_FOUND` (product).
+
 ---
 
 #### `restockVariant`
 - **Type**: Mutation
+- **Args**: `input: RestockVariantInput!`
+- **Response**: `InventoryLogEntity!`
 
 **Input: `RestockVariantInput`**
 
 ```typescript
 {
   variantId: string;  // Required.
-  quantity: number;   // Required. Min 1.
-  reason?: string;    // Optional.
+  quantity: number;   // Required. Integer >= 1.
+  reason?: string;
 }
 ```
+
+---
+
+#### `adjustProductStock`
+- **Type**: Mutation
+- **Args**: `input: AdjustProductStockInput!`
+- **Response**: `InventoryLogEntity!` (action `ADJUSTMENT`)
+- **Description**: Change a product's stock by a signed amount, e.g. damage, loss or a stock count correction.
+
+**Input: `AdjustProductStockInput`**
+
+```typescript
+{
+  productId: string;  // Required.
+  delta: number;      // Required. Non-zero integer; negative removes stock.
+  reason: string;     // Required. 1–500 chars.
+}
+```
+
+**Possible Errors**: `NOT_FOUND` (product); `BAD_REQUEST` ("Cannot remove N units … only M in stock").
+
+---
+
+#### `adjustVariantStock`
+- **Type**: Mutation
+- **Args**: `input: AdjustVariantStockInput!` (`variantId`, `delta`, `reason`; same rules as `adjustProductStock`)
+- **Response**: `InventoryLogEntity!`
+
+---
+
+#### `inventoryLogs`
+- **Type**: Query
+- **Response**: `[InventoryLogEntity!]!`, all logs, newest first
 
 ---
 
 #### `productInventoryLogs`
 - **Type**: Query
 - **Args**: `productId: ID!`
-- **Response**: `[InventoryLogEntity!]!`
+- **Response**: `[InventoryLogEntity!]!`, newest first
 
 ---
 
 #### `variantInventoryLogs`
 - **Type**: Query
 - **Args**: `variantId: ID!`
-- **Response**: `[InventoryLogEntity!]!`
+- **Response**: `[InventoryLogEntity!]!`, newest first
 
 ---
 
@@ -1697,7 +2034,9 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 #### `createReturnRequest`
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Description**: Submit a return request for a delivered order. Order must be in `DELIVERED` status.
+- **Args**: `input: CreateReturnRequestInput!`
+- **Description**: Submit a return request for one of the caller's own orders. Order must be in `DELIVERED` status. A new request is allowed only if every earlier request for the order was rejected.
+- **Possible Errors**: `NOT_FOUND` (not the caller's order), `BAD_REQUEST` (not delivered, or an open request exists).
 
 **Input: `CreateReturnRequestInput`**
 
@@ -1708,7 +2047,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 }
 ```
 
-**Response: `ReturnRequestEntity`**
+**Response: `ReturnRequestEntity`** (status enum type: `ReturnStatusEnum`)
 
 ```typescript
 {
@@ -1716,7 +2055,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
   orderId: string;
   userId: string;
   reason: string;
-  status: ReturnStatus;      // PENDING | APPROVED | REJECTED | REFUND_PENDING | REFUNDED
+  status: ReturnStatusEnum;  // PENDING | APPROVED | REJECTED | REFUND_PENDING | REFUNDED
   refundAmount?: Float;
   adminNote?: string;
   createdAt: DateTime;
@@ -1728,6 +2067,8 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 
 #### `approveReturn` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
+- **Args**: `input: ApproveReturnInput!`
+- **Response**: `ReturnRequestEntity!`
 
 **Input: `ApproveReturnInput`**
 
@@ -1739,12 +2080,14 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 }
 ```
 
-**Side effects**: Sets `ReturnStatus = APPROVED` and the refund amount. Stock is not touched. Only a `PENDING` request can be approved (`BAD_REQUEST` otherwise); if another admin approves or rejects it at the same moment, one wins and the other gets `CONFLICT`. The same applies to `rejectReturn`.
+**Side effects**: Sets `status = APPROVED` and the refund amount. Stock is not touched. Only a `PENDING` request can be approved (`BAD_REQUEST` otherwise); if another admin approves or rejects it at the same moment, one wins and the other gets `CONFLICT`. The same applies to `rejectReturn`.
 
 ---
 
 #### `rejectReturn` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
+- **Args**: `input: RejectReturnInput!`
+- **Response**: `ReturnRequestEntity!`
 
 **Input: `RejectReturnInput`**
 
@@ -1760,6 +2103,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 #### `processRefund` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `returnRequestId: ID!`
+- **Response**: `ReturnRequestEntity!`
 - **Description**: Refund the approved amount through Paystack and move the request from `APPROVED` to `REFUNDED`. **Moves money only, never stock:** a cancelled order already had its stock restored at cancellation, and physically returned goods are put back with `restockProduct` once received and inspected.
 - **How it runs**: the request is first claimed (`APPROVED → REFUND_PENDING`) and a `Refund` record is created, then Paystack is called once. On success the refund becomes `PROCESSED` (with Paystack's refund id in `providerRef`) and the request `REFUNDED`.
 - **Limits**: the amount must be greater than 0, and all refunds on the payment (including an auto-refund queued for a flagged payment) cannot exceed what was captured; otherwise `BAD_REQUEST` and nothing changes. Only Paystack payments can be refunded (cash-on-delivery: `BAD_REQUEST`).
@@ -1791,7 +2135,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
   returnRequestId?: string;   // set for refunds of return requests
   amount: Float;
   currency: string;
-  status: RefundStatus;       // PENDING | SENDING | PROCESSED | FAILED
+  status: RefundStatusEnum;   // PENDING | SENDING | PROCESSED | FAILED
   providerRef?: string;       // Paystack refund id
   failureReason?: string;     // why the last send failed, or "Outcome unknown: ..."
   createdAt: DateTime;
@@ -1816,7 +2160,9 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 
 ### 2.17 Reviews
 
-> **Privacy:** `Review.user` is a `PublicProfile { displayName }` (first name + last initial, or "Customer"). Reviewer email, phone, addresses and orders are not reachable from reviews. Separately, `User.email`, `User.phoneNumber`, `User.addresses`, `User.orders` and `Order.user` return a `FORBIDDEN` error unless the caller is that user or an ADMIN/SUPER_ADMIN.
+> **Privacy:** `Review.user` is a `PublicProfile { displayName }` (first name + last initial, or "Customer"). Reviewer email, phone, addresses and orders are not reachable from reviews. Separately, `User.email`, `User.emailVerified`, `User.pendingEmail`, `User.phoneNumber`, `User.addresses`, `User.orders` and `Order.user` return a `FORBIDDEN` error unless the caller is that user or an ADMIN/SUPER_ADMIN.
+
+The review queries and mutations below require a signed-in user. Guests can still read reviews through `Product.reviews` on the public `products`/`product` queries (field resolvers are not role-checked).
 
 ---
 
@@ -1824,19 +2170,21 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 - **Type**: Query
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `reviewId: String!`
-- **Response**: `Review`
+- **Response**: `Review!` (`NOT_FOUND` if unknown)
 
 **`Review` Object Type**:
 
 ```typescript
 {
   id: string;
-  score: number;      // 1–5
+  score: number;       // 1–5
   comment?: string;
   productId: string;
   userId: string;
   user: PublicProfile; // { displayName } only, e.g. "Kwame A." ("Customer" if no name)
-  product: Product;   // Resolved via DataLoader
+  product: Product;
+  createdAt: DateTime;
+  updatedAt: DateTime;
 }
 ```
 
@@ -1844,6 +2192,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 
 #### `productReviews`
 - **Type**: Query
+- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `productId: String!`
 - **Response**: `[Review!]!`
 
@@ -1851,14 +2200,18 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 
 #### `userReviews`
 - **Type**: Query
-- **Auth Required**: Yes
+- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Description**: Reviews written by the current user.
+- **Response**: `[Review!]!`
 
 ---
 
 #### `createReview`
 - **Type**: Mutation
-- **Roles**: `USER` (only regular users can create)
+- **Roles**: `USER` only
+- **Args**: `input: CreateReviewInput!`
+- **Response**: `Review!`
+- **Description**: One review per user per product. Buying the product is not required.
 
 **Input: `CreateReviewInput`**
 
@@ -1870,29 +2223,45 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 }
 ```
 
+**Possible Errors**: `NOT_FOUND` (product), `BAD_REQUEST` ("You have already reviewed product …").
+
 ---
 
 #### `updateReview`
 - **Type**: Mutation
-- **Roles**: `USER`
+- **Roles**: `USER` only
+- **Args**: `input: UpdateReviewInput!`
+- **Response**: `Review!`
 
 **Input: `UpdateReviewInput`**
 
 ```typescript
 {
-  reviewId: string;   // Required.
-  score?: number;     // Optional. 1–5.
-  comment?: string;   // Optional.
+  id: string;          // Required. The review ID.
+  score?: number;      // Optional. 1–5.
+  comment?: string;    // Optional.
+  productId?: string;  // Optional.
 }
 ```
+
+**Possible Errors**: `NOT_FOUND` (review), `BAD_REQUEST` ("You can only modify your own reviews").
 
 ---
 
 #### `deleteReview`
 - **Type**: Mutation
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Roles**: `USER` only
 - **Args**: `reviewId: String!`
-- **Description**: Soft-delete: sets `deleted = true`, `deletedAt = now()`.
+- **Response**: `Review!`
+- **Description**: Permanently deletes one of the caller's own reviews (hard delete). Same errors as `updateReview`.
+
+---
+
+#### `adminDeleteReview` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `reviewId: String!`
+- **Response**: `Review!`
+- **Description**: Permanently deletes any review (moderation). `NOT_FOUND` if unknown.
 
 ---
 
@@ -1900,53 +2269,64 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 
 All tax operations: `ADMIN`, `SUPER_ADMIN` only.
 
+Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or region. The sum of the **active** rates is built into the `price` of every taxable product (`price = basePrice × (1 + sum)`); creating, updating or deleting a tax recomputes all taxable product prices. No tax is added at checkout and orders do not show a tax line.
+
 ---
 
-#### `taxRates`
+#### `taxes`
 - **Type**: Query
-- **Response**: `[TaxRateEntity!]!`
+- **Response**: `[TaxEntity!]!`, sorted by name
 
-**`TaxRateEntity` Object Type**:
+**`TaxEntity` Object Type**:
 
 ```typescript
 {
   id: string;
-  country: string;    // Country name or ISO code
-  region?: string;    // Optional. State/province.
-  rate: Float;        // Decimal 0–1 (e.g., 0.15 = 15%). Stored as Decimal(5,4).
+  name: string;       // e.g. "VAT", "NHIS Levy". Unique.
+  rate: Float;        // Decimal 0–1 (0.15 = 15%)
   isActive: boolean;
   createdAt: DateTime;
   updatedAt: DateTime;
 }
 ```
 
-**Unique constraint**: `(country, region)`.
-
 ---
 
-#### `taxRate`
+#### `tax`
 - **Type**: Query
 - **Args**: `id: ID!`
+- **Response**: `TaxEntity!` (`NOT_FOUND` if unknown)
 
 ---
 
-#### `createTaxRate`
+#### `createTax`
+- **Type**: Mutation
+- **Args**: `input: CreateTaxInput!`
+- **Response**: `TaxEntity!`
 
-**Input: `CreateTaxRateInput`**
+**Input: `CreateTaxInput`**
 
 ```typescript
 {
-  country: string;   // Required.
-  region?: string;   // Optional.
-  rate: Float;       // Required. 0 ≤ rate ≤ 1.
-  isActive?: boolean;// Default true.
+  name: string;       // Required. Unique (CONFLICT).
+  rate: Float;        // Required. 0 ≤ rate ≤ 1.
+  isActive: boolean;  // Default true.
 }
 ```
 
 ---
 
-#### `updateTaxRate` / `deleteTaxRate`
-- **Args**: `id: ID!`, `input: UpdateTaxRateInput` (all optional)
+#### `updateTax`
+- **Type**: Mutation
+- **Args**: `id: ID!`, `input: UpdateTaxInput!` (`name?`, `rate?` 0–1, `isActive?`)
+- **Response**: `TaxEntity!`
+
+---
+
+#### `deleteTax`
+- **Type**: Mutation
+- **Args**: `id: ID!`
+- **Response**: `TaxEntity!`
 
 ---
 
@@ -1958,13 +2338,7 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 
 #### `salesReport`
 - **Type**: Query
-- **Args** (`@ArgsType`):
-```typescript
-{
-  startDate: DateTime; // Required. Inclusive.
-  endDate: DateTime;   // Required. Inclusive.
-}
-```
+- **Args**: `startDate: DateTime!`, `endDate: DateTime!` (both inclusive, top-level arguments: `salesReport(startDate: "…", endDate: "…")`)
 - **Response: `SalesReport`**:
 ```typescript
 {
@@ -1982,7 +2356,7 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 
 #### `topProducts`
 - **Type**: Query
-- **Args**: `limit?: number` (default 10, 1–100)
+- **Args**: `limit: Int!` (default 10, 1–100; may be omitted)
 - **Response**: `[TopProduct!]!` (paid orders, all time)
 
 ```typescript
@@ -2037,7 +2411,8 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 - **Type**: Query
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `addressId: String!`
-- **Description**: Users can only access their own addresses.
+- **Response**: `Address!`
+- **Description**: One of the caller's own addresses; anyone else's gives `NOT_FOUND`.
 
 **`Address` Object Type**:
 
@@ -2045,7 +2420,7 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 {
   id: string;
   street: string;
-  city: string;
+  city: string;      // Used to find the shipping zone at checkout
   state: string;
   zipCode: string;
   country: string;
@@ -2060,20 +2435,24 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 #### `userAddresses`
 - **Type**: Query
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Description**: All addresses for the authenticated user.
+- **Description**: All addresses of the caller.
 - **Response**: `[Address!]!`
 
 ---
 
 #### `addresses` (ADMIN, SUPER_ADMIN)
 - **Type**: Query
-- **Args**: `userId?: String` (ADMIN must supply; SUPER_ADMIN can omit to get all)
+- **Args**: `userId: String` (ADMIN must supply it, otherwise `FORBIDDEN`; SUPER_ADMIN may omit it to get every address)
+- **Response**: `[Address!]!`
 
 ---
 
 #### `createAddress`
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Args**: `input: CreateAddressInput!`
+- **Response**: `Address!`
+- **Possible Errors**: `BAD_REQUEST` ("You have reached the maximum of 10 saved addresses"), `BAD_USER_INPUT`.
 
 **Input: `CreateAddressInput`**
 
@@ -2083,29 +2462,187 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
   city: string;     // Required. Max 100 chars.
   state: string;    // Required. Max 100 chars.
   zipCode: string;  // Required. Max 20 chars.
-  country: string;  // Required. Max 100 chars.
+  country: string;  // Required. Max 100 chars. Full name or ISO 3166-1 alpha-2 code.
 }
 ```
 
 ---
 
 #### `updateAddress`
-- **Args**: `addressId: String!`, `input: UpdateAddressInput` (all optional)
+- **Type**: Mutation
+- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Args**: `addressId: String!`, `input: UpdateAddressInput!` (all `CreateAddressInput` fields optional)
+- **Response**: `Address!`
+- **Possible Errors**: `NOT_FOUND` (not the caller's address).
 
 ---
 
 #### `deleteAddress`
+- **Type**: Mutation
+- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `addressId: String!`
+- **Response**: `Address!`
+- **Possible Errors**: `NOT_FOUND` (not the caller's address); `CONFLICT` if an order was shipped to it.
+
+---
+
+### 2.21 Shipping Zones & Pickup Locations
+
+A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` order pays the fee of the active zone that lists the address city (case-insensitive, extra spaces ignored); if no active zone lists it, delivery is refused. Each city belongs to at most one zone. A **pickup location** is where a `PICKUP` order is collected (no shipping fee).
+
+---
+
+#### `activeShippingZones`
+- **Type**: Query
+- **Auth Required**: No
+- **Response**: `[ShippingZoneEntity!]!`, active zones sorted by name
+
+**`ShippingZoneEntity` Object Type**:
+
+```typescript
+{
+  id: string;
+  name: string;      // Unique
+  cities: string[];  // Stored normalised (lower-case, single spaces)
+  fee: Float;        // GHS
+  isActive: boolean;
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+```
+
+---
+
+#### `getShippingFee`
+- **Type**: Query
+- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
+- **Args**: `addressId: ID!`
+- **Response**: `Float!`, the fee `createOrder` would charge for delivery to that address
+- **Possible Errors**: `NOT_FOUND` (not the caller's address); `BAD_REQUEST` ("Delivery is not available to city …") when no active zone covers the city.
+
+---
+
+#### `shippingZones` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Response**: `[ShippingZoneEntity!]!`, all zones sorted by name
+
+---
+
+#### `shippingZone` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Args**: `id: ID!`
+- **Response**: `ShippingZoneEntity!` (`NOT_FOUND` if unknown)
+
+---
+
+#### `createShippingZone` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: CreateShippingZoneInput!`
+- **Response**: `ShippingZoneEntity!`
+
+**Input: `CreateShippingZoneInput`**
+
+```typescript
+{
+  name: string;       // Required. Unique.
+  cities: string[];   // Required. No blank entries; duplicates are merged.
+  fee: Float;         // Required. Min 0.
+  isActive?: boolean; // Default true.
+}
+```
+
+**Possible Errors**: `CONFLICT` ("Cities already covered by another shipping zone: …", active or not; or the name is taken), `BAD_REQUEST` (blank city).
+
+---
+
+#### `updateShippingZone` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `id: ID!`, `input: UpdateShippingZoneInput!` (`name?`, `cities?` replaces the whole list, `fee?`, `isActive?`)
+- **Response**: `ShippingZoneEntity!`
+- **Possible Errors**: `NOT_FOUND`, `CONFLICT` (city overlap or name taken), `BAD_REQUEST` (blank city).
+
+---
+
+#### `deleteShippingZone` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `id: ID!`
+- **Response**: `ShippingZoneEntity!`
+- **Description**: Existing orders keep the fee they were charged.
+
+---
+
+#### `activePickupLocations`
+- **Type**: Query
+- **Auth Required**: No
+- **Response**: `[PickupLocationEntity!]!`, active locations sorted by name
+
+**`PickupLocationEntity` Object Type**:
+
+```typescript
+{
+  id: string;
+  name: string;
+  address: string;   // Street address
+  city: string;
+  state: string;
+  country: string;
+  isActive: boolean; // Only active locations accept orders
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+```
+
+---
+
+#### `pickupLocations` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Response**: `[PickupLocationEntity!]!`, all locations sorted by name
+
+---
+
+#### `createPickupLocation` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: CreatePickupLocationInput!`
+- **Response**: `PickupLocationEntity!`
+
+**Input: `CreatePickupLocationInput`**
+
+```typescript
+{
+  name: string;       // Required, non-empty.
+  address: string;    // Required, non-empty.
+  city: string;       // Required, non-empty.
+  state: string;      // Required, non-empty.
+  country: string;    // Required, non-empty.
+  isActive?: boolean; // Default true.
+}
+```
+
+---
+
+#### `updatePickupLocation` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `id: ID!`, `input: UpdatePickupLocationInput!` (all fields optional)
+- **Response**: `PickupLocationEntity!`
+- **Possible Errors**: `NOT_FOUND`. Orders already placed keep their `pickupLocationSnapshot`.
+
+---
+
+#### `deletePickupLocation` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `id: ID!`
+- **Response**: `PickupLocationEntity!`
+- **Possible Errors**: `CONFLICT` if any order uses the location (deactivate it with `isActive: false` instead).
 
 ---
 
 ## 3. REST API Reference
 
-These endpoints are not in GraphQL. They use standard HTTP.
+These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ "statusCode": 400, "timestamp": "…", "path": "/payment/initialize", "message": "…" }`.
 
 ### `POST /payment/initialize`
 
-**Auth Required**: Yes (Bearer)
+**Auth Required**: Yes (Bearer, any signed-in user; the order must be theirs)
 **Rate Limit**: 5 requests/minute (`payment` throttler)
 **Content-Type**: `application/json`
 
@@ -2114,53 +2651,44 @@ These endpoints are not in GraphQL. They use standard HTTP.
 ```typescript
 {
   orderId: string;       // Required.
-  paymentMethod: string; // Required. e.g., "card"
+  paymentMethod: string; // Required. Paystack channel label, e.g. "card" or "mobile_money"; stored as Payment.paymentMethod.
   currency?: "GHS";      // Optional. Any other value is rejected (400). Payments are always charged in GHS.
   idempotencyKey?: string; // Optional, 1-255 chars. Generate one per "Pay" click and resend it on network retries.
 }
 ```
 
-The amount is always the order total; any other field (e.g. `amount`) is rejected with 400.
+The amount is always the order total at the first initialization; any other field (e.g. `amount`) is rejected with 400.
 
 **Rules**:
 
-- Only the owner's `PENDING`, non-deleted, online-payment order can be paid. A cancelled, processing, shipped or delivered order returns 400, a cash-on-delivery order returns 400, an already paid order returns 400 (`Payment for this order has already been completed`), and a missing or deleted order returns 404.
+- Only the owner's `PENDING`, non-deleted, online-payment order can be paid. A cancelled, processing, shipped or delivered order returns 400, a cash-on-delivery order returns 400, an already paid order returns 400 (`Payment for this order has already been completed`), a missing or deleted order returns 404, and another user's order returns 403.
 - Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `ABANDONED`; it is kept, and if the customer still completes that older checkout the payment is matched.
 - Repeating an `idempotencyKey` for the same order returns the same attempt and the same `authorizationUrl` without opening a new checkout. It returns **409** if that attempt is still being set up (retry shortly) or is no longer `PENDING` (use a new key).
 - If Paystack cannot open the checkout the request fails and the same key may be retried.
+- Paystack's `callback_url` is `PAYSTACK_CALLBACK_URL` (a frontend page; see [Section 8](#8-payment-integration-paystack)).
 
-**Response**:
+**Response** (`201`): the payment attempt plus `authorizationUrl`. Decimal amounts are JSON strings here.
 
 ```json
 {
-  "id": "paymentId",
-  "orderId": "orderId",
-  "amount": 29.99,
+  "id": "clx_attempt",
+  "orderId": "clx_order",
+  "amount": "29.99",
   "currency": "GHS",
   "paymentMethod": "card",
   "status": "PENDING",
+  "transactionId": "clx_order-1731900000000-a1b2c3d4",
+  "paymentDetails": { "reference": "clx_order-1731900000000-a1b2c3d4", "access_code": "..." },
+  "createdAt": "2026-11-18T10:00:00.000Z",
+  "updatedAt": "2026-11-18T10:00:00.000Z",
+  "deleted": false,
+  "deletedAt": null,
+  "order": { "id": "clx_order", "status": "PENDING", "...": "raw order record" },
   "authorizationUrl": "https://checkout.paystack.com/..."
 }
 ```
 
-**Frontend must redirect** the user to `authorizationUrl` to complete payment on Paystack.
-
----
-
-### `GET /payment/callback`
-
-**Auth Required**: No
-**Description**: Paystack redirect callback URL. Frontend should configure Paystack's callback URL to point here (or query `?reference=xxx`).
-
-**Query Params**:
-
-```typescript
-{
-  reference: string; // Paystack transaction reference
-}
-```
-
-**Response**: Payment object.
+`transactionId` is the Paystack reference that `verifyPayment` takes. **Frontend must redirect** the user to `authorizationUrl` to complete payment on Paystack.
 
 ---
 
@@ -2190,13 +2718,13 @@ The amount is always the order total; any other field (e.g. `amount`) is rejecte
 
 ### `POST /upload/single-image`
 
-**Auth Required**: Yes (Bearer)
+**Auth Required**: Yes (Bearer, `ADMIN` or `SUPER_ADMIN`; customers get 403)
 **Rate Limit**: 10 uploads/minute
 **Content-Type**: `multipart/form-data`
 **Field name**: `file`
-**Max size**: 5 MB
+**Limits**: JPEG, PNG or WebP only (detected from the file bytes, not the name or MIME type), at most 5 MB and 40 megapixels
 
-**Response**:
+**Response** (`201`):
 
 ```json
 {
@@ -2205,17 +2733,19 @@ The amount is always the order total; any other field (e.g. `amount`) is rejecte
 }
 ```
 
+**Errors**: 400 for a missing file, an unsupported format, an unreadable header or more than 40 megapixels; 413 for a file over 5 MB; 401/403 for auth.
+
 ---
 
 ### `POST /upload/multiple-images`
 
-**Auth Required**: Yes (Bearer)
+**Auth Required**: Yes (Bearer, `ADMIN` or `SUPER_ADMIN`)
 **Rate Limit**: 10 uploads/minute
 **Content-Type**: `multipart/form-data`
-**Field name**: `files` (max 3 files)
-**Max size per file**: 5 MB
+**Field name**: `files` (1–3 files)
+**Limits**: same as single image, per file
 
-**Response**:
+**Response** (`201`):
 
 ```json
 {
@@ -2227,563 +2757,100 @@ The amount is always the order total; any other field (e.g. `amount`) is rejecte
 }
 ```
 
+**Errors**: as single image; one bad file rejects the whole request.
+
 ---
 
 ### `GET /health`
 
 **Auth Required**: No
-**Description**: Health check endpoint. Returns status of database, Redis, and Cloudinary (503 if any is down).
-
-`GET /health/ready` (readiness) checks only the database and, when `REDIS_HOST` is configured, Redis; a Cloudinary outage does not fail it. `GET /health/live` (liveness) checks no dependencies.
+**Description**: Full dependency report (`@nestjs/terminus` format): database, Redis and Cloudinary. `200` when all are up, `503` if any is down. Redis reports up without probing when `REDIS_HOST` is not set.
 
 ---
 
-## 4. Prisma Data Models
+### `GET /health/ready`
 
-### `User`
-
-```prisma
-model User {
-  id                    String          @id @default(cuid())
-  name                  String?
-  email                 String          @unique
-  password              String?                           // Null for social-only accounts
-  phoneNumber           String?         @unique
-  role                  Role            @default(USER)
-  isActive              Boolean         @default(true)
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
-  lastLoginAt           DateTime?
-  profilePicture        String?
-  failedLoginAttempts   Int             @default(0)       // Incremented on failed login
-  lockedUntil           DateTime?                         // Set 15 min in future after 5 failed attempts
-  passwordResetToken    String?                           // Hashed reset token
-  passwordResetTokenExp DateTime?
-  emailVerifiedAt       DateTime?                         // Null until the current email is verified
-  pendingEmail          String?                           // Requested new email, applied on verification
-  emailVerificationToken    String?  @unique              // Hashed verification token (single-use)
-  emailVerificationTokenExp DateTime?                     // 24 hours after issue
-  addresses             Address[]
-  reviews               Review[]
-  cart                  Cart?
-  order                 Order[]
-  authProvider          AuthProvider[]
-  auditLog              AuditLog[]
-  wishlist              WishList?
-  refreshTokens         RefreshToken[]
-  couponUsages          CouponUsage[]
-  returnRequests        ReturnRequest[]
-}
-```
-
-**Delete behavior**: User deletion cascades to Address, Review, Cart, AuthProvider, WishList, RefreshToken, CouponUsage. Orders reference is `RESTRICT` (cannot delete user with orders).
+**Auth Required**: No
+**Description**: Readiness: database and Redis only (a Cloudinary outage does not fail it). `200` or `503`.
 
 ---
 
-### `RefreshToken`
+### `GET /health/live`
 
-```prisma
-model RefreshToken {
-  id        String   @id @default(cuid())
-  userId    String
-  tokenHash String   @unique   // SHA-256 hash of the raw token
-  expiresAt DateTime
-  revoked   Boolean  @default(false)
-  createdAt DateTime @default(now())
-  user      User     @relation(... onDelete: Cascade)
-  @@index([userId])
-  @@index([tokenHash])
-}
-```
+**Auth Required**: No
+**Description**: Liveness: checks no dependencies. Always `200` with `{ "status": "ok", "timestamp": "<ISO date>" }` while the process serves requests.
 
 ---
 
-### `AuthProvider`
+### `GET /`
 
-```prisma
-model AuthProvider {
-  id         String   @id @default(cuid())
-  userId     String
-  provider   String               // "google" | "facebook"
-  providerId String   @unique     // OAuth provider's user ID
-  user       User     @relation(... onDelete: Cascade)
-  createdAt  DateTime @default(now())
-  @@unique([provider, providerId])
-  @@unique([userId, provider])
-}
-```
+**Auth Required**: Yes (Bearer; there is no `@Auth(AuthType.None)` on it)
+**Description**: Returns the string `Hello World!`. Not used by the frontend.
 
 ---
 
-### `Address`
-
-```prisma
-model Address {
-  id        String   @id @default(cuid())
-  street    String
-  city      String
-  state     String
-  zipCode   String
-  country   String
-  userId    String
-  user      User     @relation(... onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  Order     Order[]
-  @@index([userId])
-}
-```
-
----
-
-### `Category`
-
-```prisma
-model Category {
-  id            String        @id @default(cuid())
-  name          String        @unique
-  description   String?       @db.Text
-  image         String?
-  products      Product[]
-  subcategories SubCategory[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  discount      Discount?     @relation(...)
-  discountId    String?
-  @@index([discountId])
-}
-```
-
----
-
-### `SubCategory`
-
-```prisma
-model SubCategory {
-  id          String    @id @default(cuid())
-  name        String
-  description String?   @db.Text
-  image       String?
-  categoryId  String
-  category    Category  @relation(...)
-  products    Product[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  @@unique([name, categoryId])   // Name must be unique within a category
-}
-```
-
----
-
-### `Brand`
-
-```prisma
-model Brand {
-  id          String    @id @default(cuid())
-  name        String    @unique @db.VarChar(255)
-  description String?   @db.Text
-  logo        String?
-  products    Product[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-}
-```
-
----
-
-### `Tag`
-
-```prisma
-model Tag {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  products  Product[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-}
-```
-
----
-
-### `Product`
-
-```prisma
-model Product {
-  id               String          @id @default(cuid())
-  name             String          @db.VarChar(255)
-  description      String?         @db.Text
-  shortDescription String?         @db.VarChar(500)
-  price            Decimal?        @db.Decimal(10, 2)
-  currentPrice     Decimal?        @db.Decimal(10, 2)
-  currency         Currency?       @default(GHS)
-  taxRate          Decimal?        @default(0.00) @db.Decimal(5, 2)
-  isTaxable        Boolean         @default(false)
-  sku              String?         @unique
-  barcode          String?         @unique
-  quantity         Int             @default(0)
-  stockStatus      StockStatus?    @default(IN_STOCK)
-  lowStockAlert    Int?            @default(5)
-  images           String[]
-  attachments      String[]
-  isActive         Boolean         @default(true)
-  status           ProductStatus?  @default(DRAFT)
-  publishedAt      DateTime?
-  deliveryOptions  DeliveryOptions[] @default([LOCAL_DELIVERY])
-  selectedDeliveryRegions String[]
-  expiryDate       DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  categoryId       String?
-  subcategoryId    String?
-  tags             Tag[]
-  reviews          Review[]
-  variants         Variant[]
-  discounts        Discount[]
-  cartItem         CartItem[]
-  orderItem        OrderItem[]
-  wishlist         WishList[]
-  brand            Brand?
-  brandId          String?
-  inventoryLogs    InventoryLog[]
-  @@index([sku])
-  @@index([brandId])
-  @@index([categoryId])
-  @@index([subcategoryId])
-  @@index([isActive, status])
-}
-```
-
-**Enums**:
-
-```
-ProductStatus: DRAFT | PUBLISHED | ARCHIVED
-StockStatus:   IN_STOCK | OUT_OF_STOCK | PREORDER | BACKORDER
-Currency:      GHS | USD | EUR | GBP | NGN
-DeliveryOptions: LOCAL_DELIVERY | INTERNATIONAL_DELIVERY | SELECTED_REGIONS
-```
-
----
-
-### `Variant`
-
-```prisma
-model Variant {
-  id                String         @id @default(cuid())
-  size              String?
-  color             String?
-  quantity          Int            @default(0)
-  price             Decimal        @db.Decimal(10, 2)
-  productId         String
-  product           Product        @relation(...)
-  cartItem          CartItem[]
-  orderItem         OrderItem[]
-  discount          Discount?
-  discountId        String?
-  lowStockThreshold Int?           @default(5)
-  inventoryLogs     InventoryLog[]
-  @@index([productId])
-  @@index([discountId])
-}
-```
-
----
-
-### `Cart` and `CartItem`
-
-```prisma
-model Cart {
-  id        String     @id @default(cuid())
-  userId    String     @unique       // One cart per user
-  user      User       @relation(... onDelete: Cascade)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  items     CartItem[]
-}
-
-model CartItem {
-  id              String    @id @default(cuid())
-  cartId          String
-  productId       String
-  variantId       String?
-  quantity        Int       @default(1)
-  originalPrice   Decimal?  @db.Decimal(10, 2)
-  discountedPrice Decimal?  @db.Decimal(10, 2)
-  discountId      String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  cart            Cart      @relation(... onDelete: Cascade)
-  product         Product   @relation(... onDelete: Restrict)
-  variant         Variant?  @relation(... onDelete: Restrict)
-  discount        Discount?
-  @@index([cartId, productId])
-  @@index([variantId])
-}
-```
-
----
-
-### `Order` and `OrderItem`
-
-```prisma
-model Order {
-  id                      String      @id @default(cuid())
-  userId                  String
-  totalAmount             Decimal     @db.Decimal(10, 2)
-  discountTotal           Decimal?
-  totalWithOutDiscount    Decimal?
-  status                  OrderStatus @default(PENDING)
-  shippingAddressId       String
-  shippingAddressSnapshot Json?       // Snapshot of address at order time
-  trackingNumber          String?
-  carrier                 String?
-  couponId                String?
-  couponDiscount          Decimal?    @db.Decimal(10, 2)
-  createdAt               DateTime    @default(now())
-  updatedAt               DateTime    @updatedAt
-  deleted                 Boolean     @default(false)
-  deletedAt               DateTime?
-  items                   OrderItem[]
-  payment                 Payment?
-  returnRequests          ReturnRequest[]
-  @@index([userId])
-  @@index([userId, status])
-  @@index([deleted])
-  @@index([trackingNumber])
-}
-
-model OrderItem {
-  id             String    @id @default(cuid())
-  orderId        String
-  productId      String
-  variantId      String?
-  quantity       Int       @default(1)
-  priceAtOrder   Decimal   @db.Decimal(10, 2)  // Price per unit at time of order
-  originalPrice  Decimal   @db.Decimal(10, 2)
-  discountAmount Decimal?  @db.Decimal(10, 2)
-  discountId     String?
-  createdAt      DateTime  @default(now())
-  @@index([productId, orderId])
-}
-```
-
-**`OrderStatus` Enum**: `PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED`
-
----
-
-### `Payment`
-
-```prisma
-model Payment {
-  id             String        @id @default(cuid())
-  orderId        String        @unique              // One payment per order
-  order          Order         @relation(... onDelete: Cascade)
-  amount         Decimal       @db.Decimal(10, 2)
-  currency       String        @default("GHS")
-  paymentMethod  String
-  status         PaymentStatus @default(PENDING)
-  transactionId  String?                            // Paystack reference
-  paymentDetails Json?                              // Full Paystack response
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deleted        Boolean       @default(false)
-  deletedAt      DateTime?
-}
-```
-
-**`PaymentStatus`**: `PENDING | COMPLETED | FAILED`
-
----
-
-### `Discount`
-
-```prisma
-model Discount {
-  id              String       @id @default(cuid())
-  name            String
-  description     String?
-  type            DiscountType            // PERCENTAGE | FLAT
-  value           Decimal
-  startDate       DateTime
-  endDate         DateTime
-  isActive        Boolean      @default(false)
-  minimumPurchase Decimal?     @db.Decimal(10, 2)
-  products        Product[]    // M2M
-  variants        Variant[]    // M2M
-  categories      Category[]   // M2M
-  orderItems      OrderItem[]
-  cartItems       CartItem[]
-  @@index([startDate, endDate, isActive])
-}
-```
-
----
-
-### `Coupon` and `CouponUsage`
-
-```prisma
-model Coupon {
-  id                 String        @id @default(cuid())
-  code               String        @unique @db.VarChar(50)
-  discountType       DiscountType               // PERCENTAGE | FLAT
-  value              Decimal       @db.Decimal(10, 2)
-  usageLimit         Int?                       // Null = unlimited
-  usedCount          Int           @default(0)
-  expiresAt          DateTime?
-  isActive           Boolean       @default(true)
-  minimumOrderAmount Decimal?      @db.Decimal(10, 2)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  usages             CouponUsage[]
-  orders             Order[]
-  @@index([code])
-  @@index([isActive, expiresAt])
-}
-
-model CouponUsage {
-  id        String   @id @default(cuid())
-  couponId  String
-  userId    String
-  orderId   String   @unique          // Each order can only use one coupon
-  coupon    Coupon   @relation(...)
-  user      User     @relation(... onDelete: Cascade)
-  createdAt DateTime @default(now())
-  @@unique([couponId, userId])         // Each user can use a given coupon only once
-  @@index([userId])
-  @@index([couponId])
-}
-```
-
----
-
-### `WishList`
-
-```prisma
-model WishList {
-  id        String    @id @default(cuid())
-  userId    String    @unique    // One wishlist per user
-  user      User      @relation(... onDelete: Cascade)
-  products  Product[]            // M2M
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-}
-```
-
----
-
-### `Review`
-
-```prisma
-model Review {
-  id        String    @id @default(cuid())
-  score     Int                   // 1–5
-  comment   String?
-  productId String
-  userId    String
-  deleted   Boolean   @default(false)
-  deletedAt DateTime?
-  user      User      @relation(... onDelete: Cascade)
-  product   Product   @relation(... onDelete: Cascade)
-  @@index([productId])
-  @@index([userId])
-}
-```
-
-**Soft delete**: `deleted` flag + `deletedAt` timestamp.
-
----
-
-### `ReturnRequest`
-
-```prisma
-model ReturnRequest {
-  id           String       @id @default(cuid())
-  orderId      String
-  userId       String
-  reason       String       @db.Text
-  status       ReturnStatus @default(PENDING)
-  refundAmount Decimal?     @db.Decimal(10, 2)
-  adminNote    String?      @db.Text
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  order        Order        @relation(... onDelete: Restrict)
-  user         User         @relation(... onDelete: Restrict)
-  @@index([orderId])
-  @@index([userId])
-  @@index([status])
-}
-```
-
-**`ReturnStatus`**: `PENDING | APPROVED | REJECTED | REFUND_PENDING | REFUNDED`
-
----
-
-### `InventoryLog`
-
-```prisma
-model InventoryLog {
-  id             String          @id @default(cuid())
-  productId      String
-  variantId      String?
-  action         InventoryAction   // RESTOCK | ORDER_DEDUCTION | RETURN_RESTORE | ADJUSTMENT
-  quantityChange Int               // Positive = added, negative = removed
-  quantityAfter  Int               // Stock level after the change
-  reason         String?
-  actorId        String?           // Admin/system user who triggered this
-  createdAt      DateTime          @default(now())
-  product        Product           @relation(... onDelete: Cascade)
-  variant        Variant?          @relation(... onDelete: SetNull)
-  @@index([productId])
-  @@index([variantId])
-  @@index([action])
-  @@index([createdAt])
-}
-```
-
----
-
-### `TaxRate`
-
-```prisma
-model TaxRate {
-  id        String   @id @default(cuid())
-  country   String
-  region    String?
-  rate      Decimal  @db.Decimal(5, 4)   // e.g., 0.1500 = 15%
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@unique([country, region])
-  @@index([country])
-}
-```
-
----
-
-### `AuditLog`
-
-```prisma
-model AuditLog {
-  id        String   @id @default(cuid())
-  entity    String               // e.g., "Order", "Product"
-  entityId  String
-  action    String               // e.g., "STATUS_CHANGE", "CREATED"
-  userId    String?              // Who performed the action (admin)
-  details   Json?                // Before/after state, extra context
-  createdAt DateTime @default(now())
-  @@index([entity, entityId])
-  @@index([userId])
-}
-```
-
----
-
-### Entity Relationship Summary
-
-- A **User** has one **Cart**, one **WishList**, many **Orders**, many **Addresses**, many **Reviews**, many **RefreshTokens**, many **CouponUsages**, many **ReturnRequests**, many **AuthProviders**.
-- A **Product** belongs to one **Category**, one **SubCategory**, one **Brand**; has many **Tags** (M2M), many **Variants**, many **Reviews**, many **Discounts** (M2M); appears in **CartItems**, **OrderItems**, **WishLists**.
-- An **Order** belongs to one **User**, references one **Address** (snapshot also stored), has many **OrderItems**, one **Payment**, many **ReturnRequests**, optionally one **Coupon**.
-- A **Discount** can apply to many **Products**, **Variants**, and **Categories** (M2M).
-- A **Coupon** tracks per-user usage via **CouponUsage** (unique per coupon+user, one coupon per order).
+## 4. Types & Enums
+
+The GraphQL schema (`schema.gql`) is the contract; the database models behind it are not exposed and are not documented here. Generate client types from `schema.gql` (e.g. GraphQL Code Generator) rather than copying them by hand.
+
+### Scalars
+
+| Scalar | Format |
+|---|---|
+| `DateTime` | ISO 8601 string in UTC, e.g. `2026-11-18T09:54:33.000Z` |
+| `JSON` | Any JSON value (used for address/pickup snapshots and `Payment.paymentDetails`) |
+| `Float` | Money values are GHS amounts with 2 decimals, sent as numbers |
+
+### Enums
+
+| Enum | Values | Used by |
+|---|---|---|
+| `Role` | `USER`, `ADMIN`, `SUPER_ADMIN` | `CreateUserInput.role`, `UserPaginateArgs.role` (`User.role` is a plain `String`) |
+| `OrderStatus` | `PENDING`, `PROCESSING`, `SHIPPED`, `DELIVERED`, `CANCELLED` | `Order.status`, `UpdateOrderStatusInput.status` |
+| `FulfillmentType` | `DELIVERY`, `PICKUP` | `Order`, `CreateOrderInput` |
+| `OrderPaymentMethod` | `ONLINE`, `CASH_ON_DELIVERY` | `Order`, `CreateOrderInput` |
+| `PaymentStatus` | `PENDING`, `COMPLETED`, `FAILED`, `ABANDONED` | `Payment.status` |
+| `ReturnStatusEnum` | `PENDING`, `APPROVED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED` | `ReturnRequestEntity.status` |
+| `RefundStatusEnum` | `PENDING` (recorded, not sent), `SENDING` (sent, outcome unknown if it stays), `PROCESSED` (accepted by Paystack), `FAILED` (refused, can be resent) | `RefundEntity.status`, `refunds(status)` |
+| `InventoryActionEnum` | `RESTOCK`, `ORDER_DEDUCTION`, `RETURN_RESTORE`, `ADJUSTMENT` | `InventoryLogEntity.action` |
+| `DiscountType` | `PERCENTAGE`, `FLAT` | `Discount.type`, discount inputs |
+| `DiscountTypeEnum` | `PERCENTAGE`, `FLAT` | `Coupon.discountType`, coupon inputs (a separate enum with the same values) |
+| `ProductStatus` | `DRAFT`, `PUBLISHED`, `ARCHIVED` | `Product.status`, product inputs, `ProductFilterArgs.status` |
+| `StockStatus` | `IN_STOCK`, `OUT_OF_STOCK`, `PREORDER`, `BACKORDER` | `Product.stockStatus` |
+| `Currency` | `GHS`, `USD`, `EUR`, `GBP`, `NGN` | `Product.currency` (only `GHS` products can be checked out) |
+| `DeliveryOptions` | `LOCAL_DELIVERY`, `INTERNATIONAL_DELIVERY`, `SELECTED_REGIONS` | `Product.deliveryOptions` (informational; not enforced at checkout) |
+| `ProductSortField` | `CREATED_AT`, `NAME`, `PRICE`, `QUANTITY`, `UPDATED_AT` | `ProductSortArgs.sortBy` |
+| `SortOrder` | `ASC`, `DESC` | `ProductSortArgs.sortOrder` |
+
+### Where each object type is described
+
+| Type | Section |
+|---|---|
+| `AuthEntity` | [2.1](#21-authentication-iam) |
+| `User`, `UserConnection`, `UserEdge`, `PublicProfile` | [2.2](#22-users), [2.17](#217-reviews) |
+| `Product`, `ProductConnection`, `ProductEdge` | [2.3](#23-products) |
+| `Category`, `SubCategory`, `Brand`, `Tag`, `Variant` | [2.4](#24-categories)–[2.8](#28-variants) |
+| `Cart`, `CartItem`, `Wishlist` | [2.9](#29-cart), [2.10](#210-wishlist) |
+| `Order`, `OrderItem` | [2.11](#211-orders) |
+| `Payment` | [2.12](#212-payment) |
+| `Coupon`, `CouponValidation`, `Discount` | [2.13](#213-coupons), [2.14](#214-discounts) |
+| `InventoryLogEntity` | [2.15](#215-inventory) |
+| `ReturnRequestEntity`, `RefundEntity` | [2.16](#216-returns) |
+| `Review` | [2.17](#217-reviews) |
+| `TaxEntity` | [2.18](#218-tax) |
+| `SalesReport`, `TopProduct`, `RevenueByCategoryEntity`, `DashboardSummary` | [2.19](#219-analytics), [16](#16-analytics-queries) |
+| `Address` | [2.20](#220-addresses) |
+| `ShippingZoneEntity`, `PickupLocationEntity` | [2.21](#221-shipping-zones--pickup-locations) |
+| `PageInfo`, `PaginationArgs` | [13](#13-pagination--filtering) |
+
+### Relationships and deletion
+
+- A **User** has one **Cart**, one **Wishlist**, many **Orders**, **Addresses**, **Reviews** and **ReturnRequests**.
+- A **Product** optionally belongs to one **Category**, **SubCategory** and **Brand**; has many **Tags**, **Variants**, **Reviews** and **Discounts**.
+- An **Order** belongs to one **User**; a `DELIVERY` order references an **Address** and a `PICKUP` order a **PickupLocation** (both also snapshotted on the order); it has many **OrderItems**, payment attempts and **ReturnRequests**, and optionally one **Coupon**.
+- A **Discount** can apply to many **Products**, **Variants** and **Categories**.
+- A **Coupon** can be used once per user and once per order.
+- Soft-deleted (hidden, not removed): orders (`deleteOrder`), payments (`softDeletePayment`), users (`archiveUser` deactivates). Everything else that has a delete operation is removed permanently; deleting something still referenced (e.g. an address or pickup location used by an order, a used coupon, a category with subcategories) is refused with `CONFLICT`.
 
 ---
 
@@ -2795,62 +2862,67 @@ The access token payload (decoded):
 
 ```json
 {
-  "sub": "userId",       // User's cuid string
+  "sub": "userId",
   "aud": "JWT_TOKEN_AUDIENCE value",
   "iss": "JWT_TOKEN_ISSUER value",
+  "jti": "random UUID",
   "iat": 1704067200,
   "exp": 1704070800
 }
 ```
 
-The refresh token payload is the same structure, signed with `JWT_REFRESH_SECRET`.
-The reset token payload adds `"purpose": "password-reset"`.
+The token carries no role: the server loads the user (role, `isActive`) from the database on every request. The refresh token has the same claims plus `sessionStart` (sign-in time, seconds), signed with `JWT_REFRESH_SECRET`. The reset token adds `"purpose": "password-reset"` and is signed with `JWT_RESET_SECRET`.
 
-### Token TTLs (defaults, all configurable)
+### Token TTLs (defaults, configurable)
 
 | Token | Default TTL | Variable |
 |---|---|---|
 | Access token | 3600 seconds (1 hour) | `JWT_ACCESS_TOKEN_TTL` |
-| Refresh token | 86400 seconds (24 hours) | `JWT_REFRESH_TOKEN_TTL` |
+| Refresh token | 86400 seconds (24 hours), never past the session limit | `JWT_REFRESH_TOKEN_TTL` |
+| Session (sign-in to last possible refresh) | 30 days | fixed |
 | Reset token | 900 seconds (15 minutes) | `JWT_RESET_TOKEN_TTL` |
+| Email verification token | 24 hours | fixed |
+
+### Events that end every session of a user
+
+Password change (`changeUserPassword`), password reset (`resetPassword`), a completed email change (`verifyEmail`), `archiveUser`, and replay of an already-rotated refresh token. Existing access tokens keep working until they expire (up to 1 hour), except for an archived user, whose access tokens stop working at once.
 
 ### Guards
 
-1. **`AuthenticationGuard`** (applied globally via `APP_GUARD`): checks for `@Auth()` metadata. Default is `AuthType.Bearer`. Falls through to `AccessTokenGuard`.
-2. **`AccessTokenGuard`**: verifies JWT, extracts user, attaches to `request[REQUEST_USER_KEY]`.
-3. **`RolesGuard`** (applied globally): checks `@Roles()` metadata against `user.role`.
-4. **`GqlThrottlerGuard`** (applied globally): enforces rate limits per named throttler.
+1. **`AuthenticationGuard`** (global): reads `@Auth()` metadata; default `AuthType.Bearer`, `AuthType.None` makes an operation public.
+2. **`AccessTokenGuard`**: verifies the JWT, loads the user, rejects missing/inactive users with `UNAUTHENTICATED`.
+3. **`RolesGuard`** (global): compares `@Roles()` metadata with `user.role`. A method-level `@Roles` replaces the resolver-level one.
+4. **`GqlThrottlerGuard`** (global): rate limits (see [Platform rules](#platform-rules)).
+5. Field middleware: owner-or-admin fields (`User.email`, `User.emailVerified`, `User.pendingEmail`, `User.phoneNumber`, `User.addresses`, `User.orders`, `Order.user`) return `FORBIDDEN` for other users. Guards do not run on other nested fields.
 
-### Role Hierarchy
+### Roles
 
-```
-SUPER_ADMIN  > ADMIN  > USER
-```
-
-`SUPER_ADMIN` passes all `@Roles()` checks that include `SUPER_ADMIN`. Guards check membership, not hierarchy — a `SUPER_ADMIN` decorator on a resolver accepts only `SUPER_ADMIN`, not `ADMIN`. Multi-role decorators like `@Roles(Role.ADMIN, Role.SUPER_ADMIN)` explicitly include both.
+There is **no role hierarchy**. Each operation lists the roles it accepts, and a role not in the list gets `FORBIDDEN`. Most admin operations accept both `ADMIN` and `SUPER_ADMIN`; the exceptions are noted per operation (`createUser` is `SUPER_ADMIN` only; `getUserPayment`, `softDeletePayment`, `restorePayment`, `updateSubCategory`, `removeSubCategory` are `ADMIN` only; `cancelOrder`, `createReview`, `updateReview`, `deleteReview`, `verifyPayment`, `getMyPayments` are `USER` only).
 
 ### Account Lockout Mechanism
 
 - On failed login: `User.failedLoginAttempts` is incremented.
-- After 5 consecutive failures: `User.lockedUntil` is set to 15 minutes in the future.
+- After 5 consecutive failures: the account is locked for 15 minutes.
 - On locked account login: `UNAUTHENTICATED` error with remaining seconds.
-- On successful login: `failedLoginAttempts` is reset to 0.
+- On successful login: the counter and lock are reset.
 
 ### Social Login Flow
 
 **Google**:
-1. Client obtains a Google OAuth access token (via Google Sign-In SDK).
+1. Client obtains a Google OAuth **access token** (via Google Sign-In SDK).
 2. Client calls `signInWithGoogle({ token })`.
-3. Backend calls Google's `tokeninfo` and `userinfo` endpoints.
-4. Backend verifies `aud === GOOGLE_CLIENT_ID`.
-5. If `AuthProvider(provider="google", providerId=googleId)` exists → return tokens.
-6. If not → create new `User` + `AuthProvider` → return tokens. The new account's email starts verified, since Google asserts `email_verified`.
+3. Backend calls Google's `tokeninfo` and `userinfo` endpoints and verifies `aud === GOOGLE_CLIENT_ID`.
+4. If an account is linked to that Google ID → return tokens.
+5. If not, and no account has that email → create `User` + link → return tokens. The new account's email starts verified (Google must assert `email_verified`, otherwise `UNAUTHENTICATED`).
+6. If an account with that email exists but is not linked → `CONFLICT` (sign in with the password; linking is not built yet).
 
-**Facebook**: Same flow using Facebook's Graph API endpoints. Facebook does not assert that the email is verified, so new Facebook accounts start unverified.
+**Facebook**: Same flow using Facebook's Graph API. Facebook does not assert that the email is verified, so new Facebook accounts start unverified.
 
 ### How Frontend Should Store and Send Tokens
 
 **Storage recommendation**: Store `accessToken` in memory (JavaScript variable/state). Store `refreshToken` in an `HttpOnly; Secure; SameSite=Strict` cookie, or alternatively in `localStorage` (less secure but usable). **Never** store access tokens in `localStorage` if XSS is a concern.
+
+**Refreshing**: allow one refresh at a time per browser (use a lock shared across tabs, e.g. `navigator.locks` or a `BroadcastChannel`), and replace the stored refresh token as soon as the response arrives. Sending an old refresh token after rotation logs the user out everywhere.
 
 **Sending tokens**: All authenticated GraphQL requests must include:
 
@@ -2877,35 +2949,37 @@ Authorization: Bearer <accessToken>
 
 ### Product Browsing Flow
 
-1. Frontend calls `query products(paginationArgs, filterArgs)` — **no auth required**.
-2. Response includes cursor-paginated `ProductConnection` with `pageInfo.hasNextPage`.
+1. Frontend calls `query products(paginationArgs, filterArgs, sortArgs)` — **no auth required**.
+2. Response includes cursor-paginated `ProductConnection` with `pageInfo.hasNextPage` and `pageInfo.totalCount`.
 3. To load next page: call again with `after: lastCursor` from previous response.
 4. Resolved fields (`discountedPrice`, `appliedDiscount`, `variants`, `reviews`) are fetched via DataLoader only when requested.
-5. To view a single product: call `query product(productId)`.
+5. To view a single product: call `query product(productId)` (returns `null` for anything not published).
 
 ### Add to Cart Flow
 
 1. User must be authenticated.
 2. Frontend calls `mutation addToCart(input: { productId, quantity })`.
-3. Backend checks product exists and has sufficient stock.
+3. Backend checks the product exists, is active and has enough stock for the new cart quantity.
 4. If cart does not exist for user, it is created automatically.
 5. If item already in cart, quantity is incremented.
-6. Returns updated `Cart` with all items.
+6. Returns updated `Cart` with all items. Stock is not reserved until `createOrder`.
 
 ### Cart Update Flow
 
 1. To change quantity: `mutation updateCartItem(input: { cartItemId, quantity })`. Setting `quantity: 0` removes the item.
 2. To remove an item directly: `mutation removeFromCart(cartItemId)`.
 3. To empty the cart: `mutation clearCart`.
-4. To see cart with active discounts applied: `query cartWithDiscount`.
+4. To show active discounts: `query cartWithDiscount` (display only; not charged).
 
 ### Checkout Flow
 
-1. User must have at least one saved address (`query userAddresses` or `mutation createAddress`).
-2. Optionally validate coupon: `mutation validateCoupon(input: { code, orderTotal })`.
-3. Create order: `mutation createOrder(input: { shippingAddressId, couponCode? })`.
-4. Backend validates stock, applies tax, applies coupon → creates `Order` with `status = PENDING` → decrements inventory → clears cart → sends confirmation email.
-5. Frontend receives `Order.id`.
+1. Choose fulfilment:
+   - `DELIVERY`: the user needs a saved address (`query userAddresses` or `mutation createAddress`). Show the fee with `query getShippingFee(addressId)`; a `BAD_REQUEST` means the city is not served (offer pickup or another address).
+   - `PICKUP`: list locations with `query activePickupLocations` (public).
+2. Optionally validate a coupon: `mutation validateCoupon(input: { code, orderTotal: <cart subtotal> })`.
+3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, contactEmail, contactPhone, couponCode?, paymentMethod? })`.
+4. Backend validates stock, prices items at product `price`, adds the shipping fee, applies the coupon → creates the `Order` (`PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`) → decrements inventory → clears cart → sends confirmation email.
+5. `ONLINE`: continue with the Order Placement Flow within 1 hour, or the order expires. `CASH_ON_DELIVERY`: done; staff ship it and record the cash with `recordCodPayment`.
 
 ### Order Placement Flow
 
@@ -2913,8 +2987,8 @@ Authorization: Bearer <accessToken>
 2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod, idempotencyKey }` (`currency` may be omitted; if sent it must be `"GHS"`). Only `PENDING` online orders can be paid.
 3. Backend opens a new payment attempt with `status = PENDING` (any earlier pending attempt becomes `ABANDONED`) and returns `authorizationUrl`.
 4. Frontend redirects user to `authorizationUrl`.
-5. After payment, Paystack redirects to `GET /payment/callback?reference=xxx`.
-6. Frontend calls `mutation verifyPayment({ reference })` to confirm status.
+5. After payment, Paystack redirects the browser to the frontend page configured as `PAYSTACK_CALLBACK_URL`, with `?reference=…` (and `trxref`) in the query string.
+6. That page calls `mutation verifyPayment(verifyPaymentInput: { reference })` and shows the result, reading the order's `status` too.
 
 ### Payment Flow (Paystack)
 
@@ -2932,9 +3006,9 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 
 ### Inventory Deduction Flow
 
-- On `createOrder`: for each order item, product/variant quantity is decremented atomically in a Prisma transaction. An `InventoryLog` record is created with `action = ORDER_DEDUCTION`.
-- On `cancelOrder` or `deleteOrder`: stock is restored. `InventoryLog` with `action = RETURN_RESTORE` (or similar) is created.
-- Low-stock check: cron job runs every 6 hours, logs warnings for products/variants at or below their `lowStockAlert` / `lowStockThreshold`.
+- On `createOrder`: each item's quantity is decremented from the **product** stock with a conditional update inside the order transaction (never below zero). An `InventoryLog` record is created with `action = ORDER_DEDUCTION`.
+- On `cancelOrder`, `adminCancelOrder`, `updateOrderStatus(CANCELLED)` or expiry: stock is restored once, logged as `RETURN_RESTORE`. `deleteOrder` never moves stock.
+- Low-stock check: a cron job every 6 hours logs warnings (server log only) for products/variants at or below their threshold.
 
 ### Return Request Flow
 
@@ -2943,57 +3017,61 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 3. Admin reviews: `mutation approveReturn(input: { returnRequestId, refundAmount, adminNote? })` → status → `APPROVED`.
 4. Admin rejects: `mutation rejectReturn(input: { returnRequestId, adminNote? })` → status → `REJECTED`.
 5. Admin processes the refund through Paystack: `mutation processRefund(returnRequestId)` → status → `REFUND_PENDING` while it is sent, then `REFUNDED`. If Paystack refuses, it stays `REFUND_PENDING` and can be retried.
+6. Returned goods are put back in stock manually with `restockProduct` once received.
+
+Cancelling a paid online order creates a return request automatically ("Automatic refund request for cancelled paid order") for staff to approve and refund.
 
 ### Review Submission Flow
 
-1. User must be authenticated with `USER` role.
-2. Call `mutation createReview(input: { productId, score, comment? })`. `score` must be 1–5.
-3. To update: `mutation updateReview(input: { reviewId, score?, comment? })`.
-4. To delete: `mutation deleteReview(reviewId)` — soft-deletes the review.
+1. User must be authenticated with the `USER` role.
+2. Call `mutation createReview(input: { productId, score, comment? })`. `score` must be 1–5; one review per product.
+3. To update: `mutation updateReview(input: { id, score?, comment? })`.
+4. To delete: `mutation deleteReview(reviewId)` — permanently deletes the review.
 
 ---
 
 ## 7. Order Lifecycle
 
 ```
-         createOrder()
-              ↓
-          PENDING ──────────────────────────────────────────────────────→ CANCELLED
-              |                                                           (user or admin)
-       Paystack webhook
-       charge.success
-              ↓
-         PROCESSING ──────────────────────────────────────────────────→ CANCELLED
-              |                                                           (admin only)
-       updateOrderStatus(SHIPPED)
-              ↓
-           SHIPPED ──────────────────────────────────────────────────→ CANCELLED
-              |                                                           (admin only)
-       updateOrderStatus(DELIVERED)
-              ↓
-          DELIVERED
-              |
+                createOrder()
+          ONLINE ↓          ↓ CASH_ON_DELIVERY
+            PENDING ─────────┼────────────────────────────→ CANCELLED
+               |             |       (customer, admin, or 1-hour expiry)
+   payment confirmed         |
+ (verifyPayment / webhook /  |
+  reconciliation sweep)      |
+               ↓             ↓
+            PROCESSING ────────────────────────────────────→ CANCELLED
+               |                                (customer or admin)
+     updateOrderStatus(SHIPPED)
+               ↓
+             SHIPPED
+               |
+     updateOrderStatus(DELIVERED)  — or recordCodPayment for COD
+               ↓
+            DELIVERED
+               |
        createReturnRequest()
-              ↓
+               ↓
     ReturnRequest: PENDING → APPROVED → REFUND_PENDING → REFUNDED
-                              |
-                           REJECTED
+                     |
+                  REJECTED
 ```
 
 ### Status Transitions
 
 | From | To | Trigger | Actor |
 |---|---|---|---|
-| *(none)* | `PENDING` | `createOrder` | USER |
-| `PENDING` | `PROCESSING` | Paystack webhook `charge.success` | Webhook |
-| `PENDING` | `CANCELLED` | `cancelOrder` | USER or ADMIN |
-| `PROCESSING` | `SHIPPED` | `updateOrderStatus` | ADMIN |
-| `PROCESSING` | `CANCELLED` | `updateOrderStatus` | ADMIN |
-| `SHIPPED` | `DELIVERED` | `updateOrderStatus` | ADMIN |
-| `SHIPPED` | `CANCELLED` | `updateOrderStatus` | ADMIN |
-| `DELIVERED` | — | (can only trigger return) | USER |
+| *(none)* | `PENDING` | `createOrder` with `ONLINE` | Customer |
+| *(none)* | `PROCESSING` | `createOrder` with `CASH_ON_DELIVERY` | Customer |
+| `PENDING` | `PROCESSING` | Confirmed online payment (`verifyPayment`, webhook, or the 5-minute reconciliation sweep) | System |
+| `PENDING` | `CANCELLED` | `cancelOrder` / `adminCancelOrder` / `updateOrderStatus(CANCELLED)` / hourly expiry | Customer, admin, system |
+| `PROCESSING` | `SHIPPED` | `updateOrderStatus` | Admin |
+| `PROCESSING` | `CANCELLED` | `cancelOrder` / `adminCancelOrder` / `updateOrderStatus(CANCELLED)` | Customer or admin |
+| `SHIPPED` | `DELIVERED` | `updateOrderStatus`, or `recordCodPayment` for COD | Admin |
+| `DELIVERED`, `CANCELLED` | — | Final | — |
 
-**Note**: The service does not enforce these transition guards explicitly (no "state machine"); it will update status to any valid `OrderStatus` enum value when called by an admin. Only user-facing `cancelOrder` restricts to the user's own order.
+The table is enforced (`src/order/order-status.ts`): any other change returns `CONFLICT`, and concurrent changes to the same order let exactly one succeed. A `SHIPPED` order cannot be cancelled. An admin cannot move an unpaid `ONLINE` order to `PROCESSING`.
 
 ---
 
@@ -3002,38 +3080,29 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 ### Step-by-Step Payment Flow
 
 ```
-Frontend                     Backend                      Paystack
-   |                            |                             |
-   |-- POST /payment/initialize → |                             |
-   |   { orderId, paymentMethod, |                             |
-   |     currency }              |                             |
-   |                            |-- Paystack.transaction.initialize() →|
-   |                            |← { authorizationUrl, reference } ----|
-   |← { ...payment, authorizationUrl }                        |
-   |                            |                             |
-   |-- redirect to authorizationUrl ─────────────────────────→|
-   |                            |                             |
-   |                            |                   (user pays)
-   |                            |                             |
-   |                            |← POST /payment/webhook ------|
-   |                            |   { event: "charge.success",|
-   |                            |     data: { reference } }    |
-   |                            |                             |
-   |← GET /payment/callback?reference=xxx ────────────────────|
-   |                            |                             |
-   |-- mutation verifyPayment({ reference }) → |              |
-   |← updated Payment with status: "COMPLETED" |              |
+Frontend                       Backend                          Paystack
+   |                              |                                 |
+   |-- POST /payment/initialize ->|                                 |
+   |   { orderId, paymentMethod,  |                                 |
+   |     idempotencyKey }         |-- transaction/initialize ------>|
+   |                              |<- { authorization_url } --------|
+   |<- { ...attempt, authorizationUrl, transactionId }              |
+   |                              |                                 |
+   |-- redirect to authorizationUrl ------------------------------->|
+   |                              |                     (user pays) |
+   |                              |<- POST /payment/webhook --------|
+   |                              |   { event: "charge.success" }   |
+   |<- browser redirected to PAYSTACK_CALLBACK_URL?reference=… -----|
+   |   (a frontend page)          |                                 |
+   |-- mutation verifyPayment({ reference }) ->|                    |
+   |<- Payment { status: "COMPLETED", order { status } }            |
 ```
 
 ### Payment Initialization
 
-**Endpoint**: `POST /payment/initialize`
-**Auth**: Bearer token required.
+**Endpoint**: `POST /payment/initialize` (see [Section 3](#post-paymentinitialize)).
 
-The backend calls Paystack's `transaction.initialize` with:
-- `email`: The order owner's email address.
-- `amount`: `Order.totalAmount` (treated as the amount in the smallest currency unit by Paystack — verify this matches your currency configuration).
-- `metadata`: includes `orderId`, `paymentMethod`, `currency`.
+The backend calls Paystack's transaction initialize with the order owner's email, the payment intent's amount (the order total when payment was first initialized) converted to pesewas, currency `GHS`, the attempt's own reference, and `callback_url = PAYSTACK_CALLBACK_URL`. The customer never sends an amount.
 
 ### Webhook Security
 
@@ -3051,17 +3120,19 @@ The comparison is constant-time and uses the exact request bytes, so the body mu
 
 | Event | Action |
 |---|---|
-| `charge.success` | `Payment.status → COMPLETED`, `Order.status → PROCESSING` |
-| `charge.failed` | `Payment.status → FAILED` |
+| `charge.success` | Re-verified with Paystack; on a valid payment `Payment.status → COMPLETED`, `Order.status → PROCESSING` |
+| `charge.failed` | Re-verified; `Payment.status → FAILED` |
 | All others | Stored, acknowledged (200 OK), not processed |
+
+A background sweep every 5 minutes also re-checks open attempts with Paystack and processes stored webhook events that failed, so a payment completes even if the webhook and the callback page both fail.
 
 ### Frontend Payment Confirmation Strategy
 
-**Option A (recommended)**: After Paystack callback redirect, call `mutation verifyPayment({ reference })`. The mutation checks with Paystack directly and updates the payment record.
+**Option A (recommended)**: On the callback page, call `mutation verifyPayment({ reference })`. The mutation checks with Paystack directly and updates the payment record. If the attempt is still `PENDING` (e.g. MoMo approval), call it again after a few seconds.
 
-**Option B**: Poll `query payment(id)` every few seconds until `status !== "PENDING"` (max 3–5 polls with exponential backoff). This works because the webhook often fires before the user returns to the frontend.
+**Option B**: Poll `query order(orderId)` (or `payment(id)`) every few seconds until the order leaves `PENDING` (max 3–5 polls with backoff). This works because the webhook often fires before the user returns to the frontend.
 
-**Option C**: Rely solely on the webhook — the order page can show the latest order status on load.
+**Option C**: Rely on the webhook and the reconciliation sweep — the order page shows the latest order status on load.
 
 ---
 
@@ -3069,32 +3140,32 @@ The comparison is constant-time and uses the exact request bytes, so the body mu
 
 ### When Stock Reduces
 
-- `createOrder`: each `OrderItem.quantity` is deducted from `Product.quantity` (or `Variant.quantity` if variant is specified). This happens **at order creation time**, not at payment time.
-- Logged with `InventoryAction.ORDER_DEDUCTION`.
+- `createOrder`: each `OrderItem.quantity` is deducted from `Product.quantity` (variants are not purchasable). This happens **at order creation time**, not at payment time. Logged as `ORDER_DEDUCTION`.
+- `adjustProductStock` / `adjustVariantStock` with a negative `delta`. Logged as `ADJUSTMENT`.
 
 ### When Stock Restores
 
-- `cancelOrder` or `deleteOrder`: all order item quantities are restored.
-- `approveReturn`: restores stock for the returned items.
-- Logged with `InventoryAction.RETURN_RESTORE`.
-- Admin `restockProduct` / `restockVariant`: manual top-up. Logged with `InventoryAction.RESTOCK`.
+- Cancelling an order (customer, admin, or expiry): all its item quantities, once. Logged as `RETURN_RESTORE`.
+- `restockProduct` / `restockVariant`: manual top-up. Logged as `RESTOCK`.
+- `adjustProductStock` / `adjustVariantStock` with a positive `delta`. Logged as `ADJUSTMENT`.
+- Not on `approveReturn`, `processRefund` or `deleteOrder`: returned goods are restocked manually.
 
 ### Out-of-Stock Handling
 
-- `Product.stockStatus` can be: `IN_STOCK`, `OUT_OF_STOCK`, `PREORDER`, `BACKORDER`.
-- `ProductFilterArgs.inStock` can filter out-of-stock products from listings.
-- Adding to cart/creating an order enforces a stock check — throws `BAD_REQUEST` if insufficient.
+- Stock can never go negative (conditional updates plus a database check).
+- Adding to cart and creating an order check stock (`BAD_REQUEST` if insufficient).
+- `Product.stockStatus` (`IN_STOCK`, `OUT_OF_STOCK`, `PREORDER`, `BACKORDER`) is whatever the admin set; it is not derived from `quantity`. Use `quantity` to show availability.
+- `ProductFilterArgs.inStock` does not currently filter anything out (known defect).
 
 ### Low Stock Logic
 
-- `Product.lowStockAlert` (default: 5): threshold for product-level low stock.
-- `Variant.lowStockThreshold` (default: 5): threshold for variant-level low stock.
-- A **cron job** runs every 6 hours (`EVERY_6_HOURS`) and logs warnings for items at or below their threshold.
-- No automatic emails or notifications to users for low stock — only server-side logging.
+- `Product.lowStockAlert` (default 5) and the variant's internal threshold (default 5, not exposed in GraphQL).
+- A cron job every 6 hours logs warnings for items at or below their threshold. No emails or notifications.
+- `dashboardSummary.lowStockProductCount` / `lowStockVariantCount` report the counts.
 
 ### Reserved Stock
 
-There is **no reserved/held stock** concept. Stock is decremented immediately on order creation. If a user abandons their order, stock is not automatically restored (only on explicit cancel).
+There is no separate reservation: stock is decremented on order creation. An unpaid `ONLINE` order gives its stock back when it expires after 1 hour or is cancelled.
 
 ---
 
@@ -3104,36 +3175,35 @@ There is **no reserved/held stock** concept. Stock is decremented immediately on
 
 | | Discount | Coupon |
 |---|---|---|
-| Scope | Product / Variant / Category | Order-level |
-| Applied | Automatically (if active & date range valid) | User enters a code at checkout |
-| Model | `Discount` | `Coupon` |
-| Stacking | Discounts from different assignments can stack | One coupon per order |
+| Scope | Product / Variant / Category | Order subtotal |
+| Applied | Shown automatically on products and in `cartWithDiscount` | Entered as `couponCode` at checkout |
+| Charged at checkout | **No** (see below) | Yes (`Order.couponDiscount`) |
+| Type | `Discount` | `Coupon` |
 
 ### Discount Application
 
-- A `Discount` must have `isActive = true` and current date must be within `[startDate, endDate]`.
-- Discounts are M2M: a discount can apply to many products, variants, and categories simultaneously.
-- On `cartWithDiscount` or on checkout, the discount service evaluates each cart item and applies the best matching discount.
-- `DiscountType.PERCENTAGE`: `discountedPrice = price - (price × value / 100)`.
-- `DiscountType.FLAT`: `discountedPrice = price - value`.
-- `minimumPurchase`: the total cart value must meet or exceed this for the discount to apply.
+- A `Discount` applies when `isActive = true` and now is within `[startDate, endDate]`.
+- For a product, the candidates are its own discounts and its category's discounts (plus the variant's, where a variant is involved). The **best** one wins: the highest `value`; on a tie, `PERCENTAGE` beats `FLAT`. (Note the comparison is on the raw value, so a 20% discount beats a GHS 15 flat discount regardless of price.)
+- `PERCENTAGE`: `discountedPrice = price - price × value / 100`. `FLAT`: `discountedPrice = price - value`.
+- `minimumPurchase`: `cartWithDiscount` fails with `BAD_REQUEST` when the cart total is below the minimum of any discount that matches an item.
+- **Checkout does not apply discounts**: `createOrder` prices items at `price`. `finalizeOrder` records discount amounts after the fact but overwrites `totalAmount` (see [`finalizeOrder`](#finalizeorder)); do not use it. Whether discounts are charged at checkout is an open product decision.
 
 ### Coupon Logic
 
-- Applied at `createOrder` time via `couponCode` parameter.
-- Validation logic (enforced in `CouponsService.validateCoupon`):
-  1. Coupon exists and `isActive = true`.
+- Applied at `createOrder` via `couponCode`, against the order subtotal (before shipping).
+- Checks (`CouponsService.validateCoupon`, repeated inside the order transaction):
+  1. Coupon exists (`NOT_FOUND`) and `isActive = true`.
   2. Not expired (`expiresAt` is null or in the future).
-  3. Usage limit not exceeded (`usedCount < usageLimit` or `usageLimit` is null).
-  4. User has not already used this coupon (`CouponUsage` unique on `[couponId, userId]`).
-  5. Order total ≥ `minimumOrderAmount`.
-- Coupon discount is saved in `Order.couponDiscount` and a `CouponUsage` record is created.
-- `Coupon.usedCount` is incremented on use.
+  3. Usage limit not reached (`usedCount < usageLimit`, or `usageLimit` is null).
+  4. User has not already used this coupon.
+  5. Subtotal ≥ `minimumOrderAmount`.
+- Discount: `PERCENTAGE` → subtotal × value / 100; `FLAT` → min(value, subtotal). Saved in `Order.couponDiscount`; `Coupon.usedCount` increments.
+- Cancelling or expiring the order gives the use back (usage record removed, `usedCount` decremented).
 
 ### Stacking Rules
 
-- Discounts and coupons can be combined (they are applied at different levels).
-- Multiple product/variant/category discounts: only one discount is applied per cart item (the service applies the first matching discount, checking product first, then variant, then category).
+- One coupon per order. Product discounts are not charged, so they do not stack with coupons today.
+- Only one discount is shown per product (the best one, as above).
 
 ---
 
@@ -3141,37 +3211,18 @@ There is **no reserved/held stock** concept. Stock is decremented immediately on
 
 ### Tax Calculation
 
-- Each country (and optionally region) has a `TaxRate` record with a `rate` (0.0–1.0).
-- At `createOrder`, the shipping address's `country` is used to look up the applicable tax rate.
-- For each taxable item (`Product.isTaxable = true`), the tax is calculated and added.
-- Tax is factored into `Order.totalAmount`.
+- Taxes are named rates (`TaxEntity { name, rate, isActive }`, e.g. VAT 0.15) with no country or region.
+- A taxable product's `price = basePrice × (1 + sum of active tax rates)`, stored on the product and recomputed whenever a tax is created, updated or deleted, or the product's `basePrice`/`isTaxable` changes. Non-taxable products: `price = basePrice`.
+- Checkout charges `price`; no tax is added at checkout, and orders carry no tax breakdown. The shipping address country is not used for tax.
 
 ### Currency
 
-Fixed exchange rates are hardcoded in `CurrencyService`:
+- All charges are in **GHS**. `createOrder` refuses products whose `currency` is not `GHS`, and `POST /payment/initialize` accepts only `currency: "GHS"` (or none).
+- `Product.currency` can hold `USD`, `EUR`, `GBP`, `NGN`, but there is no conversion: no API operation converts amounts. (A `CurrencyService` with hard-coded rates exists in the code but is not used by any operation.)
 
-```typescript
-const RATES: Record<string, number> = {
-  GHS: 1,       // Base currency
-  USD: 0.068,
-  EUR: 0.063,
-  GBP: 0.053,
-  NGN: 110,
-};
-```
+### Rounding
 
-Conversion formula:
-```
-converted = Math.round((amount / fromRate) * toRate * 100) / 100
-```
-
-Supported currencies: `GHS`, `USD`, `EUR`, `GBP`, `NGN`.
-
-**Note**: These are static rates. There is no external rate feed integration.
-
-### Rounding Strategy
-
-`Math.round(...* 100) / 100` — rounds to 2 decimal places (standard banker's rounding approximation).
+Order amounts (`subtotal`, `shippingFee`, `totalAmount`) and product `price` are stored with 2 decimals. Coupon and discount amounts returned by `validateCoupon`/`cartWithDiscount` are not rounded (e.g. `5.998`).
 
 ---
 
@@ -3212,7 +3263,9 @@ GraphQL errors follow the standard Apollo format:
 | Record still referenced, e.g. deleting a category that has sub-categories (Prisma `P2003`) | `CONFLICT` |
 | Record not found (Prisma `P2025`) | `NOT_FOUND` |
 | Query too deep (> 8), too many aliases (> 15) or too costly (> 3000), HTTP 400 | `GRAPHQL_VALIDATION_FAILED` |
-| `500 InternalServerError` | `INTERNAL_SERVER_ERROR` |
+| Any other 4xx (e.g. 422 wishlist full, 413, 429 rate limit) | `BAD_REQUEST`, with the real status in `extensions.status` |
+| Schema errors: unknown field or argument, wrong type, missing required value (HTTP 400) | `GRAPHQL_VALIDATION_FAILED` / `BAD_USER_INPUT` (Apollo) |
+| Any 5xx, and unexpected errors (incl. a null returned for a non-null field) | `INTERNAL_SERVER_ERROR` (message "Internal server error"; `extensions.status` carries e.g. 503 for a provider outage) |
 
 **Query cost:** each field costs 1; a list costs its page size (`first`, or 10 when not given) times the cost of its fields. A page of 50 products with variants and reviews costs about 2,800.
 
@@ -3220,7 +3273,9 @@ GraphQL errors follow the standard Apollo format:
 
 In **production**: only errors with codes `BAD_USER_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `BAD_REQUEST`, `GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED` expose their real message. All other errors return `{ "message": "Internal server error", "extensions": { "code": "INTERNAL_SERVER_ERROR" } }`.
 
-In **development**: full error details (including stack traces) are returned.
+Outside production every message is returned unmasked, and Apollo's default may add `extensions.stacktrace` in development; never rely on it.
+
+Switch on `extensions.code`; use `extensions.status` to tell apart the 4xx cases that share `BAD_REQUEST` (e.g. 429 = slow down). Refresh the access token only on `UNAUTHENTICATED`.
 
 ### Validation Error Format
 
@@ -3288,16 +3343,16 @@ When `class-validator` fails, the error has code `BAD_USER_INPUT`:
 
 ### Strategy: Cursor-Based Pagination
 
-Products and Users use **cursor pagination** (relay-style). The cursor is the record's `id` (cuid string).
+Only `products`, `adminProducts` and `users` are paginated (relay-style). The cursor is the record's `id`.
 
-**`PaginationArgs`**:
+**`PaginationArgs`** (products; `UserPaginateArgs` has the same fields plus filters):
 
 ```typescript
 {
-  first: number;       // Page size. Default 12. Min 1. Max 100.
+  first: number;       // Page size. Default 12. Min 1. Max 100. (Omitting paginationArgs entirely on products gives 10.)
   after?: string;      // Cursor: the ID of the last item from the previous page.
-  orderBy?: string;    // Field name to sort by.
-  orderInAsc?: boolean;// Default true (ascending).
+  orderBy?: string;    // Users only (whitelisted field name). Ignored for products.
+  orderInAsc?: boolean;// Users only. Default true.
 }
 ```
 
@@ -3306,8 +3361,9 @@ Products and Users use **cursor pagination** (relay-style). The cursor is the re
 ```typescript
 {
   hasNextPage: boolean;
-  hasPreviousPage: boolean;
+  hasPreviousPage: boolean; // true whenever `after` was sent
   pageSize: number;
+  totalCount: number;       // Total matching records (all pages)
 }
 ```
 
@@ -3317,7 +3373,7 @@ Products and Users use **cursor pagination** (relay-style). The cursor is the re
 query {
   products(
     paginationArgs: { first: 12, after: "clx1234lastCursor" }
-    filterArgs: { isActive: true }
+    sortArgs: { sortBy: CREATED_AT, sortOrder: DESC }
   ) {
     edges {
       cursor
@@ -3325,23 +3381,24 @@ query {
     }
     pageInfo {
       hasNextPage
-      pageSize
+      totalCount
     }
   }
 }
 ```
 
-### Sorting Options (Products)
+### Sorting
 
-`orderBy` accepts any `Product` field name (e.g., `"createdAt"`, `"price"`, `"name"`). `orderInAsc: true` for ascending, `false` for descending.
+- **Products**: `sortArgs: ProductSortArgs { sortBy: CREATED_AT | NAME | PRICE | QUANTITY | UPDATED_AT, sortOrder: ASC | DESC }`, default `CREATED_AT DESC`. `paginationArgs.orderBy`/`orderInAsc` are ignored.
+- **Users**: `filter.orderBy` (one of `id`, `name`, `email`, `phoneNumber`, `role`, `isActive`, `createdAt`, `updatedAt`, `lastLoginAt`, `profilePicture`) and `filter.orderInAsc`.
 
 ### Filtering Options per Resource
 
-**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName`, `subcategoryId`, `isActive` (default `true`), `search` (name/description/tags partial match), `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `inStock`, `tagId`, `tagName`.
+**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName` (defective, see [2.3](#23-products)), `subcategoryId`, `isActive` (default `true`, admin only), `status` (admin only), `search`, `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `inStock` (no effect today), `tagId`, `tagName`.
 
 **Users** (`UserPaginateArgs`): `email` (partial), `phoneNumber` (exact), `role`, `isActive`, `name` (partial), `createdAfter`.
 
-**Other resources** (orders, reviews, returns, inventory logs) use simple flat queries without pagination args — they return full lists.
+**Other resources** (orders, payments, reviews, returns, refunds, inventory logs, coupons, discounts, zones, locations) return full lists without pagination. `refunds` accepts an optional `status` filter.
 
 ---
 
@@ -3349,7 +3406,7 @@ query {
 
 ### Upload Endpoints
 
-Both endpoints are REST (not GraphQL).
+Both endpoints are REST (not GraphQL) and accept `ADMIN`/`SUPER_ADMIN` tokens only. Full reference in [Section 3](#post-uploadsingle-image).
 
 #### Single Image
 ```http
@@ -3373,11 +3430,11 @@ files: <image3>
 
 ### Accepted Formats
 
-Any image format accepted by `sharp` and Cloudinary (JPEG, PNG, WebP, GIF, etc.). The server resizes using `sharp` before uploading.
+JPEG, PNG and WebP only, identified from the file content (magic bytes), not the file name or MIME type. Anything else is rejected with 400.
 
-### Max Size
+### Limits
 
-5 MB per file (enforced by Multer).
+5 MB per file (413 above that) and at most 40 megapixels (400).
 
 ### Processing
 
@@ -3403,9 +3460,11 @@ All images are stored in the `ecommerce` Cloudinary folder.
 }
 ```
 
+Use the returned `url` values in `images`, `logo` or `image` fields of the product, brand and category inputs.
+
 ### Rate Limit
 
-10 uploads per minute per user (`upload` throttler).
+10 uploads per minute per IP (`upload` throttler).
 
 ---
 
@@ -3415,26 +3474,25 @@ All images are stored in the `ecommerce` Cloudinary folder.
 
 All notifications are **email-only** via Resend. There are no in-app notifications, push notifications, or real-time subscriptions in this system.
 
-| Trigger | Template | Recipient |
+| Trigger | Email | Recipient |
 |---|---|---|
-| User registers | Welcome email | New user |
-| Order created | Order confirmation | Order owner |
-| Order status → SHIPPED | Shipping update (with tracking number) | Order owner |
-| Order status → DELIVERED | Delivery confirmation | Order owner |
-| Online payment confirmed (webhook or `verifyPayment`), once per order | Payment confirmation | Order owner |
-| `forgotPassword` called | Password reset link | Requesting user |
+| `signUp`, `resendVerificationEmail` | Email verification token (valid 24 hours) | The address being verified |
+| First successful `verifyEmail` of an account | Welcome email | User |
+| Email change requested (`updateMyProfile` / `updateUser` with a new email) | Verification token to the new address, and a notice to the current address | Both addresses |
+| Order created | Order confirmation | Account email (not `contactEmail`) |
+| Order status → `SHIPPED` or `DELIVERED` (`updateOrderStatus`), or `updateShipping` with a tracking number | Status update (with tracking number when set) | Account email |
+| Online payment confirmed (webhook, `verifyPayment` or sweep), once per order | Payment confirmation | Account email |
+| `forgotPassword` for an existing account | Password reset token | Requesting address |
+
+Not emailed: cash-on-delivery collection (`recordCodPayment`), cancellations, refunds.
 
 ### Asynchronous
 
-All emails fire asynchronously — they do **not** block the GraphQL response. Email failures, including sends the email provider rejects, are logged as errors and not propagated.
+All emails are sent after the response — they do **not** block or fail the request. Email failures, including sends the email provider rejects, are logged as errors and not propagated. Without `RESEND_API_KEY` no email is sent.
 
 ### No GraphQL Mutations for Notifications
 
 There are no `markAsRead`, `getNotifications`, or notification subscription GraphQL operations. Notification state is purely email-based.
-
-### Mark as Read
-
-Not applicable — this system does not have in-app notification records.
 
 ---
 
@@ -3530,6 +3588,8 @@ Snapshot of key admin metrics:
 
 ## 17. Environment Variables Required
 
+Backend configuration, validated at startup (`src/config/env.validation.ts`); listed here because some values shape frontend behaviour (`ALLOWED_ORIGINS`, `PAYSTACK_CALLBACK_URL`). In production, placeholder secret values and a JWT secret reused across the three JWT variables are rejected.
+
 ### Database
 
 | Variable | Required | Description |
@@ -3541,8 +3601,8 @@ Snapshot of key admin metrics:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `PORT` | ❌ | `3000` | HTTP port |
-| `NODE_ENV` | ❌ | `development` | `development`, `production`, `test` |
-| `ALLOWED_ORIGINS` | ❌ | See note | Comma-separated allowed CORS origins. Required in production. |
+| `NODE_ENV` | ✅ | — | `development`, `production` or `test`; the app refuses to start without it |
+| `ALLOWED_ORIGINS` | Production only | — | Comma-separated allowed CORS origins (your frontend URLs). |
 
 ### JWT
 
@@ -3571,7 +3631,7 @@ Snapshot of key admin metrics:
 | Variable | Required | Description |
 |---|---|---|
 | `PAYSTACK_SECRET_KEY` | ✅ | Paystack secret key (starts with `sk_`) |
-| `PAYSTACK_CALLBACK_URL` | ❌ | Redirect URL after payment completion |
+| `PAYSTACK_CALLBACK_URL` | ❌ | URI of the **frontend** page Paystack redirects to after payment; that page calls `verifyPayment` |
 
 ### Cloudinary
 
@@ -3581,11 +3641,11 @@ Snapshot of key admin metrics:
 | `CLOUDINARY_API_KEY` | ✅ | Cloudinary API key |
 | `CLOUDINARY_API_SECRET` | ✅ | Cloudinary API secret |
 
-### Redis (optional)
+### Redis
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `REDIS_HOST` | ❌ | — | Redis host. Falls back to in-memory if absent. |
+| `REDIS_HOST` | Production only | — | Redis host. Outside production, falls back to an in-memory cache if absent. |
 | `REDIS_PORT` | ❌ | `6379` | Redis port |
 | `REDIS_PASSWORD` | ❌ | — | Redis password |
 
@@ -3593,7 +3653,7 @@ Snapshot of key admin metrics:
 
 | Variable | Required | Description |
 |---|---|---|
-| `RESEND_API_KEY` | ❌ | Resend API key. Emails silently fail if absent. |
+| `RESEND_API_KEY` | ❌ | Resend API key. Without it no email is sent (a warning is logged). |
 | `RESEND_FROM_EMAIL` | ❌ | Sender email address |
 
 ### Logging
@@ -3606,7 +3666,7 @@ Snapshot of key admin metrics:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `OTEL_ENABLED` | ❌ | `false` | Set to `"true"` to enable |
+| `OTEL_ENABLED` | ❌ | `false` | `"true"` or `"false"` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | ❌ | `http://localhost:4318/v1/traces` | OTLP collector endpoint |
 | `OTEL_SERVICE_NAME` | ❌ | `emma-commerce-backend` | Service name in traces |
 
@@ -3643,7 +3703,7 @@ src/
 ### Apollo Client Configuration
 
 ```typescript
-import { ApolloClient, InMemoryCache, createHttpLink, from } from '@apollo/client';
+import { ApolloClient, InMemoryCache, createHttpLink, from, fromPromise } from '@apollo/client';
 import { setContext } from '@apollo/client/link/context';
 import { onError } from '@apollo/client/link/error';
 
@@ -3661,7 +3721,7 @@ const authLink = setContext((_, { headers }) => {
 
 const errorLink = onError(({ graphQLErrors, operation, forward }) => {
   if (graphQLErrors?.some(e => e.extensions?.code === 'UNAUTHENTICATED')) {
-    // Attempt token refresh, then retry
+    // refreshAccessToken() must share one in-flight refresh across calls and tabs (see below)
     return fromPromise(refreshAccessToken()).flatMap(() => forward(operation));
   }
 });
@@ -3675,12 +3735,13 @@ export const client = new ApolloClient({
 ### Auth Refresh Strategy
 
 1. Store `accessToken` in memory (React state/Zustand/Redux).
-2. Store `refreshToken` in `localStorage` or `HttpOnly` cookie.
-3. On Apollo error with `UNAUTHENTICATED`:
-   - Call `mutation refreshToken({ refreshToken })`.
-   - On success: update in-memory `accessToken`, store new `refreshToken`, retry original operation.
-   - On failure: redirect to login page, clear all stored tokens.
-4. On app load: if `refreshToken` exists, call the refresh mutation to restore session.
+2. Store `refreshToken` in `localStorage` or an `HttpOnly` cookie.
+3. On a GraphQL error with `extensions.code === 'UNAUTHENTICATED'` (and not for the refresh call itself):
+   - Run **one** `mutation refreshToken({ refreshToken })` at a time for the whole browser (a lock shared across tabs); other requests wait for it.
+   - On success: store the new `refreshToken` immediately, update the in-memory `accessToken`, retry the original operation.
+   - On failure ("Invalid or expired refresh token", "Session has expired, please sign in again", "Account is inactive"): clear all tokens and go to the login page.
+4. On app load: if a `refreshToken` exists, call the refresh mutation to restore the session.
+5. Sessions end after 30 days, and after a password change/reset, a completed email change or account archival; expect to send the user to sign in.
 
 ### Optimistic UI Updates (Cart)
 
@@ -3706,27 +3767,35 @@ client.mutate({
 ### Payment Redirect Handling
 
 ```typescript
-// 1. Initialize payment (REST)
-const { authorizationUrl, id: paymentId } = await fetch('/payment/initialize', {
+// 1. Initialize payment (REST). One idempotency key per "Pay" click; reuse it on network retries.
+const res = await fetch('/payment/initialize', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-  body: JSON.stringify({ orderId, paymentMethod: 'card', idempotencyKey: crypto.randomUUID() }),
-}).then(r => r.json());
+  body: JSON.stringify({ orderId, paymentMethod: 'card', idempotencyKey }),
+});
+if (!res.ok) throw new Error((await res.json()).message);
+const { authorizationUrl, transactionId } = await res.json();
 
-// 2. Store paymentId/reference for later verification
-sessionStorage.setItem('pendingReference', reference);
+// 2. Optional: remember the reference in case the redirect loses it
+sessionStorage.setItem('pendingReference', transactionId);
 
 // 3. Redirect user
 window.location.href = authorizationUrl;
 
-// 4. On callback page (after redirect back)
-const reference = new URLSearchParams(location.search).get('reference');
+// 4. On the callback page (PAYSTACK_CALLBACK_URL, a frontend route)
+const reference =
+  new URLSearchParams(location.search).get('reference') ?? sessionStorage.getItem('pendingReference');
 const { data } = await client.mutate({
-  mutation: VERIFY_PAYMENT,
+  mutation: VERIFY_PAYMENT, // verifyPayment(verifyPaymentInput: { reference }) { id status order { id status } }
   variables: { verifyPaymentInput: { reference } },
 });
-if (data.verifyPayment.status === 'COMPLETED') {
-  // Show success, navigate to order confirmation
+const payment = data.verifyPayment;
+if (payment.status === 'COMPLETED' && payment.order.status === 'PROCESSING') {
+  // Paid: show the order confirmation
+} else if (payment.status === 'PENDING') {
+  // Not decided yet (e.g. MoMo approval): retry verifyPayment shortly
+} else {
+  // FAILED/ABANDONED, or paid after the order was cancelled (refund queued): show the order status
 }
 ```
 
@@ -3735,12 +3804,12 @@ if (data.verifyPayment.status === 'COMPLETED') {
 | Action | Refetch |
 |---|---|
 | `addToCart`, `updateCartItem`, `removeFromCart` | `cart` query (or use Apollo cache update) |
-| `createOrder` | `userOrders`, `cart` (should be empty) |
+| `createOrder` | `userOrders`, `cart` (now empty) |
 | `cancelOrder` | `userOrders`, `order(orderId)` |
-| `verifyPayment` | `payment(id)`, `order(orderId)` |
+| `verifyPayment` | `order(orderId)`, `getMyPayments` |
 | `createReturnRequest` | `myReturnRequests` |
 | `addToWishlist`, `removeFromWishlist` | `wishlist` |
-| `createAddress` | `userAddresses` |
+| `createAddress`, `updateAddress`, `deleteAddress` | `userAddresses` |
 
 ### Cache Invalidation Strategy
 
@@ -3754,7 +3823,7 @@ refetchQueries: [{ query: CART_QUERY }]
 refetchQueries: [{ query: USER_ORDERS_QUERY }, { query: CART_QUERY }]
 
 // After product updates (admin)
-refetchQueries: [{ query: PRODUCTS_QUERY }]
+refetchQueries: [{ query: ADMIN_PRODUCTS_QUERY }]
 ```
 
 ### Recommended State Management
@@ -3767,7 +3836,7 @@ refetchQueries: [{ query: PRODUCTS_QUERY }]
 
 ```graphql
 fragment ProductSummary on Product {
-  id name price currentPrice discountedPrice currency isActive
+  id name price discountedPrice currency isActive status
   images quantity categoryId
   category { id name }
   brand { id name logo }
@@ -3775,12 +3844,12 @@ fragment ProductSummary on Product {
 
 fragment CartItemFull on CartItem {
   id productId quantity originalPrice discountedPrice
-  product { id name images price currency }
-  variant { id size color price quantity }
+  product { id name images price currency quantity }
 }
 
 fragment OrderSummary on Order {
-  id status totalAmount couponDiscount createdAt
+  id orderNumber status fulfillmentType paymentMethod
+  subtotal shippingFee couponDiscount totalAmount createdAt
   items { id quantity priceAtOrder product { id name } }
 }
 
@@ -3791,18 +3860,25 @@ fragment AuthTokens on AuthEntity {
 
 ### Suggested TypeScript Shared Types
 
+Prefer generating these from `schema.gql`. Hand-written equivalents:
+
 ```typescript
-// Enums (mirror Prisma/GraphQL enums exactly)
+// Enums (mirror schema.gql exactly)
 export type Role = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
 export type OrderStatus = 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
-export type PaymentStatus = 'PENDING' | 'COMPLETED' | 'FAILED';
-export type DiscountType = 'PERCENTAGE' | 'FLAT';
-export type ReturnStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REFUND_PENDING' | 'REFUNDED';
-export type RefundStatus = 'PENDING' | 'SENDING' | 'PROCESSED' | 'FAILED';
-export type InventoryAction = 'RESTOCK' | 'ORDER_DEDUCTION' | 'RETURN_RESTORE' | 'ADJUSTMENT';
+export type FulfillmentType = 'DELIVERY' | 'PICKUP';
+export type OrderPaymentMethod = 'ONLINE' | 'CASH_ON_DELIVERY';
+export type PaymentStatus = 'PENDING' | 'COMPLETED' | 'FAILED' | 'ABANDONED';
+export type DiscountType = 'PERCENTAGE' | 'FLAT';      // also DiscountTypeEnum (coupons)
+export type ReturnStatusEnum = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REFUND_PENDING' | 'REFUNDED';
+export type RefundStatusEnum = 'PENDING' | 'SENDING' | 'PROCESSED' | 'FAILED';
+export type InventoryActionEnum = 'RESTOCK' | 'ORDER_DEDUCTION' | 'RETURN_RESTORE' | 'ADJUSTMENT';
 export type Currency = 'GHS' | 'USD' | 'EUR' | 'GBP' | 'NGN';
 export type StockStatus = 'IN_STOCK' | 'OUT_OF_STOCK' | 'PREORDER' | 'BACKORDER';
 export type ProductStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+export type DeliveryOptions = 'LOCAL_DELIVERY' | 'INTERNATIONAL_DELIVERY' | 'SELECTED_REGIONS';
+export type ProductSortField = 'CREATED_AT' | 'NAME' | 'PRICE' | 'QUANTITY' | 'UPDATED_AT';
+export type SortOrder = 'ASC' | 'DESC';
 
 // Auth
 export interface AuthTokens {
@@ -3815,6 +3891,7 @@ export interface PageInfo {
   hasNextPage: boolean;
   hasPreviousPage: boolean;
   pageSize: number;
+  totalCount: number;
 }
 export interface Connection<T> {
   edges: Array<{ cursor: string; node: T }>;
@@ -3857,7 +3934,7 @@ mutation {
 }
 ```
 
-*Action*: Store both tokens. A welcome email is sent asynchronously.
+*Action*: Store both tokens. A verification email with a token is sent; the frontend page that receives it calls `verifyEmail(input: { token })`, after which the welcome email is sent. Unverified users can still shop.
 
 ---
 
@@ -3883,7 +3960,8 @@ mutation {
 query {
   products(
     paginationArgs: { first: 12 }
-    filterArgs: { isActive: true, categoryName: "Electronics" }
+    filterArgs: { categoryName: "Electronics" }
+    sortArgs: { sortBy: CREATED_AT, sortOrder: DESC }
   ) {
     edges {
       cursor
@@ -3900,6 +3978,7 @@ query {
     }
     pageInfo {
       hasNextPage
+      totalCount
     }
   }
 }
@@ -3927,7 +4006,7 @@ query {
 
 ---
 
-### Step 5 — Create Address (if first time)
+### Step 5 — Create Address (if first time) and check delivery
 
 ```http
 Authorization: Bearer <accessToken>
@@ -3947,6 +4026,14 @@ mutation {
 }
 ```
 
+```graphql
+query {
+  getShippingFee(addressId: "clx_address_xyz")
+}
+```
+
+A `BAD_REQUEST` here means no shipping zone covers the city: offer pickup (`activePickupLocations`) instead.
+
 ---
 
 ### Step 6 — Add to Cart
@@ -3959,10 +4046,9 @@ mutation {
   }) {
     id
     items {
-      id productId quantity originalPrice discountedPrice
-      product { name images }
+      id productId quantity
+      product { name images price }
     }
-    total discountTotal finalTotal
   }
 }
 ```
@@ -3983,6 +4069,8 @@ query {
   }
 }
 ```
+
+Discounts shown here are not charged at checkout today (see [Section 10](#10-discounts-system)); show the cart subtotal as `price × quantity`.
 
 ---
 
@@ -4021,10 +4109,14 @@ mutation {
 ```graphql
 mutation {
   createOrder(input: {
+    fulfillmentType: DELIVERY
     shippingAddressId: "clx_address_xyz"
+    contactEmail: "jane@example.com"
+    contactPhone: "+233201234567"
     couponCode: "SAVE10"
   }) {
-    id status totalAmount couponDiscount
+    id orderNumber status paymentMethod
+    subtotal shippingFee couponDiscount totalAmount
     items {
       id quantity priceAtOrder
       product { name }
@@ -4033,22 +4125,26 @@ mutation {
 }
 ```
 
-**Response**:
+**Response** (shipping fee 15.00 from the zone covering Accra):
 ```json
 {
   "data": {
     "createOrder": {
       "id": "clx_order_789",
+      "orderNumber": 1042,
       "status": "PENDING",
-      "totalAmount": 53.98,
-      "couponDiscount": 5.998,
+      "paymentMethod": "ONLINE",
+      "subtotal": 59.98,
+      "shippingFee": 15,
+      "couponDiscount": 6,
+      "totalAmount": 68.98,
       "items": [...]
     }
   }
 }
 ```
 
-*Side effects*: inventory decremented, cart cleared, confirmation email sent.
+*Side effects*: inventory decremented, cart cleared, coupon use recorded, confirmation email sent. Pay within 1 hour or the order is cancelled automatically.
 
 ---
 
@@ -4062,18 +4158,20 @@ Content-Type: application/json
 {
   "orderId": "clx_order_789",
   "paymentMethod": "card",
-  "currency": "GHS"
+  "idempotencyKey": "6f1c2a9e-0d1b-4c55-9a0e-3b7f2f4d8e11"
 }
 ```
 
-**Response**:
+**Response** (abridged):
 ```json
 {
-  "id": "pay_xyz",
+  "id": "clx_attempt_1",
   "orderId": "clx_order_789",
-  "amount": 53.98,
+  "amount": "68.98",
+  "currency": "GHS",
   "status": "PENDING",
-  "authorizationUrl": "https://checkout.paystack.com/pay_ref_abc"
+  "transactionId": "clx_order_789-1731900000000-a1b2c3d4",
+  "authorizationUrl": "https://checkout.paystack.com/abc123"
 }
 ```
 
@@ -4083,9 +4181,9 @@ Content-Type: application/json
 
 ### Step 11 — User Pays on Paystack
 
-User completes payment. Paystack fires webhook to `POST /payment/webhook` → backend marks payment `COMPLETED`, order → `PROCESSING`.
+User completes payment. Paystack fires the webhook to `POST /payment/webhook` → backend marks the payment `COMPLETED`, order → `PROCESSING`.
 
-Paystack redirects user back to `GET /payment/callback?reference=pay_ref_abc`.
+Paystack redirects the browser to the frontend callback page (`PAYSTACK_CALLBACK_URL`), e.g. `https://shop.example.com/checkout/callback?trxref=clx_order_789-1731900000000-a1b2c3d4&reference=clx_order_789-1731900000000-a1b2c3d4`.
 
 ---
 
@@ -4094,7 +4192,7 @@ Paystack redirects user back to `GET /payment/callback?reference=pay_ref_abc`.
 ```graphql
 mutation {
   verifyPayment(verifyPaymentInput: {
-    reference: "pay_ref_abc"
+    reference: "clx_order_789-1731900000000-a1b2c3d4"
   }) {
     id status amount currency
     order {
@@ -4109,12 +4207,14 @@ mutation {
 {
   "data": {
     "verifyPayment": {
-      "id": "pay_xyz",
+      "id": "clx_attempt_1",
       "status": "COMPLETED",
-      "amount": 53.98,
+      "amount": 68.98,
+      "currency": "GHS",
       "order": {
         "id": "clx_order_789",
-        "status": "PROCESSING"
+        "status": "PROCESSING",
+        "totalAmount": 68.98
       }
     }
   }
@@ -4125,7 +4225,7 @@ mutation {
 
 ### Step 13 — User Receives Order (Admin updates status)
 
-Admin calls:
+Admin sets the tracking details (`updateShipping`, emails the customer) and then the status:
 ```graphql
 mutation {
   updateOrderStatus(input: {
@@ -4169,4 +4269,4 @@ mutation {
 
 ---
 
-*Documentation generated from source code — April 2026.*
+*Checked against `schema.gql` and the resolvers, November 2026.*
