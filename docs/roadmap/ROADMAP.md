@@ -251,12 +251,12 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P1-R.2** Auth-matrix snapshot test over all operations
 - [ ] **P1-R.3** TOTP MFA for staff; step-up for sensitive actions
 
-### P1-S — Store & Money (ADR-0001/0004)
+### P1-S — Store & Money (ADR-0001/0004)  🔄 in progress
 > Accept: Money arithmetic tests (allocation, rounding); no float money in pricing paths · Run: S.1 ∥ S.2 → S.3 → S.4 · L · 🟥
-- [ ] **P1-S.1** `Store` row + settings from env; per-store order counter
-- [ ] **P1-S.2** `Money` value object + lint ban on `Number()` money
-- [ ] **P1-S.3** Widen money columns `Decimal(14,2)` (M6)
-- [ ] **P1-S.4** GraphQL `Money` type alongside `Float`, deprecate `Float`
+- [ ] 🔄 **P1-S.1** `Store` row + settings from env; per-store order counter
+- [ ] 🔄 **P1-S.2** `Money` value object + lint ban on `Number()` money
+- [ ] 🔄 **P1-S.3** Widen money columns `Decimal(14,2)` (M6)
+- [ ] 🔄 **P1-S.4** GraphQL `Money` type alongside `Float`, deprecate `Float`
 
 ### P1-V — Variant as SKU + catalogue model (ADR-0002/0003)
 > Accept: Variants purchasable at variant price/stock (VAR-01 closed) · Run: V.1 → V.2 → V.3; V.4 ∥ · XL · 🟥

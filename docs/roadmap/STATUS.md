@@ -5,7 +5,16 @@
 **Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise done (46/46); dependency upgrades done (Prisma 7, NestJS 12, tooling); all ADRs accepted; Phase 1 — Foundations next (P1-K.1) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. P1-K.1 done; next is P1-K.2 (see Up next).
+- **Task:** P1-S — Store & Money (S.1 Store row + per-store order counter · S.2 `Money` value object + lint ban · S.3 widen money columns · S.4 GraphQL `Money`) (ADR-0001, ADR-0004)
+- **Branch:** `feat/p1-s-store-money` (agent, worktree `.claude/worktrees/money`, DB `emma_wt_money_test`) · **State:** in progress
+- **Decisions (Emmanuel 2026-11-18):** Money output fields replace `Float` in place in one `[breaking-api]` release (no deprecation window; nothing is live); money inputs use a `Decimal` string scalar; currency comes from the Store
+- **Steps:**
+  - [ ] S.1 Store row + settings query/mutation + order numbers from the Store counter ← **Next step** (agent)
+  - [ ] S.2 `Money` value object; float money maths replaced in pricing/checkout/payment/refund/coupon/shipping/analytics
+  - [ ] S.3 Widen money columns to `Decimal(14,2)`, rates to `Decimal(9,6)`
+  - [ ] S.4 GraphQL `Money { amount, currency }` outputs + `Decimal` inputs; lint ban on float money; schema.gql + API docs
+  - [ ] Review, combined gates, merge, push, CI
+- **Uncommitted work:** none
 
 **Last completed: P1-K.1 (2026-11-18)** `13c25c2`: CI now fails on (1) migration drift (e2e job runs `prisma migrate diff --from-config-datasource --to-schema … --exit-code` after `migrate deploy`); (2) a stale `schema.gql` (new job `api-schema` runs `npm run schema:generate`, new `scripts/generate-schema.ts`, no DB/env needed, output byte-identical to the committed file); (3) breaking GraphQL changes vs the base commit (`@graphql-inspector/cli` 7.0.5, approved; removing an already-deprecated field passes; an intentional break passes only when a commit in the range is marked `[breaking-api]`). Checked locally: unchanged/added field pass, removed field and new required input fail, deprecated removal passes only with the rule, marker/no-base cases, stale schema detected, dropped index → drift exit 2. Gates: typecheck/lint/format/build clean, unit 1412/1412, repro 21/21, audit 0 critical. Consider marking the `api-schema` job required in branch protection.
 
