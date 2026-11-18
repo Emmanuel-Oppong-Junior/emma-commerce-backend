@@ -13,6 +13,6 @@ export function ownerOrAdmin<TSource>(
     const viewer = context.req?.user;
     const isOwner = !!viewer && viewer.id === ownerIdOf(source);
     if (isOwner || (viewer && ADMIN_ROLES.includes(viewer.role))) return next();
-    throw new ForbiddenException(`Not allowed to read ${info.parentType.name}.${info.fieldName}`);
+    throw new ForbiddenException(`Not allowed to read ${info?.parentType.name}.${info?.fieldName}`);
   };
 }

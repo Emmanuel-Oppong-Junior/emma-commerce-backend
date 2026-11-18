@@ -69,6 +69,8 @@ type Brand {
   id: ID!
   logo: String
   name: String!
+
+  """Active, PUBLISHED products only"""
   products(
     """Maximum number of products to return (1–100), newest first"""
     first: Int! = 20
@@ -150,7 +152,7 @@ type Category {
   """Name of the category (e.g., "Clothing")"""
   name: String!
 
-  """List of products belonging to this category (empty if none)"""
+  """Active, PUBLISHED products only"""
   products(
     """Maximum number of products to return (1–100), newest first"""
     first: Int! = 20
@@ -1651,6 +1653,8 @@ type SubCategory {
 
   """Name of the category"""
   name: String!
+
+  """Active, PUBLISHED products only"""
   products(
     """Maximum number of products to return (1–100), newest first"""
     first: Int! = 20

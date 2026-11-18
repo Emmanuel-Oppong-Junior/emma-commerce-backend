@@ -55,7 +55,7 @@ import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
       // Tests get their env from .env.test only; never fall through to a developer's .env (real email, Redis).
       ignoreEnvFile: process.env.NODE_ENV === 'test',
       validationSchema: envValidationSchema,
-      validationOptions: { abortEarly: false },
+      validationOptions: { libraryOptions: { abortEarly: false } },
     }),
     CacheModule.registerAsync(cacheConfig),
     ThrottlerModule.forRoot([
@@ -108,6 +108,8 @@ import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
       useFactory: (logger: LoggerService) => ({
         playground: false,
         introspection: process.env.NODE_ENV !== 'production',
+        // Apollo 5 answers bad variable values with HTTP 400; keep v4's 200 until the frontend is checked against it.
+        status400ForVariableCoercionErrors: false,
         formatError: formatError(logger),
         plugins: [
           process.env.NODE_ENV === 'production'
@@ -168,6 +170,6 @@ import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(LoggerMiddleware).forRoutes('*');
+    consumer.apply(LoggerMiddleware).forRoutes('{*splat}');
   }
 }

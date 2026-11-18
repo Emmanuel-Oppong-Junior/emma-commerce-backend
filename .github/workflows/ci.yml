@@ -37,7 +37,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint:check
       - run: npm run format:check
-      - run: npx jest --ci
+      - run: npm test -- --ci
 
   e2e:
     name: End-to-end tests (Postgres)

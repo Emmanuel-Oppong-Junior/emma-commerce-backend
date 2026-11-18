@@ -1,14 +1,13 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { HealthCheckError, PrismaHealthIndicator, TerminusModule } from '@nestjs/terminus';
+import { PrismaHealthIndicator, TerminusModule } from '@nestjs/terminus';
 import { HealthController } from './health.controller';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisHealthIndicator } from './indicators/redis.health-indicator';
 import { CloudinaryHealthIndicator } from './indicators/cloudinary.health-indicator';
 
 const up = (key: string) => Promise.resolve({ [key]: { status: 'up' } });
-const down = (key: string) =>
-  Promise.reject(new HealthCheckError(`${key} failed`, { [key]: { status: 'down', error: 'unreachable' } }));
+const down = (key: string) => Promise.resolve({ [key]: { status: 'down', error: 'unreachable' } });
 
 describe('HealthController', () => {
   const prismaHealth = { pingCheck: jest.fn() };

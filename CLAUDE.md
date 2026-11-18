@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-NestJS 10 + Apollo GraphQL (code-first) + Prisma/PostgreSQL e-commerce backend, Ghana-first (GHS, Paystack, MoMo, COD).
+NestJS 12 + Apollo GraphQL (code-first) + Prisma/PostgreSQL e-commerce backend, Ghana-first (GHS, Paystack, MoMo, COD).
 
 ## Working state (read first)
 
@@ -58,7 +58,7 @@ npm run lint            # ESLint with auto-fix
 npm run format          # Prettier format
 
 # Testing
-npm run test            # Run all unit tests
+npm run test            # Run all unit tests (always via the npm scripts: Jest needs --experimental-vm-modules to load the ESM-only Nest 12 packages, so bare `npx jest` fails)
 npm run test:watch      # Watch mode
 npm run test:cov        # Coverage report
 npm run test:e2e        # End-to-end tests (test/jest-e2e.json, runs in band, separate .env.test DB)
@@ -87,7 +87,7 @@ These describe what the code enforces today. ADR-0004 (money), ADR-0008 (invento
 
 ## Architecture
 
-**NestJS** backend with **GraphQL** (Apollo Server v4) as the primary API. REST endpoints exist only for payment webhooks (Paystack). The GraphQL schema is auto-generated to `schema.gql` on startup.
+**NestJS** backend with **GraphQL** (Apollo Server v5, Express 5) as the primary API. REST endpoints exist only for payment webhooks (Paystack). The GraphQL schema is auto-generated to `schema.gql` on startup.
 
 **Database:** PostgreSQL via **Prisma 7** ORM with the `@prisma/adapter-pg` driver adapter. Schema lives in `prisma/schema.prisma`; CLI config (schema and migrations paths, seed command, `DATABASE_URL`) in `prisma.config.ts`, which loads `.env` itself. Import the client, `Prisma` and enums from `src/generated/prisma/client`, not `@prisma/client`. Migrations are in `prisma/migrations/`.
 

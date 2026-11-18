@@ -1,9 +1,9 @@
-import { HealthCheckError } from '@nestjs/terminus';
+import { HealthIndicatorService } from '@nestjs/terminus';
 import { RedisHealthIndicator } from './redis.health-indicator';
 
 function buildIndicator(redisHost: string | undefined, cache: { set: jest.Mock; get: jest.Mock }) {
   const config = { get: jest.fn().mockReturnValue(redisHost) };
-  return new RedisHealthIndicator(cache as never, config as never);
+  return new RedisHealthIndicator(cache as never, config as never, new HealthIndicatorService());
 }
 
 describe('RedisHealthIndicator', () => {
@@ -24,9 +24,11 @@ describe('RedisHealthIndicator', () => {
     });
   });
 
-  it('fails when the configured Redis is unreachable', async () => {
+  it('reports down when the configured Redis is unreachable', async () => {
     const cache = { set: jest.fn().mockRejectedValue(new Error('ECONNREFUSED')), get: jest.fn() };
 
-    await expect(buildIndicator('redis.internal', cache).isHealthy('redis')).rejects.toBeInstanceOf(HealthCheckError);
+    await expect(buildIndicator('redis.internal', cache).isHealthy('redis')).resolves.toEqual({
+      redis: { status: 'down', error: 'ECONNREFUSED' },
+    });
   });
 });
