@@ -1,4 +1,8 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { Prisma } from '@prisma/client';
 import { DiscountService } from '../../src/discount/discount.service';
+import { OrdersService } from '../../src/order/order.service';
 
 function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number) {
   return { id, name: id, type, value, minimumPurchase: null };
@@ -10,8 +14,6 @@ function buildDiscountService(repositoryOverrides: Record<string, unknown>) {
     findProductWithDiscounts: jest.fn().mockResolvedValue({ discounts: [], categoryId: null }),
     findCategoryDiscounts: jest.fn().mockResolvedValue([]),
     findVariantDiscounts: jest.fn().mockResolvedValue([]),
-    updateOrderItem: jest.fn().mockResolvedValue({}),
-    updateOrderWithDiscount: jest.fn().mockResolvedValue({}),
     ...repositoryOverrides,
   };
   const service = new DiscountService(
@@ -51,38 +53,50 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
     expect(result.discountAmount).toBe(8);
   });
 
-  it('DISC-01: finalizing discounts on an order that is already PROCESSING does not rewrite its charged total', async () => {
-    const order = {
-      id: 'order-1',
-      status: 'PROCESSING',
-      totalAmount: 530,
-      items: [{ id: 'item-1', productId: 'product-1', variantId: null, quantity: 1, product: { price: 500 } }],
-    };
-    const { service, repository } = buildDiscountService({
-      findOrderById: jest.fn().mockResolvedValue(order),
-      findProductById: jest.fn().mockResolvedValue({ price: 500 }),
-    });
+  it('DISC-01: the API has no client-callable mutation that re-prices an existing order', () => {
+    const schema = readFileSync(join(__dirname, '../../schema.gql'), 'utf8');
 
-    await service.finalizeDiscountsForOrder('order-1').catch(() => undefined);
-
-    expect(repository.updateOrderWithDiscount).not.toHaveBeenCalled();
+    expect(schema).not.toMatch(/\bfinalizeOrder\(/);
   });
 
-  it('DISC-01: finalizing a PENDING order keeps the GHS 30 shipping fee in the total', async () => {
-    const order = {
-      id: 'order-1',
-      status: 'PENDING',
-      totalAmount: 530,
-      items: [{ id: 'item-1', productId: 'product-1', variantId: null, quantity: 1, product: { price: 500 } }],
+  it('DISC-01: createOrder charges the discounted price and keeps the GHS 30 shipping fee', async () => {
+    const product = { id: 'product-1', name: 'Kettle', price: 500, currency: 'GHS', quantity: 5, categoryId: null };
+    const repository = {
+      findUserById: jest.fn().mockResolvedValue({ id: 'user-1', isActive: true }),
+      findAddressForUser: jest.fn().mockResolvedValue({ city: 'Accra' }),
+      findProductById: jest.fn().mockResolvedValue(product),
+      runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
+      decrementProductStock: jest.fn().mockResolvedValue({ ...product, quantity: 4 }),
+      create: jest.fn().mockImplementation((_tx, _userId, details) => ({ id: 'order-1', ...details, items: [] })),
+      clearCartItems: jest.fn(),
     };
-    const { service, repository } = buildDiscountService({
-      findOrderById: jest.fn().mockResolvedValue(order),
-      findProductById: jest.fn().mockResolvedValue({ price: 500 }),
+    const cart = { id: 'cart-1', items: [{ productId: 'product-1', quantity: 1 }] };
+    const discounts = {
+      findActiveDiscountsByProduct: jest
+        .fn()
+        .mockResolvedValue(new Map([['product-1', [discount('pct-10', 'PERCENTAGE', 10)]]])),
+    };
+    const service = new OrdersService(
+      repository as never,
+      { getCartOrThrow: jest.fn().mockResolvedValue(cart) } as never,
+      {} as never,
+      {} as never,
+      { logInventoryChange: jest.fn() } as never,
+      {} as never,
+      { getFeeForCity: jest.fn().mockResolvedValue(new Prisma.Decimal(30)) } as never,
+      {} as never,
+      {} as never,
+      discounts as never,
+    );
+
+    await service.createOrderFromCart('user-1', {
+      fulfillmentType: 'DELIVERY',
+      shippingAddressId: 'address-1',
+      contactEmail: 'customer@test.local',
+      contactPhone: '+233200000000',
     });
 
-    await service.finalizeDiscountsForOrder('order-1');
-
-    const [, totalAmount] = repository.updateOrderWithDiscount.mock.calls[0];
-    expect(totalAmount).toBeGreaterThanOrEqual(530);
+    const [, , details] = repository.create.mock.calls[0];
+    expect(Number(details.totalAmount)).toBe(480);
   });
 });

@@ -114,6 +114,7 @@ describe('OrdersRepository', () => {
       const result = await repository.create(mockTx as any, 'user1', {
         orderItems: [] as any,
         subtotal: new Prisma.Decimal(90),
+        discountTotal: new Prisma.Decimal(0),
         shippingFee: new Prisma.Decimal(10),
         totalAmount: new Prisma.Decimal(100),
         fulfillmentType: FulfillmentType.DELIVERY,
@@ -129,6 +130,7 @@ describe('OrdersRepository', () => {
             userId: 'user1',
             shippingAddressId: 'addr1',
             subtotal: new Prisma.Decimal(90),
+            discountTotal: new Prisma.Decimal(0),
             shippingFee: new Prisma.Decimal(10),
           }),
         }),

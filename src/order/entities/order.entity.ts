@@ -17,7 +17,10 @@ export class Order {
   @Field(() => ID)
   userId: string;
 
-  @Field(() => Float, { nullable: true, description: 'Sum of item prices at order time; null on older orders' })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Sum of item prices charged at order time, after product discounts; null on older orders',
+  })
   subtotal?: Decimal;
 
   @Field(() => Float, {
@@ -29,7 +32,7 @@ export class Order {
   @Field(() => Float, { description: 'Amount charged: subtotal + shippingFee - couponDiscount' })
   totalAmount: Decimal;
 
-  @Field(() => Float, { description: 'Total discount amount applied', nullable: true })
+  @Field(() => Float, { description: 'Product discounts taken off the list prices at checkout', nullable: true })
   discountTotal?: Decimal;
 
   @Field(() => Float, { description: 'Final total after discounts', nullable: true })

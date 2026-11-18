@@ -54,7 +54,7 @@ export class CartResolver {
     return this.cartService.clearCart(userId);
   }
 
-  @Query(() => Cart)
+  @Query(() => Cart, { description: 'Retrieves the current user’s cart priced exactly as createOrder will charge it' })
   async cartWithDiscount(@ActiveUser('id') userId: string) {
     const cart = await this.cartService.getCartOrThrow(userId);
     return this.discountService.applyDiscountsToCart(cart.id);

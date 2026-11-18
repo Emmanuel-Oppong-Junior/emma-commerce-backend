@@ -18,7 +18,10 @@ export class Cart {
   @Field(() => Float, { description: 'Total discount amount applied', nullable: true })
   discountTotal: number;
 
-  @Field(() => Float, { description: 'Final total after discounts', nullable: true })
+  @Field(() => Float, {
+    description: 'Final total after discounts; createOrder charges this for the items',
+    nullable: true,
+  })
   finalTotal?: number;
 
   @Field(() => Date, { description: 'Timestamp when the cart was created' })

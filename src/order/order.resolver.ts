@@ -7,7 +7,6 @@ import { CreateOrderInput } from './dto/create-order.input';
 import { UpdateOrderStatusInput } from './dto/update-order-status.input';
 import { UpdateShippingInput } from './dto/update-shipping.input';
 import { OrdersService } from './order.service';
-import { DiscountService } from '../discount/discount.service';
 import { UsersLoader } from '../users/loaders/users.loader';
 import { User } from '../users/entities/user.entity';
 import { FulfillmentType, PaymentMethod } from '@prisma/client';
@@ -17,7 +16,6 @@ import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middlewa
 export class OrdersResolver {
   constructor(
     private readonly ordersService: OrdersService,
-    private readonly discountService: DiscountService,
     private readonly usersLoader: UsersLoader,
   ) {}
 
@@ -117,13 +115,6 @@ export class OrdersResolver {
   })
   async deleteOrder(@ActiveUser('id') adminId: string, @Args('orderId', { type: () => String }) orderId: string) {
     return this.ordersService.deleteOrder(orderId, adminId);
-  }
-
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
-  @Mutation(() => Order)
-  async finalizeOrder(@ActiveUser('id') userId: string, @Args('id', { type: () => String }) id: string) {
-    await this.ordersService.getOrder(userId, id);
-    return this.discountService.finalizeDiscountsForOrder(id);
   }
 
   @ResolveField(() => User, { nullable: true, middleware: [ownerOrAdmin<Order>((order) => order.userId)] })

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Cart, CartItem, Discount, Order, OrderItem, Prisma, Product, Variant } from '@prisma/client';
+import { Cart, CartItem, Discount, Prisma, Product, Variant } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -122,23 +122,6 @@ export class DiscountRepository {
     return tx.cartItem.update({ where: { id }, data });
   }
 
-  async findOrderById(
-    orderId: string,
-  ): Promise<(Order & { items: (OrderItem & { product: Product; variant?: Variant })[] }) | null> {
-    return this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: { items: { include: { product: true, variant: true } } },
-    }) as Promise<(Order & { items: (OrderItem & { product: Product; variant?: Variant })[] }) | null>;
-  }
-
-  async updateOrderItem(
-    id: string,
-    data: Prisma.OrderItemUncheckedUpdateInput,
-    tx: PrismaService = this.prisma,
-  ): Promise<OrderItem> {
-    return tx.orderItem.update({ where: { id }, data });
-  }
-
   async addItemsToDiscount(
     id: string,
     data: Pick<Prisma.DiscountUpdateInput, 'products' | 'variants' | 'categories'>,
@@ -155,15 +138,22 @@ export class DiscountRepository {
     return db.discount.update({ where: { id }, data });
   }
 
-  async updateOrderWithDiscount(
-    orderId: string,
-    totalAmount: number,
-    discountTotal: number,
-  ): Promise<Order & { items: OrderItem[] }> {
-    return this.prisma.order.update({
-      where: { id: orderId },
-      data: { totalAmount, discountTotal, totalWithOutDiscount: totalAmount - discountTotal },
-      include: { items: true },
-    }) as unknown as Order & { items: OrderItem[] };
+  async findActiveDiscountsFor(
+    productIds: string[],
+    categoryIds: string[],
+  ): Promise<(Discount & { products: { id: string }[]; categories: { id: string }[] })[]> {
+    const now = new Date();
+    return this.prisma.discount.findMany({
+      where: {
+        isActive: true,
+        startDate: { lte: now },
+        endDate: { gte: now },
+        OR: [{ products: { some: { id: { in: productIds } } } }, { categories: { some: { id: { in: categoryIds } } } }],
+      },
+      include: {
+        products: { where: { id: { in: productIds } }, select: { id: true } },
+        categories: { where: { id: { in: categoryIds } }, select: { id: true } },
+      },
+    });
   }
 }

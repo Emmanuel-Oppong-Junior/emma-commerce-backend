@@ -2,9 +2,9 @@ import { Injectable, Scope } from '@nestjs/common';
 import * as DataLoader from 'dataloader';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DiscountCalculation } from '../../discount/types';
+import { bestUnitPrice, CandidateDiscount, toDiscountCalculation } from '../../discount/pricing';
 
-type DiscountEntry = { id: string; type: string; value: unknown };
-type CategoryDiscount = DiscountEntry & { categories: { id: string }[] };
+type CategoryDiscount = CandidateDiscount & { categories: { id: string }[] };
 
 @Injectable({ scope: Scope.REQUEST })
 export class DiscountLoader {
@@ -67,37 +67,14 @@ export class DiscountLoader {
         const product = products.find((p) => p.id === productId);
         if (!product) return { discountedPrice: 0, discountAmount: 0 };
 
-        const price = Number(product.price ?? 0);
-        const allDiscounts: DiscountEntry[] = [
-          ...product.discounts.map((d) => ({ id: d.id, type: d.type as string, value: d.value })),
+        const allDiscounts: CandidateDiscount[] = [
+          ...product.discounts,
           ...(product.categoryId ? (categoryDiscountMap.get(product.categoryId) ?? []) : []),
         ];
 
-        const best = this.selectBestDiscount(allDiscounts);
-        return this.getBestDiscountDetails(price, best);
+        return toDiscountCalculation(bestUnitPrice(product.price ?? 0, allDiscounts));
       });
     },
     { cache: false }, // Per-request cache disabled — data can change between resolves
   );
-
-  private selectBestDiscount(discounts: DiscountEntry[]) {
-    if (!discounts.length) return null;
-    return discounts.reduce((best, current) => {
-      const bestVal = Number(best.value);
-      const curVal = Number(current.value);
-      if (curVal > bestVal) return current;
-      if (curVal === bestVal && current.type === 'PERCENTAGE' && best.type === 'FLAT') return current;
-      return best;
-    }, discounts[0]);
-  }
-
-  private getBestDiscountDetails(price: number, best: DiscountEntry | null): DiscountCalculation {
-    if (!best) return { discountedPrice: price, discountAmount: 0 };
-    const amount = best.type === 'PERCENTAGE' ? (price * Number(best.value)) / 100 : Number(best.value);
-    return {
-      discountedPrice: Math.max(0, price - amount),
-      discountAmount: amount,
-      discountId: best.id,
-    };
-  }
 }

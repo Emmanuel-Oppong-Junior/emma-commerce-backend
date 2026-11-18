@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersResolver } from './order.resolver';
 import { OrdersService } from './order.service';
-import { DiscountService } from '../discount/discount.service';
 import { CreateOrderInput } from './dto/create-order.input';
 import { UpdateOrderStatusInput } from './dto/update-order-status.input';
 import { FulfillmentTypeEnum, OrderStatusEnum } from './enums/order.enum';
@@ -75,7 +74,6 @@ describe('OrdersResolver', () => {
       providers: [
         OrdersResolver,
         { provide: OrdersService, useValue: mockOrdersService },
-        { provide: DiscountService, useValue: {} },
         { provide: UsersLoader, useValue: { loader: { load: jest.fn() } } },
       ],
     })

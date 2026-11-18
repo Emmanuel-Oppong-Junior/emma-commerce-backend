@@ -77,6 +77,7 @@ export class OrdersRepository {
     orderDetails: {
       orderItems: OrderItem[];
       subtotal: Prisma.Decimal;
+      discountTotal: Prisma.Decimal;
       shippingFee: Prisma.Decimal;
       totalAmount: Prisma.Decimal;
       fulfillmentType: FulfillmentType;
@@ -85,7 +86,7 @@ export class OrdersRepository {
       shippingAddressSnapshot?: Record<string, unknown>;
       pickupLocationSnapshot?: Record<string, unknown>;
       couponId?: string;
-      couponDiscount?: number;
+      couponDiscount?: Prisma.Decimal;
       paymentMethod?: PaymentMethod;
       initialStatus?: OrderStatus;
       contactEmail: string;
@@ -99,6 +100,7 @@ export class OrdersRepository {
         shippingAddressId: orderDetails.shippingAddressId,
         pickupLocationId: orderDetails.pickupLocationId,
         subtotal: orderDetails.subtotal,
+        discountTotal: orderDetails.discountTotal,
         shippingFee: orderDetails.shippingFee,
         totalAmount: orderDetails.totalAmount,
         shippingAddressSnapshot: (orderDetails.shippingAddressSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,

@@ -5,7 +5,7 @@ import { DiscountRepository } from './discount.repository';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { Discount, Prisma, Product } from '@prisma/client';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
@@ -30,9 +30,7 @@ const mockDiscountRepository = {
   getInvalidIds: jest.fn(),
   findCartById: jest.fn(),
   updateCartItem: jest.fn(),
-  findOrderById: jest.fn(),
-  updateOrderItem: jest.fn(),
-  updateOrderWithDiscount: jest.fn(),
+  findActiveDiscountsFor: jest.fn(),
   addItemsToDiscount: jest.fn(),
   removeItemsFromDiscount: jest.fn(),
 };
@@ -311,14 +309,15 @@ describe('DiscountService', () => {
   });
 
   describe('applyDiscountsToCart', () => {
+    const targeting = (discount: Discount, productIds: string[], categoryIds: string[] = []) => ({
+      ...discount,
+      products: productIds.map((id) => ({ id })),
+      categories: categoryIds.map((id) => ({ id })),
+    });
+
     it('should apply discounts to cart items and compute totals', async () => {
       mockDiscountRepository.findCartById.mockResolvedValue(mockCart);
-      mockDiscountRepository.findProductById.mockResolvedValue({ price: new Prisma.Decimal(100) });
-      mockDiscountRepository.findProductWithDiscounts.mockResolvedValue({
-        categoryId: 'category1',
-        discounts: [mockDiscount],
-      });
-      mockDiscountRepository.findCategoryDiscounts.mockResolvedValue([]);
+      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([targeting(mockDiscount, ['product1'])]);
       mockDiscountRepository.updateCartItem.mockResolvedValue({
         ...mockCartItem,
         discountedPrice: 80,
@@ -334,7 +333,30 @@ describe('DiscountService', () => {
         discountTotal: 40,
         finalTotal: 160,
       });
-      expect(discountRepository.updateCartItem).toHaveBeenCalled();
+      expect(discountRepository.findActiveDiscountsFor).toHaveBeenCalledWith(['product1'], ['category1']);
+      expect(discountRepository.updateCartItem).toHaveBeenCalledWith('cartItem1', {
+        originalPrice: new Prisma.Decimal(100),
+        discountedPrice: new Prisma.Decimal(80),
+        discountId: 'discount1',
+      });
+    });
+
+    it('applies a category discount when it saves more than the product discount', async () => {
+      const flatTen = { ...mockDiscount, id: 'flat10', type: DiscountType.FLAT, value: new Prisma.Decimal(10) };
+      mockDiscountRepository.findCartById.mockResolvedValue(mockCart);
+      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([
+        targeting(flatTen, ['product1']),
+        targeting(mockDiscount, [], ['category1']),
+      ]);
+      mockDiscountRepository.updateCartItem.mockResolvedValue(mockCartItem);
+
+      const result = await service.applyDiscountsToCart('cart1');
+
+      expect(result.discountTotal).toBe(40);
+      expect(discountRepository.updateCartItem).toHaveBeenCalledWith(
+        'cartItem1',
+        expect.objectContaining({ discountId: 'discount1' }),
+      );
     });
 
     it('should throw NotFoundException for non-existent cart', async () => {
@@ -343,62 +365,28 @@ describe('DiscountService', () => {
       await expect(service.applyDiscountsToCart('cart2')).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw BadRequestException for minimum purchase not met', async () => {
+    it('does not apply a discount whose minimum purchase the cart does not reach, instead of failing the cart', async () => {
       const discountWithMinPurchase = { ...mockDiscount, minimumPurchase: new Prisma.Decimal(300) };
       mockDiscountRepository.findCartById.mockResolvedValue(mockCart);
-      mockDiscountRepository.findProductById.mockResolvedValue({ price: new Prisma.Decimal(100) });
-      mockDiscountRepository.findProductWithDiscounts.mockResolvedValue({
-        categoryId: 'category1',
-        discounts: [discountWithMinPurchase],
+      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([
+        targeting(discountWithMinPurchase, ['product1']),
+      ]);
+      mockDiscountRepository.updateCartItem.mockResolvedValue(mockCartItem);
+
+      const result = await service.applyDiscountsToCart('cart1');
+
+      expect(result).toEqual(expect.objectContaining({ total: 200, discountTotal: 0, finalTotal: 200 }));
+    });
+
+    it('rejects a cart holding a product without a price', async () => {
+      mockDiscountRepository.findCartById.mockResolvedValue({
+        ...mockCart,
+        items: [{ ...mockCartItem, product: { ...mockProduct, price: null } }],
       });
-      mockDiscountRepository.findCategoryDiscounts.mockResolvedValue([]);
-      mockDiscountRepository.updateCartItem.mockResolvedValue({
-        ...mockCartItem,
-        discountedPrice: 80,
-        discountId: 'discount1',
-      });
+      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([]);
 
       await expect(service.applyDiscountsToCart('cart1')).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('finalizeDiscountsForOrder', () => {
-    it('should throw NotFoundException for non-existent order', async () => {
-      mockDiscountRepository.findOrderById.mockResolvedValue(null);
-
-      await expect(service.finalizeDiscountsForOrder('order2')).rejects.toThrow(NotFoundException);
-    });
-
-    const pendingOrder = {
-      id: 'order1',
-      status: 'PENDING',
-      deleted: false,
-      totalAmount: new Prisma.Decimal('530.00'),
-      items: [{ id: 'item1', productId: 'prod1', variantId: null, quantity: 2, product: { price: 250 } }],
-    };
-
-    it('keeps the charged total (shipping and coupon included) and records the discount', async () => {
-      mockDiscountRepository.findOrderById.mockResolvedValue(pendingOrder);
-      jest
-        .spyOn(service, 'getDiscountedPriceForProduct')
-        .mockResolvedValue({ discountedPrice: 225, discountAmount: 25, discountId: 'disc1' });
-      mockDiscountRepository.updateOrderItem.mockResolvedValue({});
-
-      await service.finalizeDiscountsForOrder('order1');
-
-      expect(mockDiscountRepository.updateOrderWithDiscount).toHaveBeenCalledWith('order1', 530, 50);
-    });
-
-    it.each([
-      ['PROCESSING', false],
-      ['CANCELLED', false],
-      ['PENDING', true],
-    ])('refuses a %s order (deleted: %s) and writes nothing', async (status, deleted) => {
-      mockDiscountRepository.findOrderById.mockResolvedValue({ ...pendingOrder, status, deleted });
-
-      await expect(service.finalizeDiscountsForOrder('order1')).rejects.toThrow(ConflictException);
-      expect(mockDiscountRepository.updateOrderItem).not.toHaveBeenCalled();
-      expect(mockDiscountRepository.updateOrderWithDiscount).not.toHaveBeenCalled();
+      expect(discountRepository.updateCartItem).not.toHaveBeenCalled();
     });
   });
 
@@ -427,58 +415,6 @@ describe('DiscountService', () => {
       await expect(service['validateDiscountInput'](input)).rejects.toThrow(
         'Percentage discount value cannot exceed 100',
       );
-    });
-  });
-
-  describe('selectBestDiscount (private)', () => {
-    it('should select the highest-value discount', () => {
-      const discounts = [
-        { ...mockDiscount, id: 'd1', value: new Prisma.Decimal(10) },
-        { ...mockDiscount, id: 'd2', value: new Prisma.Decimal(20) },
-      ] as Discount[];
-
-      const result = service['selectBestDiscount'](discounts);
-
-      expect(result?.id).toBe('d2');
-    });
-
-    it('should prefer percentage discount for equal values', () => {
-      const discounts = [
-        { ...mockDiscount, id: 'd1', type: DiscountType.FLAT, value: new Prisma.Decimal(20) },
-        { ...mockDiscount, id: 'd2', type: DiscountType.PERCENTAGE, value: new Prisma.Decimal(20) },
-      ] as Discount[];
-
-      const result = service['selectBestDiscount'](discounts);
-
-      expect(result?.id).toBe('d2');
-    });
-
-    it('should return null for empty discounts', () => {
-      const result = service['selectBestDiscount']([]);
-
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('calculateDiscountAmount (private)', () => {
-    it('should calculate percentage discount', () => {
-      const result = service['calculateDiscountAmount'](100, {
-        ...mockDiscount,
-        type: DiscountType.PERCENTAGE,
-        value: new Prisma.Decimal(20),
-      });
-
-      expect(result).toBe(20);
-    });
-
-    it('should calculate fixed amount discount', () => {
-      const result = service['calculateDiscountAmount'](100, {
-        ...mockDiscount,
-        type: DiscountType.FLAT,
-        value: new Prisma.Decimal(15),
-      });
-
-      expect(result).toBe(15);
     });
   });
 

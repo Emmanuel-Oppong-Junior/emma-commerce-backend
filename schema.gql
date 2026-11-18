@@ -733,7 +733,6 @@ type Mutation {
 
   """Deletes a variant"""
   deleteVariant(variantId: String!): Variant!
-  finalizeOrder(id: String!): Order!
 
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!

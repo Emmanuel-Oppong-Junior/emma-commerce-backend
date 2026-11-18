@@ -14,6 +14,7 @@ import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { FulfillmentType } from '@prisma/client';
 import { ReturnsService } from '../returns/returns.service';
+import { DiscountService } from '../discount/discount.service';
 
 const mockAuditService = { log: jest.fn() };
 const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
@@ -23,6 +24,7 @@ const mockNotificationsService = { sendOrderConfirmation: jest.fn(), sendOrderSt
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
+const mockDiscountService = { findActiveDiscountsByProduct: jest.fn() };
 
 const mockOrdersRepository = {
   findById: jest.fn(),
@@ -162,6 +164,7 @@ describe('OrdersService', () => {
         { provide: ShippingZonesService, useValue: mockShippingZonesService },
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
         { provide: ReturnsService, useValue: mockReturnsService },
+        { provide: DiscountService, useValue: mockDiscountService },
       ],
     }).compile();
 
@@ -181,6 +184,7 @@ describe('OrdersService', () => {
     mockOrdersRepository.updateProductStock.mockResolvedValue(mockProduct);
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
     mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
+    mockDiscountService.findActiveDiscountsByProduct.mockResolvedValue(new Map());
   });
 
   describe('createOrderFromCart', () => {
@@ -230,6 +234,76 @@ describe('OrdersService', () => {
           totalAmount: new Decimal('44.98'),
         }),
       );
+    });
+
+    describe('with product discounts', () => {
+      const tenPercentOff = { id: 'disc10', type: 'PERCENTAGE', value: new Decimal(10), minimumPurchase: null };
+
+      beforeEach(() => {
+        mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+        mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+        mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+        mockOrdersRepository.findProductById.mockResolvedValue({ ...mockProduct, price: new Decimal('100') });
+        mockOrdersRepository.create.mockResolvedValue(mockOrder);
+        mockDiscountService.findActiveDiscountsByProduct.mockResolvedValue(new Map([['prod1', [tenPercentOff]]]));
+      });
+
+      it('charges the discounted price and records the list price and discount on each line', async () => {
+        await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+        expect(mockDiscountService.findActiveDiscountsByProduct).toHaveBeenCalledWith([
+          expect.objectContaining({ id: 'prod1', categoryId: 'cat1' }),
+        ]);
+        expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+          expect.anything(),
+          mockUserId,
+          expect.objectContaining({
+            orderItems: [
+              expect.objectContaining({
+                productId: 'prod1',
+                quantity: 2,
+                originalPrice: new Decimal('100'),
+                priceAtOrder: new Decimal('90'),
+                discountAmount: new Decimal('10'),
+                discountId: 'disc10',
+              }),
+            ],
+            subtotal: new Decimal('180'),
+            discountTotal: new Decimal('20'),
+            shippingFee: new Decimal('5'),
+            totalAmount: new Decimal('185'),
+          }),
+        );
+      });
+
+      it('takes the coupon off the discounted subtotal, before shipping', async () => {
+        mockCouponsService.validateCoupon.mockResolvedValue({ discountAmount: 18, coupon: { id: 'coupon1' } });
+
+        await ordersService.createOrderFromCart(mockUserId, { ...deliveryParams, couponCode: 'SAVE10' });
+
+        expect(mockCouponsService.validateCoupon).toHaveBeenCalledWith('SAVE10', mockUserId, 180);
+        expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+          expect.anything(),
+          mockUserId,
+          expect.objectContaining({
+            couponId: 'coupon1',
+            couponDiscount: new Decimal('18'),
+            totalAmount: new Decimal('167'),
+          }),
+        );
+      });
+    });
+
+    it('rejects checkout of a product without a price, without reserving stock', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue({ ...mockProduct, price: null });
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+        new BadRequestException('"T-Shirt" has no price and cannot be sold'),
+      );
+      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
     });
 
     it('rejects delivery to a city no shipping zone covers, without reserving stock', async () => {

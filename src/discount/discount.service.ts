@@ -1,12 +1,11 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
-import { CartItem, Discount, Order, OrderItem, OrderStatus, Product, Variant } from '@prisma/client';
+import { CartItem, Discount, Prisma } from '@prisma/client';
 import {
-  CartItemWithProduct,
   CartWithDiscount,
   CreateOrUpdateDiscountInput,
   DiscountCalculation,
@@ -14,10 +13,10 @@ import {
   DiscountConnectionOperation,
   DiscountConnectOrSetInput,
   DiscountSetInput,
-  OrderItemWithProduct,
 } from './types';
 import { DiscountRepository } from './discount.repository';
 import { AuditEntry, AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+import { bestUnitPrice, CandidateDiscount, priceCart, toDiscountCalculation } from './pricing';
 
 const DISCOUNT_ALL_KEY = 'discount:all';
 const discountKey = (id: string) => `discount:${id}`;
@@ -51,6 +50,13 @@ function discountItemsChange(
     userId: actorId,
     details: { [operation]: discountTargets(input) },
   };
+}
+
+function requirePrice(product: { id: string; name: string; price: Prisma.Decimal | null }): Prisma.Decimal {
+  if (product.price === null) {
+    throw new BadRequestException(`Product "${product.name}" (${product.id}) has no price and cannot be sold`);
+  }
+  return product.price;
 }
 
 @Injectable()
@@ -254,48 +260,76 @@ export class DiscountService {
    */
   async getDiscountedPriceForProduct(productId: string, variantId?: string): Promise<DiscountCalculation> {
     const product = await this.getProductOrThrow(productId);
-    let price = Number(product.price);
+    let price = (product.price as Prisma.Decimal.Value | null) ?? 0;
 
     if (variantId) {
       const variant = await this.getVariantOrThrow(variantId);
-      price = variant.price ? Number(variant.price) : price;
+      price = (variant.price as Prisma.Decimal.Value | null) ?? price;
     }
 
     const discounts = await this.getApplicableDiscounts(productId, variantId);
-    const bestDiscount = this.selectBestDiscount(discounts);
-    return this.getBestDiscountDetails(price, bestDiscount);
+    return toDiscountCalculation(bestUnitPrice(price, discounts));
   }
 
   /**
-   * Applies discounts to cart items and computes totals.
-   * @param cartId - The ID of the cart.
-   * @returns The updated cart with applied discounts.
+   * Prices the cart with the same rules createOrder charges, and records each line's price on the cart item.
    * @throws NotFoundException if the cart is not found.
-   * @throws BadRequestException if minimum purchase requirements are not met.
+   * @throws BadRequestException if a product in the cart has no price.
    */
   async applyDiscountsToCart(cartId: string): Promise<CartWithDiscount> {
     const cart = await this.findCartOrThrow(cartId);
-    const { total, discountTotal, updatedItems } = await this.getCartItemCalculations(cart.items);
-    const discounts = await this.getApplicableDiscountsForCart(cart.items);
-    this.validateMinimumPurchaseRequirements(discounts, total);
-    return { ...cart, items: updatedItems, total, discountTotal, finalTotal: total - discountTotal };
-  }
+    const discounts = await this.findActiveDiscountsByProduct(cart.items.map((item) => item.product));
+    const priced = priceCart(
+      cart.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: requirePrice(item.product),
+      })),
+      discounts,
+    );
 
-  /**
-   * Records the applicable discounts on a PENDING order's items without changing what the customer is charged.
-   * @throws NotFoundException if the order is not found.
-   * @throws ConflictException if the order is deleted or no longer PENDING.
-   */
-  async finalizeDiscountsForOrder(orderId: string): Promise<Order & { items: OrderItem[] }> {
-    const order = await this.findOrderOrThrow(orderId);
-    if (order.deleted || order.status !== OrderStatus.PENDING) {
-      throw new ConflictException(
-        `Discounts can only be finalized on a PENDING order; order "${orderId}" is ${order.deleted ? 'deleted' : order.status}`,
+    const updatedItems: CartItem[] = [];
+    for (const [index, item] of cart.items.entries()) {
+      const line = priced.lines[index];
+      updatedItems.push(
+        await this.discountRepository.updateCartItem(item.id, {
+          originalPrice: line.unitPrice,
+          discountedPrice: line.discountedUnitPrice,
+          discountId: line.discountId ?? null,
+        }),
       );
     }
-    const { discountTotal } = await this.getOrderItemsCalculation(order.items);
-    // Discounts are not charged at checkout yet, so the total keeps the shipping fee and coupon createOrder set.
-    return this.discountRepository.updateOrderWithDiscount(orderId, Number(order.totalAmount), discountTotal);
+    return {
+      ...cart,
+      items: updatedItems,
+      total: priced.grossSubtotal.toNumber(),
+      discountTotal: priced.discountTotal.toNumber(),
+      finalTotal: priced.subtotal.toNumber(),
+    };
+  }
+
+  /** Active, in-date discounts that target each product directly or through its category, keyed by product ID. */
+  async findActiveDiscountsByProduct(
+    products: { id: string; categoryId: string | null }[],
+  ): Promise<Map<string, CandidateDiscount[]>> {
+    const productIds = [...new Set(products.map((product) => product.id))];
+    const categoryIds = [
+      ...new Set(products.map((product) => product.categoryId).filter((id): id is string => id !== null)),
+    ];
+    const discounts = productIds.length
+      ? await this.discountRepository.findActiveDiscountsFor(productIds, categoryIds)
+      : [];
+
+    return new Map(
+      products.map((product) => [
+        product.id,
+        discounts.filter(
+          (discount) =>
+            discount.products.some(({ id }) => id === product.id) ||
+            discount.categories.some(({ id }) => id === product.categoryId),
+        ),
+      ]),
+    );
   }
 
   private async validateDiscountInput(input: CreateOrUpdateDiscountInput, isUpdate = false): Promise<void> {
@@ -342,26 +376,6 @@ export class DiscountService {
     return discounts;
   }
 
-  private selectBestDiscount(discounts: Discount[]): Discount | null {
-    if (!discounts?.length) return null;
-
-    return discounts.reduce((best, current) => {
-      const bestValue = Number(best.value);
-      const currentValue = Number(current.value);
-      if (currentValue > bestValue) return current;
-
-      if (currentValue === bestValue && current.type === 'PERCENTAGE' && best.type === 'FLAT') {
-        return current;
-      }
-      return best;
-    }, discounts[0]);
-  }
-
-  private calculateDiscountAmount(price: number, discount: Discount): number {
-    if (discount.type === 'PERCENTAGE') return (price * Number(discount.value)) / 100;
-    return Number(discount.value);
-  }
-
   private async getProductOrThrow(id: string) {
     const product = await this.discountRepository.findProductById(id, { price: true });
     if (!product) throw new NotFoundException(`Product with ID ${id} not found`);
@@ -374,102 +388,10 @@ export class DiscountService {
     return variant as { price: unknown };
   }
 
-  private getBestDiscountDetails(originalPrice: number, bestDiscount: Discount | null): DiscountCalculation {
-    if (!bestDiscount) return { discountedPrice: originalPrice, discountAmount: 0 };
-    const discountAmount = this.calculateDiscountAmount(originalPrice, bestDiscount);
-    const discountedPrice = Math.max(0, originalPrice - discountAmount);
-    return { discountedPrice, discountAmount, discountId: bestDiscount.id };
-  }
-
   private async findCartOrThrow(cartId: string) {
     const cart = await this.discountRepository.findCartById(cartId);
     if (!cart) throw new NotFoundException(`Cart with ID ${cartId} not found`);
     return cart;
-  }
-
-  private async getCartItemCalculations(cartItems: CartItemWithProduct[]) {
-    let total = 0;
-    let discountTotal = 0;
-    const updatedItems: CartItem[] = [];
-
-    for (const cartItem of cartItems) {
-      const { discountedPrice, discountAmount, discountId } = await this.getDiscountedPriceForProduct(
-        cartItem.productId,
-        cartItem.variantId ?? undefined,
-      );
-      total += Number(cartItem.product.price) * cartItem.quantity;
-      discountTotal += discountAmount * cartItem.quantity;
-
-      const updatedItem = await this.discountRepository.updateCartItem(cartItem.id, {
-        originalPrice: Number(cartItem.product.price),
-        discountedPrice,
-        discountId,
-      });
-
-      updatedItems.push(updatedItem);
-    }
-    return { total, discountTotal, updatedItems };
-  }
-
-  private async getApplicableDiscountsForCart(
-    cartItem: (CartItem & {
-      product: Product;
-      variant?: Variant;
-    })[],
-  ): Promise<Discount[]> {
-    const discountIds = new Set<string>();
-    const discounts: Discount[] = [];
-
-    for (const item of cartItem) {
-      const itemDiscounts = await this.getApplicableDiscounts(item.productId, item.variantId ?? undefined);
-      for (const discount of itemDiscounts) {
-        if (!discountIds.has(discount.id)) {
-          discountIds.add(discount.id);
-          discounts.push(discount);
-        }
-      }
-    }
-
-    return discounts;
-  }
-
-  private validateMinimumPurchaseRequirements(discounts: Discount[], total: number) {
-    for (const discount of discounts) {
-      if (discount.minimumPurchase && total < Number(discount.minimumPurchase)) {
-        throw new BadRequestException(
-          `Cart total (${total}) does not meet minimum purchase requirement (${discount.minimumPurchase}) for discount ${discount.name}`,
-        );
-      }
-    }
-  }
-
-  private async findOrderOrThrow(orderId: string) {
-    const order = await this.discountRepository.findOrderById(orderId);
-    if (!order) throw new NotFoundException(`Order with ID ${orderId} not found`);
-    return order;
-  }
-
-  private async getOrderItemsCalculation(orderItems: OrderItemWithProduct[]) {
-    let total = 0;
-    let discountTotal = 0;
-    const updatedItems: OrderItem[] = [];
-
-    for (const orderItem of orderItems) {
-      const { discountAmount, discountId } = await this.getDiscountedPriceForProduct(
-        orderItem.productId,
-        orderItem.variantId ?? undefined,
-      );
-      total += Number(orderItem.product.price) * orderItem.quantity;
-      discountTotal += discountAmount * orderItem.quantity;
-
-      const updatedItem = await this.discountRepository.updateOrderItem(orderItem.id, {
-        originalPrice: Number(orderItem.product.price),
-        discountAmount,
-        discountId,
-      });
-      updatedItems.push(updatedItem);
-    }
-    return { total, discountTotal, updatedItems };
   }
 
   private ensureEndDateComeAfter(input: CreateOrUpdateDiscountInput) {

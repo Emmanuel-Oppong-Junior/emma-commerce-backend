@@ -636,7 +636,7 @@ Reading an "owner or admin only" field of another user as a `USER` gives `FORBID
 
 > **Visibility:** the public `products` and `product` queries only ever return products that are active **and** `PUBLISHED`; `isActive`/`status` sent in `filterArgs` cannot widen that. `product` returns `null` for a draft, archived or inactive product. Admins list and open products in any state with `adminProducts` / `adminProduct`. Nested `products` on `Category`, `SubCategory` and `Brand` also return published products only, newest first, capped by `first` (default 20, 1–100; anything else is an error).
 
-> **Price:** admins enter `basePrice`. `price` is what customers pay and what checkout charges: `basePrice × (1 + sum of active tax rates)` when `isTaxable`, otherwise `basePrice`. It is recomputed when `basePrice`/`isTaxable` change and whenever a tax is created, updated or deleted. Product discounts are shown via `discountedPrice` but are **not** applied at checkout (see [Section 10](#10-discounts-system)).
+> **Price:** admins enter `basePrice`. `price` is what customers pay and what checkout charges: `basePrice × (1 + sum of active tax rates)` when `isTaxable`, otherwise `basePrice`. It is recomputed when `basePrice`/`isTaxable` change and whenever a tax is created, updated or deleted. Product discounts are shown via `discountedPrice` and charged at checkout (see [Section 10](#10-discounts-system)).
 
 ---
 
@@ -1224,7 +1224,7 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
 #### `cart`
 - **Type**: Query
 - **Auth Required**: Yes
-- **Description**: Retrieve the current user's cart. Item prices are the product `price`; discounts are not applied here (use `cartWithDiscount`).
+- **Description**: Retrieve the current user's cart. Item prices are the product `price` and totals are not filled in; use `cartWithDiscount` for the prices and totals checkout will charge.
 - **Response**: `Cart | null` (`null` until the first item is added)
 
 **`Cart` Object Type**:
@@ -1235,8 +1235,8 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
   userId: string;
   items: CartItem[];
   total?: Float;           // Set by cartWithDiscount: sum of price × quantity
-  discountTotal?: Float;   // Set by cartWithDiscount
-  finalTotal?: Float;      // Set by cartWithDiscount: total - discountTotal
+  discountTotal?: Float;   // Set by cartWithDiscount: product discounts
+  finalTotal?: Float;      // Set by cartWithDiscount: total - discountTotal; what createOrder charges for the items
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -1323,9 +1323,9 @@ There is no `variantId`: variants cannot be added to the cart.
 #### `cartWithDiscount`
 - **Type**: Query
 - **Auth Required**: Yes
-- **Description**: Returns the cart with the best active discount applied to each item, and `total`, `discountTotal`, `finalTotal` filled in. Display only: checkout charges the undiscounted `price` (see [Section 10](#10-discounts-system)).
+- **Description**: Returns the cart priced exactly as `createOrder` will charge it: each item's `originalPrice` (list price), `discountedPrice` (unit price after the best active discount) and the cart's `total`, `discountTotal`, `finalTotal`. `createOrder` charges `finalTotal` for the items, plus shipping, minus any coupon (see [Section 10](#10-discounts-system)).
 - **Response**: `Cart!`
-- **Possible Errors**: `NOT_FOUND` (no cart yet); `BAD_REQUEST` when the cart total is below a matching discount's `minimumPurchase`.
+- **Possible Errors**: `NOT_FOUND` (no cart yet); `BAD_REQUEST` if a product in the cart has no price. A discount whose `minimumPurchase` the cart does not reach is not applied.
 
 ---
 
@@ -1411,11 +1411,11 @@ All order operations require `Bearer` JWT.
   paymentMethod: OrderPaymentMethod;           // ONLINE | CASH_ON_DELIVERY
   contactEmail: string;
   contactPhone: string;
-  subtotal?: Float;                            // Sum of item prices at order time (null on older orders)
+  subtotal?: Float;                            // Sum of item prices charged, after product discounts (null on older orders)
   shippingFee?: Float;                         // Delivery fee charged; 0 for PICKUP (null on older orders)
   couponDiscount?: Float;                      // Coupon discount applied at checkout
   totalAmount: Float;                          // Amount charged: subtotal + shippingFee - couponDiscount
-  discountTotal?: Float;                       // Set only by finalizeOrder
+  discountTotal?: Float;                       // Product discounts taken off at checkout (null on older orders)
   finalTotal?: Float;                          // Never populated (always null)
   shippingAddressId?: string;                  // Set for DELIVERY orders
   shippingAddressSnapshot?: JSON;              // DELIVERY: { street, city, state, zipCode, country } at order time
@@ -1438,9 +1438,9 @@ All order operations require `Bearer` JWT.
   productId: string;
   variantId?: string;         // Always null today
   quantity: Float;
-  priceAtOrder: Float;        // Product price per unit at the time of the order
-  originalPrice?: Float;
-  discountAmount?: Float;     // Set only by finalizeOrder
+  priceAtOrder: Float;        // Unit price charged: originalPrice - discountAmount
+  originalPrice?: Float;      // List price per unit at the time of the order
+  discountAmount?: Float;     // Product discount taken off one unit at checkout (0 if none)
   appliedDiscount?: Discount;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -1507,9 +1507,9 @@ CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 **What happens**:
 1. The cart must exist and hold 1–50 items; the account must be active.
 2. `DELIVERY`: the address must belong to the caller. The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
-3. Each item is priced at the product's current `price` (tax-inclusive; product discounts are **not** applied). Every product must be priced in GHS and have enough stock.
-4. A coupon, if given, is validated against the subtotal and its use is recorded.
-5. `totalAmount = max(0, subtotal + shippingFee - couponDiscount)`.
+3. Each item is priced exactly as `cartWithDiscount` shows it: the product's current `price` (tax-inclusive) minus the best active product or category discount. `subtotal` equals the cart's `finalTotal` and `discountTotal` the cart's `discountTotal`. Every product must have a price in GHS and enough stock.
+4. A coupon, if given, is validated against `subtotal` (after product discounts, before shipping) and its use is recorded.
+5. `totalAmount = max(0, subtotal + shippingFee - couponDiscount)`. This is the amount Paystack is asked for.
 6. Stock is decremented (logged as `ORDER_DEDUCTION`), the order is saved and the cart emptied, all in one transaction.
 7. Status: `PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`.
 8. A confirmation email goes to the account's email (not `contactEmail`) after the response.
@@ -1518,7 +1518,7 @@ No tax is added at checkout; tax is already inside each product's `price`.
 
 **Possible Errors**:
 - `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, product no longer exists, unknown coupon code.
-- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; more than 50 items; account inactive; insufficient stock; product not priced in GHS; delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; more than 50 items; account inactive; insufficient stock; product not priced in GHS or without a price; delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
 - `BAD_USER_INPUT` — Invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:
@@ -1600,16 +1600,6 @@ mutation {
 - **Args**: `orderId: String!`
 - **Response**: `Order!`
 - **Description**: Soft-delete a finished order (`DELIVERED` or `CANCELLED` only). Sets `deleted = true`, `deletedAt = now()`. **Never moves stock.** An open order returns `CONFLICT` (cancel it first, which restores its stock); deleting twice also returns `CONFLICT`.
-
----
-
-#### `finalizeOrder`
-- **Type**: Mutation
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN` (own orders only; otherwise `NOT_FOUND`)
-- **Args**: `id: String!`
-- **Response**: `Order!`
-- **Description**: Records the best active discount per item as `OrderItem.discountAmount`/`appliedDiscount` and sets `Order.discountTotal`, for information only. `Order.totalAmount` (what the customer is charged, shipping and coupon included) is never changed, because discounts are not charged at checkout (open product decision).
-- **Possible Errors**: `NOT_FOUND` (not your order); `CONFLICT` if the order is deleted or no longer `PENDING`.
 
 ---
 
@@ -1803,7 +1793,7 @@ Coupon codes are stored upper-case and matched case-insensitively.
 ```typescript
 {
   code: string;        // Required.
-  orderTotal: Float;   // Required. Min 0. Use the cart subtotal (createOrder applies the coupon to the subtotal, before shipping).
+  orderTotal: Float;   // Required. Min 0. Use `cartWithDiscount.finalTotal` (createOrder applies the coupon to the subtotal after product discounts, before shipping).
 }
 ```
 
@@ -1825,7 +1815,7 @@ Coupon codes are stored upper-case and matched case-insensitively.
 
 ### 2.14 Discounts
 
-Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). They are shown on products (`discountedPrice`, `appliedDiscount`) and in `cartWithDiscount`, but **not charged at checkout** (see [Section 10](#10-discounts-system)).
+Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). They are shown on products (`discountedPrice`, `appliedDiscount`) and in `cartWithDiscount`, and `createOrder` charges the same prices (see [Section 10](#10-discounts-system)).
 
 ---
 
@@ -2970,16 +2960,16 @@ Authorization: Bearer <accessToken>
 1. To change quantity: `mutation updateCartItem(input: { cartItemId, quantity })`. Setting `quantity: 0` removes the item.
 2. To remove an item directly: `mutation removeFromCart(cartItemId)`.
 3. To empty the cart: `mutation clearCart`.
-4. To show active discounts: `query cartWithDiscount` (display only; not charged).
+4. To show prices and totals with discounts: `query cartWithDiscount` (checkout charges the same `finalTotal`).
 
 ### Checkout Flow
 
 1. Choose fulfilment:
    - `DELIVERY`: the user needs a saved address (`query userAddresses` or `mutation createAddress`). Show the fee with `query getShippingFee(addressId)`; a `BAD_REQUEST` means the city is not served (offer pickup or another address).
    - `PICKUP`: list locations with `query activePickupLocations` (public).
-2. Optionally validate a coupon: `mutation validateCoupon(input: { code, orderTotal: <cart subtotal> })`.
+2. Optionally validate a coupon: `mutation validateCoupon(input: { code, orderTotal: <cartWithDiscount.finalTotal> })`.
 3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, contactEmail, contactPhone, couponCode?, paymentMethod? })`.
-4. Backend validates stock, prices items at product `price`, adds the shipping fee, applies the coupon → creates the `Order` (`PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`) → decrements inventory → clears cart → sends confirmation email.
+4. Backend validates stock, prices items as `cartWithDiscount` does, applies the coupon to that subtotal, adds the shipping fee → creates the `Order` (`PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`) → decrements inventory → clears cart → sends confirmation email.
 5. `ONLINE`: continue with the Order Placement Flow within 1 hour, or the order expires. `CASH_ON_DELIVERY`: done; staff ship it and record the cash with `recordCodPayment`.
 
 ### Order Placement Flow
@@ -3178,20 +3168,20 @@ There is no separate reservation: stock is decremented on order creation. An unp
 |---|---|---|
 | Scope | Product / Variant / Category | Order subtotal |
 | Applied | Shown automatically on products and in `cartWithDiscount` | Entered as `couponCode` at checkout |
-| Charged at checkout | **No** (see below) | Yes (`Order.couponDiscount`) |
+| Charged at checkout | Yes (`Order.discountTotal`, per item `discountAmount`) | Yes (`Order.couponDiscount`) |
 | Type | `Discount` | `Coupon` |
 
 ### Discount Application
 
 - A `Discount` applies when `isActive = true` and now is within `[startDate, endDate]`.
-- For a product, the candidates are its own discounts and its category's discounts (plus the variant's, where a variant is involved). The **best** one wins: the highest `value`; on a tie, `PERCENTAGE` beats `FLAT`. (Note the comparison is on the raw value, so a 20% discount beats a GHS 15 flat discount regardless of price.)
-- `PERCENTAGE`: `discountedPrice = price - price × value / 100`. `FLAT`: `discountedPrice = price - value`.
-- `minimumPurchase`: `cartWithDiscount` fails with `BAD_REQUEST` when the cart total is below the minimum of any discount that matches an item.
-- **Checkout does not apply discounts**: `createOrder` prices items at `price`. `finalizeOrder` only records discount amounts for information; it never changes `totalAmount`. Whether discounts are charged at checkout is an open product decision.
+- For a product, the candidates are its own discounts and its category's discounts. The **best** one is the one that saves the most money on one unit at the current price (on a GHS 50 item, GHS 8 off beats 10% off; on GHS 1,000, 30% off beats GHS 50 off). On an equal saving the first candidate is kept.
+- Unit discount: `PERCENTAGE` → `price × value / 100`, `FLAT` → `value`, rounded half-up to 2 decimal places and never more than the price. `discountedPrice = price - unit discount`; line total = `discountedPrice × quantity`.
+- `minimumPurchase`: in the cart and at checkout a discount applies only when the cart's list-price `total` (all items, before discounts) reaches its minimum; otherwise it is skipped and the next best discount applies. Product pages (`discountedPrice`) do not check minimums.
+- **Checkout charges the same prices**: product pages, `cartWithDiscount` and `createOrder` use one pricing function, so `Order.subtotal` equals `cartWithDiscount.finalTotal` at the moment of checkout. An order is priced once, when it is created; nothing re-prices an existing order.
 
 ### Coupon Logic
 
-- Applied at `createOrder` via `couponCode`, against the order subtotal (before shipping).
+- Applied at `createOrder` via `couponCode`, against the order subtotal (after product discounts, before shipping).
 - Checks (`CouponsService.validateCoupon`, repeated inside the order transaction):
   1. Coupon exists (`NOT_FOUND`) and `isActive = true`.
   2. Not expired (`expiresAt` is null or in the future).
@@ -3203,7 +3193,7 @@ There is no separate reservation: stock is decremented on order creation. An unp
 
 ### Stacking Rules
 
-- One coupon per order. Product discounts are not charged, so they do not stack with coupons today.
+- One coupon per order. Product discounts are applied first; the coupon is computed on the discounted subtotal (and its `minimumOrderAmount` checked against it). Shipping is added last.
 - Only one discount is shown per product (the best one, as above).
 
 ---
@@ -4071,7 +4061,7 @@ query {
 }
 ```
 
-Discounts shown here are not charged at checkout today (see [Section 10](#10-discounts-system)); show the cart subtotal as `price × quantity`.
+`createOrder` charges `finalTotal` for these items (plus shipping, minus any coupon); see [Section 10](#10-discounts-system).
 
 ---
 

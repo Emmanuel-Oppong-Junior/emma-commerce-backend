@@ -23,13 +23,13 @@ export class OrderItem {
   @Field(() => Float, { description: 'Original price per unit of the product or variant', nullable: true })
   originalPrice?: Decimal;
 
-  @Field(() => Float, { description: 'Discount amount applied to the item', nullable: true })
+  @Field(() => Float, { description: 'Discount taken off one unit at checkout', nullable: true })
   discountAmount?: Decimal;
 
   @Field(() => Discount, { description: 'Discount applied to the order item, if any', nullable: true })
   appliedDiscount?: Discount;
 
-  @Field(() => Float)
+  @Field(() => Float, { description: 'Unit price charged: originalPrice - discountAmount' })
   priceAtOrder: Decimal;
 
   @Field()

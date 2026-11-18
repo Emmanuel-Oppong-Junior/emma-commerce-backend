@@ -21,6 +21,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     {} as never,
     {} as never,
     { createSystemReturnRequest: jest.fn() } as never,
+    {} as never,
   );
   return { service, repository };
 }

@@ -37,8 +37,6 @@ const mockPrismaVariant = { findUnique: jest.fn(), findMany: jest.fn() };
 const mockPrismaCategory = { findMany: jest.fn() };
 const mockPrismaCart = { findUnique: jest.fn() };
 const mockPrismaCartItem = { update: jest.fn() };
-const mockPrismaOrder = { findUnique: jest.fn(), update: jest.fn() };
-const mockPrismaOrderItem = { update: jest.fn() };
 
 const mockPrisma = {
   discount: mockPrismaDiscount,
@@ -47,8 +45,6 @@ const mockPrisma = {
   category: mockPrismaCategory,
   cart: mockPrismaCart,
   cartItem: mockPrismaCartItem,
-  order: mockPrismaOrder,
-  orderItem: mockPrismaOrderItem,
 };
 
 describe('DiscountRepository', () => {
@@ -263,34 +259,6 @@ describe('DiscountRepository', () => {
     });
   });
 
-  describe('updateOrderItem', () => {
-    it('should update an order item', async () => {
-      const orderItem = { id: 'oi1', discountAmount: 20 };
-      mockPrismaOrderItem.update.mockResolvedValue(orderItem);
-
-      const result = await repository.updateOrderItem('oi1', { discountAmount: 20 } as any);
-
-      expect(result).toEqual(orderItem);
-    });
-  });
-
-  describe('updateOrderWithDiscount', () => {
-    it('should update order with discount totals', async () => {
-      const updatedOrder = { id: 'order1', totalAmount: 180, discountTotal: 20 };
-      mockPrismaOrder.update.mockResolvedValue(updatedOrder);
-
-      const result = await repository.updateOrderWithDiscount('order1', 180, 20);
-
-      expect(result).toEqual(updatedOrder);
-      expect(mockPrismaOrder.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'order1' },
-          data: expect.objectContaining({ totalAmount: 180, discountTotal: 20 }),
-        }),
-      );
-    });
-  });
-
   describe('findCartById', () => {
     it('should return a cart with items', async () => {
       const mockCart = { id: 'cart1', items: [] };
@@ -311,23 +279,25 @@ describe('DiscountRepository', () => {
     });
   });
 
-  describe('findOrderById', () => {
-    it('should return an order with items', async () => {
-      const mockOrder = { id: 'order1', items: [] };
-      mockPrismaOrder.findUnique.mockResolvedValue(mockOrder);
+  describe('findActiveDiscountsFor', () => {
+    it('finds active, in-date discounts on the given products or categories, with only those targets', async () => {
+      mockPrismaDiscount.findMany.mockResolvedValue([]);
 
-      const result = await repository.findOrderById('order1');
+      await repository.findActiveDiscountsFor(['p1'], ['c1']);
 
-      expect(result).toEqual(mockOrder);
-      expect(mockPrismaOrder.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'order1' } }));
-    });
-
-    it('should return null if order not found', async () => {
-      mockPrismaOrder.findUnique.mockResolvedValue(null);
-
-      const result = await repository.findOrderById('nonexistent');
-
-      expect(result).toBeNull();
+      const query = mockPrismaDiscount.findMany.mock.calls[0][0];
+      expect(query.where).toEqual(
+        expect.objectContaining({
+          isActive: true,
+          startDate: { lte: expect.any(Date) },
+          endDate: { gte: expect.any(Date) },
+          OR: [{ products: { some: { id: { in: ['p1'] } } } }, { categories: { some: { id: { in: ['c1'] } } } }],
+        }),
+      );
+      expect(query.include).toEqual({
+        products: { where: { id: { in: ['p1'] } }, select: { id: true } },
+        categories: { where: { id: { in: ['c1'] } }, select: { id: true } },
+      });
     });
   });
 });

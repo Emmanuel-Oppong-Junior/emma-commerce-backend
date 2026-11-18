@@ -21,6 +21,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
+import { DiscountService } from '../discount/discount.service';
+import { priceCart } from '../discount/pricing';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
@@ -47,6 +49,7 @@ export class OrdersService {
     private readonly shippingZonesService: ShippingZonesService,
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly returnsService: ReturnsService,
+    private readonly discountService: DiscountService,
   ) {}
 
   /**
@@ -326,6 +329,10 @@ export class OrdersService {
     if (cart.items.length > 50) throw new BadRequestException('Order exceeds maximum item limit of 50');
   }
 
+  /**
+   * Prices the cart with the same function as cartWithDiscount, then takes the coupon off the discounted
+   * merchandise subtotal and adds shipping, so the total charged is the total the customer was shown.
+   */
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
@@ -334,45 +341,56 @@ export class OrdersService {
   ): Promise<{
     orderItems: OrderItem[];
     subtotal: Prisma.Decimal;
+    discountTotal: Prisma.Decimal;
     shippingFee: Prisma.Decimal;
     totalAmount: Prisma.Decimal;
     couponId?: string;
-    couponDiscount?: number;
+    couponDiscount?: Prisma.Decimal;
   }> {
-    const orderItems = await this.createOrderItems(cartItems);
-    const subtotal = this.computeSubtotal(orderItems);
-
-    let couponId: string | undefined;
-    let couponDiscount = 0;
-    if (couponCode) {
-      const { discountAmount, coupon } = await this.couponsService.validateCoupon(couponCode, userId, subtotal);
-      couponId = coupon.id;
-      couponDiscount = discountAmount;
-    }
-
-    const totalAmount = new Prisma.Decimal(Math.max(0, subtotal + Number(shippingFee) - couponDiscount).toFixed(2));
-    return {
-      orderItems,
-      subtotal: new Prisma.Decimal(subtotal.toFixed(2)),
-      shippingFee: new Prisma.Decimal(shippingFee.toFixed(2)),
-      totalAmount,
-      couponId,
-      couponDiscount: couponDiscount || undefined,
-    };
-  }
-
-  private async createOrderItems(cartItems: CartItem[]): Promise<OrderItem[]> {
-    const orderItems: OrderItem[] = [];
-    for (const item of cartItems) {
-      const product = await this.checkProductAvailability(item);
-      orderItems.push({
+    const products: Product[] = [];
+    for (const item of cartItems) products.push(await this.checkProductAvailability(item));
+    const discounts = await this.discountService.findActiveDiscountsByProduct(products);
+    const priced = priceCart(
+      cartItems.map((item, index) => ({
         productId: item.productId,
         quantity: item.quantity,
-        priceAtOrder: product.price as unknown as Prisma.Decimal,
-        originalPrice: product.price as unknown as Prisma.Decimal,
-      } as OrderItem);
+        unitPrice: products[index].price as Prisma.Decimal,
+      })),
+      discounts,
+    );
+
+    let couponId: string | undefined;
+    let couponDiscount: Prisma.Decimal | undefined;
+    if (couponCode) {
+      const { discountAmount, coupon } = await this.couponsService.validateCoupon(
+        couponCode,
+        userId,
+        priced.subtotal.toNumber(),
+      );
+      couponId = coupon.id;
+      couponDiscount = new Prisma.Decimal(discountAmount).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
     }
-    return orderItems;
+
+    const totalAmount = Prisma.Decimal.max(0, priced.subtotal.add(shippingFee).sub(couponDiscount ?? 0));
+    return {
+      orderItems: priced.lines.map(
+        (line) =>
+          ({
+            productId: line.productId,
+            quantity: line.quantity,
+            priceAtOrder: line.discountedUnitPrice,
+            originalPrice: line.unitPrice,
+            discountAmount: line.unitDiscount,
+            discountId: line.discountId ?? null,
+          }) as OrderItem,
+      ),
+      subtotal: priced.subtotal,
+      discountTotal: priced.discountTotal,
+      shippingFee: shippingFee.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
+      totalAmount: totalAmount.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
+      couponId,
+      couponDiscount: couponDiscount?.isZero() ? undefined : couponDiscount,
+    };
   }
 
   private async checkProductAvailability(item: CartItem): Promise<Product> {
@@ -384,16 +402,13 @@ export class OrdersService {
         `"${product.name}" is priced in ${product.currency ?? 'no currency'}; only GHS products can be checked out`,
       );
     }
+    if (product.price === null) throw new BadRequestException(`"${product.name}" has no price and cannot be sold`);
     if (product.quantity < item.quantity) {
       throw new BadRequestException(
         `Insufficient stock for "${product.name}": ${product.quantity} available, ${item.quantity} requested`,
       );
     }
     return product;
-  }
-
-  private computeSubtotal(orderItems: OrderItem[]): number {
-    return orderItems.reduce((sum, item) => sum + Number(item.priceAtOrder) * item.quantity, 0);
   }
 
   private async saveOrderAndUpdateInventory(
@@ -403,9 +418,10 @@ export class OrdersService {
       orderItems: OrderItem[];
       subtotal: Prisma.Decimal;
       shippingFee: Prisma.Decimal;
+      discountTotal: Prisma.Decimal;
       totalAmount: Prisma.Decimal;
       couponId?: string;
-      couponDiscount?: number;
+      couponDiscount?: Prisma.Decimal;
       paymentMethod?: PaymentMethod;
       contactEmail: string;
       contactPhone: string;
