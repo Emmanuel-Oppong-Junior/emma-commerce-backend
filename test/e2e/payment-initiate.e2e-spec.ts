@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
-import { PaymentService } from '../../src/payment/payment.service';
+import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
@@ -21,16 +21,17 @@ describe('Payment initiation (e2e)', () => {
   let orderCount = 0;
 
   const paystack = {
-    transaction: {
-      initialize: jest.fn(async ({ reference }: InitializeParams) => ({
-        status: true,
-        data: { reference, authorization_url: `https://checkout.test/${reference}`, access_code: `ac-${reference}` },
-      })),
-      verify: jest.fn(async ({ reference }: { reference: string }) => ({
-        status: true,
-        data: { reference, status: 'success', amount: 10000, currency: 'GHS' },
-      })),
-    },
+    initializeTransaction: jest.fn(async ({ reference }: InitializeParams) => ({
+      reference,
+      authorization_url: `https://checkout.test/${reference}`,
+      access_code: `ac-${reference}`,
+    })),
+    verifyTransaction: jest.fn(async (reference: string) => ({
+      reference,
+      status: 'success',
+      amount: 10000,
+      currency: 'GHS',
+    })),
   };
 
   const createOrder = async (data: Partial<Prisma.OrderUncheckedCreateInput> = {}): Promise<string> => {
@@ -57,8 +58,7 @@ describe('Payment initiation (e2e)', () => {
     prisma.paymentAttempt.findMany({ where: { intent: { orderId } }, orderBy: { createdAt: 'asc' } });
 
   beforeAll(async () => {
-    ({ app, prisma } = await createTestApp());
-    (app.get(PaymentService) as unknown as { paystack: typeof paystack }).paystack = paystack;
+    ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
     await resetDb(prisma);
     await seedMinimal(prisma);
     userToken = await signInUser(app);
@@ -78,7 +78,7 @@ describe('Payment initiation (e2e)', () => {
 
     const [attempt] = await attemptsOf(orderId);
     expect(res.body.authorizationUrl).toBe(`https://checkout.test/${attempt.reference}`);
-    expect(paystack.transaction.initialize).toHaveBeenCalledWith(
+    expect(paystack.initializeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ amount: 10000, currency: 'GHS', reference: attempt.reference }),
     );
     expect(attempt).toMatchObject({ status: PaymentStatus.PENDING, currency: 'GHS' });
@@ -90,7 +90,7 @@ describe('Payment initiation (e2e)', () => {
 
     await initiate({ orderId, amount: 1 }).expect(400);
 
-    expect(paystack.transaction.initialize).not.toHaveBeenCalled();
+    expect(paystack.initializeTransaction).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -103,7 +103,7 @@ describe('Payment initiation (e2e)', () => {
 
     await initiate({ orderId }).expect(statusCode);
 
-    expect(paystack.transaction.initialize).not.toHaveBeenCalled();
+    expect(paystack.initializeTransaction).not.toHaveBeenCalled();
     expect(await attemptsOf(orderId)).toHaveLength(0);
   });
 
@@ -136,7 +136,7 @@ describe('Payment initiation (e2e)', () => {
 
     expect(second.body.id).toBe(first.body.id);
     expect(second.body.authorizationUrl).toBe(first.body.authorizationUrl);
-    expect(paystack.transaction.initialize).toHaveBeenCalledTimes(1);
+    expect(paystack.initializeTransaction).toHaveBeenCalledTimes(1);
     expect(await attemptsOf(orderId)).toHaveLength(1);
   });
 
@@ -164,12 +164,12 @@ describe('Payment initiation (e2e)', () => {
     for (const res of responses.filter((r) => r.status === 201)) {
       expect(res.body.id).toBe(attempt.id);
     }
-    expect(paystack.transaction.initialize).toHaveBeenCalledTimes(1);
+    expect(paystack.initializeTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('lets the same key be retried after Paystack failed to open the checkout', async () => {
     const orderId = await createOrder();
-    paystack.transaction.initialize.mockRejectedValueOnce(new Error('Paystack unavailable'));
+    paystack.initializeTransaction.mockRejectedValueOnce(new Error('Paystack unavailable'));
 
     await initiate({ orderId, idempotencyKey: 'retry-key' }).expect(500);
     await initiate({ orderId, idempotencyKey: 'retry-key' }).expect(201);

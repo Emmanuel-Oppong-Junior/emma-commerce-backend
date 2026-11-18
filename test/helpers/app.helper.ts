@@ -60,7 +60,7 @@ export async function createTestApp(
     .useValue(noopThrottlerStorage);
   const moduleFixture: TestingModule = await override(builder).compile();
 
-  const app = moduleFixture.createNestApplication();
+  const app = moduleFixture.createNestApplication({ rawBody: true });
   const prisma = moduleFixture.get<PrismaService>(PrismaService);
   const logger = moduleFixture.get<LoggerService>(LoggerService);
 

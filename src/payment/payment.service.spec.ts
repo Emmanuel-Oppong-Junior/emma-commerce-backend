@@ -11,22 +11,17 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PaystackWebhookDto } from './dto/paystack.dto';
-import { PaystackEvent } from './enums/paystack-event.enum';
-import { createHmac } from 'node:crypto';
 import { PaymentStatus, Prisma } from '@prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { Role } from '../users/enums/role.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../commons/audit.service';
+import { PaystackClient } from './paystack.client';
 
-// Stable mock instance shared between service constructor and test references
-const mockPaystackTransaction = {
-  initialize: jest.fn(),
-  verify: jest.fn(),
+const mockPaystack = {
+  initializeTransaction: jest.fn(),
+  verifyTransaction: jest.fn(),
 };
-
-jest.mock('paystack-api', () => jest.fn(() => ({ transaction: mockPaystackTransaction })));
 
 const mockPaymentRepository = {
   openAttempt: jest.fn(),
@@ -76,6 +71,7 @@ describe('PaymentService', () => {
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: NotificationsService, useValue: mockNotificationsService },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: PaystackClient, useValue: mockPaystack },
       ],
     }).compile();
 
@@ -118,11 +114,9 @@ describe('PaymentService', () => {
       updatedAt: new Date(),
     };
     const transaction = {
-      data: {
-        reference: 'order1-ref',
-        authorization_url: 'http://paystack.test/auth',
-        access_code: 'acc_test_123',
-      },
+      reference: 'order1-ref',
+      authorization_url: 'http://paystack.test/auth',
+      access_code: 'acc_test_123',
     };
 
     const openAttemptAgainst = (current: unknown, opened: unknown) =>
@@ -136,7 +130,7 @@ describe('PaymentService', () => {
     beforeEach(() => {
       mockPaymentRepository.findOrderWithUser.mockResolvedValue(order);
       openAttemptAgainst(order, { created: true, attempt: payment });
-      mockPaystackTransaction.initialize.mockResolvedValue(transaction);
+      mockPaystack.initializeTransaction.mockResolvedValue(transaction);
     });
 
     it('opens a pending attempt and a Paystack checkout for its reference, charging the attempt amount in GHS', async () => {
@@ -148,7 +142,7 @@ describe('PaymentService', () => {
       );
       const { reference } = mockPaymentRepository.openAttempt.mock.calls[0][0];
       expect(reference).toMatch(/^order1-/);
-      expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(
+      expect(mockPaystack.initializeTransaction).toHaveBeenCalledWith(
         expect.objectContaining({ email: 'test@example.com', amount: 100050, currency: 'GHS', reference }),
       );
       expect(paymentRepository.recordCheckout).toHaveBeenCalledWith('pay1', 'http://paystack.test/auth', {
@@ -163,7 +157,7 @@ describe('PaymentService', () => {
       async ({ currency }) => {
         await service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency });
 
-        expect(mockPaystackTransaction.initialize).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
+        expect(mockPaystack.initializeTransaction).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
       },
     );
 
@@ -200,7 +194,7 @@ describe('PaymentService', () => {
 
         await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(BadRequestException);
         expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
-        expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+        expect(mockPaystack.initializeTransaction).not.toHaveBeenCalled();
       },
     );
 
@@ -210,7 +204,7 @@ describe('PaymentService', () => {
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
         new BadRequestException('Order "order1" is CANCELLED and can no longer be paid'),
       );
-      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+      expect(mockPaystack.initializeTransaction).not.toHaveBeenCalled();
     });
 
     it('refuses an order found already paid when the attempt is opened', async () => {
@@ -222,7 +216,7 @@ describe('PaymentService', () => {
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(
         new BadRequestException('Payment for this order has already been completed'),
       );
-      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+      expect(mockPaystack.initializeTransaction).not.toHaveBeenCalled();
     });
 
     it('returns the checkout already opened under a repeated idempotency key without a new Paystack call', async () => {
@@ -231,7 +225,7 @@ describe('PaymentService', () => {
       const result = await service.initiatePayment(userId, { ...createPaymentDto, idempotencyKey: 'key-1' });
 
       expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/first' });
-      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+      expect(mockPaystack.initializeTransaction).not.toHaveBeenCalled();
       expect(paymentRepository.recordCheckout).not.toHaveBeenCalled();
     });
 
@@ -245,12 +239,12 @@ describe('PaymentService', () => {
       await expect(service.initiatePayment(userId, { ...createPaymentDto, idempotencyKey: 'key-1' })).rejects.toThrow(
         ConflictException,
       );
-      expect(mockPaystackTransaction.initialize).not.toHaveBeenCalled();
+      expect(mockPaystack.initializeTransaction).not.toHaveBeenCalled();
     });
 
     it('fails the attempt and frees its key when Paystack cannot open the checkout', async () => {
       const paystackError = new Error('Paystack unavailable');
-      mockPaystackTransaction.initialize.mockRejectedValue(paystackError);
+      mockPaystack.initializeTransaction.mockRejectedValue(paystackError);
 
       await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toBe(paystackError);
       expect(paymentRepository.markInitializationFailed).toHaveBeenCalledWith('pay1');
@@ -269,7 +263,7 @@ describe('PaymentService', () => {
       status: PaymentStatus.PENDING,
       deleted: false,
     };
-    const verification = { data: { status: 'success', reference: 'ref1', amount: 25000, currency: 'GHS' } };
+    const verification = { status: 'success', reference: 'ref1', amount: 25000, currency: 'GHS' };
     const completed = { ...payment, status: PaymentStatus.COMPLETED };
     const lockedState = {
       status: PaymentStatus.PENDING,
@@ -291,7 +285,7 @@ describe('PaymentService', () => {
 
     beforeEach(() => {
       mockPaymentRepository.findByReference.mockResolvedValue(payment);
-      mockPaystackTransaction.verify.mockResolvedValue(verification);
+      mockPaystack.verifyTransaction.mockResolvedValue(verification);
       mockPaymentRepository.findOrderWithUser.mockResolvedValue({ id: 'order1', user: { email: 'buyer@example.com' } });
     });
 
@@ -301,7 +295,7 @@ describe('PaymentService', () => {
       const result = await service.verifyPayment(reference);
 
       expect(paymentRepository.findByReference).toHaveBeenCalledWith('ref1');
-      expect(mockPaystackTransaction.verify).toHaveBeenCalledWith({ reference: 'ref1' });
+      expect(mockPaystack.verifyTransaction).toHaveBeenCalledWith('ref1');
       expect(paymentRepository.settleAttempt).toHaveBeenCalledWith(
         'pay1',
         { reference: 'ref1', status: 'success', amount: 25000, currency: 'GHS' },
@@ -320,7 +314,7 @@ describe('PaymentService', () => {
         const result = await service.verifyPayment(reference);
 
         expect(result).toEqual({ ...payment, status });
-        expect(mockPaystackTransaction.verify).not.toHaveBeenCalled();
+        expect(mockPaystack.verifyTransaction).not.toHaveBeenCalled();
         expect(paymentRepository.settleAttempt).not.toHaveBeenCalled();
       },
     );
@@ -340,7 +334,7 @@ describe('PaymentService', () => {
     });
 
     it('does not count a success for a smaller amount as payment', async () => {
-      mockPaystackTransaction.verify.mockResolvedValue({ data: { ...verification.data, amount: 100 } });
+      mockPaystack.verifyTransaction.mockResolvedValue({ ...verification, amount: 100 });
       settleAgainst(lockedState, { ...payment, status: PaymentStatus.FAILED }, 'refund1');
 
       const result = await service.verifyPayment(reference);
@@ -353,7 +347,7 @@ describe('PaymentService', () => {
 
     it('should handle failed payment', async () => {
       const failedPayment = { ...payment, status: PaymentStatus.FAILED };
-      mockPaystackTransaction.verify.mockResolvedValue({ data: { status: 'failed', reference: 'ref1' } });
+      mockPaystack.verifyTransaction.mockResolvedValue({ status: 'failed', reference: 'ref1' });
       settleAgainst(lockedState, failedPayment);
 
       const result = await service.verifyPayment(reference);
@@ -368,7 +362,7 @@ describe('PaymentService', () => {
     });
 
     it('rejects a Paystack answer for a different reference without touching the attempt', async () => {
-      mockPaystackTransaction.verify.mockResolvedValue({ data: { ...verification.data, reference: 'other' } });
+      mockPaystack.verifyTransaction.mockResolvedValue({ ...verification, reference: 'other' });
 
       await expect(service.verifyPayment(reference)).rejects.toThrow(BadGatewayException);
       expect(paymentRepository.settleAttempt).not.toHaveBeenCalled();
@@ -402,7 +396,7 @@ describe('PaymentService', () => {
     });
 
     it('does not email when the payment failed', async () => {
-      mockPaystackTransaction.verify.mockResolvedValue({ data: { status: 'failed', reference: 'ref1' } });
+      mockPaystack.verifyTransaction.mockResolvedValue({ status: 'failed', reference: 'ref1' });
       settleAgainst(lockedState, { ...payment, status: PaymentStatus.FAILED });
 
       await service.verifyPayment(reference);
@@ -435,7 +429,7 @@ describe('PaymentService', () => {
 
     it('applies the same rule when the owner verifies', async () => {
       mockPaymentRepository.findOrderById.mockResolvedValue({ id: 'order1', userId: 'user1' });
-      mockPaystackTransaction.verify.mockResolvedValue({ data: { ...verification.data, currency: 'USD' } });
+      mockPaystack.verifyTransaction.mockResolvedValue({ ...verification, currency: 'USD' });
       settleAgainst(lockedState, { ...payment, status: PaymentStatus.FAILED }, 'refund1');
 
       const result = await service.verifyPaymentAsUser(reference, 'user1');
@@ -451,7 +445,7 @@ describe('PaymentService', () => {
       mockPaymentRepository.findOrderById.mockResolvedValue({ id: 'order1', userId: 'someone-else' });
 
       await expect(service.verifyPaymentAsUser(reference, 'user1')).rejects.toThrow(ForbiddenException);
-      expect(mockPaystackTransaction.verify).not.toHaveBeenCalled();
+      expect(mockPaystack.verifyTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -519,108 +513,6 @@ describe('PaymentService', () => {
       const result = await service.getUserPayments(userId);
 
       expect(result).toEqual([]);
-    });
-  });
-
-  describe('handlePaystackWebhook', () => {
-    const webhookDto: PaystackWebhookDto = {
-      event: PaystackEvent.CHARGE_SUCCESS,
-      data: { reference: 'ref1', status: 'success' },
-    } as PaystackWebhookDto;
-
-    it('should throw UnauthorizedException for invalid signature', async () => {
-      jest.spyOn(service as any, 'isValidWebhookSignature').mockReturnValue(false);
-
-      await expect(service.handlePaystackWebhook(webhookDto, 'invalid_signature')).rejects.toThrow(
-        UnauthorizedException,
-      );
-      expect(paymentRepository.findByReference).not.toHaveBeenCalled();
-    });
-
-    it('should return true (acknowledge) for irrelevant event without processing', async () => {
-      jest.spyOn(service as any, 'isValidWebhookSignature').mockReturnValue(true);
-      jest.spyOn(service as any, 'isRelevantEvent').mockReturnValue(false);
-
-      const result = await service.handlePaystackWebhook(
-        { ...webhookDto, event: 'transfer.success' as PaystackEvent },
-        'valid_signature',
-      );
-
-      expect(result).toBe(true);
-      expect(paymentRepository.findByReference).not.toHaveBeenCalled();
-    });
-
-    it('should return false if payment not found', async () => {
-      jest.spyOn(service as any, 'isValidWebhookSignature').mockReturnValue(true);
-      jest.spyOn(service as any, 'isRelevantEvent').mockReturnValue(true);
-      mockPaymentRepository.findByReference.mockResolvedValue(null);
-
-      const result = await service.handlePaystackWebhook(webhookDto, 'valid_signature');
-
-      expect(result).toBe(false);
-    });
-  });
-
-  describe('handlePaystackWebhook — signature validation', () => {
-    it('should throw UnauthorizedException for invalid HMAC signature', async () => {
-      const dto: PaystackWebhookDto = {
-        event: PaystackEvent.CHARGE_SUCCESS,
-        data: { reference: 'ref-sig-test', status: 'success' },
-      } as PaystackWebhookDto;
-      mockConfigService.get.mockReturnValue('real-secret');
-
-      await expect(service.handlePaystackWebhook(dto, 'invalid-sig')).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('should accept webhook with valid HMAC signature', async () => {
-      const dto: PaystackWebhookDto = {
-        event: PaystackEvent.CHARGE_SUCCESS,
-        data: { reference: 'ref-valid', status: 'success' },
-      } as PaystackWebhookDto;
-      const secret = 'real-secret';
-      mockConfigService.get.mockReturnValue(secret);
-      const validSig = createHmac('sha512', secret).update(JSON.stringify(dto)).digest('hex');
-
-      const payment = {
-        id: 'pay1',
-        transactionId: 'ref-valid',
-        deleted: false,
-        orderId: 'order1',
-        status: PaymentStatus.PENDING,
-      };
-      const verifyData = { data: { status: 'success', reference: 'ref-valid', amount: 100, currency: 'GHS' } };
-      mockPaymentRepository.findByReference.mockResolvedValue(payment);
-      mockPaystackTransaction.verify.mockResolvedValue(verifyData);
-      mockPaymentRepository.settleAttempt.mockResolvedValue({
-        outcome: { kind: 'paid' },
-        attempt: { ...payment, status: PaymentStatus.COMPLETED },
-      });
-      mockPaymentRepository.findOrderWithUser.mockResolvedValue(null);
-
-      const result = await service.handlePaystackWebhook(dto, validSig);
-
-      expect(result).toBe(true);
-    });
-
-    it('should log error via LoggerService (not console) on webhook failure', async () => {
-      const dto: PaystackWebhookDto = {
-        event: PaystackEvent.CHARGE_SUCCESS,
-        data: { reference: 'ref-fail', status: 'success' },
-      } as PaystackWebhookDto;
-      const secret = 'real-secret';
-      mockConfigService.get.mockReturnValue(secret);
-      const validSig = createHmac('sha512', secret).update(JSON.stringify(dto)).digest('hex');
-
-      mockPaymentRepository.findByReference.mockRejectedValue(new Error('DB down'));
-
-      const result = await service.handlePaystackWebhook(dto, validSig);
-
-      expect(result).toBe(false);
-      expect(mockLoggerService.error).toHaveBeenCalledWith(
-        expect.stringContaining('Webhook verification failed'),
-        expect.any(String),
-        'PaymentWebhook',
-      );
     });
   });
 

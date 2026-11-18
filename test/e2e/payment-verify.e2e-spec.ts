@@ -3,7 +3,7 @@ import { createHmac } from 'crypto';
 import { OrderStatus, PaymentIntentStatus, PaymentStatus, Prisma } from '@prisma/client';
 import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
-import { PaymentService } from '../../src/payment/payment.service';
+import { PaystackClient } from '../../src/payment/paystack.client';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
@@ -26,20 +26,17 @@ describe('Payment verification (e2e)', () => {
 
   const charged: Partial<VerifyResult> = { status: 'success', amount: 10000, currency: 'GHS' };
   const paystack = {
-    transaction: {
-      verify: jest.fn(
-        async ({ reference }: { reference: string }): Promise<{ status: boolean; data: VerifyResult }> => ({
-          status: true,
-          data: { reference, status: 'success', amount: 10000, currency: 'GHS' },
-        }),
-      ),
-    },
+    verifyTransaction: jest.fn(
+      async (reference: string): Promise<VerifyResult> => ({
+        reference,
+        status: 'success',
+        amount: 10000,
+        currency: 'GHS',
+      }),
+    ),
   };
   const paystackAnswers = (data: Partial<VerifyResult>) =>
-    paystack.transaction.verify.mockImplementation(async ({ reference }) => ({
-      status: true,
-      data: { reference, status: 'success', ...data },
-    }));
+    paystack.verifyTransaction.mockImplementation(async (reference) => ({ reference, status: 'success', ...data }));
 
   const createOrder = async (data: Partial<Prisma.OrderUncheckedCreateInput> = {}): Promise<string> => {
     orderCount += 1;
@@ -86,8 +83,7 @@ describe('Payment verification (e2e)', () => {
   };
 
   beforeAll(async () => {
-    ({ app, prisma } = await createTestApp());
-    (app.get(PaymentService) as unknown as { paystack: typeof paystack }).paystack = paystack;
+    ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
     sendPaymentConfirmation = jest.spyOn(app.get(NotificationsService), 'sendPaymentConfirmation').mockReturnValue();
     await resetDb(prisma);
     await seedMinimal(prisma);
@@ -122,7 +118,7 @@ describe('Payment verification (e2e)', () => {
       reviewReason: null,
     });
     expect(ledger.refunds).toHaveLength(0);
-    expect(paystack.transaction.verify).toHaveBeenCalledTimes(1);
+    expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
     expect(sendPaymentConfirmation).toHaveBeenCalledTimes(1);
   });
 
@@ -136,7 +132,7 @@ describe('Payment verification (e2e)', () => {
     const ledger = await ledgerOf(orderId);
     expect(ledger.orderStatus).toBe(OrderStatus.DELIVERED);
     expect(ledger.refunds).toHaveLength(0);
-    expect(paystack.transaction.verify).not.toHaveBeenCalled();
+    expect(paystack.verifyTransaction).not.toHaveBeenCalled();
   });
 
   it('keeps a cancelled order CANCELLED, flags the late payment and queues exactly one refund across replays', async () => {

@@ -1,7 +1,5 @@
 import { PaymentService } from '../../src/payment/payment.service';
 
-jest.mock('paystack-api', () => jest.fn(() => ({ transaction: {} })));
-
 interface PaystackVerifyData {
   status: string;
   amount: number;
@@ -23,23 +21,22 @@ function buildPaymentService(
     delete: jest.fn(),
     create: jest.fn().mockResolvedValue({ id: 'payment-2' }),
   };
+  const paystack = {
+    verifyTransaction: jest.fn().mockResolvedValue({ reference: payment.transactionId, ...verified }),
+    initializeTransaction: jest.fn().mockResolvedValue({
+      reference: 'ref-2',
+      authorization_url: 'https://checkout.test/x',
+      access_code: 'code',
+    }),
+  };
   const service = new PaymentService(
     repository as never,
     { get: () => 'sk_test_placeholder' } as never,
     { log: jest.fn(), warn: jest.fn(), error: jest.fn() } as never,
     { sendPaymentConfirmation: jest.fn() } as never,
     { log: jest.fn() } as never,
+    paystack as never,
   );
-  const paystack = {
-    transaction: {
-      verify: jest.fn().mockResolvedValue({ status: true, data: { reference: payment.transactionId, ...verified } }),
-      initialize: jest.fn().mockResolvedValue({
-        status: true,
-        data: { reference: 'ref-2', authorization_url: 'https://checkout.test/x', access_code: 'code' },
-      }),
-    },
-  };
-  (service as unknown as { paystack: unknown }).paystack = paystack;
   return { service, repository, paystack };
 }
 
@@ -93,7 +90,7 @@ describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
     await expect(
       service.initiatePayment('user-1', { orderId: 'order-1', paymentMethod: 'card', currency: 'GHS' }),
     ).rejects.toThrow();
-    expect(paystack.transaction.initialize).not.toHaveBeenCalled();
+    expect(paystack.initializeTransaction).not.toHaveBeenCalled();
   });
 
   it('PAY-03: retrying payment keeps the earlier PENDING attempt so a late success on its reference can still be matched', async () => {

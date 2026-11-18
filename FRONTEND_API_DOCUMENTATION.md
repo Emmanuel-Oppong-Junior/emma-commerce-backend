@@ -2127,26 +2127,21 @@ The amount is always the order total; any other field (e.g. `amount`) is rejecte
 **Description**: Paystack webhook. Must be registered in Paystack dashboard.
 
 **Headers required**:
-- `x-paystack-signature: <HMAC-SHA512 of raw body>` (Paystack sends this automatically)
+- `x-paystack-signature: <hex HMAC-SHA512 of the raw request body, keyed with PAYSTACK_SECRET_KEY>` (Paystack sends this automatically)
+- `Content-Type: application/json`
 
-**Body (PaystackWebhookDto)**:
+**Body**: Paystack's event JSON, `{ event: string; data: { id?, reference?, amount?, currency?, status?, ... } }`. The signature is checked over the exact bytes received, so any proxy or gateway in front of the API must forward the body unmodified (no re-encoding, re-formatting or compression changes).
 
-```typescript
-{
-  event: "charge.success" | "charge.failed";
-  data: {
-    reference: string;
-    amount: number;       // In kobo/pesewas (smallest unit)
-    currency: string;
-    status: string;
-  };
-}
-```
+**Responses**:
+- `200 OK`: the event is stored and either processed or needs no processing (unhandled type, or a duplicate of an event already processed).
+- `400`: empty body, or a signed body that is not `{ event, data }` JSON.
+- `401`: missing or invalid signature. Nothing is stored.
+- `503`: the event is stored but processing failed after three in-process attempts. Paystack retries the delivery, and the retry processes the stored event.
 
-**Handled Events**:
-- `charge.success` → marks payment `COMPLETED`, order status → `PROCESSING`.
-- `charge.failed` → marks payment `FAILED`.
-- All other events: acknowledged (`200 OK`) but not processed.
+**Handled Events** (each delivery is stored once per event type and Paystack `data.id`, or `data.reference` when there is no id; repeats are no-ops):
+- `charge.success` → re-verifies the reference with Paystack; marks payment `COMPLETED`, order status → `PROCESSING` (same rule as `verifyPayment`).
+- `charge.failed` → re-verifies; marks payment `FAILED`.
+- All other events: stored and acknowledged (`200 OK`) but not processed.
 
 ---
 
@@ -2885,10 +2880,12 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 ### Webhook Handling Flow
 
 1. Paystack POSTs to `POST /payment/webhook`.
-2. Backend verifies HMAC-SHA512 signature using `PAYSTACK_SECRET_KEY`.
-3. On `charge.success`: the same verification as `verifyPayment` runs (amount and currency must match; a payment for a cancelled or already-paid order never moves the order and is queued for refund). On a valid payment: payment `status → COMPLETED`, order `status → PROCESSING`, confirmation email sent once.
-4. On `charge.failed`: payment `status → FAILED`.
-5. Always responds `200 OK` to Paystack (even for unhandled events).
+2. Backend verifies the HMAC-SHA512 signature over the raw body using `PAYSTACK_SECRET_KEY` (constant-time compare). A bad signature gets `401` and nothing is stored.
+3. The event is stored in the webhook inbox (`WebhookEvent`). A repeat of an event already processed gets `200` and changes nothing.
+4. On `charge.success`: the same verification as `verifyPayment` runs (amount and currency must match; a payment for a cancelled or already-paid order never moves the order and is queued for refund). On a valid payment: payment `status → COMPLETED`, order `status → PROCESSING`, confirmation email sent once.
+5. On `charge.failed`: payment `status → FAILED`.
+6. Unhandled events are stored and answered `200 OK`.
+7. If processing fails (for example Paystack's verify API is down), it is retried in-process up to three attempts; if it still fails the backend answers `503`, the event stays stored as unprocessed, and Paystack's redelivery processes it.
 
 ### Inventory Deduction Flow
 
@@ -3003,6 +3000,8 @@ The webhook validates the Paystack signature:
 HMAC-SHA512(rawBody, PAYSTACK_SECRET_KEY) === x-paystack-signature header
 ```
 
+The comparison is constant-time and uses the exact request bytes, so the body must reach the API unmodified.
+
 **Frontend note**: You do **not** call the webhook. It is server-to-server only.
 
 ### Events Handled
@@ -3011,7 +3010,7 @@ HMAC-SHA512(rawBody, PAYSTACK_SECRET_KEY) === x-paystack-signature header
 |---|---|
 | `charge.success` | `Payment.status → COMPLETED`, `Order.status → PROCESSING` |
 | `charge.failed` | `Payment.status → FAILED` |
-| All others | Acknowledged (200 OK), ignored |
+| All others | Stored, acknowledged (200 OK), not processed |
 
 ### Frontend Payment Confirmation Strategy
 

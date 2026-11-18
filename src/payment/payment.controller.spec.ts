@@ -1,14 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentController } from './payment.controller';
 import { PaymentService } from './payment.service';
+import { PaymentWebhookService } from './payment-webhook.service';
 
 describe('PaymentController', () => {
   let controller: PaymentController;
+  const webhookService = { handlePaystackWebhook: jest.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PaymentController],
-      providers: [{ provide: PaymentService, useValue: {} }],
+      providers: [
+        { provide: PaymentService, useValue: {} },
+        { provide: PaymentWebhookService, useValue: webhookService },
+      ],
     }).compile();
 
     controller = module.get<PaymentController>(PaymentController);
@@ -16,5 +21,13 @@ describe('PaymentController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('hands the webhook the raw request bytes, not the parsed body', async () => {
+    const rawBody = Buffer.from('{"event":"charge.success","data":{}}');
+
+    await controller.paymentWebhookHandler({ rawBody, body: { parsed: true } } as never, 'sig');
+
+    expect(webhookService.handlePaystackWebhook).toHaveBeenCalledWith(rawBody, 'sig');
   });
 });

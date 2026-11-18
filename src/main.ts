@@ -8,7 +8,8 @@ import helmet from 'helmet';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // The Paystack webhook signature covers the exact request bytes, so the raw body is kept next to the parsed one.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   app.set('trust proxy', 1); // Trust requests from the loopback address
   app.use(
     helmet({

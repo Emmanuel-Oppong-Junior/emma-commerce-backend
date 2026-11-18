@@ -1,12 +1,9 @@
 import { ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PaystackWebhookDto } from './dto/paystack.dto';
 import { OrderStatus, PaymentProvider, Prisma } from '@prisma/client';
-import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, randomBytes } from 'node:crypto';
-import { PaystackEvent } from './enums/paystack-event.enum';
+import { randomBytes } from 'node:crypto';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -14,24 +11,18 @@ import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
 import { decideVerification, isSettled, parseProviderVerification } from './payment-verification';
 import { assertCodCollectable } from './cash-on-delivery';
 import { AuditService } from '../commons/audit.service';
+import { InitializedTransaction, PaystackClient, VerifiedTransaction } from './paystack.client';
 
 @Injectable()
 export class PaymentService {
-  private readonly paystack: Paystack.Client;
-  private readonly PAYSTACK_EVENTS = {
-    CHARGE_SUCCESS: PaystackEvent.CHARGE_SUCCESS,
-    CHARGE_FAILED: PaystackEvent.CHARGE_FAILED,
-  } as const;
-
   constructor(
     private readonly paymentRepository: PaymentRepository,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
-  ) {
-    this.paystack = Paystack(this.configService.get('PAYSTACK_SECRET_KEY'));
-  }
+    private readonly paystack: PaystackClient,
+  ) {}
 
   /**
    * Opens a Paystack checkout for a PENDING online order. The amount and currency come from the order's payment
@@ -159,49 +150,6 @@ export class PaymentService {
   }
 
   /**
-   * Processes a Paystack webhook event.
-   * @param dto - Webhook payload.
-   * @param signature - Paystack signature header.
-   * @returns True if processed successfully, false otherwise.
-   */
-  async handlePaystackWebhook(dto: PaystackWebhookDto, signature: string): Promise<boolean> {
-    const { event } = dto;
-    const reference = dto.data?.reference ?? 'unknown';
-    const amount = dto.data?.amount ?? 0;
-    const currency = dto.data?.currency ?? '';
-
-    this.logger.log(
-      `Webhook received | event: ${event} | reference: ${reference} | amount: ${amount} ${currency}`,
-      'PaymentWebhook',
-    );
-
-    // [CRITICAL-1] Invalid signature must yield 401, not 200/400
-    if (!this.isValidWebhookSignature(dto, signature)) {
-      this.logger.warn(
-        `Webhook rejected | event: ${event} | reference: ${reference} | reason: invalid signature`,
-        'PaymentWebhook',
-      );
-      throw new UnauthorizedException('Invalid webhook signature');
-    }
-
-    if (!this.isRelevantEvent(dto.event)) {
-      this.logger.log(
-        `Webhook ignored | event: ${event} | reference: ${reference} | reason: unhandled event type`,
-        'PaymentWebhook',
-      );
-      // Acknowledge receipt to Paystack without processing
-      return true;
-    }
-
-    const success = await this.processWebhookPayment(reference);
-    this.logger.log(
-      `Webhook processed | event: ${event} | reference: ${reference} | status: ${success ? 'success' : 'failed'}`,
-      'PaymentWebhook',
-    );
-    return success;
-  }
-
-  /**
    * Soft deletes a payment record by marking it as deleted and setting the deletion timestamp.
    * @param id - The ID of the payment to be softly deleted.
    * @returns The updated payment record with deletion status.
@@ -231,18 +179,18 @@ export class PaymentService {
 
   private async openPaystackCheckout(attempt: PaymentRecord, reference: string, email: string): Promise<string> {
     try {
-      const transaction = await this.paystack.transaction.initialize({
+      const transaction = await this.paystack.initializeTransaction({
         email,
         amount: attempt.amount.mul(100).toNumber(),
         currency: attempt.currency,
         reference,
         callback_url: this.configService.get('PAYSTACK_CALLBACK_URL'),
       });
-      const authorizationUrl = transaction.data.authorization_url;
+      const authorizationUrl = transaction.authorization_url;
       await this.paymentRepository.recordCheckout(
         attempt.id,
         authorizationUrl,
-        this.sanitizeInitializeDetails(transaction.data),
+        this.sanitizeInitializeDetails(transaction),
       );
       return authorizationUrl;
     } catch (error) {
@@ -266,7 +214,7 @@ export class PaymentService {
    * The checkout URL is kept in its own column so an idempotent retry can hand it back.
    * [LOW-1] Null-coalesce each field to avoid storing `undefined` in the JSON column.
    */
-  private sanitizeInitializeDetails(data: Paystack.Transaction.InitializeResponse): Prisma.InputJsonValue {
+  private sanitizeInitializeDetails(data: InitializedTransaction): Prisma.InputJsonValue {
     return {
       reference: data.reference ?? null,
       access_code: data.access_code ?? null,
@@ -277,15 +225,15 @@ export class PaymentService {
    * Strips raw Paystack verification data down to safe audit fields.
    * Omits customer PII, IP addresses, raw channel tokens, and authorization objects.
    */
-  private sanitizeVerifyDetails(data: Paystack.Transaction.VerifyResponse): Prisma.InputJsonValue {
+  private sanitizeVerifyDetails(data: VerifiedTransaction): Prisma.InputJsonValue {
     return {
-      reference: data.reference,
-      status: data.status,
-      amount: data.amount,
-      currency: data.currency,
-      channel: data.channel,
-      paid_at: data.paid_at,
-      gateway_response: data.gateway_response,
+      reference: data.reference ?? null,
+      status: data.status ?? null,
+      amount: data.amount ?? null,
+      currency: data.currency ?? null,
+      channel: data.channel ?? null,
+      paid_at: data.paid_at ?? null,
+      gateway_response: data.gateway_response ?? null,
     } as Prisma.InputJsonValue;
   }
 
@@ -295,24 +243,18 @@ export class PaymentService {
     return payment;
   }
 
-  private async verifyPaystackTransaction(
-    reference: string,
-  ): Promise<Paystack.Response<Paystack.Transaction.VerifyResponse>> {
-    return this.paystack.transaction.verify({ reference });
-  }
-
   /**
    * The one path from a provider verdict to the ledger and the order, shared by the customer verify and the
    * webhook. A settled attempt is returned as it is, so replays and late events change nothing.
    */
   private async settleWithProvider(payment: PaymentRecord, reference: string): Promise<PaymentRecord> {
     if (isSettled(payment.status)) return payment;
-    const response = await this.verifyPaystackTransaction(reference);
-    const verified = parseProviderVerification(reference, response.data);
+    const transaction = await this.paystack.verifyTransaction(reference);
+    const verified = parseProviderVerification(reference, transaction);
     const settled = await this.paymentRepository.settleAttempt(
       payment.id,
       verified,
-      this.sanitizeVerifyDetails(response.data),
+      this.sanitizeVerifyDetails(transaction),
       (state) => decideVerification(state, verified),
     );
 
@@ -344,38 +286,5 @@ export class PaymentService {
           'PaymentService',
         );
       });
-  }
-
-  private async processWebhookPayment(reference: string): Promise<boolean> {
-    try {
-      await this.verifyPayment(reference);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Webhook verification failed | reference: ${reference} | ${message}`, stack, 'PaymentWebhook');
-      return false;
-    }
-  }
-
-  private isValidWebhookSignature(dto: PaystackWebhookDto, signature: string): boolean {
-    try {
-      const hash = this.computeWebhookSignature(dto);
-      return hash === signature;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(`Signature validation error | ${message}`, stack, 'PaymentService');
-      return false;
-    }
-  }
-
-  private computeWebhookSignature(dto: PaystackWebhookDto): string {
-    const secret = this.configService.get('PAYSTACK_SECRET_KEY');
-    return createHmac('sha512', secret).update(JSON.stringify(dto)).digest('hex');
-  }
-
-  private isRelevantEvent(event: PaystackEvent): boolean {
-    return [this.PAYSTACK_EVENTS.CHARGE_SUCCESS, this.PAYSTACK_EVENTS.CHARGE_FAILED].includes(event);
   }
 }

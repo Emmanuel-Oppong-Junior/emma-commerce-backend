@@ -1,7 +1,8 @@
-import { Body, Controller, Headers, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpStatus, Post, RawBodyRequest, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
-import { PaystackWebhookDto } from './dto/paystack.dto';
 import { PaymentService } from './payment.service';
+import { PaymentWebhookService } from './payment-webhook.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
@@ -10,7 +11,10 @@ import { PAYSTACK_WEBHOOK_SIGNATURE_KEY } from './constant';
 
 @Controller('payment')
 export class PaymentController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly paymentWebhookService: PaymentWebhookService,
+  ) {}
 
   @Throttle({ payment: { limit: 5, ttl: 60000 } })
   @Post('/initialize')
@@ -21,10 +25,10 @@ export class PaymentController {
   @Auth(AuthType.None)
   @Post('/webhook')
   @HttpCode(HttpStatus.OK)
-  async paymentWebhookHandler(@Body() dto: PaystackWebhookDto, @Headers() headers: Record<string, string> = {}) {
-    // Express lowercases all headers; PAYSTACK_WEBHOOK_SIGNATURE_KEY is 'x-paystack-signature'
-    // [CRITICAL-2] Header key is already lowercase — matches Express header normalisation
-    const signature = headers[PAYSTACK_WEBHOOK_SIGNATURE_KEY] ?? '';
-    await this.paymentService.handlePaystackWebhook(dto, signature);
+  async paymentWebhookHandler(
+    @Req() request: RawBodyRequest<Request>,
+    @Headers(PAYSTACK_WEBHOOK_SIGNATURE_KEY) signature?: string,
+  ): Promise<void> {
+    await this.paymentWebhookService.handlePaystackWebhook(request.rawBody, signature);
   }
 }
