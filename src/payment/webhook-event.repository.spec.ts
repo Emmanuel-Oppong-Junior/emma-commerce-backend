@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { WebhookEventRepository } from './webhook-event.repository';
 
 describe('WebhookEventRepository', () => {
-  const webhookEvent = { create: jest.fn(), findUniqueOrThrow: jest.fn(), updateMany: jest.fn() };
+  const webhookEvent = { create: jest.fn(), findUniqueOrThrow: jest.fn(), findMany: jest.fn(), updateMany: jest.fn() };
   const repository = new WebhookEventRepository({ webhookEvent } as never);
   const incoming = {
     provider: 'PAYSTACK' as const,
@@ -41,6 +41,19 @@ describe('WebhookEventRepository', () => {
     webhookEvent.create.mockRejectedValue(failure);
 
     await expect(repository.record(incoming)).rejects.toBe(failure);
+  });
+
+  it('finds unprocessed events received before the cutoff and under the attempt cap, oldest first', async () => {
+    const cutoff = new Date('2026-11-18T01:25:00.000Z');
+    webhookEvent.findMany.mockResolvedValue([]);
+
+    await repository.findUnprocessed(cutoff, 20, 30);
+
+    expect(webhookEvent.findMany).toHaveBeenCalledWith({
+      where: { processedAt: null, receivedAt: { lt: cutoff }, attempts: { lt: 20 } },
+      orderBy: { receivedAt: 'asc' },
+      take: 30,
+    });
   });
 
   it('marks an event processed only while it is still unprocessed', async () => {

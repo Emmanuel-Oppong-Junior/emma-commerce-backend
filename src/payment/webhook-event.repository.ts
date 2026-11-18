@@ -31,6 +31,15 @@ export class WebhookEventRepository {
     }
   }
 
+  /** Stored events still unprocessed, received before `receivedBefore` and tried fewer than `maxAttempts` times. */
+  async findUnprocessed(receivedBefore: Date, maxAttempts: number, limit: number): Promise<WebhookEvent[]> {
+    return this.prisma.webhookEvent.findMany({
+      where: { processedAt: null, receivedAt: { lt: receivedBefore }, attempts: { lt: maxAttempts } },
+      orderBy: { receivedAt: 'asc' },
+      take: limit,
+    });
+  }
+
   async markProcessed(id: string, attempts: number): Promise<void> {
     await this.prisma.webhookEvent.updateMany({
       where: { id, processedAt: null },

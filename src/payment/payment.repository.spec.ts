@@ -545,6 +545,21 @@ describe('PaymentRepository', () => {
       expect(mockPrismaAttempt.updateMany).not.toHaveBeenCalled();
     });
 
+    it('writes nothing when the provider repeats the undecided status already recorded', async () => {
+      mockPrismaAttempt.findUniqueOrThrow.mockReset();
+      mockPrismaAttempt.findUniqueOrThrow
+        .mockResolvedValueOnce({ intent: { orderId: 'order1' } })
+        .mockResolvedValueOnce({ ...locked, rawStatus: 'abandoned' });
+
+      const result = await repository.settleAttempt('pay1', { ...success, status: 'abandoned' }, details, () => ({
+        kind: 'unresolved',
+      }));
+
+      expect(result.outcome).toEqual({ kind: 'unresolved' });
+      expect(mockPrismaAttempt.update).not.toHaveBeenCalled();
+      expect(mockPrismaAttempt.updateMany).not.toHaveBeenCalled();
+    });
+
     it('records a review case on the attempt and queues one refund of the captured amount, order untouched', async () => {
       const result = await repository.settleAttempt('pay1', { ...success, amount: 9999 }, details, () => ({
         kind: 'review',

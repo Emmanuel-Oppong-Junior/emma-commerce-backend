@@ -139,4 +139,35 @@ describe('PaymentWebhookService', () => {
       'Payment with reference "ref1" not found',
     );
   });
+
+  describe('reprocessStoredEvent', () => {
+    const stored = (overrides: Record<string, unknown> = {}) =>
+      ({ ...storedEvent(), attempts: 3, ...overrides }) as never;
+
+    it('settles the reference once and counts one attempt', async () => {
+      await expect(service.reprocessStoredEvent(stored())).resolves.toBe('processed');
+
+      expect(paymentService.verifyPayment).toHaveBeenCalledTimes(1);
+      expect(paymentService.verifyPayment).toHaveBeenCalledWith('ref1');
+      expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 1);
+    });
+
+    it('records one failed attempt without retrying in process', async () => {
+      paymentService.verifyPayment.mockRejectedValue(new NotFoundException('Payment with reference "ref1" not found'));
+
+      await expect(service.reprocessStoredEvent(stored())).resolves.toBe('failed');
+
+      expect(paymentService.verifyPayment).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+      expect(webhookEvents.recordFailure).toHaveBeenCalledWith('evt1', 1, 'Payment with reference "ref1" not found');
+      expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
+    });
+
+    it('marks a non-settling event processed without verifying', async () => {
+      await expect(service.reprocessStoredEvent(stored({ event: 'transfer.success' }))).resolves.toBe('skipped');
+
+      expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+      expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 0);
+    });
+  });
 });

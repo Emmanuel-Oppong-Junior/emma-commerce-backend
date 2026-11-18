@@ -13,6 +13,8 @@ export const WEBHOOK_RETRY_DELAYS_MS = [200, 400];
 
 const CONTEXT = 'PaymentWebhook';
 
+export type ReprocessOutcome = 'processed' | 'skipped' | 'failed';
+
 @Injectable()
 export class PaymentWebhookService {
   constructor(
@@ -38,7 +40,7 @@ export class PaymentWebhookService {
 
     const parsed = parsePaystackWebhook(rawBody);
     const { created, event } = await this.webhookEvents.record({ provider: PaymentProvider.PAYSTACK, ...parsed });
-    const summary = `event: ${event.event} | reference: ${event.reference ?? 'none'} | id: ${event.id}`;
+    const summary = describeEvent(event);
     if (event.processedAt) {
       this.logger.log(`Webhook duplicate ignored | ${summary}`, CONTEXT);
       return;
@@ -51,6 +53,33 @@ export class PaymentWebhookService {
       return;
     }
     await this.processWithRetries(event, event.reference, summary);
+  }
+
+  /**
+   * One more processing attempt for an event that is stored but unprocessed, counted in its `attempts`. There are
+   * no in-process retries: the caller's next sweep is the retry. Settlement is idempotent, so an event that was
+   * processed meanwhile changes nothing.
+   */
+  async reprocessStoredEvent(event: WebhookEvent): Promise<ReprocessOutcome> {
+    const summary = describeEvent(event);
+    if (!isSettlingEvent(event.event) || !event.reference) {
+      await this.webhookEvents.markProcessed(event.id, 0);
+      return 'skipped';
+    }
+    try {
+      await this.paymentService.verifyPayment(event.reference);
+    } catch (error) {
+      const lastError = describeErrorForLog(error);
+      await this.webhookEvents.recordFailure(event.id, 1, lastError);
+      this.logger.warn(
+        `Webhook reprocessing failed | ${summary} | attempts: ${event.attempts + 1} | ${lastError}`,
+        CONTEXT,
+      );
+      return 'failed';
+    }
+    await this.webhookEvents.markProcessed(event.id, 1);
+    this.logger.log(`Webhook reprocessed | ${summary}`, CONTEXT);
+    return 'processed';
   }
 
   private async processWithRetries(event: WebhookEvent, reference: string, summary: string): Promise<void> {
@@ -73,4 +102,8 @@ export class PaymentWebhookService {
     this.logger.error(`Webhook left unprocessed for redelivery | ${summary}`, lastError, CONTEXT);
     throw new ServiceUnavailableException('Webhook could not be processed; it will be retried');
   }
+}
+
+function describeEvent(event: WebhookEvent): string {
+  return `event: ${event.event} | reference: ${event.reference ?? 'none'} | id: ${event.id}`;
 }

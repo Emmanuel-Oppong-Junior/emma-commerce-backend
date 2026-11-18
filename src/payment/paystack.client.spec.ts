@@ -96,6 +96,69 @@ describe('PaystackClient', () => {
     });
   });
 
+  describe('listTransactions', () => {
+    const request = {
+      from: new Date('2026-11-17T00:00:00.000Z'),
+      to: new Date('2026-11-18T00:00:00.000Z'),
+      status: 'success' as const,
+      page: 2,
+      perPage: 100,
+    };
+
+    it('gets one page with the documented filters and keeps only the compared fields', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(200, {
+          status: true,
+          message: 'Transactions retrieved',
+          data: [
+            {
+              id: 1,
+              reference: 'ref1',
+              status: 'success',
+              amount: 10000,
+              currency: 'GHS',
+              customer: { email: 'buyer@example.com' },
+              authorization: { last4: '4081' },
+            },
+          ],
+          meta: { total: 101, skipped: 100, perPage: 100, page: 2, pageCount: 2 },
+        }),
+      );
+
+      await expect(client.listTransactions(request)).resolves.toEqual({
+        transactions: [{ reference: 'ref1', status: 'success', amount: 10000, currency: 'GHS' }],
+        pageCount: 2,
+      });
+      const url = new URL(fetchMock.mock.calls[0][0]);
+      expect(`${url.origin}${url.pathname}`).toBe('https://api.paystack.co/transaction');
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        from: '2026-11-17T00:00:00.000Z',
+        to: '2026-11-18T00:00:00.000Z',
+        status: 'success',
+        perPage: '100',
+        page: '2',
+      });
+      expect(fetchMock.mock.calls[0][1]).toMatchObject({
+        method: 'GET',
+        headers: { Authorization: 'Bearer sk_test_client_secret' },
+      });
+    });
+
+    it.each([
+      ['no data array', { status: true, data: {}, meta: { pageCount: 1 } }],
+      ['no page count', { status: true, data: [] }],
+      [
+        'a transaction without an amount',
+        { status: true, data: [{ reference: 'r', status: 'success', currency: 'GHS' }], meta: { pageCount: 1 } },
+      ],
+      ['a failed envelope', { status: false, message: 'Invalid key' }],
+    ])('maps %s to 502', async (_label, body) => {
+      fetchMock.mockResolvedValue(jsonResponse(200, body));
+
+      await expect(client.listTransactions(request)).rejects.toThrow(BadGatewayException);
+    });
+  });
+
   it('refuses to start without a secret key', () => {
     const missing = {
       getOrThrow: () => {

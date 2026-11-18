@@ -10,6 +10,8 @@ import { PaystackClient } from './paystack.client';
 import { WebhookEventRepository } from './webhook-event.repository';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderModule } from '../order/order.module';
+import { PaymentReconciliationService } from './payment-reconciliation.service';
+import { PaymentReconciliationTask } from './tasks/payment-reconciliation.task';
 
 @Module({
   imports: [CommonsModule, NotificationsModule, OrderModule],
@@ -20,6 +22,8 @@ import { OrderModule } from '../order/order.module';
     PaymentWebhookService,
     WebhookEventRepository,
     PaystackClient,
+    PaymentReconciliationService,
+    PaymentReconciliationTask,
     ConfigService,
   ],
   controllers: [PaymentController],

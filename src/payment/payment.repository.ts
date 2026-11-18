@@ -19,6 +19,7 @@ import {
   ProviderVerification,
   VerificationOutcome,
 } from './payment-verification';
+import { LedgerAttempt } from './payment-reconciliation';
 
 /** A payment attempt in the shape the GraphQL `Payment` type exposes. */
 export interface PaymentRecord {
@@ -244,6 +245,31 @@ export class PaymentRepository {
     return current ? toPaymentRecord(current) : null;
   }
 
+  /** Open Paystack attempts created in [`createdFrom`, `createdBefore`), newest first: the ones a webhook may have missed. */
+  async findOpenPaystackReferences(createdFrom: Date, createdBefore: Date, limit: number): Promise<string[]> {
+    const attempts = await this.prisma.paymentAttempt.findMany({
+      where: {
+        provider: PaymentProvider.PAYSTACK,
+        status: { in: [PaymentStatus.PENDING, PaymentStatus.ABANDONED] },
+        reference: { not: null },
+        deleted: false,
+        createdAt: { gte: createdFrom, lt: createdBefore },
+      },
+      select: { reference: true },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    return attempts.map((attempt) => attempt.reference as string);
+  }
+
+  async findLedgerAttempts(references: string[]): Promise<LedgerAttempt[]> {
+    const attempts = await this.prisma.paymentAttempt.findMany({
+      where: { reference: { in: references } },
+      select: { reference: true, status: true, amount: true, currency: true, reviewReason: true },
+    });
+    return attempts.map((attempt) => ({ ...attempt, reference: attempt.reference as string }));
+  }
+
   async findAll(): Promise<PaymentRecord[]> {
     const attempts = await this.prisma.paymentAttempt.findMany({
       where: { deleted: false },
@@ -314,6 +340,8 @@ export class PaymentRepository {
 
       if (outcome.kind === 'settled') return { outcome, attempt: toPaymentRecord(attempt) };
       if (outcome.kind === 'unresolved') {
+        // Order expiry reads an attempt's updatedAt as customer activity, so a repeat poll must not touch the row.
+        if (attempt.rawStatus === verified.status) return { outcome, attempt: toPaymentRecord(attempt) };
         const updated = await tx.paymentAttempt.update({
           where: { id: attemptId },
           data: { rawStatus: verified.status },

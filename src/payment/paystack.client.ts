@@ -1,6 +1,10 @@
 import { BadGatewayException, GatewayTimeoutException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PAYSTACK_TRANSACTION_INI_URL, PAYSTACK_TRANSACTION_VERIFY_BASE_URL } from './constant';
+import {
+  PAYSTACK_TRANSACTION_INI_URL,
+  PAYSTACK_TRANSACTION_LIST_URL,
+  PAYSTACK_TRANSACTION_VERIFY_BASE_URL,
+} from './constant';
 
 export const PAYSTACK_TIMEOUT_MS = 8000;
 
@@ -28,6 +32,27 @@ export interface VerifiedTransaction {
   channel?: unknown;
   paid_at?: unknown;
   gateway_response?: unknown;
+}
+
+export interface ListTransactionsRequest {
+  from: Date;
+  to: Date;
+  status: 'success' | 'failed' | 'abandoned';
+  page: number;
+  perPage: number;
+}
+
+/** One listed transaction, reduced to what reconciliation compares. `amount` is in subunits (pesewas). */
+export interface ListedTransaction {
+  reference: string;
+  status: string;
+  amount: number;
+  currency: string;
+}
+
+export interface TransactionPage {
+  transactions: ListedTransaction[];
+  pageCount: number;
 }
 
 /**
@@ -63,7 +88,32 @@ export class PaystackClient {
     });
   }
 
+  /** One page of `GET /transaction`, filtered by creation time and status. Customer and card fields are dropped. */
+  async listTransactions(request: ListTransactionsRequest): Promise<TransactionPage> {
+    const query = new URLSearchParams({
+      from: request.from.toISOString(),
+      to: request.to.toISOString(),
+      status: request.status,
+      perPage: String(request.perPage),
+      page: String(request.page),
+    });
+    const envelope = await this.send('list', `${PAYSTACK_TRANSACTION_LIST_URL}?${query.toString()}`, { method: 'GET' });
+    const pageCount = isRecord(envelope.meta) ? envelope.meta.pageCount : undefined;
+    if (!Array.isArray(envelope.data) || !Number.isSafeInteger(pageCount)) {
+      throw new BadGatewayException('Paystack list returned no data array or page count');
+    }
+    return { transactions: envelope.data.map(toListedTransaction), pageCount: pageCount as number };
+  }
+
   private async call(operation: string, url: string, init: RequestInit): Promise<Record<string, unknown>> {
+    const envelope = await this.send(operation, url, init);
+    if (!isRecord(envelope.data)) {
+      throw new BadGatewayException(`Paystack ${operation} returned no data object`);
+    }
+    return envelope.data;
+  }
+
+  private async send(operation: string, url: string, init: RequestInit): Promise<Record<string, unknown>> {
     let response: Response;
     let body: unknown;
     try {
@@ -89,11 +139,21 @@ export class PaystackClient {
       const message = typeof envelope.message === 'string' ? `: ${envelope.message.slice(0, 200)}` : '';
       throw new BadGatewayException(`Paystack ${operation} failed with HTTP ${response.status}${message}`);
     }
-    if (!isRecord(envelope.data)) {
-      throw new BadGatewayException(`Paystack ${operation} returned no data object`);
-    }
-    return envelope.data;
+    return envelope;
   }
+}
+
+function toListedTransaction(item: unknown): ListedTransaction {
+  if (
+    !isRecord(item) ||
+    typeof item.reference !== 'string' ||
+    typeof item.status !== 'string' ||
+    !Number.isSafeInteger(item.amount) ||
+    typeof item.currency !== 'string'
+  ) {
+    throw new BadGatewayException('Paystack list returned a transaction without reference, status, amount or currency');
+  }
+  return { reference: item.reference, status: item.status, amount: item.amount as number, currency: item.currency };
 }
 
 // An error page from a proxy is not JSON; it is reported through the HTTP status instead.

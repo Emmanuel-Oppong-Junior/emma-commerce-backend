@@ -403,7 +403,7 @@ model PaymentAttempt {
 
   @@unique([intentId, idempotencyKey])
   @@index([intentId])
-  @@index([status])
+  @@index([status, createdAt])
 }
 
 model Refund {
@@ -434,6 +434,7 @@ model WebhookEvent {
   lastError   String?
 
   @@unique([provider, eventKey])
+  @@index([processedAt, receivedAt])
 }
 
 model CashCollection {
