@@ -1,32 +1,8 @@
 [
   {
-    "advisory": "https://github.com/advisories/GHSA-fjxv-7rqg-78g4",
-    "package": "form-data <2.5.4 (via paystack-api > request)",
-    "reason": "No fix available: request is deprecated. Removed when paystack-api is replaced by a thin client.",
-    "removeBy": "P0-C.4"
-  },
-  {
-    "advisory": "https://github.com/advisories/GHSA-xq3m-2v4x-88gg",
-    "package": "protobufjs <7.5.5 (via @nestjs/terminus > @grpc/proto-loader)",
-    "reason": "Fix available in range via npm audit fix; needs a reviewed lockfile update.",
-    "removeBy": "dependency update task"
-  },
-  {
-    "advisory": "https://github.com/advisories/GHSA-jqcg-44mw-7w3h",
-    "package": "proxy-addr <2.0.8 (via express)",
-    "reason": "Fix available in range via npm audit fix; needs a reviewed lockfile update.",
-    "removeBy": "dependency update task"
-  },
-  {
-    "advisory": "https://github.com/advisories/GHSA-95m3-7q98-8xr5",
-    "package": "sha.js <=2.4.11 (via @apollo/server > @apollo/utils.createhash)",
-    "reason": "Fix available in range via npm audit fix; needs a reviewed lockfile update.",
-    "removeBy": "dependency update task"
-  },
-  {
     "advisory": "https://github.com/advisories/GHSA-23hp-3jrh-7fpw",
-    "package": "tar <=7.5.18 (via bcrypt > @mapbox/node-pre-gyp)",
-    "reason": "Fix available in range via npm audit fix; needs a reviewed lockfile update.",
-    "removeBy": "dependency update task"
+    "package": "tar <=7.5.20 (via bcrypt > @mapbox/node-pre-gyp)",
+    "reason": "No in-range fix: bcrypt 5.1.1 (latest 5.x) pins @mapbox/node-pre-gyp 1.x, which needs tar 6. Only used at install time to fetch the bcrypt binary. Fixed by bcrypt 6 (major).",
+    "removeBy": "post-Phase-0 major upgrades"
   }
 ]
