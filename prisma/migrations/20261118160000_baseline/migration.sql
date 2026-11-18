@@ -1,3 +1,6 @@
+-- CreateSchema
+CREATE SCHEMA IF NOT EXISTS "public";
+
 -- CreateEnum
 CREATE TYPE "ProductStatus" AS ENUM ('DRAFT', 'PUBLISHED', 'ARCHIVED');
 
@@ -14,7 +17,19 @@ CREATE TYPE "DeliveryOptions" AS ENUM ('LOCAL_DELIVERY', 'INTERNATIONAL_DELIVERY
 CREATE TYPE "Role" AS ENUM ('USER', 'ADMIN', 'SUPER_ADMIN');
 
 -- CreateEnum
-CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'COMPLETED', 'FAILED');
+CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'COMPLETED', 'FAILED', 'ABANDONED');
+
+-- CreateEnum
+CREATE TYPE "PaymentIntentStatus" AS ENUM ('PENDING', 'PAID');
+
+-- CreateEnum
+CREATE TYPE "PaymentReviewReason" AS ENUM ('AMOUNT_MISMATCH', 'CURRENCY_MISMATCH', 'ORDER_NOT_PAYABLE', 'ALREADY_PAID');
+
+-- CreateEnum
+CREATE TYPE "PaymentProvider" AS ENUM ('PAYSTACK', 'CASH_ON_DELIVERY');
+
+-- CreateEnum
+CREATE TYPE "RefundStatus" AS ENUM ('PENDING', 'SENDING', 'PROCESSED', 'FAILED');
 
 -- CreateEnum
 CREATE TYPE "PaymentMethod" AS ENUM ('ONLINE', 'CASH_ON_DELIVERY');
@@ -29,7 +44,7 @@ CREATE TYPE "DiscountType" AS ENUM ('PERCENTAGE', 'FLAT');
 CREATE TYPE "FulfillmentType" AS ENUM ('DELIVERY', 'PICKUP');
 
 -- CreateEnum
-CREATE TYPE "ReturnStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED', 'REFUNDED');
+CREATE TYPE "ReturnStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED', 'REFUND_PENDING', 'REFUNDED');
 
 -- CreateEnum
 CREATE TYPE "InventoryAction" AS ENUM ('RESTOCK', 'ORDER_DEDUCTION', 'RETURN_RESTORE', 'ADJUSTMENT');
@@ -51,6 +66,10 @@ CREATE TABLE "User" (
     "lockedUntil" TIMESTAMP(3),
     "passwordResetToken" TEXT,
     "passwordResetTokenExp" TIMESTAMP(3),
+    "emailVerifiedAt" TIMESTAMP(3),
+    "pendingEmail" TEXT,
+    "emailVerificationToken" TEXT,
+    "emailVerificationTokenExp" TIMESTAMP(3),
 
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
 );
@@ -166,7 +185,7 @@ CREATE TABLE "Product" (
     "price" DECIMAL(10,2),
     "currentPrice" DECIMAL(10,2),
     "currency" "Currency" DEFAULT 'GHS',
-    "taxRate" DECIMAL(5,2) DEFAULT 0.00,
+    "basePrice" DECIMAL(10,2),
     "isTaxable" BOOLEAN NOT NULL DEFAULT false,
     "sku" TEXT,
     "barcode" TEXT,
@@ -255,12 +274,15 @@ CREATE TABLE "Order" (
     "userId" TEXT NOT NULL,
     "discountTotal" DECIMAL(65,30),
     "totalWithOutDiscount" DECIMAL(65,30),
+    "subtotal" DECIMAL(10,2),
+    "shippingFee" DECIMAL(10,2),
     "totalAmount" DECIMAL(10,2) NOT NULL,
     "status" "OrderStatus" NOT NULL DEFAULT 'PENDING',
     "fulfillmentType" "FulfillmentType" NOT NULL DEFAULT 'DELIVERY',
     "shippingAddressId" TEXT,
     "pickupLocationId" TEXT,
     "shippingAddressSnapshot" JSONB,
+    "pickupLocationSnapshot" JSONB,
     "trackingNumber" TEXT,
     "carrier" TEXT,
     "couponId" TEXT,
@@ -293,21 +315,87 @@ CREATE TABLE "OrderItem" (
 );
 
 -- CreateTable
-CREATE TABLE "Payment" (
+CREATE TABLE "PaymentIntent" (
     "id" TEXT NOT NULL,
     "orderId" TEXT NOT NULL,
     "amount" DECIMAL(10,2) NOT NULL,
     "currency" TEXT NOT NULL DEFAULT 'GHS',
-    "paymentMethod" TEXT NOT NULL,
+    "status" "PaymentIntentStatus" NOT NULL DEFAULT 'PENDING',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PaymentIntent_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PaymentAttempt" (
+    "id" TEXT NOT NULL,
+    "intentId" TEXT NOT NULL,
+    "provider" "PaymentProvider" NOT NULL,
+    "reference" TEXT,
+    "amount" DECIMAL(10,2) NOT NULL,
+    "currency" TEXT NOT NULL DEFAULT 'GHS',
     "status" "PaymentStatus" NOT NULL DEFAULT 'PENDING',
-    "transactionId" TEXT,
-    "paymentDetails" JSONB,
+    "rawStatus" TEXT,
+    "reviewReason" "PaymentReviewReason",
+    "channel" TEXT NOT NULL,
+    "providerDetails" JSONB,
+    "idempotencyKey" TEXT,
+    "authorizationUrl" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "deleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
 
-    CONSTRAINT "Payment_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "PaymentAttempt_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Refund" (
+    "id" TEXT NOT NULL,
+    "attemptId" TEXT NOT NULL,
+    "returnRequestId" TEXT,
+    "amount" DECIMAL(10,2) NOT NULL,
+    "currency" TEXT NOT NULL DEFAULT 'GHS',
+    "status" "RefundStatus" NOT NULL DEFAULT 'PENDING',
+    "providerRef" TEXT,
+    "failureReason" TEXT,
+    "idempotencyKey" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Refund_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "WebhookEvent" (
+    "id" TEXT NOT NULL,
+    "provider" "PaymentProvider" NOT NULL,
+    "eventKey" TEXT NOT NULL,
+    "event" TEXT NOT NULL,
+    "reference" TEXT,
+    "payload" JSONB NOT NULL,
+    "receivedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "processedAt" TIMESTAMP(3),
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "lastError" TEXT,
+
+    CONSTRAINT "WebhookEvent_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CashCollection" (
+    "id" TEXT NOT NULL,
+    "orderId" TEXT NOT NULL,
+    "attemptId" TEXT,
+    "riderId" TEXT,
+    "recordedById" TEXT,
+    "amount" DECIMAL(10,2) NOT NULL,
+    "currency" TEXT NOT NULL DEFAULT 'GHS',
+    "collectedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "CashCollection_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -420,16 +508,15 @@ CREATE TABLE "ShippingZone" (
 );
 
 -- CreateTable
-CREATE TABLE "TaxRate" (
+CREATE TABLE "Tax" (
     "id" TEXT NOT NULL,
-    "country" TEXT NOT NULL,
-    "region" TEXT,
+    "name" TEXT NOT NULL,
     "rate" DECIMAL(5,4) NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "TaxRate_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "Tax_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -463,13 +550,13 @@ CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 CREATE UNIQUE INDEX "User_phoneNumber_key" ON "User"("phoneNumber");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "User_emailVerificationToken_key" ON "User"("emailVerificationToken");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "RefreshToken_tokenHash_key" ON "RefreshToken"("tokenHash");
 
 -- CreateIndex
 CREATE INDEX "RefreshToken_userId_idx" ON "RefreshToken"("userId");
-
--- CreateIndex
-CREATE INDEX "RefreshToken_tokenHash_idx" ON "RefreshToken"("tokenHash");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "AuthProvider_providerId_key" ON "AuthProvider"("providerId");
@@ -511,9 +598,6 @@ CREATE UNIQUE INDEX "Product_sku_key" ON "Product"("sku");
 CREATE UNIQUE INDEX "Product_barcode_key" ON "Product"("barcode");
 
 -- CreateIndex
-CREATE INDEX "Product_sku_idx" ON "Product"("sku");
-
--- CreateIndex
 CREATE INDEX "Product_brandId_idx" ON "Product"("brandId");
 
 -- CreateIndex
@@ -550,16 +634,16 @@ CREATE INDEX "CartItem_discountId_idx" ON "CartItem"("discountId");
 CREATE UNIQUE INDEX "Order_orderNumber_key" ON "Order"("orderNumber");
 
 -- CreateIndex
-CREATE INDEX "Order_userId_idx" ON "Order"("userId");
-
--- CreateIndex
 CREATE INDEX "Order_userId_status_idx" ON "Order"("userId", "status");
 
 -- CreateIndex
-CREATE INDEX "Order_deleted_idx" ON "Order"("deleted");
+CREATE INDEX "Order_createdAt_idx" ON "Order"("createdAt");
 
 -- CreateIndex
-CREATE INDEX "Order_trackingNumber_idx" ON "Order"("trackingNumber");
+CREATE INDEX "Order_status_createdAt_idx" ON "Order"("status", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "OrderItem_orderId_idx" ON "OrderItem"("orderId");
 
 -- CreateIndex
 CREATE INDEX "OrderItem_productId_orderId_idx" ON "OrderItem"("productId", "orderId");
@@ -571,7 +655,46 @@ CREATE INDEX "OrderItem_variantId_idx" ON "OrderItem"("variantId");
 CREATE INDEX "OrderItem_discountId_idx" ON "OrderItem"("discountId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Payment_orderId_key" ON "Payment"("orderId");
+CREATE UNIQUE INDEX "PaymentIntent_orderId_key" ON "PaymentIntent"("orderId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PaymentAttempt_reference_key" ON "PaymentAttempt"("reference");
+
+-- CreateIndex
+CREATE INDEX "PaymentAttempt_intentId_idx" ON "PaymentAttempt"("intentId");
+
+-- CreateIndex
+CREATE INDEX "PaymentAttempt_status_createdAt_idx" ON "PaymentAttempt"("status", "createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PaymentAttempt_intentId_idempotencyKey_key" ON "PaymentAttempt"("intentId", "idempotencyKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Refund_returnRequestId_key" ON "Refund"("returnRequestId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Refund_providerRef_key" ON "Refund"("providerRef");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Refund_idempotencyKey_key" ON "Refund"("idempotencyKey");
+
+-- CreateIndex
+CREATE INDEX "Refund_attemptId_idx" ON "Refund"("attemptId");
+
+-- CreateIndex
+CREATE INDEX "Refund_status_idx" ON "Refund"("status");
+
+-- CreateIndex
+CREATE INDEX "WebhookEvent_processedAt_receivedAt_idx" ON "WebhookEvent"("processedAt", "receivedAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "WebhookEvent_provider_eventKey_key" ON "WebhookEvent"("provider", "eventKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CashCollection_attemptId_key" ON "CashCollection"("attemptId");
+
+-- CreateIndex
+CREATE INDEX "CashCollection_orderId_idx" ON "CashCollection"("orderId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "WishList_userId_key" ON "WishList"("userId");
@@ -586,9 +709,6 @@ CREATE INDEX "AuditLog_userId_idx" ON "AuditLog"("userId");
 CREATE UNIQUE INDEX "Coupon_code_key" ON "Coupon"("code");
 
 -- CreateIndex
-CREATE INDEX "Coupon_code_idx" ON "Coupon"("code");
-
--- CreateIndex
 CREATE INDEX "Coupon_isActive_expiresAt_idx" ON "Coupon"("isActive", "expiresAt");
 
 -- CreateIndex
@@ -596,9 +716,6 @@ CREATE UNIQUE INDEX "CouponUsage_orderId_key" ON "CouponUsage"("orderId");
 
 -- CreateIndex
 CREATE INDEX "CouponUsage_userId_idx" ON "CouponUsage"("userId");
-
--- CreateIndex
-CREATE INDEX "CouponUsage_couponId_idx" ON "CouponUsage"("couponId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "CouponUsage_couponId_userId_key" ON "CouponUsage"("couponId", "userId");
@@ -610,16 +727,10 @@ CREATE INDEX "ReturnRequest_orderId_idx" ON "ReturnRequest"("orderId");
 CREATE INDEX "ReturnRequest_userId_idx" ON "ReturnRequest"("userId");
 
 -- CreateIndex
-CREATE INDEX "ReturnRequest_status_idx" ON "ReturnRequest"("status");
-
--- CreateIndex
 CREATE INDEX "InventoryLog_productId_idx" ON "InventoryLog"("productId");
 
 -- CreateIndex
 CREATE INDEX "InventoryLog_variantId_idx" ON "InventoryLog"("variantId");
-
--- CreateIndex
-CREATE INDEX "InventoryLog_action_idx" ON "InventoryLog"("action");
 
 -- CreateIndex
 CREATE INDEX "InventoryLog_createdAt_idx" ON "InventoryLog"("createdAt");
@@ -634,10 +745,7 @@ CREATE UNIQUE INDEX "ShippingZone_name_key" ON "ShippingZone"("name");
 CREATE INDEX "ShippingZone_isActive_idx" ON "ShippingZone"("isActive");
 
 -- CreateIndex
-CREATE INDEX "TaxRate_country_idx" ON "TaxRate"("country");
-
--- CreateIndex
-CREATE UNIQUE INDEX "TaxRate_country_region_key" ON "TaxRate"("country", "region");
+CREATE UNIQUE INDEX "Tax_name_key" ON "Tax"("name");
 
 -- CreateIndex
 CREATE INDEX "_ProductToTag_B_index" ON "_ProductToTag"("B");
@@ -724,7 +832,22 @@ ALTER TABLE "OrderItem" ADD CONSTRAINT "OrderItem_variantId_fkey" FOREIGN KEY ("
 ALTER TABLE "OrderItem" ADD CONSTRAINT "OrderItem_discountId_fkey" FOREIGN KEY ("discountId") REFERENCES "Discount"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Payment" ADD CONSTRAINT "Payment_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "PaymentIntent" ADD CONSTRAINT "PaymentIntent_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PaymentAttempt" ADD CONSTRAINT "PaymentAttempt_intentId_fkey" FOREIGN KEY ("intentId") REFERENCES "PaymentIntent"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Refund" ADD CONSTRAINT "Refund_attemptId_fkey" FOREIGN KEY ("attemptId") REFERENCES "PaymentAttempt"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Refund" ADD CONSTRAINT "Refund_returnRequestId_fkey" FOREIGN KEY ("returnRequestId") REFERENCES "ReturnRequest"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CashCollection" ADD CONSTRAINT "CashCollection_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CashCollection" ADD CONSTRAINT "CashCollection_attemptId_fkey" FOREIGN KEY ("attemptId") REFERENCES "PaymentAttempt"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "WishList" ADD CONSTRAINT "WishList_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -767,3 +890,31 @@ ALTER TABLE "_DiscountToProduct" ADD CONSTRAINT "_DiscountToProduct_A_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "_DiscountToProduct" ADD CONSTRAINT "_DiscountToProduct_B_fkey" FOREIGN KEY ("B") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- Baseline (ADR-0017): replaces the earlier migration history, which no environment with real data ever ran.
+-- What follows is schema Prisma cannot declare, carried over from that history.
+
+-- Stock can never go negative (CLAUDE.md non-negotiable).
+ALTER TABLE "Product" ADD CONSTRAINT "Product_quantity_non_negative" CHECK ("quantity" >= 0);
+ALTER TABLE "Variant" ADD CONSTRAINT "Variant_quantity_non_negative" CHECK ("quantity" >= 0);
+
+-- Ledger rows are financial records: corrections are new rows or status changes, never deletes (DB-02).
+-- TRUNCATE does not fire row triggers, which is how test databases are reset.
+CREATE FUNCTION "payment_ledger_forbid_delete"() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'Rows in "%" are financial records and cannot be deleted', TG_TABLE_NAME
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+CREATE TRIGGER "PaymentIntent_forbid_delete" BEFORE DELETE ON "PaymentIntent"
+  FOR EACH ROW EXECUTE FUNCTION "payment_ledger_forbid_delete"();
+CREATE TRIGGER "PaymentAttempt_forbid_delete" BEFORE DELETE ON "PaymentAttempt"
+  FOR EACH ROW EXECUTE FUNCTION "payment_ledger_forbid_delete"();
+CREATE TRIGGER "Refund_forbid_delete" BEFORE DELETE ON "Refund"
+  FOR EACH ROW EXECUTE FUNCTION "payment_ledger_forbid_delete"();
+CREATE TRIGGER "CashCollection_forbid_delete" BEFORE DELETE ON "CashCollection"
+  FOR EACH ROW EXECUTE FUNCTION "payment_ledger_forbid_delete"();
+
+-- Order numbers start at 10001. START also makes a later RESTART or TRUNCATE ... RESTART IDENTITY return to 10001.
+ALTER SEQUENCE "Order_orderNumber_seq" START WITH 10001 RESTART WITH 10001;

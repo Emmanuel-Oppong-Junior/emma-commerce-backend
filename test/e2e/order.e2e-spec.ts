@@ -94,6 +94,18 @@ describe('Orders (e2e)', () => {
       createdOrderId = res.body.data.createOrder.id;
     });
 
+    it('numbers orders from 10001 (ADR-0017 baseline)', async () => {
+      const res = await gqlRequest(
+        app,
+        `query { order(orderId: "${createdOrderId}") { orderNumber } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.order.orderNumber).toBeGreaterThanOrEqual(10001);
+    });
+
     it('fails when the cart is empty', async () => {
       // Arrange — cart was consumed by the previous test; no items remain
       const mutation = `
