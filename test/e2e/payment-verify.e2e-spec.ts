@@ -24,6 +24,15 @@ describe('Payment verification (e2e)', () => {
   let sendPaymentConfirmation: jest.SpyInstance;
   let orderCount = 0;
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  // The confirmation email goes out on a detached promise after the response, so wait for it before counting.
+  async function confirmationEmailsSent(): Promise<number> {
+    const deadline = Date.now() + 2000;
+    while (sendPaymentConfirmation.mock.calls.length === 0 && Date.now() < deadline) await sleep(20);
+    await sleep(100);
+    return sendPaymentConfirmation.mock.calls.length;
+  }
+
   const charged: Partial<VerifyResult> = { status: 'success', amount: 10000, currency: 'GHS' };
   const paystack = {
     verifyTransaction: jest.fn(
@@ -119,7 +128,7 @@ describe('Payment verification (e2e)', () => {
     });
     expect(ledger.refunds).toHaveLength(0);
     expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
-    expect(sendPaymentConfirmation).toHaveBeenCalledTimes(1);
+    expect(await confirmationEmailsSent()).toBe(1);
   });
 
   it('changes nothing when a paid reference is verified again after the order was DELIVERED', async () => {
@@ -157,7 +166,7 @@ describe('Payment verification (e2e)', () => {
       idempotencyKey: `auto-refund:${ledger.attempts[0].id}`,
     });
     expect(ledger.refunds[0].amount.toString()).toBe('100');
-    expect(sendPaymentConfirmation).not.toHaveBeenCalled();
+    expect(await confirmationEmailsSent()).toBe(0);
   });
 
   it.each([
@@ -183,7 +192,7 @@ describe('Payment verification (e2e)', () => {
     expect(ledger.refunds).toHaveLength(1);
     expect(ledger.refunds[0].amount.toString()).toBe(refundAmount);
     expect(ledger.refunds[0].currency).toBe(refundCurrency);
-    expect(sendPaymentConfirmation).not.toHaveBeenCalled();
+    expect(await confirmationEmailsSent()).toBe(0);
   });
 
   it('flags a second successful attempt for an order already paid and queues its refund', async () => {
@@ -207,7 +216,7 @@ describe('Payment verification (e2e)', () => {
     const late = ledger.attempts.find((attempt) => attempt.id === first.paymentId)!;
     expect(late).toMatchObject({ status: PaymentStatus.COMPLETED, reviewReason: 'ALREADY_PAID' });
     expect(ledger.refunds).toEqual([expect.objectContaining({ attemptId: first.paymentId, status: 'PENDING' })]);
-    expect(sendPaymentConfirmation).toHaveBeenCalledTimes(1);
+    expect(await confirmationEmailsSent()).toBe(1);
   });
 
   it('moves the order once when the customer verify and the webhook race', async () => {
@@ -222,6 +231,6 @@ describe('Payment verification (e2e)', () => {
     expect(ledger.orderStatus).toBe(OrderStatus.PROCESSING);
     expect(ledger.attempts[0]).toMatchObject({ status: PaymentStatus.COMPLETED, reviewReason: null });
     expect(ledger.refunds).toHaveLength(0);
-    expect(sendPaymentConfirmation).toHaveBeenCalledTimes(1);
+    expect(await confirmationEmailsSent()).toBe(1);
   });
 });
