@@ -1952,7 +1952,7 @@ All tax operations: `ADMIN`, `SUPER_ADMIN` only.
 
 ### 2.19 Analytics
 
-All analytics queries: `ADMIN`, `SUPER_ADMIN` only.
+All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenue definition, described under [16. Analytics Queries](#16-analytics-queries).
 
 ---
 
@@ -1961,16 +1961,20 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only.
 - **Args** (`@ArgsType`):
 ```typescript
 {
-  startDate: DateTime; // Required.
-  endDate: DateTime;   // Required.
+  startDate: DateTime; // Required. Inclusive.
+  endDate: DateTime;   // Required. Inclusive.
 }
 ```
 - **Response: `SalesReport`**:
 ```typescript
 {
-  totalRevenue: Float;
-  orderCount: number;
-  averageOrderValue: Float;
+  grossRevenue: Float;      // Payments accepted for orders in the period
+  refunds: Float;           // Refunds processed in the period
+  netRevenue: Float;        // grossRevenue - refunds
+  totalRevenue: Float;      // Deprecated: same value as netRevenue
+  itemSales: Float;         // Item sales of the orders paid in the period
+  orderCount: number;       // Orders paid in the period
+  averageOrderValue: Float; // grossRevenue / orderCount
 }
 ```
 
@@ -1979,14 +1983,14 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only.
 #### `topProducts`
 - **Type**: Query
 - **Args**: `limit?: number` (default 10, 1–100)
-- **Response**: `[TopProduct!]!`
+- **Response**: `[TopProduct!]!` (paid orders, all time)
 
 ```typescript
 {
   productId: string;
   productName: string;
-  totalQuantitySold: number;
-  totalRevenue: Float;
+  totalQuantitySold: number; // Units sold in paid orders
+  totalRevenue: Float;       // Item sales in paid orders
 }
 ```
 
@@ -1994,14 +1998,14 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only.
 
 #### `revenueByCategory`
 - **Type**: Query
-- **Response**: `[RevenueByCategoryEntity!]!`
+- **Response**: `[RevenueByCategoryEntity!]!` (paid orders, all time)
 
 ```typescript
 {
   categoryId?: string;
   categoryName?: string;
-  totalRevenue: Float;
-  orderCount: number;
+  totalRevenue: Float; // Item sales in paid orders
+  orderCount: number;  // Paid orders containing this category
 }
 ```
 
@@ -2014,8 +2018,10 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only.
 ```typescript
 {
   totalUsers: number;
-  ordersToday: number;
-  revenueToday: Float;
+  ordersToday: number;       // Orders paid today
+  revenueToday: Float;       // Net revenue today
+  grossRevenueToday: Float;  // Payments accepted today
+  refundsToday: Float;       // Refunds processed today
   lowStockProductCount: number;
   lowStockVariantCount: number;
 }
@@ -3434,30 +3440,58 @@ Not applicable — this system does not have in-app notification records.
 
 ## 16. Analytics Queries
 
-All analytics are `ADMIN`/`SUPER_ADMIN` only.
+All analytics are `ADMIN`/`SUPER_ADMIN` only. Amounts are GHS.
+
+### Revenue definition
+
+Revenue comes from the payment ledger, not from order status:
+
+- **Paid order**: an order with an accepted payment, meaning an online payment that settled for the order, or cash collected for a cash-on-delivery order. Unpaid online checkouts, cancelled orders and cash-on-delivery orders not yet collected are not paid orders.
+- **Gross revenue**: the accepted payments (the order total: items + shipping - coupon discount). A payment is counted when it was accepted: when the online payment settled, or when the cash was collected. Payments captured but not accepted for their order (for example a late payment on a cancelled order) are never revenue; they are refunded automatically.
+- **Refunds**: refunds with status `PROCESSED` against accepted payments, counted when they were processed. Pending, sending or failed refunds are not deducted.
+- **Net revenue**: gross revenue - refunds.
+- **Order count** and **average order value** (gross revenue / order count) cover the orders paid in the period.
+
+The dashboard's "today" figures are `salesReport` from the start of today (server time) until now.
+
+### Product and category breakdowns
+
+`topProducts` and `revenueByCategory` cover the same population (paid orders), all time. Their `totalRevenue` is **item sales**: unit price paid × quantity, after item-level discounts but before the order-level coupon, without shipping, and before refunds (refunds are recorded per order, not per item). Relation to the sales report over the same paid orders:
+
+```
+itemSales    = sum of topProducts.totalRevenue over all products = sum of revenueByCategory.totalRevenue
+grossRevenue = itemSales + shipping fees - coupon discounts
+netRevenue   = grossRevenue - refunds
+```
+
+`salesReport.itemSales` is the item sales of the orders paid in the requested period, so an all-time `salesReport` reconciles with the breakdowns.
 
 ### `salesReport(startDate, endDate)`
 
-Returns aggregate sales data for the date range:
+Both dates are inclusive.
 
 ```typescript
 {
-  totalRevenue: Float;          // Sum of all order amounts in the period
-  orderCount: number;           // Count of orders in the period
-  averageOrderValue: Float;     // totalRevenue / orderCount
+  grossRevenue: Float;          // Accepted payments in the period
+  refunds: Float;               // Processed refunds in the period
+  netRevenue: Float;            // grossRevenue - refunds
+  totalRevenue: Float;          // Deprecated: same value as netRevenue
+  itemSales: Float;             // Item sales of the orders paid in the period
+  orderCount: number;           // Orders paid in the period
+  averageOrderValue: Float;     // grossRevenue / orderCount (0 when there are no paid orders)
 }
 ```
 
 ### `topProducts(limit?)`
 
-Returns best-selling products by quantity, descending:
+Returns the best-selling products of paid orders by quantity, descending:
 
 ```typescript
 [{
   productId: string;
   productName: string;
   totalQuantitySold: number;
-  totalRevenue: Float;
+  totalRevenue: Float;          // Item sales
 }]
 ```
 
@@ -3465,14 +3499,14 @@ Default `limit`: 10. Max: 100.
 
 ### `revenueByCategory()`
 
-Returns revenue grouped by category:
+Returns item sales of paid orders grouped by category, highest first:
 
 ```typescript
 [{
   categoryId?: string;
   categoryName?: string;
-  totalRevenue: Float;
-  orderCount: number;
+  totalRevenue: Float;          // Item sales
+  orderCount: number;           // Paid orders containing this category
 }]
 ```
 
@@ -3483,8 +3517,10 @@ Snapshot of key admin metrics:
 ```typescript
 {
   totalUsers: number;
-  ordersToday: number;
-  revenueToday: Float;
+  ordersToday: number;          // Orders paid today
+  revenueToday: Float;          // Net revenue today
+  grossRevenueToday: Float;     // Accepted payments today
+  refundsToday: Float;          // Processed refunds today
   lowStockProductCount: number;
   lowStockVariantCount: number;
 }

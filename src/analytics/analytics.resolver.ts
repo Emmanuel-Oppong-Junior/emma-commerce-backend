@@ -14,17 +14,21 @@ import { Role } from '../users/enums/role.enum';
 export class AnalyticsResolver {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
-  @Query(() => SalesReport, { description: 'Sales report for a date range (admin only)' })
+  @Query(() => SalesReport, {
+    description: 'Gross revenue, refunds and net revenue recognised in a date range (admin only)',
+  })
   salesReport(@Args() args: SalesReportArgs) {
     return this.analyticsService.getSalesReport(args.startDate, args.endDate);
   }
 
-  @Query(() => [TopProduct], { description: 'Best-selling products by quantity (admin only)' })
+  @Query(() => [TopProduct], { description: 'Best-selling products of paid orders by quantity, all time (admin only)' })
   topProducts(@Args() args: TopProductsArgs) {
     return this.analyticsService.getTopProducts(args.limit);
   }
 
-  @Query(() => [RevenueByCategoryEntity], { description: 'Revenue grouped by category (admin only)' })
+  @Query(() => [RevenueByCategoryEntity], {
+    description: 'Item sales of paid orders grouped by category, all time (admin only)',
+  })
   revenueByCategory() {
     return this.analyticsService.getRevenueByCategory();
   }

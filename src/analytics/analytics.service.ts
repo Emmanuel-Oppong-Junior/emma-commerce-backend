@@ -1,46 +1,97 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SalesReport } from './entities/sales-report.entity';
 import { TopProduct } from './entities/top-product.entity';
 import { RevenueByCategoryEntity } from './entities/revenue-by-category.entity';
 import { DashboardSummary } from './entities/dashboard-summary.entity';
 
+/**
+ * A payment accepted for its order: a settled online attempt or a recorded cash collection (which also writes a
+ * COMPLETED cash-on-delivery attempt). Captured payments held for review are excluded; they are queued for refund.
+ */
+const ACCEPTED_ATTEMPT = Prisma.sql`pa.status = 'COMPLETED' AND pa."reviewReason" IS NULL AND pa.deleted = false`;
+
+// An attempt has no settled-at column: updatedAt is written by the settling update and only touched again by an
+// admin soft delete or restore. Cash is recognised when it was collected.
+const ACCEPTED_PAYMENTS = Prisma.sql`
+  SELECT intent."orderId", pa.amount, COALESCE(cc."collectedAt", pa."updatedAt") AS "recognisedAt"
+  FROM "PaymentAttempt" pa
+  JOIN "PaymentIntent" intent ON intent.id = pa."intentId"
+  LEFT JOIN "CashCollection" cc ON cc."attemptId" = pa.id
+  WHERE ${ACCEPTED_ATTEMPT}
+`;
+
 @Injectable()
 export class AnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Returns aggregated sales figures (revenue, order count, average order value) for the given date range.
-   * @param startDate - Start of the reporting period (inclusive).
-   * @param endDate - End of the reporting period (inclusive).
-   * @returns Aggregated sales report.
+   * Revenue recognised in [startDate, endDate]: payments accepted in the period (gross) minus refunds processed in
+   * the period against accepted payments. Order count and average order value cover the orders paid in the period.
    */
   async getSalesReport(startDate: Date, endDate: Date): Promise<SalesReport> {
-    const result = await this.prisma.order.aggregate({
-      where: {
-        status: { not: 'CANCELLED' },
-        deleted: false,
-        createdAt: { gte: startDate, lte: endDate },
-      },
-      _sum: { totalAmount: true },
-      _count: { id: true },
-      _avg: { totalAmount: true },
-    });
+    type RawRow = {
+      grossRevenue: Prisma.Decimal;
+      refunds: Prisma.Decimal;
+      netRevenue: Prisma.Decimal;
+      itemSales: Prisma.Decimal;
+      orderCount: number;
+      averageOrderValue: Prisma.Decimal;
+    };
+    const [row] = await this.prisma.$queryRaw<RawRow[]>`
+      WITH period AS (
+        SELECT * FROM (${ACCEPTED_PAYMENTS}) accepted
+        WHERE "recognisedAt" >= ${startDate} AND "recognisedAt" <= ${endDate}
+      ),
+      totals AS (
+        SELECT COALESCE(SUM(amount), 0) AS gross, COUNT(DISTINCT "orderId")::int AS "orderCount" FROM period
+      ),
+      items AS (
+        SELECT COALESCE(SUM(oi."priceAtOrder" * oi.quantity), 0) AS "itemSales"
+        FROM "OrderItem" oi
+        WHERE oi."orderId" IN (SELECT "orderId" FROM period)
+      ),
+      refunded AS (
+        SELECT COALESCE(SUM(r.amount), 0) AS refunds
+        FROM "Refund" r
+        JOIN "PaymentAttempt" pa ON pa.id = r."attemptId"
+        WHERE r.status = 'PROCESSED' AND ${ACCEPTED_ATTEMPT}
+          AND r."updatedAt" >= ${startDate} AND r."updatedAt" <= ${endDate}
+      )
+      SELECT
+        t.gross AS "grossRevenue",
+        r.refunds,
+        t.gross - r.refunds AS "netRevenue",
+        i."itemSales",
+        t."orderCount",
+        COALESCE(ROUND(t.gross / NULLIF(t."orderCount", 0), 2), 0) AS "averageOrderValue"
+      FROM totals t, items i, refunded r
+    `;
 
+    const netRevenue = Number(row.netRevenue);
     return {
-      totalRevenue: Number(result._sum.totalAmount ?? 0),
-      orderCount: result._count.id,
-      averageOrderValue: Number(result._avg.totalAmount ?? 0),
+      grossRevenue: Number(row.grossRevenue),
+      refunds: Number(row.refunds),
+      netRevenue,
+      totalRevenue: netRevenue,
+      itemSales: Number(row.itemSales),
+      orderCount: row.orderCount,
+      averageOrderValue: Number(row.averageOrderValue),
     };
   }
 
   /**
-   * Returns the top-selling products ranked by total quantity sold.
+   * Returns the top-selling products of paid orders, ranked by quantity sold, with their item sales.
    * @param limit - Maximum number of products to return.
-   * @returns List of top products with quantity sold and revenue.
    */
   async getTopProducts(limit: number): Promise<TopProduct[]> {
-    type RawRow = { productId: string; productName: string; totalQuantitySold: bigint; totalRevenue: number };
+    type RawRow = {
+      productId: string;
+      productName: string;
+      totalQuantitySold: bigint;
+      totalRevenue: Prisma.Decimal;
+    };
     const rows = await this.prisma.$queryRaw<RawRow[]>`
       SELECT
         oi."productId",
@@ -49,10 +100,9 @@ export class AnalyticsService {
         SUM(oi."priceAtOrder" * oi.quantity) AS "totalRevenue"
       FROM "OrderItem" oi
       JOIN "Product" p ON p.id = oi."productId"
-      JOIN "Order" o ON o.id = oi."orderId"
-      WHERE o."deleted" = false AND o.status != 'CANCELLED'
+      WHERE oi."orderId" IN (SELECT "orderId" FROM (${ACCEPTED_PAYMENTS}) accepted)
       GROUP BY oi."productId", p.name
-      ORDER BY "totalQuantitySold" DESC
+      ORDER BY "totalQuantitySold" DESC, oi."productId"
       LIMIT ${limit}
     `;
 
@@ -64,23 +114,24 @@ export class AnalyticsService {
     }));
   }
 
-  /**
-   * Returns total revenue and order count grouped by product category.
-   * @returns List of category revenue breakdowns, ordered by revenue descending.
-   */
+  /** Item sales and paid-order count of paid orders grouped by product category, highest sales first. */
   async getRevenueByCategory(): Promise<RevenueByCategoryEntity[]> {
-    type RawRow = { categoryId: string | null; categoryName: string | null; totalRevenue: number; orderCount: bigint };
+    type RawRow = {
+      categoryId: string | null;
+      categoryName: string | null;
+      totalRevenue: Prisma.Decimal;
+      orderCount: bigint;
+    };
     const rows = await this.prisma.$queryRaw<RawRow[]>`
       SELECT
         p."categoryId",
         c.name AS "categoryName",
         SUM(oi."priceAtOrder" * oi.quantity) AS "totalRevenue",
-        COUNT(DISTINCT o.id)::bigint AS "orderCount"
+        COUNT(DISTINCT oi."orderId")::bigint AS "orderCount"
       FROM "OrderItem" oi
       JOIN "Product" p ON p.id = oi."productId"
       LEFT JOIN "Category" c ON c.id = p."categoryId"
-      JOIN "Order" o ON o.id = oi."orderId"
-      WHERE o."deleted" = false AND o.status != 'CANCELLED'
+      WHERE oi."orderId" IN (SELECT "orderId" FROM (${ACCEPTED_PAYMENTS}) accepted)
       GROUP BY p."categoryId", c.name
       ORDER BY "totalRevenue" DESC
     `;
@@ -94,27 +145,17 @@ export class AnalyticsService {
   }
 
   /**
-   * Returns a real-time snapshot of key business metrics for the admin dashboard.
-   * Includes today's orders and revenue, active user count, and low-stock counts.
-   * @returns Dashboard summary with aggregated KPIs.
+   * Returns a real-time snapshot of key business metrics for the admin dashboard. Today's orders and revenue are
+   * the sales report from the start of today until now.
    */
   async getDashboardSummary(): Promise<DashboardSummary> {
-    const todayStart = new Date();
+    const now = new Date();
+    const todayStart = new Date(now);
     todayStart.setHours(0, 0, 0, 0);
 
-    const [totalUsers, ordersToday, revenueToday, lowStockProducts, lowStockVariants] = await Promise.all([
+    const [totalUsers, today, lowStockProducts, lowStockVariants] = await Promise.all([
       this.prisma.user.count({ where: { isActive: true } }),
-      this.prisma.order.count({
-        where: { deleted: false, createdAt: { gte: todayStart } },
-      }),
-      this.prisma.order.aggregate({
-        where: {
-          deleted: false,
-          status: { not: 'CANCELLED' },
-          createdAt: { gte: todayStart },
-        },
-        _sum: { totalAmount: true },
-      }),
+      this.getSalesReport(todayStart, now),
       this.prisma.$queryRaw<[{ count: bigint }]>`
         SELECT COUNT(*)::bigint AS count FROM "Product"
         WHERE "isActive" = true AND quantity <= COALESCE("lowStockAlert", 5)
@@ -127,10 +168,12 @@ export class AnalyticsService {
 
     return {
       totalUsers,
-      ordersToday,
-      revenueToday: Number(revenueToday._sum.totalAmount ?? 0),
-      lowStockProductCount: lowStockProducts as unknown as number,
-      lowStockVariantCount: lowStockVariants as unknown as number,
+      ordersToday: today.orderCount,
+      revenueToday: today.netRevenue,
+      grossRevenueToday: today.grossRevenue,
+      refundsToday: today.refunds,
+      lowStockProductCount: lowStockProducts,
+      lowStockVariantCount: lowStockVariants,
     };
   }
 }

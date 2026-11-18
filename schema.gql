@@ -483,9 +483,18 @@ enum Currency {
 }
 
 type DashboardSummary {
+  """Payments accepted today (salesReport.grossRevenue for today)"""
+  grossRevenueToday: Float!
   lowStockProductCount: Int!
   lowStockVariantCount: Int!
+
+  """Orders paid today (salesReport.orderCount for today)"""
   ordersToday: Int!
+
+  """Refunds processed today (salesReport.refunds for today)"""
+  refundsToday: Float!
+
+  """Net revenue today (salesReport.netRevenue for today)"""
   revenueToday: Float!
   totalUsers: Int!
 }
@@ -1319,13 +1328,15 @@ type Query {
   """Get all return requests (admin only)"""
   returnRequests: [ReturnRequestEntity!]!
 
-  """Revenue grouped by category (admin only)"""
+  """Item sales of paid orders grouped by category, all time (admin only)"""
   revenueByCategory: [RevenueByCategoryEntity!]!
 
   """Retrieves a specific review by ID"""
   review(reviewId: String!): Review!
 
-  """Sales report for a date range (admin only)"""
+  """
+  Gross revenue, refunds and net revenue recognised in a date range (admin only)
+  """
   salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
 
   """Get a shipping zone by ID (admin only)"""
@@ -1355,7 +1366,9 @@ type Query {
   """Get all taxes (admin only)"""
   taxes: [TaxEntity!]!
 
-  """Best-selling products by quantity (admin only)"""
+  """
+  Best-selling products of paid orders by quantity, all time (admin only)
+  """
   topProducts(limit: Int! = 10): [TopProduct!]!
 
   """Retrieves all addresses for the current user"""
@@ -1492,7 +1505,13 @@ enum ReturnStatusEnum {
 type RevenueByCategoryEntity {
   categoryId: ID
   categoryName: String
+
+  """Paid orders containing this category"""
   orderCount: Int!
+
+  """
+  Item sales of this category in paid orders (unit price paid x quantity)
+  """
   totalRevenue: Float!
 }
 
@@ -1516,10 +1535,32 @@ enum Role {
   USER
 }
 
+"""
+Revenue recognised in a period. A payment counts when it is accepted for its order (online payment settled, or cash collected); a refund counts when it is processed.
+"""
 type SalesReport {
+  """grossRevenue / orderCount"""
   averageOrderValue: Float!
+
+  """
+  Payments accepted for orders in the period (order totals incl. shipping, after coupons)
+  """
+  grossRevenue: Float!
+
+  """
+  Item sales (unit price paid x quantity) of the orders paid in the period. grossRevenue = itemSales + shipping fees - coupon discounts.
+  """
+  itemSales: Float!
+
+  """grossRevenue minus refunds"""
+  netRevenue: Float!
+
+  """Orders paid in the period"""
   orderCount: Int!
-  totalRevenue: Float!
+
+  """Refunds processed in the period against accepted payments"""
+  refunds: Float!
+  totalRevenue: Float! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
 }
 
 type ShippingZoneEntity {
@@ -1635,7 +1676,11 @@ type TaxEntity {
 type TopProduct {
   productId: ID!
   productName: String!
+
+  """Units sold in paid orders"""
   totalQuantitySold: Int!
+
+  """Item sales of this product in paid orders (unit price paid x quantity)"""
   totalRevenue: Float!
 }
 

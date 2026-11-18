@@ -8,9 +8,9 @@ export class RevenueByCategoryEntity {
   @Field({ nullable: true })
   categoryName?: string;
 
-  @Field(() => Float)
+  @Field(() => Float, { description: 'Item sales of this category in paid orders (unit price paid x quantity)' })
   totalRevenue: number;
 
-  @Field(() => Int)
+  @Field(() => Int, { description: 'Paid orders containing this category' })
   orderCount: number;
 }

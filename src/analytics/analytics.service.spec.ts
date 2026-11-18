@@ -1,16 +1,39 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import { AnalyticsService } from './analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const mockPrisma = {
-  order: {
-    aggregate: jest.fn(),
-    count: jest.fn(),
-  },
   user: {
     count: jest.fn(),
   },
   $queryRaw: jest.fn(),
+};
+
+const salesRow = (values: {
+  grossRevenue: string;
+  refunds: string;
+  netRevenue: string;
+  itemSales: string;
+  orderCount: number;
+  averageOrderValue: string;
+}) => ({
+  ...values,
+  grossRevenue: new Prisma.Decimal(values.grossRevenue),
+  refunds: new Prisma.Decimal(values.refunds),
+  netRevenue: new Prisma.Decimal(values.netRevenue),
+  itemSales: new Prisma.Decimal(values.itemSales),
+  averageOrderValue: new Prisma.Decimal(values.averageOrderValue),
+});
+
+/** Joins the static SQL of a tagged-template `$queryRaw` call, inlining nested Prisma.sql fragments. */
+const sqlOf = (call: unknown[]): string => {
+  const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+  return strings.reduce((sql, part, i) => {
+    const value = values[i - 1];
+    const fragment = typeof value === 'object' && value !== null && 'sql' in value ? (value as Prisma.Sql).sql : '?';
+    return sql + fragment + part;
+  });
 };
 
 describe('AnalyticsService', () => {
@@ -26,96 +49,130 @@ describe('AnalyticsService', () => {
   });
 
   describe('getSalesReport', () => {
-    it('should return sales report with totals', async () => {
-      mockPrisma.order.aggregate.mockResolvedValue({
-        _sum: { totalAmount: 5000 },
-        _count: { id: 20 },
-        _avg: { totalAmount: 250 },
-      });
+    it('maps gross revenue, refunds and net revenue computed in SQL, with totalRevenue equal to net revenue', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        salesRow({
+          grossRevenue: '375.00',
+          refunds: '40.00',
+          netRevenue: '335.00',
+          itemSales: '340.00',
+          orderCount: 3,
+          averageOrderValue: '125.00',
+        }),
+      ]);
 
       const result = await service.getSalesReport(new Date('2025-01-01'), new Date('2025-01-31'));
 
       expect(result).toEqual({
-        totalRevenue: 5000,
-        orderCount: 20,
-        averageOrderValue: 250,
+        grossRevenue: 375,
+        refunds: 40,
+        netRevenue: 335,
+        totalRevenue: 335,
+        itemSales: 340,
+        orderCount: 3,
+        averageOrderValue: 125,
       });
-      expect(mockPrisma.order.aggregate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ status: { not: 'CANCELLED' }, deleted: false }),
-        }),
-      );
     });
 
-    it('should return zeros when there are no orders', async () => {
-      mockPrisma.order.aggregate.mockResolvedValue({
-        _sum: { totalAmount: null },
-        _count: { id: 0 },
-        _avg: { totalAmount: null },
-      });
+    it('counts only accepted payments and processed refunds against them, within the period', async () => {
+      mockPrisma.$queryRaw.mockResolvedValue([
+        salesRow({
+          grossRevenue: '0',
+          refunds: '0',
+          netRevenue: '0',
+          itemSales: '0',
+          orderCount: 0,
+          averageOrderValue: '0',
+        }),
+      ]);
+      const start = new Date('2025-01-01');
+      const end = new Date('2025-01-31');
 
-      const result = await service.getSalesReport(new Date('2025-01-01'), new Date('2025-01-31'));
+      const result = await service.getSalesReport(start, end);
 
-      expect(result).toEqual({ totalRevenue: 0, orderCount: 0, averageOrderValue: 0 });
+      expect(result).toMatchObject({ grossRevenue: 0, netRevenue: 0, orderCount: 0, averageOrderValue: 0 });
+      const call = mockPrisma.$queryRaw.mock.calls[0];
+      const sql = sqlOf(call);
+      expect(sql).toContain(`pa.status = 'COMPLETED' AND pa."reviewReason" IS NULL AND pa.deleted = false`);
+      expect(sql).toContain(`r.status = 'PROCESSED'`);
+      expect(sql).not.toContain('"Order"');
+      expect(call.slice(1)).toEqual(expect.arrayContaining([start, end]));
     });
   });
 
   describe('getTopProducts', () => {
-    it('should return top products with mapped values', async () => {
+    it('maps top products of paid orders', async () => {
       mockPrisma.$queryRaw.mockResolvedValue([
-        { productId: 'p1', productName: 'T-Shirt', totalQuantitySold: BigInt(50), totalRevenue: 999.5 },
-        { productId: 'p2', productName: 'Hoodie', totalQuantitySold: BigInt(30), totalRevenue: 1500 },
+        {
+          productId: 'p1',
+          productName: 'T-Shirt',
+          totalQuantitySold: BigInt(50),
+          totalRevenue: new Prisma.Decimal('999.50'),
+        },
+        {
+          productId: 'p2',
+          productName: 'Hoodie',
+          totalQuantitySold: BigInt(30),
+          totalRevenue: new Prisma.Decimal(1500),
+        },
       ]);
 
       const result = await service.getTopProducts(5);
 
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({
-        productId: 'p1',
-        productName: 'T-Shirt',
-        totalQuantitySold: 50,
-        totalRevenue: 999.5,
-      });
-      expect(result[1].productName).toBe('Hoodie');
+      expect(result).toEqual([
+        { productId: 'p1', productName: 'T-Shirt', totalQuantitySold: 50, totalRevenue: 999.5 },
+        { productId: 'p2', productName: 'Hoodie', totalQuantitySold: 30, totalRevenue: 1500 },
+      ]);
+      expect(sqlOf(mockPrisma.$queryRaw.mock.calls[0])).toContain(`pa."reviewReason" IS NULL`);
     });
 
-    it('should return empty array when no products', async () => {
+    it('returns an empty array when nothing was paid', async () => {
       mockPrisma.$queryRaw.mockResolvedValue([]);
 
-      const result = await service.getTopProducts(5);
-
-      expect(result).toEqual([]);
+      expect(await service.getTopProducts(5)).toEqual([]);
     });
   });
 
   describe('getRevenueByCategory', () => {
-    it('should return revenue by category with mapped values', async () => {
+    it('maps category item sales of paid orders', async () => {
       mockPrisma.$queryRaw.mockResolvedValue([
-        { categoryId: 'cat1', categoryName: 'Clothing', totalRevenue: 3000, orderCount: BigInt(15) },
-        { categoryId: null, categoryName: null, totalRevenue: 500, orderCount: BigInt(5) },
+        {
+          categoryId: 'cat1',
+          categoryName: 'Clothing',
+          totalRevenue: new Prisma.Decimal(3000),
+          orderCount: BigInt(15),
+        },
+        { categoryId: null, categoryName: null, totalRevenue: new Prisma.Decimal(500), orderCount: BigInt(5) },
       ]);
 
       const result = await service.getRevenueByCategory();
 
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({
-        categoryId: 'cat1',
-        categoryName: 'Clothing',
-        totalRevenue: 3000,
-        orderCount: 15,
-      });
-      expect(result[1].categoryId).toBeUndefined();
-      expect(result[1].categoryName).toBeUndefined();
+      expect(result).toEqual([
+        { categoryId: 'cat1', categoryName: 'Clothing', totalRevenue: 3000, orderCount: 15 },
+        { categoryId: undefined, categoryName: undefined, totalRevenue: 500, orderCount: 5 },
+      ]);
+      expect(sqlOf(mockPrisma.$queryRaw.mock.calls[0])).toContain(`pa."reviewReason" IS NULL`);
     });
   });
 
   describe('getDashboardSummary', () => {
-    it('should return dashboard summary with all metrics', async () => {
+    it("reports today's paid orders and revenue from the sales report since the start of today", async () => {
       mockPrisma.user.count.mockResolvedValue(100);
-      mockPrisma.order.count.mockResolvedValue(5);
-      mockPrisma.order.aggregate.mockResolvedValue({ _sum: { totalAmount: 1250 } });
-      // Two $queryRaw calls: lowStockProducts and lowStockVariants
-      mockPrisma.$queryRaw.mockResolvedValueOnce([{ count: BigInt(3) }]).mockResolvedValueOnce([{ count: BigInt(7) }]);
+      mockPrisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
+        const sql = strings.join('?');
+        if (sql.includes('FROM "Product"')) return Promise.resolve([{ count: BigInt(3) }]);
+        if (sql.includes('FROM "Variant"')) return Promise.resolve([{ count: BigInt(7) }]);
+        return Promise.resolve([
+          salesRow({
+            grossRevenue: '1300.00',
+            refunds: '50.00',
+            netRevenue: '1250.00',
+            itemSales: '1200.00',
+            orderCount: 5,
+            averageOrderValue: '260.00',
+          }),
+        ]);
+      });
 
       const result = await service.getDashboardSummary();
 
@@ -123,21 +180,40 @@ describe('AnalyticsService', () => {
         totalUsers: 100,
         ordersToday: 5,
         revenueToday: 1250,
+        grossRevenueToday: 1300,
+        refundsToday: 50,
         lowStockProductCount: 3,
         lowStockVariantCount: 7,
       });
+      const salesCall = mockPrisma.$queryRaw.mock.calls.find((call) => sqlOf(call).includes('"recognisedAt"'))!;
+      const [start, end] = salesCall.slice(1).filter((value: unknown) => value instanceof Date) as Date[];
+      expect(start.getHours()).toBe(0);
+      expect(start.getMinutes()).toBe(0);
+      expect(end.getTime()).toBeGreaterThanOrEqual(start.getTime());
     });
 
-    it('should handle zero revenue today', async () => {
+    it('reports zero revenue today when nothing was paid', async () => {
       mockPrisma.user.count.mockResolvedValue(0);
-      mockPrisma.order.count.mockResolvedValue(0);
-      mockPrisma.order.aggregate.mockResolvedValue({ _sum: { totalAmount: null } });
-      mockPrisma.$queryRaw.mockResolvedValueOnce([{ count: BigInt(0) }]).mockResolvedValueOnce([{ count: BigInt(0) }]);
+      mockPrisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
+        const sql = strings.join('?');
+        if (sql.includes('FROM "Product"') || sql.includes('FROM "Variant"')) {
+          return Promise.resolve([{ count: BigInt(0) }]);
+        }
+        return Promise.resolve([
+          salesRow({
+            grossRevenue: '0',
+            refunds: '0',
+            netRevenue: '0',
+            itemSales: '0',
+            orderCount: 0,
+            averageOrderValue: '0',
+          }),
+        ]);
+      });
 
       const result = await service.getDashboardSummary();
 
-      expect(result.revenueToday).toBe(0);
-      expect(result.totalUsers).toBe(0);
+      expect(result).toMatchObject({ totalUsers: 0, ordersToday: 0, revenueToday: 0, refundsToday: 0 });
     });
   });
 });

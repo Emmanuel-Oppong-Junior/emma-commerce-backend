@@ -5,11 +5,17 @@ export class DashboardSummary {
   @Field(() => Int)
   totalUsers: number;
 
-  @Field(() => Int)
+  @Field(() => Int, { description: 'Orders paid today (salesReport.orderCount for today)' })
   ordersToday: number;
 
-  @Field(() => Float)
+  @Field(() => Float, { description: 'Net revenue today (salesReport.netRevenue for today)' })
   revenueToday: number;
+
+  @Field(() => Float, { description: 'Payments accepted today (salesReport.grossRevenue for today)' })
+  grossRevenueToday: number;
+
+  @Field(() => Float, { description: 'Refunds processed today (salesReport.refunds for today)' })
+  refundsToday: number;
 
   @Field(() => Int)
   lowStockProductCount: number;

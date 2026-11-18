@@ -8,9 +8,9 @@ export class TopProduct {
   @Field()
   productName: string;
 
-  @Field(() => Int)
+  @Field(() => Int, { description: 'Units sold in paid orders' })
   totalQuantitySold: number;
 
-  @Field(() => Float)
+  @Field(() => Float, { description: 'Item sales of this product in paid orders (unit price paid x quantity)' })
   totalRevenue: number;
 }
