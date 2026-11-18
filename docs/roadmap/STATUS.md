@@ -7,7 +7,7 @@
 ## Active task
 **Bug fixes (2026-11-18, `d1dfaf5`, approved by Emmanuel):** (1) DISC-01: `finalizeOrder` never changes `totalAmount` and refuses deleted/non-PENDING orders (CONFLICT); (2) `UpdateProductInput.isActive/isTaxable` and `UpdateDiscountInput.isActive` no longer default to `false`, so omitted flags leave the record unchanged. Gates: unit 1386/1386, repro 19/21 (DISC-01 ×2 green; DISC-02 ×2 left, part of P0-B.3), e2e 332 (330 full run + the new suite; the 4 new tests fail on the old code). API doc updated.
 
-_None._ All unblocked Phase 0 tasks are done (41/46). Remaining: P0-B.3, P0-B.10, P0-B.11 (stop-gap decisions), P0-O.2 (dependency approval), P0-F.3 (DB password rotation) — all waiting on Emmanuel. From now on update `FRONTEND_API_DOCUMENTATION.md` with every API change (CLAUDE.md non-negotiable).
+**Batch 8 (2026-11-18):** last five Phase 0 tasks unblocked by Emmanuel's decisions (see Decisions log); starting agents A/B/C per Up next. From now on update `FRONTEND_API_DOCUMENTATION.md` with every API change (CLAUDE.md non-negotiable).
 
 **Last completed (2026-11-18):** P0-D.3 (`ddb1d87`, docs only). `FRONTEND_API_DOCUMENTATION.md` now matches `schema.gql`: 152/152 operations documented once, no stale operations, REST endpoints match code, all 19 GraphQL examples validate; new "Platform rules" (limits, throttles, TTLs) and "Types & Enums" sections; every STATUS frontend item reflected. Code issues found while documenting (not fixed): (1) and (2) fixed in `d1dfaf5` (see above); (3) product filter `subCategoryName` compares against `categoryName`, `inStock` filters nothing; (4) bad `users` `orderBy` → INTERNAL_SERVER_ERROR; (5) `userById`/`userByEmail`/`userByProviderId`/`viewOrder` return null for non-null types; (6) `payment(id)` of another user → 401; (7) several ADMIN-only resolvers refuse SUPER_ADMIN; (8) `category(id)`/`subCategories`/`tags`/`variants` need sign-in while `categories` is public; (9) never-populated fields (`Order.finalTotal`, `User.authProvider`/`facebookId`, `currentPrice`, `publishedAt`; `SubCategory.category` mistyped); (10) guards don't run on field resolvers (`Product.reviews` readable by guests); (11) `EmailService` logs the recipient email when `RESEND_API_KEY` is unset (PII); (12) minor: `addToCart` ignores PUBLISHED, no 100% cap on percentage coupons, `GET /` needs a token.
 
@@ -53,9 +53,10 @@ _None._ All unblocked Phase 0 tasks are done (41/46). Remaining: P0-B.3, P0-B.10
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
-| 2 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
-| 3 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
+| 1 | P0-B.3 charge discounts at checkout, then P0-B.11 block variant products at checkout (same cart/order files) | agent A | — |
+| 2 | P0-B.10 fix tax repricing (Decimal SQL, one transaction, Postgres test) | agent B | — |
+| 3 | P0-O.2 in-range security upgrades + remove unused deps; P0-F.3 inventory, keep `.claude/settings.local.json` untracked, gitleaks (new commits + baseline) | agent C | — |
+| 4 | Major dependency upgrades (NestJS 11, Prisma 7 with ADR-0017 re-baseline, Apollo, others), one framework at a time | — | after Phase 0 |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -90,16 +91,13 @@ Repro tests turned green: **19 / 21** (DISC-01 ×2, PAY-01, PAY-05, PAY-02, PAY-
 - [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
 - [ ] Add `NODE_ENV=development` to your local `.env` if it is missing (now required, P0-O.3), and update `.env.example` with: NODE_ENV, PORT, ALLOWED_ORIGINS, LOG_LEVEL, DATABASE_URL, JWT_SECRET/JWT_REFRESH_SECRET/JWT_RESET_SECRET (≥32 chars, all different), JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER, JWT_ACCESS/REFRESH/RESET_TOKEN_TTL, GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET, PAYSTACK_SECRET_KEY, PAYSTACK_CALLBACK_URL, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET, REDIS_HOST (prod)/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL, OTEL_ENABLED (true|false), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, SUPER_ADMIN_EMAIL/PASSWORD.
 - [ ] On your machine: stop the dev server, run `npx prisma generate` (local generate hit the Windows DLL lock) and `npx prisma migrate dev` to apply `20261117111256_add_order_fee_breakdown_and_pickup_snapshot` `20261117200000_add_stock_non_negative_checks` and `20261117210000_add_hot_query_indexes_drop_redundant` (the stock one fails if any product/variant has negative stock: fix those first). Dev seeder has no shipping zones: create zones (e.g. Greater Accra) or delivery orders will now be rejected.
-- [ ] Rotate the DB password that was committed in `.claude/settings.local.json`. The file is untracked now, but the password is still in git history.
-- [ ] Decide the Phase 0 stop-gaps before these tasks start:
-  - **P0-B.3:** fix discounts at checkout, or switch them off until Phase 2?
-  - **P0-B.10:** minimal tax fix, or freeze tax-rate changes?
-  - **P0-B.11:** hide variant purchasing until Phase 1?
+- [x] DB password in `.claude/settings.local.json` history: local-only DB, no rotation needed (Emmanuel 2026-11-18); file stays untracked and gitignored.
 - [ ] Accept, amend or reject the ADRs (needed before **Phase 1**).
 
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-18 | Phase 0 stop-gaps (Emmanuel): P0-B.3 charge product/category discounts at checkout with the cart's logic (remove `finalizeOrder`); P0-B.10 fix repricing, no freeze; P0-B.11 reject products with active variants in addToCart/createOrder; P0-O.2 in-range upgrades + remove unused deps now, majors (NestJS 11, Prisma 7, …) as a dedicated task right after Phase 0; P0-F.3 DB was local-only (no rotation), gitleaks scans new commits with a baseline for old leaks; open questions from I.4/C.3–C.7/D.2: no preference, shipped defaults stand | STATUS |
 | 2026-11-17 | P0-C.1 (Claude, within ADR-0007): one PaymentIntent per order (`orderId` unique; drop it if a MoMo deposit ever needs a second intent); legacy refunds backfilled as Refund PENDING; WebhookEvent stays deletable for pruning; expand+contract in one guarded, lossless migration | STATUS |
 | 2026-11-17 | ADR-0007 (payment provider port + payment-attempt ledger + idempotent webhook inbox; Paystack first) **Accepted** (Emmanuel). Unblocks P0-C.1–C.7 | ADR-0007, STATUS |
 | 2026-11-17 | P0-B.8: `stockStatus` stays editable on product updates; only `quantity` leaves the update inputs (Emmanuel). Initial-stock logging on create deferred (Claude) | STATUS |
