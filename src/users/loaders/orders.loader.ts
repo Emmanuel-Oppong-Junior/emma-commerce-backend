@@ -1,5 +1,5 @@
 import { Injectable, Scope } from '@nestjs/common';
-import DataLoader = require('dataloader');
+import * as DataLoader from 'dataloader';
 import { Order, OrderItem } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 

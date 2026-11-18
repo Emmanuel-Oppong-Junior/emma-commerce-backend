@@ -35,14 +35,12 @@ describe('Payment verification (e2e)', () => {
 
   const charged: Partial<VerifyResult> = { status: 'success', amount: 10000, currency: 'GHS' };
   const paystack = {
-    verifyTransaction: jest.fn(
-      async (reference: string): Promise<VerifyResult> => ({
-        reference,
-        status: 'success',
-        amount: 10000,
-        currency: 'GHS',
-      }),
-    ),
+    verifyTransaction: jest.fn(async (reference: string): Promise<VerifyResult> => ({
+      reference,
+      status: 'success',
+      amount: 10000,
+      currency: 'GHS',
+    })),
   };
   const paystackAnswers = (data: Partial<VerifyResult>) =>
     paystack.verifyTransaction.mockImplementation(async (reference) => ({ reference, status: 'success', ...data }));

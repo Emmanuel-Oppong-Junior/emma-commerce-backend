@@ -3,14 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '../generated/prisma/client';
 
 export type AuditAction =
-  | 'CREATE'
-  | 'UPDATE'
-  | 'DELETE'
-  | 'ARCHIVE'
-  | 'RESTORE'
-  | 'STATUS_CHANGE'
-  | 'REFUND'
-  | 'STOCK_ADJUSTMENT';
+  'CREATE' | 'UPDATE' | 'DELETE' | 'ARCHIVE' | 'RESTORE' | 'STATUS_CHANGE' | 'REFUND' | 'STOCK_ADJUSTMENT';
 
 export interface AuditEntry {
   entity: string;

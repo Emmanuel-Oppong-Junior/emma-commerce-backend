@@ -26,7 +26,7 @@ export class AccessTokenGuard implements CanActivate {
       const user = await this.userService.findOne(id);
       if (!user || !user.isActive) throw new UnauthorizedException();
       request[REQUEST_USER_KEY] = user;
-    } catch (e) {
+    } catch {
       throw new UnauthorizedException();
     }
     return true;
