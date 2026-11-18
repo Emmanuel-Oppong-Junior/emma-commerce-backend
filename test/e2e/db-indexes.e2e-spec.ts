@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
+import { resetDb, seedMinimal } from '../helpers/db.helper';
 
 describe('Hot-query indexes (e2e)', () => {
   let app: INestApplication;
@@ -20,11 +21,33 @@ describe('Hot-query indexes (e2e)', () => {
       return rows.map((r) => r['QUERY PLAN']).join('\n');
     });
 
+  // On empty tables OrderItem_orderId_idx and OrderItem_productId_orderId_idx cost the same, so the planner picked
+  // either. With realistic, analyzed data the single-column index is the cheaper one and the plan is stable.
+  const seedOrderItems = async (): Promise<void> => {
+    const { userIds } = await seedMinimal(prisma);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "Product" ("id", "name", "updatedAt")
+      SELECT 'idx_p_' || g, 'Index product ' || g, now() FROM generate_series(1, 200) g`);
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "Order" ("id", "userId", "totalAmount", "contactEmail", "contactPhone", "updatedAt")
+       SELECT 'idx_o_' || g, $1, 10, 'index@example.com', '0240000000', now() FROM generate_series(1, 500) g`,
+      userIds.userId,
+    );
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "OrderItem" ("id", "orderId", "productId", "priceAtOrder", "originalPrice")
+      SELECT 'idx_i_' || g, 'idx_o_' || (g % 500 + 1), 'idx_p_' || (g % 200 + 1), 10, 10
+      FROM generate_series(1, 5000) g`);
+    await prisma.$executeRawUnsafe('ANALYZE "OrderItem"');
+  };
+
   beforeAll(async () => {
     ({ app, prisma } = await createTestApp());
+    await resetDb(prisma);
+    await seedOrderItems();
   });
 
   afterAll(async () => {
+    await resetDb(prisma);
     await app.close();
   });
 
