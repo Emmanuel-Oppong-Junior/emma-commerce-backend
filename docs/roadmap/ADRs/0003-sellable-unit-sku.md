@@ -1,6 +1,6 @@
 # ADR-0003 — The SKU is the sellable unit
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 Today price and stock live on both `Product` (`price`, `currentPrice`, `basePrice`, `quantity`) and `Variant` (`price`, `quantity`). Cart, order and inventory deduction only use `Product` (VAR-01, ORD-06, INV-01). The two counters are never reconciled (VAR-02). Variants cannot be bought.

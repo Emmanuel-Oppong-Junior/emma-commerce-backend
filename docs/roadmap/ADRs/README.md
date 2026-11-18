@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-All ADRs are **Proposed**. Emmanuel approves, amends or rejects each one; once approved, change the status line to `Accepted (YYYY-MM-DD)`. Superseded ADRs keep their file and get `Superseded by ADR-NNNN`.
+All 17 ADRs are **Accepted** (0007 on 2026-11-17, the rest on 2026-11-18). ADR-0006 implementation waits for a Ghanaian tax adviser; ADR-0016 pharmacy deployments wait for legal sign-off. New ADRs start **Proposed**; once Emmanuel approves one, change its status line to `Accepted (YYYY-MM-DD)`. Superseded ADRs keep their file and get `Superseded by ADR-NNNN`.
 
 | ADR | Decision | Reversibility | Needed before |
 |---|---|---|---|
@@ -20,4 +20,4 @@ All ADRs are **Proposed**. Emmanuel approves, amends or rejects each one; once a
 | [0014](0014-order-state-machine.md) | Explicit order/payment/fulfilment state machines with guarded, conditional transitions | Moderate | Phase 0 |
 | [0015](0015-notifications.md) | Notification service with templates, preferences and channels (email, SMS, WhatsApp, in-app) on the job queue | Cheap | Phase 1/5 |
 | [0016](0016-hosting-and-data-residency.md) | Hosting region per client deployment; pharmacy data hosted in Ghana | Expensive | Before launch |
-| [0017](0017-prisma-upgrade-and-migration-baseline.md) | Pin Prisma 6 in Phase 0; upgrade to Prisma 7 as the first Phase 1 epic; re-baseline migrations once | Moderate | Phase 1 start |
+| [0017](0017-prisma-upgrade-and-migration-baseline.md) | Upgrade to Prisma 7 right after Phase 0 and re-baseline migrations once (done: P1-P.1/P.2) | Moderate | Phase 1 start |

@@ -2,7 +2,7 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise done (46/46); dependency upgrades done (Prisma 7, NestJS 12, tooling); Phase 1 next · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise done (46/46); dependency upgrades done (Prisma 7, NestJS 12, tooling); all ADRs accepted; Phase 1 — Foundations next (P1-K.1) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
 None. Dependency upgrades finished 2026-11-18; next is Phase 1 (see Up next).
@@ -58,7 +58,10 @@ None. Dependency upgrades finished 2026-11-18; next is Phase 1 (see Up next).
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | Phase 1 (remaining epics) | — | ADR decisions (15 still Proposed) |
+| 1 | P1-K.1 CI gates: `prisma migrate diff --exit-code` drift check + `graphql-inspector` breaking-change check | → first | Approval to add `@graphql-inspector/cli` (dev dependency) |
+| 2 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
+| 3 | P1-J (worker, outbox, BullMQ), P1-R (RBAC + MFA), P1-S (Store, Money), P1-G (Ghana addresses), P1-L (observability) | ∥ lanes | J needs `@nestjs/bullmq`/`bullmq` approval; L.2 needs an error-tracking choice (Sentry or equivalent) |
+| 4 | P1-V → P1-N → P1-O (SKU model, inventory ledger, order snapshots) | → sequential, riskiest | after S.2 Money and V.1 |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -97,11 +100,12 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 - [ ] **Frontend (P0-B.3/B.11/B.10):** `finalizeOrder` removed (GRAPHQL_VALIDATION_FAILED); `createOrder` charges discounted prices (`Order.subtotal` = `cartWithDiscount.finalTotal`; `discountTotal`, `OrderItem.priceAtOrder`/`originalPrice`/`discountAmount` filled at creation); coupon applies after product discounts (pass `finalTotal` to `validateCoupon`); `cartWithDiscount` skips (no longer rejects) discounts whose `minimumPurchase` isn't met and returns BAD_REQUEST for a product without a price; products with variants rejected by `addToCart`/`createOrder` (BAD_REQUEST); failed tax mutations save nothing; product prices round half away from zero (some move up GHS 0.01); changing `isTaxable` without a base price → BAD_REQUEST. Documented in `FRONTEND_API_DOCUMENTATION.md`.
 - [ ] **P0-B.3 questions:** (1) coupon on the discounted subtotal (current) or list price? (2) `minimumPurchase` judged on the whole cart's list-price total (current), eligible lines only, or the total after discounts? (3) drop the no-longer-written `Order.totalWithOutDiscount` column later?
 - [ ] **P0-F.3 questions:** (1) were the keys in the early committed `.env` (Paystack/Cloudinary/OAuth, removed in `bcbae7b`) real and rotated, or test keys? (2) has any hosted DB (staging/prod/preview) ever run the schema? Both marked "Emmanuel to confirm" in `environments.md`. Consider making the new CI `secrets` job required.
-- [ ] Accept, amend or reject the ADRs (needed before **Phase 1**).
+- [x] ADRs: all 15 Proposed ADRs **Accepted** as recommended (Emmanuel, 2026-11-18). Still open from them: a Ghanaian tax adviser before building P2-T (ADR-0006); legal sign-off before any pharmacy deployment (ADR-0016) or marketplace (ADR-0001).
 
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-18 | ADRs 0001–0006, 0008–0016 **Accepted** as recommended (Emmanuel): silo deployment per client, pool-ready, no marketplace without legal sign-off; product types + validated JSONB attributes + capability columns; SKU is the only sellable unit; `Decimal(14,2)` + `Money` type, GraphQL `Money` replaces `Float` (one breaking frontend change in Phase 1); full pricing engine; component tax engine (build waits for tax adviser); inventory ledger with reservations, locations, lots, serials; BullMQ + outbox + separate worker, Redis required in prod; Postgres search behind a port; GraphQL + integration-only REST; permission RBAC with MFA for staff; full order/payment/fulfilment state machines; notification service (email, SMS, WhatsApp, in-app); hosting region per client, EU default, pharmacy in Ghana | ADRs, STATUS |
 | 2026-11-18 | Upgrades (Claude, within Emmanuel's "all latest, TS 5.9"): Jest 30 brought forward into the NestJS step (Nest 12 is ESM-only); graphql stays 16 and @nestjs/schematics 11 (peer limits); sharp 0.35 via a typed `require` shim rather than staying on 0.34.5 (HIGH advisories); keyv held at 5. Flaky `db-indexes` test fixed by seeding analyzed rows, assertion unchanged (Emmanuel) | STATUS |
 | 2026-11-18 | P1-P.2 (Claude): the `migrations` CI check skips bases that predate the baseline (one-time exemption for the re-baseline itself); baseline enum values follow schema order (`SENDING`, `REFUND_PENDING` move, no data impact); CI drift step left to P1-K.1 | STATUS, ci.yml |
 | 2026-11-18 | Dependency upgrades (Emmanuel): ADR-0017 **Accepted** with the re-baseline path (replace migration folders with one baseline, order numbers from 10001, reset dev/test DBs); targets = latest stable (NestJS 12, graphql/apollo 14, Apollo 5, Prisma 7, ESLint 10, Jest 30, bcrypt 6, cloudinary 2, graphql 17) except TypeScript stays 5.9; Node 24 in CI, Docker and engines | ADR-0017, STATUS |
@@ -125,4 +129,4 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | 2026-11-16 | Workflow: untracked `tmp/` for scratch files; `STATUS.md` is the only state file, updated at every checkpoint | `CLAUDE.md`, WORKING-AGREEMENT §2a |
 
 ## ADR status
-ADR-0007 and ADR-0017 are **Accepted**; the other 15 are **Proposed**. See [`ADRs/README.md`](ADRs/README.md).
+All 17 ADRs are **Accepted** (0007 on 2026-11-17, the rest on 2026-11-18). See [`ADRs/README.md`](ADRs/README.md).

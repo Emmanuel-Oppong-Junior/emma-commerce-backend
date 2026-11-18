@@ -1,6 +1,6 @@
 # ADR-0016 — Hosting region and data residency
 
-Status: **Proposed** · Date: 2026-11-16 · Needs legal input
+Status: **Accepted** (Emmanuel, 2026-11-18; per-client region, EU default; pharmacy deployments need legal sign-off first) · Date: 2026-11-16 · Needs legal input
 
 ## Context
 Customer PII is processed by foreign processors: Paystack, Cloudinary, Resend, Google and Facebook. Hosting is not defined in the repo. The research notes say:

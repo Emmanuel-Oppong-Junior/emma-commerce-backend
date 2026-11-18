@@ -1,6 +1,6 @@
 # ADR-0011 — Caching and Redis
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 Without `REDIS_HOST` the cache silently falls back to memory (`cache.config.ts:13-34`). Throttler storage is in memory as well, so limits are per instance and easy to bypass (PLAT-04). The category cache is dead code because the select set is never empty (PRD finding). Cache invalidation on mutations is ad hoc.

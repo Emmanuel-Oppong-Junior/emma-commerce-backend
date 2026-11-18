@@ -1,6 +1,6 @@
 # ADR-0006 — Tax engine
 
-Status: **Proposed** · Date: 2026-11-16 · Needs confirmation from a Ghanaian tax adviser before implementation
+Status: **Accepted** (Emmanuel, 2026-11-18; building P2-T waits for the Ghanaian tax adviser sign-off) · Date: 2026-11-16 · Needs confirmation from a Ghanaian tax adviser before implementation
 
 ## Context
 Today `Tax{name, rate, isActive}` rows are summed into a multiplier. `Product.price` is then rewritten by a raw SQL update whenever a rate changes (`tax.service.ts:55-63`). The update probably fails, and it runs after the Tax row is saved (TAX-02, suspected). Product edits can silently drop tax (TAX-01). Orders store no tax at all, so VAT cannot be invoiced or reported (TAX-03 / DB-04).

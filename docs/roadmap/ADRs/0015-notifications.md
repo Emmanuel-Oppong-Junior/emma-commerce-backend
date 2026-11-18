@@ -1,6 +1,6 @@
 # ADR-0015 — Notifications
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 Email is the only channel today. It is sent through Resend, fire-and-forget on the request path:

@@ -1,6 +1,6 @@
 # ADR-0010 — Search engine
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 Search is Prisma `fullTextSearchPostgres` with raw user text passed to `to_tsquery`, which likely fails on special characters (suspected). There is no GIN index. Several filters are broken: `inStock` is always true, `priceMin` and `priceMax` overwrite each other, and `subCategoryName` is compared against the category name (PRD findings). The target needs typo tolerance, attribute-driven facets, synonyms and autocomplete.

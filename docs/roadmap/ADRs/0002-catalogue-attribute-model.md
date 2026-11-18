@@ -1,6 +1,6 @@
 # ADR-0002 — Catalogue attribute model for multiple verticals
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 `Variant` hard-codes `size` and `color` (`prisma/schema.prisma:133-153`); `Product` carries `expiryDate`, `deliveryOptions`, `selectedDeliveryRegions` as one-off columns. Pharmacy needs prescription flags and dosage forms; electronics needs IMEI/warranty/condition; furniture needs dimensions/weight/lead time; food needs unit-of-measure, storage conditions, expiry/batch; digital goods need entitlements and no shipping. Filters/facets must be driven by attributes (prompt §3.1, §3.6).

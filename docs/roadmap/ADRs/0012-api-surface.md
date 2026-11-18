@@ -1,6 +1,6 @@
 # ADR-0012 — API surface and field-level authorization
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 GraphQL is the only application API. REST exists for upload, health and the Paystack webhook, and is entirely broken today (PLAT-01, IAM-07). Field resolvers run without guards, so a public `product` query exposes customer PII through `reviews.user` (SEC-01). There are no depth or complexity limits on a cyclic schema (PLAT-05/PERF-01). Error codes are flattened to `BAD_USER_INPUT` (DOC-06). There are no subscriptions.

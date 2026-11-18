@@ -1,6 +1,6 @@
 # ADR-0014 — Order, payment and fulfilment state machines
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 - **Admin can set any status.** `updateOrderStatus` moves any status to any other, e.g. CANCELLED → SHIPPED (ORD-04).

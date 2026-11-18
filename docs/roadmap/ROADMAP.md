@@ -1,7 +1,7 @@
 # Emma Commerce Backend — Roadmap
 
 Date: 2026-11-16 · Basis: `docs/audit/` (all findings cite file:line there) and `docs/audit/_work/gap-analysis.md` (capability matrix, 102 rows: 47 Absent, 17 Partial, 37 Defective, 1 Present).
-Rules for executing this roadmap: [`WORKING-AGREEMENT.md`](WORKING-AGREEMENT.md). Decisions: [`ADRs/`](ADRs/README.md) (all **Proposed** until Emmanuel accepts them).
+Rules for executing this roadmap: [`WORKING-AGREEMENT.md`](WORKING-AGREEMENT.md). Decisions: [`ADRs/`](ADRs/README.md) (all **Accepted** by Emmanuel, 2026-11-18).
 
 **Labels**
 - **Class:** 🟥 **Launch** = must have before a real client takes real money · 🟧 **Advantage** = competitive advantage · ⬜ **Later**.

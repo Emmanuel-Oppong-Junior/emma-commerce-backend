@@ -1,6 +1,6 @@
 # ADR-0005 — Pricing and promotions engine
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 Today, discounts are computed in three places that disagree:

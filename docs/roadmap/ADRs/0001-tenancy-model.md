@@ -1,6 +1,6 @@
 # ADR-0001 — Tenancy model
 
-Status: **Proposed** · Date: 2026-11-16 · Decision owner: Emmanuel
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16 · Decision owner: Emmanuel
 
 ## Context
 The schema has no notion of a store, tenant or seller. Every table is global: one catalogue, one Paystack key in env, and one admin population. The target (prompt §3, §3.8) must be able to power any Ghanaian store type, possibly many stores, possibly a marketplace. This choice shapes every table, every query, authorization, payments (who is merchant of record) and hosting.

@@ -1,6 +1,6 @@
 # ADR-0004 — Money representation
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 - **Mixed column types.** Money is stored as Prisma `Decimal`, sometimes without precision (`Order.discountTotal`, `Order.totalWithOutDiscount`, `Discount.value` default to `DECIMAL(65,30)`).

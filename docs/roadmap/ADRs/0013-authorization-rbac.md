@@ -1,6 +1,6 @@
 # ADR-0013 — Authorization: permission-based RBAC
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 There are three hard-coded roles (`USER`, `ADMIN`, `SUPER_ADMIN`) and an exact-match `RolesGuard` with no hierarchy (SEC-03). Any ADMIN can edit or delete peer ADMINs (IAM-10/USR-03). Some operations lock SUPER_ADMIN out. The target needs owner, manager, inventory staff, pharmacist, cashier, delivery rider and support roles (prompt §3.7), scoped per store or location.

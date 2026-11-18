@@ -1,6 +1,6 @@
 # ADR-0008 — Inventory model
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 - **Stock can be restored repeatedly.** It is restored without status guards: on repeated cancel, on delete, on refund after cancel, and once per extra instance of the expiry job (ORD-01/02/03, RET-01, CRON-01).

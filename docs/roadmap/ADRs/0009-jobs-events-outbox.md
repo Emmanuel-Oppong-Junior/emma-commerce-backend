@@ -1,6 +1,6 @@
 # ADR-0009 — Background jobs, domain events and outbox
 
-Status: **Proposed** · Date: 2026-11-16
+Status: **Accepted** (Emmanuel, 2026-11-18) · Date: 2026-11-16
 
 ## Context
 - **Crons on every instance.** Two in-process `@Cron` jobs run on every instance with no lock (CRON-01).
