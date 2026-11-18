@@ -1,5 +1,5 @@
 import { BadGatewayException, GatewayTimeoutException } from '@nestjs/common';
-import { PAYSTACK_TIMEOUT_MS, PaystackClient } from './paystack.client';
+import { PAYSTACK_TIMEOUT_MS, PaystackClient, PaystackRequestRejected } from './paystack.client';
 
 const jsonResponse = (status: number, body: unknown) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
@@ -156,6 +156,50 @@ describe('PaystackClient', () => {
       fetchMock.mockResolvedValue(jsonResponse(200, body));
 
       await expect(client.listTransactions(request)).rejects.toThrow(BadGatewayException);
+    });
+  });
+
+  describe('createRefund', () => {
+    const request = { transaction: 'ref1', amount: 4000 };
+
+    it('posts the transaction reference and amount in subunits with a timeout, and returns the refund id', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse(200, {
+          status: true,
+          message: 'Refund has been queued for processing',
+          data: { id: 3018284, status: 'pending', amount: 4000, currency: 'GHS' },
+        }),
+      );
+
+      await expect(client.createRefund(request)).resolves.toEqual({ id: '3018284', status: 'pending' });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('https://api.paystack.co/refund');
+      expect(init).toMatchObject({ method: 'POST', body: JSON.stringify(request) });
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('reports a 4xx refusal as rejected, so the caller knows nothing was refunded', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(400, { status: false, message: 'Transaction has been fully reversed' }));
+
+      await expect(client.createRefund(request)).rejects.toThrow(PaystackRequestRejected);
+    });
+
+    it.each([
+      ['a 5xx answer', () => jsonResponse(502, { status: false, message: 'Upstream error' })],
+      ['a success without a refund id', () => jsonResponse(200, { status: true, data: { status: 'pending' } })],
+    ])('does not report %s as rejected, because the refund may exist', async (_case, response) => {
+      fetchMock.mockResolvedValue(response());
+
+      const error = await client.createRefund(request).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadGatewayException);
+      expect(error).not.toBeInstanceOf(PaystackRequestRejected);
+    });
+
+    it('maps a timeout to 504', async () => {
+      fetchMock.mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));
+
+      await expect(client.createRefund(request)).rejects.toThrow(GatewayTimeoutException);
     });
   });
 

@@ -730,6 +730,11 @@ type Mutation {
   forgotPassword(input: ForgotPasswordInput!): Boolean!
   permanentlyDeleteProduct(productId: String!): Product!
 
+  """
+  Send a PENDING refund (e.g. an auto-refund of a flagged payment) or resend a FAILED one (admin only)
+  """
+  processPendingRefund(refundId: ID!): RefundEntity!
+
   """Process a refund for an approved return (admin only)"""
   processRefund(returnRequestId: ID!): ReturnRequestEntity!
 
@@ -1308,6 +1313,9 @@ type Query {
   """
   products(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs, sortArgs: ProductSortArgs): ProductConnection!
 
+  """List refunds, optionally by status, newest first (admin only)"""
+  refunds(status: RefundStatusEnum): [RefundEntity!]!
+
   """Get all return requests (admin only)"""
   returnRequests: [ReturnRequestEntity!]!
 
@@ -1394,6 +1402,43 @@ input RefreshTokenInput {
   refreshToken: String!
 }
 
+type RefundEntity {
+  amount: Float!
+
+  """The payment (attempt) the refund returns money from"""
+  attemptId: ID!
+  createdAt: DateTime!
+  currency: String!
+
+  """Why the last send failed or has an unknown outcome"""
+  failureReason: String
+  id: ID!
+
+  """The refund id Paystack returned"""
+  providerRef: String
+
+  """Set when the refund belongs to a return request"""
+  returnRequestId: ID
+  status: RefundStatusEnum!
+  updatedAt: DateTime!
+}
+
+enum RefundStatusEnum {
+  """Refused by the provider; nothing was refunded and it can be sent again"""
+  FAILED
+
+  """Recorded, not yet sent to the provider"""
+  PENDING
+
+  """Accepted by the provider"""
+  PROCESSED
+
+  """
+  Claimed and sent; if it stays here the provider outcome is unknown and must be checked in Paystack before any resend
+  """
+  SENDING
+}
+
 input RejectReturnInput {
   adminNote: String
   returnRequestId: ID!
@@ -1440,6 +1485,7 @@ enum ReturnStatusEnum {
   APPROVED
   PENDING
   REFUNDED
+  REFUND_PENDING
   REJECTED
 }
 

@@ -1,8 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { ReturnsRepository } from './returns.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, ReturnRequest } from '@prisma/client';
+import { ReturnRequest } from '@prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -22,7 +21,8 @@ const mockPrismaReturnRequest = {
   create: jest.fn(),
   findUnique: jest.fn(),
   findMany: jest.fn(),
-  update: jest.fn(),
+  findUniqueOrThrow: jest.fn(),
+  updateMany: jest.fn(),
 };
 
 const mockPrisma = { returnRequest: mockPrismaReturnRequest };
@@ -106,43 +106,35 @@ describe('ReturnsRepository', () => {
     });
   });
 
-  describe('updateStatus', () => {
-    it('should update return request status', async () => {
-      const updated = { ...mockReturnRequest, status: 'APPROVED', refundAmount: 50 };
-      mockPrismaReturnRequest.update.mockResolvedValue(updated);
+  describe('transitionStatus', () => {
+    it('updates the request only while it still has the expected status, and returns it', async () => {
+      const updated = { ...mockReturnRequest, status: 'APPROVED', refundAmount: 50, adminNote: 'Approved by admin' };
+      mockPrismaReturnRequest.updateMany.mockResolvedValue({ count: 1 });
+      mockPrismaReturnRequest.findUniqueOrThrow.mockResolvedValue(updated);
 
-      const result = await repository.updateStatus('return1', 'APPROVED' as any, 50, 'Approved by admin');
+      const result = await repository.transitionStatus('return1', 'PENDING', 'APPROVED', {
+        refundAmount: 50,
+        adminNote: 'Approved by admin',
+      });
 
       expect(result).toEqual(updated);
-      expect(mockPrismaReturnRequest.update).toHaveBeenCalledWith({
-        where: { id: 'return1' },
+      expect(mockPrismaReturnRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: 'return1', status: 'PENDING' },
         data: { status: 'APPROVED', refundAmount: 50, adminNote: 'Approved by admin' },
       });
     });
 
-    it('should update status without optional fields', async () => {
-      const updated = { ...mockReturnRequest, status: 'REFUNDED' };
-      mockPrismaReturnRequest.update.mockResolvedValue(updated);
+    it('returns null and reads nothing back when the request is missing or no longer has the expected status', async () => {
+      mockPrismaReturnRequest.updateMany.mockResolvedValue({ count: 0 });
 
-      const result = await repository.updateStatus('return1', 'REFUNDED' as any);
-
-      expect(result).toEqual(updated);
+      await expect(repository.transitionStatus('return1', 'PENDING', 'REJECTED', {})).resolves.toBeNull();
+      expect(mockPrismaReturnRequest.findUniqueOrThrow).not.toHaveBeenCalled();
     });
 
-    it('should throw NotFoundException on P2025', async () => {
-      const prismaError = new Prisma.PrismaClientKnownRequestError('Not found', {
-        code: 'P2025',
-        clientVersion: '5.0',
-      });
-      mockPrismaReturnRequest.update.mockRejectedValue(prismaError);
+    it('rethrows database errors', async () => {
+      mockPrismaReturnRequest.updateMany.mockRejectedValue(new Error('DB error'));
 
-      await expect(repository.updateStatus('nonexistent', 'APPROVED' as any)).rejects.toThrow(NotFoundException);
-    });
-
-    it('should rethrow unknown errors', async () => {
-      mockPrismaReturnRequest.update.mockRejectedValue(new Error('DB error'));
-
-      await expect(repository.updateStatus('return1', 'APPROVED' as any)).rejects.toThrow('DB error');
+      await expect(repository.transitionStatus('return1', 'PENDING', 'APPROVED', {})).rejects.toThrow('DB error');
     });
   });
 });

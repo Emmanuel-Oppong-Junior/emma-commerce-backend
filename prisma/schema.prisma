@@ -407,18 +407,22 @@ model PaymentAttempt {
 }
 
 model Refund {
-  id             String         @id @default(cuid())
-  attemptId      String
-  attempt        PaymentAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
-  amount         Decimal        @db.Decimal(10, 2)
-  currency       String         @default("GHS")
-  status         RefundStatus   @default(PENDING)
-  providerRef    String?
-  idempotencyKey String         @unique
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id              String         @id @default(cuid())
+  attemptId       String
+  attempt         PaymentAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  returnRequestId String?        @unique
+  returnRequest   ReturnRequest? @relation(fields: [returnRequestId], references: [id], onDelete: Restrict)
+  amount          Decimal        @db.Decimal(10, 2)
+  currency        String         @default("GHS")
+  status          RefundStatus   @default(PENDING)
+  providerRef     String?        @unique
+  failureReason   String?
+  idempotencyKey  String         @unique
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   @@index([attemptId])
+  @@index([status])
 }
 
 model WebhookEvent {
@@ -508,6 +512,7 @@ enum PaymentProvider {
 
 enum RefundStatus {
   PENDING
+  SENDING
   PROCESSED
   FAILED
 }
@@ -539,6 +544,7 @@ enum ReturnStatus {
   PENDING
   APPROVED
   REJECTED
+  REFUND_PENDING
   REFUNDED
 }
 
@@ -590,6 +596,7 @@ model ReturnRequest {
   adminNote    String?      @db.Text
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
+  refund       Refund?
   order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
   user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
 

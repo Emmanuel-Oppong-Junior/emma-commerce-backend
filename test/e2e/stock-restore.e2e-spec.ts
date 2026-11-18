@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
-import axios from 'axios';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
@@ -12,6 +12,7 @@ describe('Stock is restored exactly once (e2e)', () => {
   let userToken: string;
   let adminToken: string;
   let addressId: string;
+  const paystack = { createRefund: jest.fn(async () => ({ id: 'rf_stock', status: 'pending' })) };
 
   const stockOf = async () =>
     (await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' }, select: { quantity: true } })).quantity;
@@ -39,7 +40,7 @@ describe('Stock is restored exactly once (e2e)', () => {
   const admin = (query: string) => gqlRequest(app, query, undefined, adminToken).expect(200);
 
   beforeAll(async () => {
-    ({ app, prisma } = await createTestApp());
+    ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
     await resetDb(prisma);
     await seedMinimal(prisma);
     userToken = await signInUser(app);
@@ -60,7 +61,6 @@ describe('Stock is restored exactly once (e2e)', () => {
   });
 
   it('cancelling a paid online order and refunding it returns stock once, with one log per item', async () => {
-    const paystackRefund = jest.spyOn(axios, 'post').mockResolvedValue({ data: { status: true } });
     const before = await stockOf();
     const orderId = await placeOrder();
     await seedPaymentAttempt(prisma, { orderId, status: 'COMPLETED', reference: `ref-${orderId}` });
@@ -84,7 +84,7 @@ describe('Stock is restored exactly once (e2e)', () => {
 
     expect(refund.body.errors).toBeUndefined();
     expect(refund.body.data.processRefund.status).toBe('REFUNDED');
-    expect(paystackRefund).toHaveBeenCalledTimes(1);
+    expect(paystack.createRefund).toHaveBeenCalledTimes(1);
     expect(await stockOf()).toBe(before);
     expect(await restoreLogsFor(orderId)).toBe(1);
   });

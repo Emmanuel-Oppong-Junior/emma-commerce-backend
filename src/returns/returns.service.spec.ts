@@ -1,17 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ReturnsService } from './returns.service';
 import { ReturnsRepository } from './returns.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
-import { LoggerService } from '../commons/logger.service';
-import { ReturnRequest } from '@prisma/client';
-import axios from 'axios';
+import { Prisma, ReturnRequest } from '@prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
-
-jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
+import { RefundsService } from './refunds.service';
+import { RefundRepository } from './refund.repository';
 
 const mockReturnsRepository = {
   create: jest.fn(),
@@ -19,7 +15,7 @@ const mockReturnsRepository = {
   findByOrder: jest.fn(),
   findByUser: jest.fn(),
   findAll: jest.fn(),
-  updateStatus: jest.fn(),
+  transitionStatus: jest.fn(),
 };
 
 const mockPrisma = {
@@ -28,9 +24,9 @@ const mockPrisma = {
   $transaction: jest.fn(),
 };
 
-const mockConfigService = { get: jest.fn().mockReturnValue('paystack_secret') };
-const mockLogger = { log: jest.fn(), error: jest.fn(), warn: jest.fn() };
 const mockAuditService = createAuditServiceMock();
+const mockRefundsService = { openForReturn: jest.fn(), send: jest.fn() };
+const mockRefundRepository = { findByReturnRequest: jest.fn() };
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -61,9 +57,9 @@ describe('ReturnsService', () => {
         ReturnsService,
         { provide: ReturnsRepository, useValue: mockReturnsRepository },
         { provide: PrismaService, useValue: mockPrisma },
-        { provide: ConfigService, useValue: mockConfigService },
-        { provide: LoggerService, useValue: mockLogger },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: RefundsService, useValue: mockRefundsService },
+        { provide: RefundRepository, useValue: mockRefundRepository },
       ],
     }).compile();
 
@@ -136,7 +132,7 @@ describe('ReturnsService', () => {
     it('should approve a pending return request', async () => {
       const approved = { ...mockReturnRequest, status: 'APPROVED', refundAmount: 50 };
       mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.updateStatus.mockResolvedValue(approved);
+      mockReturnsRepository.transitionStatus.mockResolvedValue(approved);
 
       const result = await service.approveReturn(
         { returnRequestId: 'return1', refundAmount: 50, adminNote: 'Approved' },
@@ -144,12 +140,18 @@ describe('ReturnsService', () => {
       );
 
       expect(result.status).toBe('APPROVED');
-      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith('return1', 'APPROVED', 50, 'Approved', AUDIT_TX);
+      expect(mockReturnsRepository.transitionStatus).toHaveBeenCalledWith(
+        'return1',
+        'PENDING',
+        'APPROVED',
+        { refundAmount: 50, adminNote: 'Approved' },
+        AUDIT_TX,
+      );
     });
 
     it('audits the approval with the admin, the status change and the refund amount in the same transaction', async () => {
       mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.updateStatus.mockResolvedValue({
+      mockReturnsRepository.transitionStatus.mockResolvedValue({
         ...mockReturnRequest,
         status: 'APPROVED',
         refundAmount: 50,
@@ -167,6 +169,16 @@ describe('ReturnsService', () => {
         },
         AUDIT_TX,
       );
+    });
+
+    it('fails with CONFLICT and audits nothing when another request reviewed it after it was read', async () => {
+      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
+      mockReturnsRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(service.approveReturn({ returnRequestId: 'return1', refundAmount: 50 }, 'admin1')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockAuditService.log).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if return request not found', async () => {
@@ -191,16 +203,16 @@ describe('ReturnsService', () => {
     it('should reject a pending return request', async () => {
       const rejected = { ...mockReturnRequest, status: 'REJECTED' };
       mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.updateStatus.mockResolvedValue(rejected);
+      mockReturnsRepository.transitionStatus.mockResolvedValue(rejected);
 
       const result = await service.rejectReturn({ returnRequestId: 'return1', adminNote: 'Not eligible' }, 'admin1');
 
       expect(result.status).toBe('REJECTED');
-      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith(
+      expect(mockReturnsRepository.transitionStatus).toHaveBeenCalledWith(
         'return1',
+        'PENDING',
         'REJECTED',
-        undefined,
-        'Not eligible',
+        { adminNote: 'Not eligible' },
         AUDIT_TX,
       );
       expect(mockAuditService.log).toHaveBeenCalledWith(
@@ -215,6 +227,16 @@ describe('ReturnsService', () => {
       );
     });
 
+    it('fails with CONFLICT and audits nothing when another request reviewed it after it was read', async () => {
+      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
+      mockReturnsRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(service.rejectReturn({ returnRequestId: 'return1', adminNote: 'note' }, 'admin1')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockAuditService.log).not.toHaveBeenCalled();
+    });
+
     it('should throw BadRequestException if return is not pending', async () => {
       mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'APPROVED' });
 
@@ -225,88 +247,85 @@ describe('ReturnsService', () => {
   });
 
   describe('processRefund', () => {
-    it('should process a refund for an approved return', async () => {
-      const approvedReturn = {
-        ...mockReturnRequest,
-        status: 'APPROVED',
-        refundAmount: { toString: () => '50', valueOf: () => 50 } as any,
-      };
-      const refundedReturn = { ...approvedReturn, status: 'REFUNDED' };
+    const approvedReturn = {
+      ...mockReturnRequest,
+      status: 'APPROVED',
+      refundAmount: new Prisma.Decimal(50),
+    } as unknown as ReturnRequest;
+    const refundedReturn = { ...approvedReturn, status: 'REFUNDED' };
 
+    it('opens the refund on the paying attempt, then sends it, and returns the refunded request', async () => {
       mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
-      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ reference: 'txn_123' });
-      mockedAxios.post.mockResolvedValue({ data: { status: true } });
-      mockReturnsRepository.updateStatus.mockResolvedValue(refundedReturn);
+      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ id: 'attempt1', reference: 'txn_123' });
+      mockRefundsService.openForReturn.mockResolvedValue({ id: 'refund1' });
+      mockRefundsService.send.mockResolvedValue({ refund: { id: 'refund1' }, returnRequest: refundedReturn });
 
       const result = await service.processRefund('return1', 'admin1');
 
-      expect(mockReturnsRepository.updateStatus).toHaveBeenCalledWith(
-        'return1',
-        'REFUNDED',
-        undefined,
-        undefined,
-        AUDIT_TX,
-      );
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        {
-          entity: 'ReturnRequest',
-          entityId: 'return1',
-          action: 'REFUND',
-          userId: 'admin1',
-          details: { orderId: 'order1', from: 'APPROVED', to: 'REFUNDED', amount: '50', providerReference: 'txn_123' },
-        },
-        AUDIT_TX,
-      );
-      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-
-      expect(mockedAxios.post).toHaveBeenCalledWith(
-        'https://api.paystack.co/refund',
-        expect.objectContaining({ transaction: 'txn_123' }),
-        expect.any(Object),
-      );
-      expect(result.status).toBe('REFUNDED');
+      expect(result).toBe(refundedReturn);
+      expect(mockPrisma.paymentAttempt.findFirst).toHaveBeenCalledWith({
+        where: { intent: { orderId: 'order1' }, status: 'COMPLETED', reference: { not: null } },
+        orderBy: [{ reviewReason: { sort: 'asc', nulls: 'first' } }, { createdAt: 'desc' }],
+      });
+      expect(mockRefundsService.openForReturn).toHaveBeenCalledWith(approvedReturn, 'attempt1', 'admin1');
+      expect(mockRefundsService.send).toHaveBeenCalledWith('refund1', 'admin1');
     });
 
-    it('should throw BadRequestException if return is not approved', async () => {
-      mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'PENDING' });
+    it('resends the existing refund of a REFUND_PENDING request instead of opening another', async () => {
+      mockReturnsRepository.findById.mockResolvedValue({ ...approvedReturn, status: 'REFUND_PENDING' });
+      mockRefundRepository.findByReturnRequest.mockResolvedValue({ id: 'refund1' });
+      mockRefundsService.send.mockResolvedValue({ refund: { id: 'refund1' }, returnRequest: refundedReturn });
+
+      await service.processRefund('return1', 'admin1');
+
+      expect(mockRefundsService.openForReturn).not.toHaveBeenCalled();
+      expect(mockRefundsService.send).toHaveBeenCalledWith('refund1', 'admin1');
+    });
+
+    it('fails with CONFLICT for a REFUND_PENDING request without a refund', async () => {
+      mockReturnsRepository.findById.mockResolvedValue({ ...approvedReturn, status: 'REFUND_PENDING' });
+      mockRefundRepository.findByReturnRequest.mockResolvedValue(null);
+
+      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(ConflictException);
+      expect(mockRefundsService.send).not.toHaveBeenCalled();
+    });
+
+    it('does not send when another request claimed the return first', async () => {
+      mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
+      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ id: 'attempt1', reference: 'txn_123' });
+      mockRefundsService.openForReturn.mockRejectedValue(new ConflictException('no longer APPROVED'));
+
+      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(ConflictException);
+      expect(mockRefundsService.send).not.toHaveBeenCalled();
+    });
+
+    it.each(['PENDING', 'REJECTED', 'REFUNDED'])('should throw BadRequestException if return is %s', async (status) => {
+      mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status });
 
       await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(
         'Only approved return requests can be refunded',
       );
+      expect(mockRefundsService.send).not.toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException if refund amount is not set', async () => {
-      mockReturnsRepository.findById.mockResolvedValue({
-        ...mockReturnRequest,
-        status: 'APPROVED',
-        refundAmount: null,
-      });
+    it.each([
+      ['not set', null],
+      ['zero', new Prisma.Decimal(0)],
+    ])('should throw BadRequestException if refund amount is %s', async (_case, refundAmount) => {
+      mockReturnsRepository.findById.mockResolvedValue({ ...approvedReturn, refundAmount });
 
       await expect(service.processRefund('return1', 'admin1')).rejects.toThrow('Refund amount not set');
+      expect(mockRefundsService.openForReturn).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if no payment transaction found', async () => {
-      mockReturnsRepository.findById.mockResolvedValue({
-        ...mockReturnRequest,
-        status: 'APPROVED',
-        refundAmount: 50,
-      });
+      mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
       mockPrisma.paymentAttempt.findFirst.mockResolvedValue(null);
 
       await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(
         'No payment transaction found for this order',
       );
-    });
-
-    it('should throw BadRequestException if Paystack refund fails', async () => {
-      const approvedReturn = { ...mockReturnRequest, status: 'APPROVED', refundAmount: 50 };
-      mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
-      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ reference: 'txn_123' });
-      mockedAxios.post.mockRejectedValue(new Error('Network error'));
-
-      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow('Refund processing failed');
-      expect(mockReturnsRepository.updateStatus).not.toHaveBeenCalled();
-      expect(mockAuditService.log).not.toHaveBeenCalled();
+      expect(mockRefundsService.openForReturn).not.toHaveBeenCalled();
     });
   });
 

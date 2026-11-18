@@ -1716,7 +1716,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
   orderId: string;
   userId: string;
   reason: string;
-  status: ReturnStatus;      // PENDING | APPROVED | REJECTED | REFUNDED
+  status: ReturnStatus;      // PENDING | APPROVED | REJECTED | REFUND_PENDING | REFUNDED
   refundAmount?: Float;
   adminNote?: string;
   createdAt: DateTime;
@@ -1739,7 +1739,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 }
 ```
 
-**Side effects**: Sets `ReturnStatus = APPROVED`, records inventory restore log.
+**Side effects**: Sets `ReturnStatus = APPROVED` and the refund amount. Stock is not touched. Only a `PENDING` request can be approved (`BAD_REQUEST` otherwise); if another admin approves or rejects it at the same moment, one wins and the other gets `CONFLICT`. The same applies to `rejectReturn`.
 
 ---
 
@@ -1761,6 +1761,43 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only.
 - **Type**: Mutation
 - **Args**: `returnRequestId: ID!`
 - **Description**: Refund the approved amount through Paystack and move the request from `APPROVED` to `REFUNDED`. **Moves money only, never stock:** a cancelled order already had its stock restored at cancellation, and physically returned goods are put back with `restockProduct` once received and inspected.
+- **How it runs**: the request is first claimed (`APPROVED → REFUND_PENDING`) and a `Refund` record is created, then Paystack is called once. On success the refund becomes `PROCESSED` (with Paystack's refund id in `providerRef`) and the request `REFUNDED`.
+- **Limits**: the amount must be greater than 0, and all refunds on the payment (including an auto-refund queued for a flagged payment) cannot exceed what was captured; otherwise `BAD_REQUEST` and nothing changes. Only Paystack payments can be refunded (cash-on-delivery: `BAD_REQUEST`).
+- **Errors and retries**:
+  - Double-click or a second admin: `CONFLICT`; Paystack is never called twice.
+  - Paystack refused the refund: `BAD_REQUEST` ("Nothing was refunded"). The request stays `REFUND_PENDING` and its refund is `FAILED`; call `processRefund` again to retry.
+  - Paystack timed out or answered unreadably: an error, and the refund stays `SENDING` because Paystack may have created it. Further calls get `CONFLICT`. Check the Paystack dashboard; there is no in-app way to resolve this yet.
+  - Already `REFUNDED`, or not approved: `BAD_REQUEST`.
+
+---
+
+#### `processPendingRefund` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `refundId: ID!`
+- **Response**: `RefundEntity`
+- **Description**: Sends a `PENDING` refund through Paystack, or resends a `FAILED` one. Used for auto-refunds that payment verification queues when money arrives for a cancelled, already-paid or wrong-amount payment (these are never sent automatically). A refund linked to a return request also completes that request. Same cap, claim and error rules as `processRefund`: a second call gets `CONFLICT`.
+
+---
+
+#### `refunds` (ADMIN, SUPER_ADMIN)
+- **Type**: Query
+- **Args**: `status: RefundStatusEnum` (optional)
+- **Response**: `[RefundEntity!]!`, newest first. Use `refunds(status: PENDING)` to find auto-refunds waiting to be sent.
+
+```typescript
+{
+  id: string;
+  attemptId: string;          // the payment the money is returned from
+  returnRequestId?: string;   // set for refunds of return requests
+  amount: Float;
+  currency: string;
+  status: RefundStatus;       // PENDING | SENDING | PROCESSED | FAILED
+  providerRef?: string;       // Paystack refund id
+  failureReason?: string;     // why the last send failed, or "Outcome unknown: ..."
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+```
 
 ---
 
@@ -2670,7 +2707,7 @@ model ReturnRequest {
 }
 ```
 
-**`ReturnStatus`**: `PENDING | APPROVED | REJECTED | REFUNDED`
+**`ReturnStatus`**: `PENDING | APPROVED | REJECTED | REFUND_PENDING | REFUNDED`
 
 ---
 
@@ -2899,7 +2936,7 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 2. `ReturnRequest` created with `status = PENDING`.
 3. Admin reviews: `mutation approveReturn(input: { returnRequestId, refundAmount, adminNote? })` → status → `APPROVED`.
 4. Admin rejects: `mutation rejectReturn(input: { returnRequestId, adminNote? })` → status → `REJECTED`.
-5. Admin processes refund (external): `mutation processRefund(returnRequestId)` → status → `REFUNDED`.
+5. Admin processes the refund through Paystack: `mutation processRefund(returnRequestId)` → status → `REFUND_PENDING` while it is sent, then `REFUNDED`. If Paystack refuses, it stays `REFUND_PENDING` and can be retried.
 
 ### Review Submission Flow
 
@@ -2932,7 +2969,7 @@ See [Section 8](#8-payment-integration-paystack) for full details.
               |
        createReturnRequest()
               ↓
-    ReturnRequest: PENDING → APPROVED → REFUNDED
+    ReturnRequest: PENDING → APPROVED → REFUND_PENDING → REFUNDED
                               |
                            REJECTED
 ```
@@ -3724,7 +3761,8 @@ export type Role = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
 export type OrderStatus = 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
 export type PaymentStatus = 'PENDING' | 'COMPLETED' | 'FAILED';
 export type DiscountType = 'PERCENTAGE' | 'FLAT';
-export type ReturnStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REFUNDED';
+export type ReturnStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REFUND_PENDING' | 'REFUNDED';
+export type RefundStatus = 'PENDING' | 'SENDING' | 'PROCESSED' | 'FAILED';
 export type InventoryAction = 'RESTOCK' | 'ORDER_DEDUCTION' | 'RETURN_RESTORE' | 'ADJUSTMENT';
 export type Currency = 'GHS' | 'USD' | 'EUR' | 'GBP' | 'NGN';
 export type StockStatus = 'IN_STOCK' | 'OUT_OF_STOCK' | 'PREORDER' | 'BACKORDER';

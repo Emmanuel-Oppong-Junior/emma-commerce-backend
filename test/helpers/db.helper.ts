@@ -12,10 +12,10 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   // Leaf-level audit / usage tables
   await prisma.inventoryLog.deleteMany();
   await prisma.couponUsage.deleteMany();
-  await prisma.returnRequest.deleteMany();
 
-  // Payment and order hierarchy
+  // Payment and order hierarchy (refunds reference return requests)
   await clearPaymentLedger(prisma);
+  await prisma.returnRequest.deleteMany();
   await prisma.orderItem.deleteMany();
   await prisma.order.deleteMany();
 

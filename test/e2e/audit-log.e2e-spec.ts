@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
-import axios from 'axios';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { PaystackClient } from '../../src/payment/paystack.client';
 import { AuditService } from '../../src/commons/audit.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
@@ -15,6 +15,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
   let superAdminToken: string;
   let adminId: string;
   let superAdminId: string;
+  const paystack = { createRefund: jest.fn(async () => ({ id: 'rf_audit', status: 'pending' })) };
 
   const run = async (query: string, token: string) => {
     const res = await gqlRequest(app, query, undefined, token).expect(200);
@@ -25,7 +26,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
     prisma.auditLog.findMany({ where: { entity, entityId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
 
   beforeAll(async () => {
-    ({ app, prisma } = await createTestApp());
+    ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
     await resetDb(prisma);
     await seedMinimal(prisma);
     userToken = await signInUser(app);
@@ -63,7 +64,6 @@ describe('Audit log for privileged mutations (e2e)', () => {
   });
 
   it('records the approval and the refund of a return with the admin, amounts and provider reference', async () => {
-    jest.spyOn(axios, 'post').mockResolvedValue({ data: { status: true } });
     const address = await run(
       `mutation { createAddress(input: { street: "1 Audit St", city: "Accra", state: "Greater Accra",
         zipCode: "00233", country: "Ghana" }) { id } }`,
@@ -90,6 +90,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
     );
     await run(`mutation { processRefund(returnRequestId: "${returnId}") { status } }`, adminToken);
 
+    const refund = await prisma.refund.findUniqueOrThrow({ where: { returnRequestId: returnId } });
     const rows = await auditRows('ReturnRequest', returnId);
     expect(rows.map(({ action, userId: actor, details }) => ({ action, actor, details }))).toEqual([
       {
@@ -98,10 +99,26 @@ describe('Audit log for privileged mutations (e2e)', () => {
         details: { orderId, from: 'PENDING', to: 'APPROVED', refundAmount: '40' },
       },
       {
+        action: 'STATUS_CHANGE',
+        actor: adminId,
+        details: { orderId, from: 'APPROVED', to: 'REFUND_PENDING', refundId: refund.id, amount: '40' },
+      },
+      {
         action: 'REFUND',
         actor: adminId,
-        details: { orderId, from: 'APPROVED', to: 'REFUNDED', amount: '40', providerReference: `ref-${orderId}` },
+        details: {
+          orderId,
+          from: 'REFUND_PENDING',
+          to: 'REFUNDED',
+          amount: '40',
+          providerReference: `ref-${orderId}`,
+          providerRefundId: 'rf_audit',
+        },
       },
+    ]);
+    expect((await auditRows('Refund', refund.id)).map(({ action, userId: actor }) => ({ action, actor }))).toEqual([
+      { action: 'STATUS_CHANGE', actor: adminId },
+      { action: 'REFUND', actor: adminId },
     ]);
   });
 

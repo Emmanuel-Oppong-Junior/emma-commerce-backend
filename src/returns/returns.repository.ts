@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma, ReturnRequest, ReturnStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -29,23 +29,18 @@ export class ReturnsRepository {
     return this.prisma.returnRequest.findMany({ orderBy: { createdAt: 'desc' } });
   }
 
-  async updateStatus(
+  /** Moves the request from `from` to `to` only if it is still `from`; null when another request changed it first. */
+  async transitionStatus(
     id: string,
-    status: ReturnStatus,
-    refundAmount?: number,
-    adminNote?: string,
+    from: ReturnStatus,
+    to: ReturnStatus,
+    changes: { refundAmount?: number; adminNote?: string },
     db: Prisma.TransactionClient = this.prisma,
-  ): Promise<ReturnRequest> {
-    try {
-      return await db.returnRequest.update({
-        where: { id },
-        data: { status, refundAmount, adminNote },
-      });
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
-        throw new NotFoundException(`Return request "${id}" not found`);
-      }
-      throw e;
-    }
+  ): Promise<ReturnRequest | null> {
+    const { count } = await db.returnRequest.updateMany({
+      where: { id, status: from },
+      data: { ...changes, status: to },
+    });
+    return count === 0 ? null : db.returnRequest.findUniqueOrThrow({ where: { id } });
   }
 }

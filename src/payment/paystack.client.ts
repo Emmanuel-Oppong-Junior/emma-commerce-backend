@@ -1,6 +1,7 @@
 import { BadGatewayException, GatewayTimeoutException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  PAYSTACK_REFUND_URL,
   PAYSTACK_TRANSACTION_INI_URL,
   PAYSTACK_TRANSACTION_LIST_URL,
   PAYSTACK_TRANSACTION_VERIFY_BASE_URL,
@@ -55,6 +56,24 @@ export interface TransactionPage {
   pageCount: number;
 }
 
+export interface CreateRefundRequest {
+  /** The transaction reference. */
+  transaction: string;
+  /** In subunits (pesewas). */
+  amount: number;
+}
+
+export interface CreatedRefund {
+  id: string;
+  status: string;
+}
+
+/**
+ * Paystack answered with a 4xx and `status: false`, so it refused the request and did nothing. Every other failure
+ * leaves the outcome unknown.
+ */
+export class PaystackRequestRejected extends BadGatewayException {}
+
 /**
  * The Paystack calls the app makes, over `fetch` with a timeout. Transport failures, timeouts, non-2xx answers and
  * malformed envelopes all surface as 502/504 so callers never act on a response they could not read.
@@ -105,6 +124,14 @@ export class PaystackClient {
     return { transactions: envelope.data.map(toListedTransaction), pageCount: pageCount as number };
   }
 
+  async createRefund(request: CreateRefundRequest): Promise<CreatedRefund> {
+    const data = await this.call('refund', PAYSTACK_REFUND_URL, { method: 'POST', body: JSON.stringify(request) });
+    if ((typeof data.id !== 'number' && typeof data.id !== 'string') || data.id === '') {
+      throw new BadGatewayException('Paystack refund returned no refund id');
+    }
+    return { id: String(data.id), status: typeof data.status === 'string' ? data.status : 'unknown' };
+  }
+
   private async call(operation: string, url: string, init: RequestInit): Promise<Record<string, unknown>> {
     const envelope = await this.send(operation, url, init);
     if (!isRecord(envelope.data)) {
@@ -137,7 +164,9 @@ export class PaystackClient {
     const envelope = isRecord(body) ? body : {};
     if (!response.ok || envelope.status !== true) {
       const message = typeof envelope.message === 'string' ? `: ${envelope.message.slice(0, 200)}` : '';
-      throw new BadGatewayException(`Paystack ${operation} failed with HTTP ${response.status}${message}`);
+      const failure = `Paystack ${operation} failed with HTTP ${response.status}${message}`;
+      const rejected = response.status >= 400 && response.status < 500 && envelope.status === false;
+      throw rejected ? new PaystackRequestRejected(failure) : new BadGatewayException(failure);
     }
     return envelope;
   }
