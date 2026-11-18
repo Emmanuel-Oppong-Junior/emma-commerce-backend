@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import { ProductsService } from './products.service';
 import { ProductsRepository } from './products.repository';
 import { TaxService } from '../tax/tax.service';
@@ -91,7 +92,7 @@ describe('ProductsService', () => {
       mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
       mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
       mockProductsRepository.findFirst.mockResolvedValue(null);
-      mockTaxService.getTotalActiveRate.mockResolvedValue(0.15);
+      mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.15'));
 
       await service.create({ ...input, basePrice: '100.00', isTaxable: true }, 'admin1');
 
@@ -359,7 +360,7 @@ describe('ProductsService', () => {
 
     it('should recompute price from the existing basePrice when only isTaxable changes', async () => {
       mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: '100.00', isTaxable: false });
-      mockTaxService.getTotalActiveRate.mockResolvedValue(0.2);
+      mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.2'));
 
       await service.update('prod1', { isTaxable: true }, 'admin1');
 
@@ -369,6 +370,29 @@ describe('ProductsService', () => {
         { category: true, subcategory: true },
         AUDIT_TX,
       );
+    });
+
+    it('should round the tax-inclusive price half away from zero, like the tax reprice', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: '10.10', isTaxable: false });
+      mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.15'));
+
+      await service.update('prod1', { isTaxable: true }, 'admin1');
+
+      expect(productsRepository.update).toHaveBeenCalledWith(
+        'prod1',
+        { isTaxable: true, price: '11.62' },
+        { category: true, subcategory: true },
+        AUDIT_TX,
+      );
+    });
+
+    it('should refuse to recompute the price of a product without a basePrice', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: null, isTaxable: false });
+
+      await expect(service.update('prod1', { isTaxable: true }, 'admin1')).rejects.toThrow(
+        new BadRequestException('Product "prod1" has no basePrice; set basePrice to recompute its price'),
+      );
+      expect(productsRepository.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if product does not exist', async () => {
@@ -505,7 +529,7 @@ describe('ProductsService', () => {
       mockProductsRepository.update.mockImplementation(async (_id, data) => ({ ...existing, ...data }));
       mockProductsRepository.delete.mockResolvedValue(existing);
       mockProductsRepository.updateTags.mockResolvedValue(existing);
-      mockTaxService.getTotalActiveRate.mockResolvedValue(0.2);
+      mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.2'));
     });
 
     it.each<[string, () => Promise<unknown>, object]>([

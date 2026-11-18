@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Tax } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
+import { Prisma, Tax } from '@prisma/client';
 import { TaxRepository } from './tax.repository';
 import { CreateTaxInput } from './dto/create-tax-rate.input';
 import { UpdateTaxInput } from './dto/update-tax-rate.input';
@@ -12,13 +11,19 @@ const AUDITED_TAX_FIELDS = ['name', 'rate', 'isActive'] as const satisfies reado
 export class TaxService {
   constructor(
     private readonly taxRepository: TaxRepository,
-    private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
 
   async create(input: CreateTaxInput, actorId: string): Promise<Tax> {
-    const tax = await this.auditService.record(
-      (tx) => this.taxRepository.create({ name: input.name, rate: input.rate, isActive: input.isActive ?? true }, tx),
+    return this.auditService.record(
+      async (tx) => {
+        const created = await this.taxRepository.create(
+          { name: input.name, rate: input.rate, isActive: input.isActive ?? true },
+          tx,
+        );
+        await this.repriceTaxableProducts(tx);
+        return created;
+      },
       (created) => ({
         entity: 'Tax',
         entityId: created.id,
@@ -27,14 +32,16 @@ export class TaxService {
         details: { after: fieldValues(created, AUDITED_TAX_FIELDS) },
       }),
     );
-    await this.recomputeAllTaxableProductPrices();
-    return tax;
   }
 
   async update(id: string, input: UpdateTaxInput, actorId: string): Promise<Tax> {
     const existing = await this.findOne(id);
-    const tax = await this.auditService.record(
-      (tx) => this.taxRepository.update(id, input, tx),
+    return this.auditService.record(
+      async (tx) => {
+        const updated = await this.taxRepository.update(id, input, tx);
+        await this.repriceTaxableProducts(tx);
+        return updated;
+      },
       (updated) => ({
         entity: 'Tax',
         entityId: id,
@@ -43,13 +50,15 @@ export class TaxService {
         details: { changes: fieldChanges(existing, updated, AUDITED_TAX_FIELDS) },
       }),
     );
-    await this.recomputeAllTaxableProductPrices();
-    return tax;
   }
 
   async delete(id: string, actorId: string): Promise<Tax> {
-    const tax = await this.auditService.record(
-      (tx) => this.taxRepository.delete(id, tx),
+    return this.auditService.record(
+      async (tx) => {
+        const deleted = await this.taxRepository.delete(id, tx);
+        await this.repriceTaxableProducts(tx);
+        return deleted;
+      },
       (deleted) => ({
         entity: 'Tax',
         entityId: id,
@@ -58,8 +67,6 @@ export class TaxService {
         details: { before: fieldValues(deleted, AUDITED_TAX_FIELDS) },
       }),
     );
-    await this.recomputeAllTaxableProductPrices();
-    return tax;
   }
 
   async findAll(): Promise<Tax[]> {
@@ -72,21 +79,13 @@ export class TaxService {
     return tax;
   }
 
-  async getTotalActiveRate(): Promise<number> {
+  async getTotalActiveRate(): Promise<Prisma.Decimal> {
     return this.taxRepository.getTotalActiveRate();
   }
 
-  /**
-   * Recalculates price for all taxable products using current active tax rates.
-   * price = basePrice * (1 + sum of all active tax rates)
-   */
-  private async recomputeAllTaxableProductPrices(): Promise<void> {
-    const totalRate = await this.taxRepository.getTotalActiveRate();
-    const multiplier = 1 + totalRate;
-    await this.prisma.$executeRaw`
-      UPDATE "Product"
-      SET "price" = ROUND(CAST("basePrice" AS NUMERIC) * ${multiplier}, 2)
-      WHERE "isTaxable" = true AND "basePrice" IS NOT NULL
-    `;
+  /** Runs on the tax change's transaction, so a failed reprice rolls the tax change back. */
+  private async repriceTaxableProducts(tx: Prisma.TransactionClient): Promise<void> {
+    const totalRate = await this.taxRepository.getTotalActiveRate(tx);
+    await this.taxRepository.repriceTaxableProducts(totalRate, tx);
   }
 }

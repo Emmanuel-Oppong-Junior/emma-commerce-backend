@@ -14,8 +14,9 @@ const vat = {
 };
 
 describe('TaxService', () => {
-  let repository: jest.Mocked<Pick<TaxRepository, 'create' | 'update' | 'delete' | 'findById' | 'getTotalActiveRate'>>;
-  let prisma: { $executeRaw: jest.Mock };
+  let repository: jest.Mocked<
+    Pick<TaxRepository, 'create' | 'update' | 'delete' | 'findById' | 'getTotalActiveRate' | 'repriceTaxableProducts'>
+  >;
   let audit: ReturnType<typeof createAuditServiceMock>;
   let service: TaxService;
 
@@ -25,11 +26,11 @@ describe('TaxService', () => {
       update: jest.fn().mockImplementation(async (id, data) => ({ ...vat, id, ...data })),
       delete: jest.fn().mockResolvedValue(vat),
       findById: jest.fn().mockResolvedValue(vat),
-      getTotalActiveRate: jest.fn().mockResolvedValue(0.15),
+      getTotalActiveRate: jest.fn().mockResolvedValue(new Prisma.Decimal('0.15')),
+      repriceTaxableProducts: jest.fn().mockResolvedValue(undefined),
     };
-    prisma = { $executeRaw: jest.fn().mockResolvedValue(0) };
     audit = createAuditServiceMock();
-    service = new TaxService(repository as never, prisma as never, audit as never);
+    service = new TaxService(repository as never, audit as never);
   });
 
   it.each<[string, () => Promise<unknown>, object]>([
@@ -56,7 +57,26 @@ describe('TaxService', () => {
       { entity: 'Tax', entityId: 'tax1', userId: 'admin1', ...expected },
       AUDIT_TX,
     );
-    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, () => Promise<unknown>]>([
+    ['create', () => service.create({ name: 'VAT', rate: 0.15 }, 'admin1')],
+    ['update', () => service.update('tax1', { rate: 0.2 }, 'admin1')],
+    ['delete', () => service.delete('tax1', 'admin1')],
+  ])('%s reprices taxable products from the rate read on the audit transaction', async (_name, act) => {
+    await act();
+
+    expect(repository.getTotalActiveRate).toHaveBeenCalledWith(AUDIT_TX);
+    expect(repository.repriceTaxableProducts).toHaveBeenCalledWith(new Prisma.Decimal('0.15'), AUDIT_TX);
+  });
+
+  it('fails the tax change without an audit entry when the reprice fails', async () => {
+    const failure = new Error('reprice failed');
+    repository.repriceTaxableProducts.mockRejectedValue(failure);
+
+    await expect(service.create({ name: 'VAT', rate: 0.15 }, 'admin1')).rejects.toBe(failure);
+    expect(audit.record).toHaveBeenCalledTimes(1);
+    expect(audit.log).not.toHaveBeenCalled();
   });
 
   it('writes the tax change on the audit transaction', async () => {
@@ -73,6 +93,6 @@ describe('TaxService', () => {
     );
     expect(repository.update).not.toHaveBeenCalled();
     expect(audit.log).not.toHaveBeenCalled();
-    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+    expect(repository.repriceTaxableProducts).not.toHaveBeenCalled();
   });
 });

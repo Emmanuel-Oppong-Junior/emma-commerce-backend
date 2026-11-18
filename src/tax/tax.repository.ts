@@ -25,9 +25,19 @@ export class TaxRepository {
     return this.prisma.tax.findMany({ orderBy: { name: 'asc' } });
   }
 
-  async getTotalActiveRate(): Promise<number> {
-    const taxes = await this.prisma.tax.findMany({ where: { isActive: true } });
-    return taxes.reduce((sum, t) => sum + Number(t.rate), 0);
+  async getTotalActiveRate(db: Prisma.TransactionClient = this.prisma): Promise<Prisma.Decimal> {
+    const taxes = await db.tax.findMany({ where: { isActive: true } });
+    return taxes.reduce((sum, t) => sum.plus(t.rate), new Prisma.Decimal(0));
+  }
+
+  /** Sets price = basePrice × (1 + totalRate) on every taxable product; the rounding matches `taxInclusivePrice`. */
+  async repriceTaxableProducts(totalRate: Prisma.Decimal, db: Prisma.TransactionClient = this.prisma): Promise<void> {
+    // Bound as a Decimal and cast to numeric so the multiply and ROUND stay exact decimal arithmetic, never float8.
+    await db.$executeRaw`
+      UPDATE "Product"
+      SET "price" = ROUND("basePrice" * ${totalRate.plus(1)}::numeric, 2)
+      WHERE "isTaxable" = true AND "basePrice" IS NOT NULL
+    `;
   }
 
   async update(id: string, data: Prisma.TaxUpdateInput, db: Prisma.TransactionClient = this.prisma): Promise<Tax> {

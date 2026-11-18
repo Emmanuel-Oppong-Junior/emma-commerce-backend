@@ -821,7 +821,7 @@ query {
 - **Args**: `productId: String!`, `updateProductInput: UpdateProductInput!`
 - **Response**: `Product!`
 
-`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `quantity`**: stock cannot be set here (sending it is a schema error, HTTP 400). Change stock with `restockProduct` or `adjustProductStock`. Omitted fields, including `isActive` and `isTaxable`, are left unchanged.
+`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `quantity`**: stock cannot be set here (sending it is a schema error, HTTP 400). Change stock with `restockProduct` or `adjustProductStock`. Omitted fields, including `isActive` and `isTaxable`, are left unchanged. Changing `isTaxable` on a product that has no `basePrice` (e.g. older seeded products) without also sending `basePrice` fails with `BAD_REQUEST`, instead of setting the price to 0.00.
 
 ---
 
@@ -2260,7 +2260,7 @@ The review queries and mutations below require a signed-in user. Guests can stil
 
 All tax operations: `ADMIN`, `SUPER_ADMIN` only.
 
-Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or region. The sum of the **active** rates is built into the `price` of every taxable product (`price = basePrice × (1 + sum)`); creating, updating or deleting a tax recomputes all taxable product prices. No tax is added at checkout and orders do not show a tax line.
+Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or region. The sum of the **active** rates is built into the `price` of every taxable product (`price = basePrice × (1 + sum)`); creating, updating or deleting a tax recomputes all taxable product prices in the same transaction, so if the reprice fails the mutation returns an error and neither the tax change nor any price is saved. Prices are rounded to 2 decimal places, half away from zero (basePrice 10.10 at 15% → 11.62), the same way whether the price was set by a product edit or a tax change. No tax is added at checkout and orders do not show a tax line.
 
 ---
 

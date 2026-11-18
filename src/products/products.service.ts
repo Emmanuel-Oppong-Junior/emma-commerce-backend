@@ -10,6 +10,7 @@ import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { ProductsRepository } from './products.repository';
 import { TaxService } from '../tax/tax.service';
+import { taxInclusivePrice } from '../tax/tax-inclusive-price';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 
 export const PUBLIC_PRODUCT_WHERE = { isActive: true, status: 'PUBLISHED' } satisfies Prisma.ProductWhereInput;
@@ -44,7 +45,7 @@ export class ProductsService {
   async create(createProductInput: CreateProductInput, actorId: string): Promise<Product> {
     await this.validateProductInput(createProductInput);
     const { basePrice, isTaxable, ...rest } = createProductInput;
-    const price = await this.computePrice(Number(basePrice), isTaxable);
+    const price = await this.computePrice(basePrice, isTaxable);
     return this.auditService.record(
       (tx) =>
         this.productsRepository.create(
@@ -193,10 +194,9 @@ export class ProductsService {
     );
   }
 
-  private async computePrice(basePrice: number, isTaxable: boolean): Promise<number> {
-    if (!isTaxable) return basePrice;
-    const totalRate = await this.taxService.getTotalActiveRate();
-    return basePrice * (1 + totalRate);
+  private async computePrice(basePrice: Prisma.Decimal.Value, isTaxable: boolean): Promise<Prisma.Decimal> {
+    if (!isTaxable) return new Prisma.Decimal(basePrice);
+    return taxInclusivePrice(basePrice, await this.taxService.getTotalActiveRate());
   }
 
   private async buildUpdateData(existing: Product, input: UpdateProductInput): Promise<Prisma.ProductUpdateInput> {
@@ -204,7 +204,12 @@ export class ProductsService {
     const updateData: Prisma.ProductUpdateInput = { ...rest };
 
     if (basePrice !== undefined || isTaxable !== undefined) {
-      const effectiveBase = basePrice !== undefined ? Number(basePrice) : Number(existing.basePrice);
+      const effectiveBase = basePrice ?? existing.basePrice;
+      if (effectiveBase === null) {
+        throw new BadRequestException(
+          `Product "${existing.id}" has no basePrice; set basePrice to recompute its price`,
+        );
+      }
       const effectiveTaxable = isTaxable !== undefined ? isTaxable : existing.isTaxable;
       const price = await this.computePrice(effectiveBase, effectiveTaxable);
       updateData.price = price.toFixed(2);

@@ -99,7 +99,7 @@ describe('TaxRepository', () => {
 
       const result = await repository.getTotalActiveRate();
 
-      expect(result).toBeCloseTo(0.175);
+      expect(result).toEqual(new Prisma.Decimal('0.175'));
       expect(mockPrismaTax.findMany).toHaveBeenCalledWith({ where: { isActive: true } });
     });
 
@@ -108,7 +108,23 @@ describe('TaxRepository', () => {
 
       const result = await repository.getTotalActiveRate();
 
-      expect(result).toBe(0);
+      expect(result).toEqual(new Prisma.Decimal(0));
+    });
+  });
+
+  describe('repriceTaxableProducts', () => {
+    it('binds the multiplier as a Decimal cast to numeric, never a float', async () => {
+      const executeRaw = jest.fn().mockResolvedValue(3);
+
+      await repository.repriceTaxableProducts(new Prisma.Decimal('0.15'), {
+        $executeRaw: executeRaw,
+      } as unknown as Prisma.TransactionClient);
+
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      const [sql, multiplier] = executeRaw.mock.calls[0] as [TemplateStringsArray, unknown];
+      expect(multiplier).toEqual(new Prisma.Decimal('1.15'));
+      expect(multiplier).toBeInstanceOf(Prisma.Decimal);
+      expect(sql.join('?')).toContain('?::numeric, 2)');
     });
   });
 
