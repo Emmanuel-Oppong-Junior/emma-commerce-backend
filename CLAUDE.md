@@ -69,6 +69,7 @@ npm run test:repro      # Audit repro tests (test/jest-repro.json); failures are
 npx prisma migrate dev  # Run migrations in development (new migration: add --create-only and review the SQL first); no longer generates or seeds
 npx prisma generate     # Regenerate Prisma Client (into src/generated/prisma, gitignored) after install and schema changes
 npx prisma db seed      # Seed the database (command in prisma.config.ts; needs SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD)
+npm run schema:generate # Rewrite schema.gql from the resolvers (no DB or env needed)
 npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code  # Drift check (exit 2 = drift)
 ```
 
@@ -84,7 +85,7 @@ These describe what the code enforces today. ADR-0004 (money), ADR-0008 (invento
 - **Side effects** (email): never let one fail a request or vanish silently. Catch and log until the queue/outbox exists.
 - No secrets or PII in logs.
 - **Migrations:** create with `--create-only` and review the SQL. Never edit an applied migration. Backfills must be safe to re-run. `prisma migrate diff` must show no drift.
-- **API changes:** regenerate and commit `schema.gql`. List frontend-visible changes in `STATUS.md` until `FRONTEND_API_DOCUMENTATION.md` is brought in line (P0-D.3); after that, update it with every API change.
+- **API changes:** regenerate `schema.gql` with `npm run schema:generate` and commit it (CI fails on a stale file). Deprecate before removing; CI's graphql-inspector check fails on breaking changes unless a commit in the push/PR is marked `[breaking-api]`, and those must be listed for the frontend. Update `FRONTEND_API_DOCUMENTATION.md` with every API change.
 
 ## Architecture
 

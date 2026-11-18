@@ -70,7 +70,52 @@ jobs:
       # Test-only values with random JWT secrets per run; no repository secrets involved.
       - run: node scripts/write-test-env.js "$DATABASE_URL"
       - run: npx prisma migrate deploy
+      - name: Migrations match schema.prisma (no drift)
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
       - run: npm run test:e2e
+
+  api-schema:
+    name: GraphQL schema up to date and no breaking changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Committed schema.gql matches the resolvers
+        run: |
+          npm run schema:generate
+          if ! git diff --exit-code -- schema.gql; then
+            echo "schema.gql is stale: run 'npm run schema:generate' and commit the result."
+            exit 1
+          fi
+      # Deprecate before removing (ADR-0012): removing an already-deprecated field passes. An intentional break
+      # passes only when a commit in the range says [breaking-api], and must be listed for the frontend.
+      - name: No breaking GraphQL changes against the base commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "${BASE_SHA}:schema.gql" 2>/dev/null; then
+            echo "No base schema.gql to compare with."
+            exit 0
+          fi
+          git show "${BASE_SHA}:schema.gql" > "$RUNNER_TEMP/base-schema.gql"
+          if npx graphql-inspector diff "$RUNNER_TEMP/base-schema.gql" schema.gql --rule suppressRemovalOfDeprecatedField; then
+            exit 0
+          fi
+          if git log --format=%B "${BASE_SHA}..${HEAD_SHA}" | grep -qF '[breaking-api]'; then
+            echo "Breaking changes accepted: a commit in this range is marked [breaking-api]."
+            exit 0
+          fi
+          echo "Breaking GraphQL change. Deprecate first, or mark the commit [breaking-api] and tell the frontend."
+          exit 1
 
   docker:
     name: Docker image build and smoke run
