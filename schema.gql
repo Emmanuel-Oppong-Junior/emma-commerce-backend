@@ -83,7 +83,7 @@ type Cart {
   """Total discount amount applied"""
   discountTotal: Float
 
-  """Final total after discounts"""
+  """Final total after discounts; createOrder charges this for the items"""
   finalTotal: Float
 
   """Unique identifier of the cart"""
@@ -906,7 +906,7 @@ type Order {
   couponDiscount: Float
   createdAt: DateTime!
 
-  """Total discount amount applied"""
+  """Product discounts taken off the list prices at checkout"""
   discountTotal: Float
 
   """Final total after discounts"""
@@ -941,7 +941,9 @@ type Order {
   shippingFee: Float
   status: OrderStatus!
 
-  """Sum of item prices at order time; null on older orders"""
+  """
+  Sum of item prices charged at order time, after product discounts; null on older orders
+  """
   subtotal: Float
 
   """Amount charged: subtotal + shippingFee - couponDiscount"""
@@ -959,13 +961,15 @@ type OrderItem {
   appliedDiscount: Discount
   createdAt: DateTime!
 
-  """Discount amount applied to the item"""
+  """Discount taken off one unit at checkout"""
   discountAmount: Float
   id: ID!
   orderId: ID!
 
   """Original price per unit of the product or variant"""
   originalPrice: Float
+
+  """Unit price charged: originalPrice - discountAmount"""
   priceAtOrder: Float!
   product: Product!
   productId: ID!
@@ -1260,6 +1264,10 @@ type Query {
 
   """Retrieves the current user’s cart"""
   cart: Cart
+
+  """
+  Retrieves the current user’s cart priced exactly as createOrder will charge it
+  """
   cartWithDiscount: Cart!
 
   """Retrieves a list of all categories, sorted alphabetically by name"""
