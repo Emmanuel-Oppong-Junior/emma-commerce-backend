@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { CouponsRepository } from './coupons.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Coupon, Prisma } from '@prisma/client';
+import { Coupon, Prisma } from '../generated/prisma/client';
 
 const mockCoupon = {
   id: 'coupon1',

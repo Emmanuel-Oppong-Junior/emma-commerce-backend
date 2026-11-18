@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PaymentProvider, WebhookEvent } from '@prisma/client';
+import { PaymentProvider, WebhookEvent } from '../generated/prisma/client';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { LoggerService } from '../commons/logger.service';
 import { describeErrorForLog } from '../commons/filters/error-classification';

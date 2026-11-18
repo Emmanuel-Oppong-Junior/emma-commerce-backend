@@ -3,7 +3,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PaymentRepository } from './payment.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
-import { Order, Prisma } from '@prisma/client';
+import { Order, Prisma } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 

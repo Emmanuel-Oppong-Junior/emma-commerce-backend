@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { InputValidationException } from '../validation-pipe';
 
 export interface ClassifiedError {
@@ -22,11 +22,34 @@ const INTERNAL: ClassifiedError = {
   message: 'Internal server error',
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+// The pg driver adapter reports the violated constraint under driverAdapterError instead of meta.target, and
+// Postgres always names it, so the columns come from Prisma's default name: <Model>_<field>_<field>_key.
+function uniqueFields(meta: Record<string, unknown> | undefined): string[] | undefined {
+  const target = meta?.target;
+  if (Array.isArray(target)) return target.map(String);
+  if (typeof target === 'string') return [target];
+  const driverError = meta?.driverAdapterError;
+  const cause = isRecord(driverError) ? driverError.cause : undefined;
+  const constraint = isRecord(cause) ? cause.constraint : undefined;
+  if (!isRecord(constraint)) return undefined;
+  if (Array.isArray(constraint.fields)) return constraint.fields.map(String);
+  const model = meta?.modelName;
+  const index = constraint.index;
+  if (typeof index !== 'string' || typeof model !== 'string') return undefined;
+  const prefix = `${model}_`;
+  if (!index.startsWith(prefix) || !index.endsWith('_key')) return undefined;
+  const fields = index.slice(prefix.length, -'_key'.length).split('_');
+  return fields.every(Boolean) ? fields : undefined;
+}
+
 function classifyPrisma(error: Prisma.PrismaClientKnownRequestError): ClassifiedError {
   switch (error.code) {
     case 'P2002': {
-      const target = error.meta?.target;
-      const fields = Array.isArray(target) ? target.join(', ') : typeof target === 'string' ? target : undefined;
+      const fields = uniqueFields(error.meta)?.join(', ');
       return {
         status: HttpStatus.CONFLICT,
         code: 'CONFLICT',
@@ -57,8 +80,7 @@ function httpMessage(exception: HttpException): string {
 // Safe for logs: Prisma's own message can contain the values being written, so only its code and target are kept.
 export function describeErrorForLog(exception: unknown): string {
   if (exception instanceof Prisma.PrismaClientKnownRequestError) {
-    const target = exception.meta?.target;
-    const fields = Array.isArray(target) ? target.join(',') : typeof target === 'string' ? target : undefined;
+    const fields = uniqueFields(exception.meta)?.join(',');
     const model = typeof exception.meta?.modelName === 'string' ? exception.meta.modelName : undefined;
     const where = [model, fields].filter(Boolean).join('.');
     return `Prisma ${exception.code}${where ? ` on ${where}` : ''}`;

@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { InventoryRepository } from './inventory.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { InventoryLog } from '@prisma/client';
+import { InventoryLog } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 

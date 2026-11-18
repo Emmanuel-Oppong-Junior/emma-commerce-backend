@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '../generated/prisma/client';
 import { assertOrderPayable, checkoutUrlForReplay, PayableOrder } from './payment-initiation';
 
 const payable: PayableOrder = {

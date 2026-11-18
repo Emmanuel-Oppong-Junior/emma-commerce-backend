@@ -1,6 +1,6 @@
 import { ExecutionContext } from '@nestjs/common';
 import { GqlContextType, GqlExecutionContext } from '@nestjs/graphql';
-import { User } from '@prisma/client';
+import { User } from '../generated/prisma/client';
 import { Request } from 'express';
 
 export type AuthenticatedRequest = Request & { user?: User };

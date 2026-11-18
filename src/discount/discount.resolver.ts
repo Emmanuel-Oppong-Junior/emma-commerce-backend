@@ -6,7 +6,7 @@ import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 
 @Resolver(() => Discount)
 export class DiscountResolver {

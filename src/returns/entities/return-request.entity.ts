@@ -1,6 +1,6 @@
 import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
 import { ReturnStatusEnum } from '../enums/return-status.enum';
-import { ReturnStatus } from '@prisma/client';
+import { ReturnStatus } from '../../generated/prisma/client';
 
 @ObjectType()
 export class ReturnRequestEntity {

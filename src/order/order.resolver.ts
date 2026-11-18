@@ -9,7 +9,7 @@ import { UpdateShippingInput } from './dto/update-shipping.input';
 import { OrdersService } from './order.service';
 import { UsersLoader } from '../users/loaders/users.loader';
 import { User } from '../users/entities/user.entity';
-import { FulfillmentType, PaymentMethod } from '@prisma/client';
+import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
 import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
 
 @Resolver(() => Order)

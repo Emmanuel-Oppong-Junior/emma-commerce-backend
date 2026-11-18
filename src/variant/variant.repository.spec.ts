@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { VariantRepository } from './variant.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, Variant } from '@prisma/client';
+import { Prisma, Variant } from '../generated/prisma/client';
 
 const mockVariant = {
   id: 'var1',

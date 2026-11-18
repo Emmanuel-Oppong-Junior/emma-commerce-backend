@@ -5,7 +5,8 @@ import { ProductFilterArgs } from './dto/product-filter.args';
 import { ProductSortArgs } from './dto/product-sort.args';
 import { ProductSortField } from './enums/product-sort-field.enum';
 import { SortOrder } from '../commons/enums/sort-order.enum';
-import { Prisma, Product } from '@prisma/client';
+import { Prisma, Product } from '../generated/prisma/client';
+import { Decimal } from '@prisma/client/runtime/client';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { ProductsRepository } from './products.repository';
@@ -194,7 +195,7 @@ export class ProductsService {
     );
   }
 
-  private async computePrice(basePrice: Prisma.Decimal.Value, isTaxable: boolean): Promise<Prisma.Decimal> {
+  private async computePrice(basePrice: Decimal.Value, isTaxable: boolean): Promise<Prisma.Decimal> {
     if (!isTaxable) return new Prisma.Decimal(basePrice);
     return taxInclusivePrice(basePrice, await this.taxService.getTotalActiveRate());
   }

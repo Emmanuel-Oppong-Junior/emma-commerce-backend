@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';
 import { CloudinaryService } from './cloudinary.service';
 import { UploadController } from './upload.controller';

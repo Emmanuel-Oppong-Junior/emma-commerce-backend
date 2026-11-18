@@ -1,7 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
-import { SubCategory } from '@prisma/client';
+import { SubCategory } from '../generated/prisma/client';
 import { SubCategoriesRepository } from './sub-categories.repository';
 
 @Injectable()

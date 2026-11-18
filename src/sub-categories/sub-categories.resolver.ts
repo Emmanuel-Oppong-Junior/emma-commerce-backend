@@ -3,7 +3,7 @@ import { SubCategoriesService } from './sub-categories.service';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
 
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { SubCategory } from './entities/sub-category.entity';
 

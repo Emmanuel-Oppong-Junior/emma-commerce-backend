@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { DiscountType } from '@prisma/client';
+import { DiscountType } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';

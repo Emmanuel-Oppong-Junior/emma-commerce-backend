@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, SubCategory } from '@prisma/client';
+import { Prisma, SubCategory } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 

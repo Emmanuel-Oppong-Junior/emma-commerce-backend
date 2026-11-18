@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/client';
 import { ShippingZonesService } from './shipping-zones.service';
 import { ShippingZonesRepository } from './shipping-zones.repository';
 import { AddressesService } from '../addresses/addresses.service';

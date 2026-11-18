@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, RefreshToken, User } from '@prisma/client';
+import { Prisma, RefreshToken, User } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type RefreshRotationOutcome = 'rotated' | 'reused' | 'invalid';

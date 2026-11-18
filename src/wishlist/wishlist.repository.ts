@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, WishList } from '@prisma/client';
+import { Prisma, WishList } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type WishlistWithProducts = WishList & { products: { id: string; name: string }[] };

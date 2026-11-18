@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 import { bestUnitPrice, CandidateDiscount, priceCart } from './pricing';
 
 const pct = (id: string, value: number, minimumPurchase?: number): CandidateDiscount => ({

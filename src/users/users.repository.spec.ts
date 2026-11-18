@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { UsersRepository } from './users.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, User } from '@prisma/client';
+import { Prisma, User } from '../generated/prisma/client';
 import { Role } from './enums/role.enum';
 
 const mockUser: User = {

@@ -3,7 +3,7 @@ import { SubCategoriesResolver } from './sub-categories.resolver';
 import { SubCategoriesService } from './sub-categories.service';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
-import { SubCategory } from '@prisma/client';
+import { SubCategory } from '../generated/prisma/client';
 
 const mockSubCategoriesService = {
   create: jest.fn(),

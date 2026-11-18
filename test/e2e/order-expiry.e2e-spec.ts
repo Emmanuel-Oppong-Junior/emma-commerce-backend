@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { FulfillmentType, PaymentStatus } from '@prisma/client';
+import { FulfillmentType, PaymentStatus } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ORDER_EXPIRY_LOCK_KEY, OrdersService } from '../../src/order/order.service';
 import { createTestApp } from '../helpers/app.helper';

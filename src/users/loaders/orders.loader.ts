@@ -1,6 +1,6 @@
 import { Injectable, Scope } from '@nestjs/common';
 import DataLoader = require('dataloader');
-import { Order, OrderItem } from '@prisma/client';
+import { Order, OrderItem } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type OrderWithItems = Order & { items: (OrderItem & { product: unknown })[] };

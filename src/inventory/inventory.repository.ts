@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { InventoryAction, InventoryLog, Prisma } from '@prisma/client';
+import { InventoryAction, InventoryLog, Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreateLogData {

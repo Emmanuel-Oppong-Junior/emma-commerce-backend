@@ -6,7 +6,7 @@ import { UserConnection } from './entities/user-connection.entity';
 import { CreateUserInput } from './dto/create-user.input';
 import { UpdateUserInput } from './dto/update-user.input';
 import { UserPaginateArgs } from './dto/user-paginate.args';
-import { Role, User as PrismaUser } from '@prisma/client';
+import { Role, User as PrismaUser } from '../generated/prisma/client';
 import { Reflector } from '@nestjs/core';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { AddressesLoader } from './loaders/addresses.loader';

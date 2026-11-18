@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ReturnsRepository } from './returns.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { ReturnRequest } from '@prisma/client';
+import { ReturnRequest } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 

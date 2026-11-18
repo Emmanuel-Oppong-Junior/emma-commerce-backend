@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { Prisma, User } from '@prisma/client';
+import { Prisma, User } from '../generated/prisma/client';
 import { createHash } from 'crypto';
 import { EmailVerificationService } from './email-verification.service';
 import { Role } from './enums/role.enum';

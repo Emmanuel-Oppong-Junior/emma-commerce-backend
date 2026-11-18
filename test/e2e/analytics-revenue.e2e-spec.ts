@@ -8,7 +8,7 @@ import {
   PaymentStatus,
   RefundStatus,
   ReturnStatus,
-} from '@prisma/client';
+} from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';

@@ -1,7 +1,7 @@
 import { GraphQLResolveInfo } from 'graphql/type';
 import { FieldNode } from 'graphql/language';
 import { parseResolveInfo, ResolveTree } from 'graphql-parse-resolve-info';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 
 /**
  * Converts the GraphQL resolve info into a Prisma `select` object.

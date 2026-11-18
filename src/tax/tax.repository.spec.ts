@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { TaxRepository } from './tax.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, Tax } from '@prisma/client';
+import { Prisma, Tax } from '../generated/prisma/client';
 
 const mockTax = {
   id: 'tax1',

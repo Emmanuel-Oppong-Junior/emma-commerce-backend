@@ -9,7 +9,7 @@ import jwtConfig from '../config/jwt.config';
 import { Role } from '../../users/enums/role.enum';
 import { SignUpInput } from './dto/sign-up.input';
 import { SignInInput } from './dto/sign-in.input';
-import { User } from '@prisma/client';
+import { User } from '../../generated/prisma/client';
 import { UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';

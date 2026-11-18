@@ -1,7 +1,7 @@
 import { Field, Float, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
 import { Tag } from '../../tag/entities/tag.entity';
 import { Discount } from '../../discount/entities/discount.entity';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { Category } from '../../categories/entities/category.entity';
 import { SubCategory } from '../../sub-categories/entities/sub-category.entity';
 import { Variant } from '../../variant/entities/variant.entity';

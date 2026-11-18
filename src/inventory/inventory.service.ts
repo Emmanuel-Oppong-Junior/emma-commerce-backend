@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InventoryLog, Prisma } from '@prisma/client';
+import { InventoryLog, Prisma } from '../generated/prisma/client';
 import { InventoryRepository, CreateLogData } from './inventory.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { RestockProductInput, RestockVariantInput } from './dto/restock.input';

@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { WishlistRepository } from './wishlist.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, WishList } from '@prisma/client';
+import { Prisma, WishList } from '../generated/prisma/client';
 
 const mockWishlist = {
   id: 'wishlist1',

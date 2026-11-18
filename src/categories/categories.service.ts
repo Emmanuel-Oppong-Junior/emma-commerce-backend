@@ -4,7 +4,7 @@ import { Cache } from 'cache-manager';
 import { Inject } from '@nestjs/common';
 import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
-import { Category, Prisma } from '@prisma/client';
+import { Category, Prisma } from '../generated/prisma/client';
 import { CategoriesRepository } from './categories.repository';
 
 const CATEGORY_TREE_KEY = 'category:tree';

@@ -1,5 +1,5 @@
 import { ConflictException } from '@nestjs/common';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus } from '../generated/prisma/client';
 import { allowedFrom, assertTransition, canTransition } from './order-status';
 
 const { PENDING, PROCESSING, SHIPPED, DELIVERED, CANCELLED } = OrderStatus;

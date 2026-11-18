@@ -65,9 +65,10 @@ npm run test:e2e        # End-to-end tests (test/jest-e2e.json, runs in band, se
 npm run test:repro      # Audit repro tests (test/jest-repro.json); failures are expected until each finding is fixed
 
 # Database
-npx prisma migrate dev  # Run migrations in development (new migration: add --create-only and review the SQL first)
-npx prisma generate     # Regenerate Prisma Client after schema changes
-npx prisma db seed      # Seed the database (prisma/seeders/main.ts; needs SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD)
+npx prisma migrate dev  # Run migrations in development (new migration: add --create-only and review the SQL first); no longer generates or seeds
+npx prisma generate     # Regenerate Prisma Client (into src/generated/prisma, gitignored) after install and schema changes
+npx prisma db seed      # Seed the database (command in prisma.config.ts; needs SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD)
+npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code  # Drift check (exit 2 = drift)
 ```
 
 ## Non-negotiables
@@ -88,7 +89,7 @@ These describe what the code enforces today. ADR-0004 (money), ADR-0008 (invento
 
 **NestJS** backend with **GraphQL** (Apollo Server v4) as the primary API. REST endpoints exist only for payment webhooks (Paystack). The GraphQL schema is auto-generated to `schema.gql` on startup.
 
-**Database:** PostgreSQL via **Prisma** ORM. Schema lives in `prisma/schema.prisma`. Migrations are in `prisma/migrations/`.
+**Database:** PostgreSQL via **Prisma 7** ORM with the `@prisma/adapter-pg` driver adapter. Schema lives in `prisma/schema.prisma`; CLI config (schema and migrations paths, seed command, `DATABASE_URL`) in `prisma.config.ts`, which loads `.env` itself. Import the client, `Prisma` and enums from `src/generated/prisma/client`, not `@prisma/client`. Migrations are in `prisma/migrations/`.
 
 ### Module structure
 

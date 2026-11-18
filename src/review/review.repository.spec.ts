@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { ReviewRepository } from './review.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, Review } from '@prisma/client';
+import { Prisma, Review } from '../generated/prisma/client';
 
 const mockReview = {
   id: 'review1',

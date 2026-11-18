@@ -1,5 +1,5 @@
 import { Reflector } from '@nestjs/core';
-import { Role } from '@prisma/client';
+import { Role } from '../../../generated/prisma/client';
 import { RolesGuard } from './roles.guard';
 import { Roles } from '../decorators/roles.decorator';
 import { graphqlContext, httpContext } from '../../../../test/helpers/execution-context.helper';

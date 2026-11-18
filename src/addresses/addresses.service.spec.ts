@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AddressesService } from './addresses.service';
 import { AddressesRepository } from './addresses.repository';
 import { NotFoundException } from '@nestjs/common';
-import { Address } from '@prisma/client';
+import { Address } from '../generated/prisma/client';
 import { UpdateAddressInput } from './dto/update-address.input';
 
 const mockAddressesRepository = {

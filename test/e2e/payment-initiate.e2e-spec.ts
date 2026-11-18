@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '../../src/generated/prisma/client';
 import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';

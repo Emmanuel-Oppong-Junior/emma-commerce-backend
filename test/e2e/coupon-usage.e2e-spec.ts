@@ -1,5 +1,5 @@
 import { BadRequestException, INestApplication } from '@nestjs/common';
-import { FulfillmentType } from '@prisma/client';
+import { FulfillmentType } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { OrdersService } from '../../src/order/order.service';
 import { createTestApp } from '../helpers/app.helper';

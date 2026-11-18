@@ -1,6 +1,6 @@
 import { Injectable, Scope } from '@nestjs/common';
 import DataLoader = require('dataloader');
-import { Address } from '@prisma/client';
+import { Address } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable({ scope: Scope.REQUEST })

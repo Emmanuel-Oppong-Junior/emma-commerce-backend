@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { DiscountRepository } from './discount.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Discount, Prisma } from '@prisma/client';
+import { Discount, Prisma } from '../generated/prisma/client';
 import { DiscountType } from './enums/discount-type.enum';
 
 const mockDiscount: Discount = {

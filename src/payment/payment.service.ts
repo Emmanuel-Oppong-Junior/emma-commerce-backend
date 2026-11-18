@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { OrderStatus, PaymentProvider, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentProvider, Prisma } from '../generated/prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
 import { LoggerService } from '../commons/logger.service';

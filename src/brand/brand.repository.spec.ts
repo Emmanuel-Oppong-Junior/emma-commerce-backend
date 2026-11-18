@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { BrandRepository } from './brand.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Brand, Prisma } from '@prisma/client';
+import { Brand, Prisma } from '../generated/prisma/client';
 
 const mockBrand: Brand = {
   id: 'brand1',

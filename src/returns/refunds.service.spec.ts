@@ -1,5 +1,5 @@
 import { BadGatewayException, BadRequestException, ConflictException, GatewayTimeoutException } from '@nestjs/common';
-import { PaymentProvider, PaymentStatus, Prisma, Refund, RefundStatus } from '@prisma/client';
+import { PaymentProvider, PaymentStatus, Prisma, Refund, RefundStatus } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
 import { PaystackClient, PaystackRequestRejected } from '../payment/paystack.client';

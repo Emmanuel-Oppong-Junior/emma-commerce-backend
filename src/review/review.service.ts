@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Review } from '@prisma/client';
+import { Review } from '../generated/prisma/client';
 import { CreateReviewInput } from './dto/create-review.input';
 import { UpdateReviewInput } from './dto/update-review.input';
 import { ReviewRepository } from './review.repository';

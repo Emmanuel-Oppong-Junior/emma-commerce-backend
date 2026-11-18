@@ -12,7 +12,7 @@ import {
   PaymentMethod,
   Prisma,
   Product,
-} from '@prisma/client';
+} from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { CouponsService } from '../coupons/coupons.service';

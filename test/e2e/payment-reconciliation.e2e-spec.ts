@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus } from '../../src/generated/prisma/client';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ListedTransaction, PaystackClient } from '../../src/payment/paystack.client';

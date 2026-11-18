@@ -10,7 +10,7 @@ import { ProductFilterArgs } from './dto/product-filter.args';
 import { Product } from './entities/product.entity';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { DiscountService } from '../discount/discount.service';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 import { DiscountType } from '../discount/enums/discount-type.enum';
 
 const mockProductsService = {

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { PaymentProvider, Prisma, WebhookEvent } from '@prisma/client';
+import { PaymentProvider, Prisma, WebhookEvent } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface IncomingWebhookEvent {

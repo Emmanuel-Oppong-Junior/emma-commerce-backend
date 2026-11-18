@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { PaymentProvider, PaymentStatus, Prisma, Refund, RefundStatus } from '@prisma/client';
+import { PaymentProvider, PaymentStatus, Prisma, Refund, RefundStatus } from '../generated/prisma/client';
 import { autoRefundKey } from '../payment/payment-verification';
 
 /** A payment attempt and every refund recorded against it, read under the attempt's row lock. */

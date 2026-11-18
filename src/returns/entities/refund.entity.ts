@@ -1,6 +1,6 @@
 import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
-import { RefundStatus } from '@prisma/client';
-import { Decimal } from '@prisma/client/runtime/library';
+import { RefundStatus } from '../../generated/prisma/client';
+import { Decimal } from '@prisma/client/runtime/client';
 import { RefundStatusEnum } from '../enums/refund-status.enum';
 
 @ObjectType()

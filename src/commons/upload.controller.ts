@@ -1,7 +1,7 @@
 import { BadRequestException, Controller, Post, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 import { CloudinaryService } from './cloudinary.service';
 import { memoryStorage } from 'multer';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';

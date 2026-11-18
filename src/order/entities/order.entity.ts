@@ -1,8 +1,8 @@
 import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
 import { FulfillmentTypeEnum, OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
-import { FulfillmentType, OrderStatus, PaymentMethod } from '@prisma/client';
+import { FulfillmentType, OrderStatus, PaymentMethod } from '../../generated/prisma/client';
 import { OrderItem } from './order-item.entity';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/client';
 import GraphQLJSON from 'graphql-type-json';
 import { User } from '../../users/entities/user.entity';
 

@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 import { AuditService, fieldChanges, fieldValues } from './audit.service';
 
 function buildService() {

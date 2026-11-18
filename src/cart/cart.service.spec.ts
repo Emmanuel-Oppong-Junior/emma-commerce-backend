@@ -4,7 +4,7 @@ import { CartRepository } from './cart.repository';
 import { AddToCartInput } from './dto/add-to-cart.input';
 import { UpdateCartItemInput } from './dto/update-cart.input';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Cart, CartItem } from '@prisma/client';
+import { Cart, CartItem } from '../generated/prisma/client';
 
 const mockCartRepository = {
   findByUser: jest.fn(),

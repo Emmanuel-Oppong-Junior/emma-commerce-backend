@@ -1,4 +1,4 @@
-import { PaymentProvider, PaymentStatus, Role } from '@prisma/client';
+import { PaymentProvider, PaymentStatus, Role } from '../../src/generated/prisma/client';
 import { genSalt, hash } from 'bcrypt';
 import { PrismaService } from '../../src/prisma/prisma.service';
 

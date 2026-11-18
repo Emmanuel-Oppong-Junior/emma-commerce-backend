@@ -1,9 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { ShippingZone } from '@prisma/client';
+import { ShippingZone } from '../generated/prisma/client';
 import { ShippingZonesRepository } from './shipping-zones.repository';
 import { CreateShippingZoneInput } from './dto/create-shipping-zone.input';
 import { UpdateShippingZoneInput } from './dto/update-shipping-zone.input';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/client';
 import { AddressesService } from '../addresses/addresses.service';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Address } from '@prisma/client';
+import { Address } from '../generated/prisma/client';
 import { CreateAddressInput } from './dto/create-address.input';
 import { UpdateAddressInput } from './dto/update-address.input';
 import { AddressesRepository } from './addresses.repository';

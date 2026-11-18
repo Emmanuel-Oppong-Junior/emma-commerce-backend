@@ -6,7 +6,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import * as request from 'supertest';
 import { ConfigModule } from '@nestjs/config';
 import { genSalt, hash } from 'bcrypt';
-import { Role, User } from '@prisma/client';
+import { Role, User } from '../src/generated/prisma/client';
 import { ThrottlerStorage } from '@nestjs/throttler';
 import { resetDb } from './helpers/db.helper';
 

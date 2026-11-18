@@ -27,9 +27,9 @@ RUN npm ci --omit=dev \
   && npm install --no-save --omit=dev "prisma@$(node -p "require('./package-lock.json').packages['node_modules/prisma'].version")" \
   && npm cache clean --force
 
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/dist ./dist
 COPY prisma ./prisma
+COPY prisma.config.ts ./
 
 # The app writes schema.gql and logs/ at runtime; nothing else under /app is writable by it.
 COPY --chown=node:node schema.gql ./

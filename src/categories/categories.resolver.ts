@@ -3,7 +3,7 @@ import { CategoriesService } from './categories.service';
 import { Category } from './entities/category.entity';
 import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';

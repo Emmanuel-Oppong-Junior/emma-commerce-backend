@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { PaymentStatus, Prisma, ReturnRequest, ReturnStatus } from '@prisma/client';
+import { PaymentStatus, Prisma, ReturnRequest, ReturnStatus } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReturnsRepository } from './returns.repository';
 import { CreateReturnRequestInput } from './dto/create-return-request.input';

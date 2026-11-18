@@ -1,5 +1,5 @@
 import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class ShippingZoneEntity {

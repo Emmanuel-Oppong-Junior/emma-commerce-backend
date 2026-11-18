@@ -7,9 +7,18 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { classifyError, describeErrorForLog } from './error-classification';
 import { InputValidationException } from '../validation-pipe';
+
+// The meta shape Prisma 7 gives through the pg driver adapter: no target, the constraint name instead.
+const adapterUniqueMeta = (modelName: string, constraint: Record<string, unknown>) => ({
+  modelName,
+  driverAdapterError: {
+    name: 'DriverAdapterError',
+    cause: { originalCode: '23505', kind: 'UniqueConstraintViolation', constraint, table: modelName },
+  },
+});
 
 const prismaError = (code: string, meta?: Record<string, unknown>) =>
   new Prisma.PrismaClientKnownRequestError('Invalid `prisma.order.delete()` invocation: secret table details', {
@@ -61,6 +70,30 @@ describe('classifyError', () => {
     });
   });
 
+  it.each([
+    ['a single-field index', adapterUniqueMeta('Brand', { index: 'Brand_name_key' }), 'name'],
+    [
+      'a compound index',
+      adapterUniqueMeta('CouponUsage', { index: 'CouponUsage_couponId_userId_key' }),
+      'couponId, userId',
+    ],
+    ['reported fields', adapterUniqueMeta('Product', { fields: ['sku'] }), 'sku'],
+  ])('names the fields of a driver-adapter P2002 from %s', (_case, meta, fields) => {
+    expect(classifyError(prismaError('P2002', meta))).toEqual({
+      status: 409,
+      code: 'CONFLICT',
+      message: `A record with this ${fields} already exists`,
+    });
+  });
+
+  it('keeps a driver-adapter P2002 generic when the constraint has a custom name', () => {
+    expect(classifyError(prismaError('P2002', adapterUniqueMeta('Brand', { index: 'brand_unique_name' })))).toEqual({
+      status: 409,
+      code: 'CONFLICT',
+      message: 'A record with these values already exists',
+    });
+  });
+
   it('maps a foreign-key violation (P2003) to CONFLICT without Prisma details', () => {
     const result = classifyError(prismaError('P2003', { field_name: 'ReturnRequest_orderId_fkey' }));
 
@@ -91,6 +124,12 @@ describe('classifyError', () => {
 describe('describeErrorForLog', () => {
   it('describes a Prisma error by code, model and fields, without its message', () => {
     const error = prismaError('P2002', { modelName: 'User', target: ['email'] });
+
+    expect(describeErrorForLog(error)).toBe('Prisma P2002 on User.email');
+  });
+
+  it('describes a driver-adapter P2002 by model and the fields of its constraint', () => {
+    const error = prismaError('P2002', adapterUniqueMeta('User', { index: 'User_email_key' }));
 
     expect(describeErrorForLog(error)).toBe('Prisma P2002 on User.email');
   });

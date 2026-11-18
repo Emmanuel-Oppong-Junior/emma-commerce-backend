@@ -1,5 +1,5 @@
 import { RESOLVER_NAME_METADATA, RESOLVER_TYPE_METADATA } from '@nestjs/graphql';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';

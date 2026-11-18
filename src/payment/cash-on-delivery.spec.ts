@@ -1,5 +1,11 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { FulfillmentType, OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import {
+  FulfillmentType,
+  OrderStatus,
+  PaymentIntentStatus,
+  PaymentMethod,
+  PaymentStatus,
+} from '../generated/prisma/client';
 import { assertCodCollectable, CollectableOrder } from './cash-on-delivery';
 
 const shipped: CollectableOrder = {

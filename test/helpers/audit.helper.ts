@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../src/generated/prisma/client';
 import { AuditEntry } from '../../src/commons/audit.service';
 
 export const AUDIT_TX = { auditTransaction: true } as unknown as Prisma.TransactionClient;

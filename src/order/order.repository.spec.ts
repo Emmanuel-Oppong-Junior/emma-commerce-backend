@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Address, FulfillmentType, Order, OrderItem, Prisma, Product, User } from '@prisma/client';
+import { Address, FulfillmentType, Order, OrderItem, Prisma, Product, User } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 

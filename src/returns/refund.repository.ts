@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Refund, RefundStatus, ReturnRequest, ReturnStatus } from '@prisma/client';
+import { Prisma, Refund, RefundStatus, ReturnRequest, ReturnStatus } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RefundLedger } from './refund-cap';
 

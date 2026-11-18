@@ -4,7 +4,7 @@ import { UsersRepository } from './users.repository';
 import { HashingService } from '../iam/hashing/hashing.service';
 import { CreateUserInput } from './dto/create-user.input';
 import { UserPaginateArgs } from './dto/user-paginate.args';
-import { User } from '@prisma/client';
+import { User } from '../generated/prisma/client';
 import { Role } from './enums/role.enum';
 import { UpdateUserInput } from './dto/update-user.input';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';

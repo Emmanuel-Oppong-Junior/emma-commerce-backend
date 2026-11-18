@@ -6,7 +6,7 @@ import { Brand } from './entities/brand.entity';
 import { GraphQLResolveInfo } from 'graphql/type';
 import { extractRequestedFieldsFromQuery } from '../commons/useful-functions';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '@prisma/client';
+import { Role } from '../generated/prisma/client';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 

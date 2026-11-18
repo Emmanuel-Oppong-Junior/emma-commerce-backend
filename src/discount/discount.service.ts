@@ -4,7 +4,8 @@ import { Cache } from 'cache-manager';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
-import { CartItem, Discount, Prisma } from '@prisma/client';
+import { CartItem, Discount, Prisma } from '../generated/prisma/client';
+import { Decimal } from '@prisma/client/runtime/client';
 import {
   CartWithDiscount,
   CreateOrUpdateDiscountInput,
@@ -260,11 +261,11 @@ export class DiscountService {
    */
   async getDiscountedPriceForProduct(productId: string, variantId?: string): Promise<DiscountCalculation> {
     const product = await this.getProductOrThrow(productId);
-    let price = (product.price as Prisma.Decimal.Value | null) ?? 0;
+    let price = (product.price as Decimal.Value | null) ?? 0;
 
     if (variantId) {
       const variant = await this.getVariantOrThrow(variantId);
-      price = (variant.price as Prisma.Decimal.Value | null) ?? price;
+      price = (variant.price as Decimal.Value | null) ?? price;
     }
 
     const discounts = await this.getApplicableDiscounts(productId, variantId);

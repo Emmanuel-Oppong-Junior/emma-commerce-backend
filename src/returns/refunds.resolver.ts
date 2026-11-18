@@ -1,5 +1,5 @@
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
-import { RefundStatus } from '@prisma/client';
+import { RefundStatus } from '../generated/prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '../users/enums/role.enum';

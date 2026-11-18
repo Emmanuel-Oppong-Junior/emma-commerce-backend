@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The shipped image (Node 24) is exercised by the docker job; these jobs still run on Node 20.
-  NODE_VERSION: '20'
+  # Same major as the Docker image (node:24-alpine).
+  NODE_VERSION: '24'
 
 jobs:
   checks:

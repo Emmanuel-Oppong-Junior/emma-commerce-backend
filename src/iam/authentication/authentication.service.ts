@@ -2,7 +2,7 @@ import { ConflictException, Inject, Injectable, UnauthorizedException } from '@n
 import { UsersService } from '../../users/users.service';
 import { Role } from '../../users/enums/role.enum';
 import { HashingService } from '../hashing/hashing.service';
-import { User } from '@prisma/client';
+import { User } from '../../generated/prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import jwtConfig from '../config/jwt.config';
 import { ConfigType } from '@nestjs/config';

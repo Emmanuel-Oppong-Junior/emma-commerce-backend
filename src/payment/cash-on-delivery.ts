@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '../generated/prisma/client';
 
 /**
  * Cash is handed over when the order reaches the customer, so it is recorded only for a SHIPPED order: out for

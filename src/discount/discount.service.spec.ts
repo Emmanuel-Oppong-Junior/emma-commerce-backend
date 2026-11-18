@@ -4,7 +4,7 @@ import { DiscountService } from './discount.service';
 import { DiscountRepository } from './discount.repository';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
-import { Discount, Prisma, Product } from '@prisma/client';
+import { Discount, Prisma, Product } from '../generated/prisma/client';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';

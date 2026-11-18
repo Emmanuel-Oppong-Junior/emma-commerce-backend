@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { TagService } from './tag.service';
 import { TagRepository } from './tag.repository';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Tag } from '@prisma/client';
+import { Tag } from '../generated/prisma/client';
 
 const mockTagRepository = {
   findById: jest.fn(),

@@ -1,5 +1,11 @@
 import { BadGatewayException } from '@nestjs/common';
-import { OrderStatus, PaymentIntentStatus, PaymentReviewReason, PaymentStatus, Prisma } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentIntentStatus,
+  PaymentReviewReason,
+  PaymentStatus,
+  Prisma,
+} from '../generated/prisma/client';
 
 /** The provider's verdict on one transaction, checked at the boundary. `amount` is in subunits (pesewas). */
 export interface ProviderVerification {

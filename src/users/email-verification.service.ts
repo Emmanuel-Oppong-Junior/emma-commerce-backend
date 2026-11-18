@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, User } from '@prisma/client';
+import { Prisma, User } from '../generated/prisma/client';
 import { createHash, randomBytes } from 'crypto';
 import { UsersRepository } from './users.repository';
 import { NotificationsService } from '../notifications/notifications.service';

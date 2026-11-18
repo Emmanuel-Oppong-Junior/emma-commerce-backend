@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AddProductsToTagDto } from './dto/add-products-to-tag.dto';
 import { RemoveProductsFromTagDto } from './dto/remove-products-from-tag.dto';
-import { Tag } from '@prisma/client';
+import { Tag } from '../generated/prisma/client';
 import { TagRepository } from './tag.repository';
 
 @Injectable()

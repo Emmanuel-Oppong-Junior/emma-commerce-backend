@@ -1,5 +1,5 @@
 import { faker, prisma } from './seed-context';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../src/generated/prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const categories = [

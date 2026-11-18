@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 import { taxInclusivePrice } from './tax-inclusive-price';
 
 describe('taxInclusivePrice', () => {

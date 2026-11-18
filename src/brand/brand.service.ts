@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateBrandInput } from './dto/create-brand.input';
 import { UpdateBrandInput } from './dto/update-brand.input';
-import { Brand, Prisma } from '@prisma/client';
+import { Brand, Prisma } from '../generated/prisma/client';
 import { BrandRepository } from './brand.repository';
 
 @Injectable()

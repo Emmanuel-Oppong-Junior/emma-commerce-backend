@@ -1,5 +1,6 @@
 import { GatewayTimeoutException, INestApplication } from '@nestjs/common';
-import { OrderStatus, PaymentStatus, Prisma, ReturnStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus, ReturnStatus } from '../../src/generated/prisma/client';
+import { Decimal } from '@prisma/client/runtime/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient, PaystackRequestRejected } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
@@ -61,7 +62,7 @@ describe('Refunds (e2e)', () => {
   /** A delivered order paid GHS 100 through Paystack with a return request in the given state. */
   const paidReturn = async (
     status: ReturnStatus = ReturnStatus.APPROVED,
-    refundAmount: Prisma.Decimal.Value | null = 100,
+    refundAmount: Decimal.Value | null = 100,
   ): Promise<{ orderId: string; returnId: string; reference: string }> => {
     const orderId = await createOrder();
     const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.COMPLETED });

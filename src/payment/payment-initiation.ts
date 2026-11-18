@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '../generated/prisma/client';
 
 /**
  * What initiation needs to know about an order to decide whether it can be paid. Without `paymentIntent` the

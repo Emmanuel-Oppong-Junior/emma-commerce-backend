@@ -1,5 +1,5 @@
 import { BadGatewayException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 import {
   DIFF_MAX_PAGES,
   PAYMENT_DIFF_LOCK_KEY,

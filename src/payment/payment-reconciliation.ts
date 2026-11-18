@@ -1,4 +1,4 @@
-import { PaymentReviewReason, PaymentStatus, Prisma } from '@prisma/client';
+import { PaymentReviewReason, PaymentStatus, Prisma } from '../generated/prisma/client';
 import { PAYSTACK_SUCCESS_STATUS } from './constant';
 import { isSettled } from './payment-verification';
 import { ListedTransaction } from './paystack.client';

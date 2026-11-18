@@ -1,7 +1,7 @@
 import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
 import { Product } from '../../products/entities/product.entity';
 import { Discount } from '../../discount/entities/discount.entity';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class OrderItem {

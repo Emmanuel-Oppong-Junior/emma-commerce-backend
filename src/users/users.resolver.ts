@@ -8,7 +8,7 @@ import { UserPaginateArgs } from './dto/user-paginate.args';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role, User as UserRecord } from '@prisma/client';
+import { Role, User as UserRecord } from '../generated/prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { AddressesLoader } from './loaders/addresses.loader';

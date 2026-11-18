@@ -3,7 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { InventoryRepository } from './inventory.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { InventoryLog, Prisma } from '@prisma/client';
+import { InventoryLog, Prisma } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { createAuditServiceMock } from '../../test/helpers/audit.helper';
 

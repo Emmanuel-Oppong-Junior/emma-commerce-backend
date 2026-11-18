@@ -1,4 +1,5 @@
-import { DiscountType, Prisma } from '@prisma/client';
+import { DiscountType, Prisma } from '../generated/prisma/client';
+import { Decimal } from '@prisma/client/runtime/client';
 import { DiscountCalculation } from './types';
 
 type Money = Prisma.Decimal;
@@ -7,8 +8,8 @@ const ZERO = new Prisma.Decimal(0);
 export interface CandidateDiscount {
   id: string;
   type: DiscountType | `${DiscountType}`;
-  value: Prisma.Decimal.Value;
-  minimumPurchase?: Prisma.Decimal.Value | null;
+  value: Decimal.Value;
+  minimumPurchase?: Decimal.Value | null;
 }
 
 export interface UnitPrice {
@@ -20,7 +21,7 @@ export interface UnitPrice {
 
 export interface CartLine {
   productId: string;
-  unitPrice: Prisma.Decimal.Value;
+  unitPrice: Decimal.Value;
   quantity: number;
 }
 
@@ -38,7 +39,7 @@ export interface PricedCart {
   subtotal: Money;
 }
 
-function toCedis(value: Prisma.Decimal.Value): Money {
+function toCedis(value: Decimal.Value): Money {
   return new Prisma.Decimal(value).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 }
 
@@ -51,7 +52,7 @@ function unitSaving(unitPrice: Money, discount: CandidateDiscount): Money {
 }
 
 /** Applies the discount that saves the most money on one unit; ties keep the earlier candidate. */
-export function bestUnitPrice(price: Prisma.Decimal.Value, discounts: readonly CandidateDiscount[]): UnitPrice {
+export function bestUnitPrice(price: Decimal.Value, discounts: readonly CandidateDiscount[]): UnitPrice {
   const unitPrice = toCedis(price);
   let best: { discount: CandidateDiscount; saving: Money } | undefined;
   for (const discount of discounts) {

@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { PaymentProvider, PaymentStatus, Prisma, RefundStatus } from '@prisma/client';
+import { PaymentProvider, PaymentStatus, Prisma, RefundStatus } from '../generated/prisma/client';
 import { assertRefundable, capturedAmount, RefundLedger } from './refund-cap';
 
 const d = (value: string | number) => new Prisma.Decimal(value);

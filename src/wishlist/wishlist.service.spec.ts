@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WishlistService } from './wishlist.service';
 import { WishlistRepository } from './wishlist.repository';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { WishList as Wishlist } from '@prisma/client';
+import { WishList as Wishlist } from '../generated/prisma/client';
 
 const mockWishlistRepository = {
   findByUser: jest.fn(),

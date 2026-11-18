@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { CategoriesRepository } from './categories.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Category, Prisma } from '@prisma/client';
+import { Category, Prisma } from '../generated/prisma/client';
 
 const mockCategory: Category = {
   id: 'cat1',

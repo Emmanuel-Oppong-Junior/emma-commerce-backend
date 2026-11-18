@@ -1,6 +1,6 @@
 import { BadGatewayException, INestApplication } from '@nestjs/common';
 import { createHmac } from 'crypto';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { OrderStatus, PaymentStatus } from '../../src/generated/prisma/client';
 import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';

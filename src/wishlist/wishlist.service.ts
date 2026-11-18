@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import { WishList } from '@prisma/client';
+import { WishList } from '../generated/prisma/client';
 import { WishlistRepository } from './wishlist.repository';
 
 @Injectable()

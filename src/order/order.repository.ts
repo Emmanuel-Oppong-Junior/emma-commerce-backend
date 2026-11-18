@@ -11,7 +11,7 @@ import {
   Prisma,
   Product,
   User,
-} from '@prisma/client';
+} from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type OrderWithItems = Order & { items: OrderItem[] };

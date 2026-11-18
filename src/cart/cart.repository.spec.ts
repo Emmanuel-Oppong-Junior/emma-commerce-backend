@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { CartRepository } from './cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Cart, CartItem, Prisma, Product } from '@prisma/client';
+import { Cart, CartItem, Prisma, Product } from '../generated/prisma/client';
 
 const mockCart = {
   id: 'cart1',

@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 import { TaxService } from './tax.service';
 import { TaxRepository } from './tax.repository';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';

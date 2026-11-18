@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { TagRepository } from './tag.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, Tag } from '@prisma/client';
+import { Prisma, Tag } from '../generated/prisma/client';
 
 const mockTag: Tag = {
   id: 'tag1',

@@ -11,7 +11,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PaymentStatus, Prisma } from '@prisma/client';
+import { PaymentStatus, Prisma } from '../generated/prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { Role } from '../users/enums/role.enum';
 import { NotificationsService } from '../notifications/notifications.service';

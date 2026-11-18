@@ -3,7 +3,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { ReturnsService } from './returns.service';
 import { ReturnsRepository } from './returns.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, ReturnRequest } from '@prisma/client';
+import { Prisma, ReturnRequest } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 import { RefundsService } from './refunds.service';

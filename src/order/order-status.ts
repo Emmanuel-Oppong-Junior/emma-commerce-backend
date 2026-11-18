@@ -1,5 +1,5 @@
 import { ConflictException } from '@nestjs/common';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus } from '../generated/prisma/client';
 
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   PENDING: [OrderStatus.PROCESSING, OrderStatus.CANCELLED],

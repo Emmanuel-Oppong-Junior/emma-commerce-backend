@@ -1,6 +1,6 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { InventoryActionEnum } from '../enums/inventory-action.enum';
-import { InventoryAction } from '@prisma/client';
+import { InventoryAction } from '../../generated/prisma/client';
 
 @ObjectType()
 export class InventoryLogEntity {

@@ -1,4 +1,4 @@
-import { Cart, CartItem } from '@prisma/client';
+import { Cart, CartItem } from '../../generated/prisma/client';
 import { CreateDiscountInput } from '../dto/create-discount.input';
 import { UpdateDiscountInput } from '../dto/update-discount.input';
 

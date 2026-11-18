@@ -8,7 +8,7 @@ import {
   PaymentProvider,
   PaymentStatus,
   Prisma,
-} from '@prisma/client';
+} from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
 import { CHARGE_CURRENCY } from './constant';

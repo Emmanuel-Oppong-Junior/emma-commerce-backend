@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CartService } from '../cart/cart.service';
 import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
-import { OrderStatus } from '@prisma/client';
+import { OrderStatus } from '../generated/prisma/client';
 import { ORDER_EXPIRY_LOCK_KEY, OrdersService } from './order.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { AuditService } from '../commons/audit.service';
@@ -9,10 +9,10 @@ import { CouponsService } from '../coupons/coupons.service';
 import { TaxService } from '../tax/tax.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Decimal } from '@prisma/client/runtime/client';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
-import { FulfillmentType } from '@prisma/client';
+import { FulfillmentType } from '../generated/prisma/client';
 import { ReturnsService } from '../returns/returns.service';
 import { DiscountService } from '../discount/discount.service';
 

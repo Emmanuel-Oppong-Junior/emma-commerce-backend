@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Tax } from '@prisma/client';
+import { Prisma, Tax } from '../generated/prisma/client';
 import { TaxRepository } from './tax.repository';
 import { CreateTaxInput } from './dto/create-tax-rate.input';
 import { UpdateTaxInput } from './dto/update-tax-rate.input';

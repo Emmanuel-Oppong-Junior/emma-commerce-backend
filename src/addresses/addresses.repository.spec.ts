@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AddressesRepository } from './addresses.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Address, Prisma } from '@prisma/client';
+import { Address, Prisma } from '../generated/prisma/client';
 
 const mockAddress: Address = {
   id: 'addr1',

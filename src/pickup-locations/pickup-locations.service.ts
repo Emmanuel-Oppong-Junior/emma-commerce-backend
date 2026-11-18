@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PickupLocation } from '@prisma/client';
+import { PickupLocation } from '../generated/prisma/client';
 import { PickupLocationsRepository } from './pickup-locations.repository';
 import { CreatePickupLocationInput } from './dto/create-pickup-location.input';
 import { UpdatePickupLocationInput } from './dto/update-pickup-location.input';

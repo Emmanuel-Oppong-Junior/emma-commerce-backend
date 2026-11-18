@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../generated/prisma/client';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { PAYSTACK_WEBHOOK_CRYPTO_ALGO } from './constant';
 import { PaystackEvent } from './enums/paystack-event.enum';

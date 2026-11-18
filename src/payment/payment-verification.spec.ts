@@ -1,5 +1,11 @@
 import { BadGatewayException } from '@nestjs/common';
-import { OrderStatus, PaymentIntentStatus, PaymentReviewReason, PaymentStatus, Prisma } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentIntentStatus,
+  PaymentReviewReason,
+  PaymentStatus,
+  Prisma,
+} from '../generated/prisma/client';
 import {
   AttemptState,
   autoRefundKey,

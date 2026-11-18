@@ -1,6 +1,6 @@
 import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
 import { lastValueFrom, of, throwError } from 'rxjs';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { GraphqlLoggingInterceptor } from './graphql-logging.interceptor';
 import { LoggerService } from '../logger.service';
 import { httpContext } from '../../../test/helpers/execution-context.helper';

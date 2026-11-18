@@ -8,7 +8,7 @@ import {
 import { CreateUserInput } from './dto/create-user.input';
 import { UpdateUserInput } from './dto/update-user.input';
 import { HashingService } from '../iam/hashing/hashing.service';
-import { Prisma, Role, User } from '@prisma/client';
+import { Prisma, Role, User } from '../generated/prisma/client';
 import { UserPaginateArgs } from './dto/user-paginate.args';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { UsersRepository } from './users.repository';

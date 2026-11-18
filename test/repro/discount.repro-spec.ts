@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '../../src/generated/prisma/client';
 import { DiscountService } from '../../src/discount/discount.service';
 import { OrdersService } from '../../src/order/order.service';
 

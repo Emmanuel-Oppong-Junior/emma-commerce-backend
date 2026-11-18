@@ -4,7 +4,7 @@ import { BrandRepository } from './brand.repository';
 import { CreateBrandInput } from './dto/create-brand.input';
 import { UpdateBrandInput } from './dto/update-brand.input';
 import { NotFoundException } from '@nestjs/common';
-import { Brand } from '@prisma/client';
+import { Brand } from '../generated/prisma/client';
 
 const mockBrandRepository = {
   create: jest.fn(),

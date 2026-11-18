@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { PaymentProvider, PaymentStatus } from '@prisma/client';
+import { PaymentProvider, PaymentStatus, Prisma } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
@@ -22,6 +22,21 @@ describe('Payment ledger schema (e2e)', () => {
       },
     });
     return order.id;
+  };
+
+  // The pg driver adapter reports the trigger's restrict_violation (23001) as P2003 with a generic message; the
+  // trigger's own text survives only in the driver error, which is what proves the trigger (not a foreign key) fired.
+  const expectLedgerDeleteRejected = async (operation: Promise<unknown>) => {
+    const error = await operation.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    expect((error as Prisma.PrismaClientKnownRequestError).meta).toMatchObject({
+      driverAdapterError: {
+        cause: { originalCode: '23001', originalMessage: expect.stringMatching(/financial records/) },
+      },
+    });
   };
 
   beforeAll(async () => {
@@ -95,10 +110,10 @@ describe('Payment ledger schema (e2e)', () => {
     });
     const collection = await prisma.cashCollection.create({ data: { orderId, amount: 100 } });
 
-    await expect(prisma.refund.delete({ where: { id: refund.id } })).rejects.toThrow(/financial records/);
-    await expect(prisma.cashCollection.delete({ where: { id: collection.id } })).rejects.toThrow(/financial records/);
-    await expect(prisma.paymentAttempt.delete({ where: { id: paymentId } })).rejects.toThrow(/financial records/);
-    await expect(prisma.paymentIntent.deleteMany({ where: { orderId } })).rejects.toThrow(/financial records/);
+    await expectLedgerDeleteRejected(prisma.refund.delete({ where: { id: refund.id } }));
+    await expectLedgerDeleteRejected(prisma.cashCollection.delete({ where: { id: collection.id } }));
+    await expectLedgerDeleteRejected(prisma.paymentAttempt.delete({ where: { id: paymentId } }));
+    await expectLedgerDeleteRejected(prisma.paymentIntent.deleteMany({ where: { orderId } }));
 
     expect(await prisma.paymentAttempt.findUnique({ where: { id: paymentId } })).not.toBeNull();
   });

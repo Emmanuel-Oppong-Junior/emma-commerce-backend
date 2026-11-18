@@ -1,6 +1,6 @@
 import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
 import { DiscountTypeEnum } from '../enums/discount-type.enum';
-import { DiscountType } from '@prisma/client';
+import { DiscountType } from '../../generated/prisma/client';
 
 @ObjectType()
 export class Coupon {

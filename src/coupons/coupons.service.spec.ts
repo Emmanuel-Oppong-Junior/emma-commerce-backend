@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CouponsService } from './coupons.service';
 import { CouponsRepository } from './coupons.repository';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Coupon, Prisma } from '@prisma/client';
+import { Coupon, Prisma } from '../generated/prisma/client';
 import { CreateCouponInput } from './dto/create-coupon.input';
 import { DiscountTypeEnum } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';
