@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+# The default rules miss passwords inside connection strings (SEC-05). The entropy floor skips
+# throwaway values such as the CI e2e:e2e, at the cost of also skipping weak local passwords.
+[[rules]]
+id = "database-connection-string"
+description = "Password embedded in a database connection string"
+regex = '''(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?)://[^:@\s/'"]+:([^@\s/'"]+)@'''
+secretGroup = 1
+entropy = 3
+keywords = ["postgres", "mysql", "mongodb", "redis"]

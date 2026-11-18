@@ -1,0 +1,21 @@
+# Keys in the .env committed early on and deleted in bcbae7b; still in history (see docs/roadmap/environments.md).
+17c07ff6b66c51ab6669e894806b87fa0e3973e0:.env:generic-api-key:12
+2b6a4e3bdf9a87377d7f7c82e3c5cdaf79b9646d:.env:stripe-access-token:17
+
+# Fake fixture values in tests.
+df36384420b00997705a547e27dc1914e31980b5:test/repro/payment.repro-spec.ts:stripe-access-token:28
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:10
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:11
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:15
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:17
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:21
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:9
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:91
+fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:stripe-access-token:18
+
+# Documentation placeholders (example tokens, NestJS README badge URL).
+3d221d5691155ac456e0743b82525a57b11ba187:FRONTEND_API_DOCUMENTATION.md:generic-api-key:3648
+3d221d5691155ac456e0743b82525a57b11ba187:FRONTEND_API_DOCUMENTATION.md:generic-api-key:3649
+85d2c3ecaa9d5a2e1b5d0f900f154cd9fa26c259:README.md:generic-api-key:5
+ddb1d8709dd73fe5ee68759e1240c0dd53f6344e:FRONTEND_API_DOCUMENTATION.md:generic-api-key:4161
+e028c4c301bc8a29267a265b15f0d9d546bf1465:README.md:generic-api-key:5
