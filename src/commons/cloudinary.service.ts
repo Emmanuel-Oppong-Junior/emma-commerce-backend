@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
-import * as sharp from 'sharp';
+import { sharp } from './sharp';
 import { LoggerService } from './logger.service';
 import { MAX_IMAGE_PIXELS } from './image-upload-validation';
 

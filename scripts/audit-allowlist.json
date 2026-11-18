@@ -1,8 +1,1 @@
-[
-  {
-    "advisory": "https://github.com/advisories/GHSA-23hp-3jrh-7fpw",
-    "package": "tar <=7.5.20 (via bcrypt > @mapbox/node-pre-gyp)",
-    "reason": "No in-range fix: bcrypt 5.1.1 (latest 5.x) pins @mapbox/node-pre-gyp 1.x, which needs tar 6. Only used at install time to fetch the bcrypt binary. Fixed by bcrypt 6 (major).",
-    "removeBy": "post-Phase-0 major upgrades"
-  }
-]
+[]

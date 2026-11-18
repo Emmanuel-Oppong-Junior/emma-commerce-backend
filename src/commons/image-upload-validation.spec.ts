@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import * as sharp from 'sharp';
+import { sharp } from './sharp';
 import { assertAllowedImage, MAX_IMAGE_FILE_SIZE_BYTES, MAX_IMAGE_PIXELS } from './image-upload-validation';
 
 const solidImage = (width: number, height: number) =>

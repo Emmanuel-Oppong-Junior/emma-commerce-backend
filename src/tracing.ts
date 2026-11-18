@@ -12,7 +12,6 @@ import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
 
 export function startTracing(env: NodeJS.ProcessEnv): NodeSDK | undefined {
   if (env.OTEL_ENABLED !== 'true') return undefined;
@@ -26,7 +25,7 @@ export function startTracing(env: NodeJS.ProcessEnv): NodeSDK | undefined {
       [ATTR_SERVICE_NAME]: env.OTEL_SERVICE_NAME ?? 'emma-commerce-backend',
       [ATTR_SERVICE_VERSION]: env.npm_package_version ?? '1.0.0',
     }),
-    spanProcessor: new BatchSpanProcessor(exporter),
+    traceExporter: exporter,
     instrumentations: [
       getNodeAutoInstrumentations({
         '@opentelemetry/instrumentation-fs': { enabled: false },
