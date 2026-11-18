@@ -5,9 +5,14 @@
 **Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
+_None._ Next: P0-D.3 (docs: bring `FRONTEND_API_DOCUMENTATION.md` in line with `schema.gql`, last in phase). Remaining Phase 0 tasks after that are blocked on Emmanuel (B.3, B.10, B.11, O.2, F.3).
+
+**Last completed (2026-11-18):** P0-D.2 (`2324739`, no migration). Gates on dev: unit 1382/1382, build ok, e2e 328/328 (Linux node:20), repro 17/21, drift 0. Revenue comes from the payment ledger only: accepted payment = COMPLETED attempt with no `reviewReason` (online, and the COD cash attempt), counted at `CashCollection.collectedAt` / attempt `updatedAt`; refunds = PROCESSED Refunds on accepted payments at `updatedAt`; net = gross − refunds; order count/AOV over paid orders; breakdowns report item sales on the same population (`Σ = itemSales`, `gross = itemSales + shipping − coupons`). Follow-ups: `PaymentAttempt.settledAt` would make online recognition exact (soft delete/restore touches `updatedAt`); ANA-04 (inclusive end date, server-local "today"), ANA-05 (all-time breakdowns, no caching), ANA-06/07 open.
+
 **CI fix (2026-11-18):** e2e failed in CI on `7e33bf9` (logs need GitHub auth). Two flake sources fixed: cron jobs firing inside e2e apps (CRON-06: `createTestApp` now stops them; new `scheduler.e2e-spec.ts` fails without it) and `payment-verify` counting the detached confirmation email before it was sent (now waits). Unit 1382/1382; e2e 324/324 twice in a row (Linux node:20).
 
-_None._ Payments epic complete. Next: P0-D.2 (revenue on the new ledger), then P0-D.3 (docs, last in phase).
+- **Task:** P0-D.2 revenue on the new ledger (ANA-01..03) · branch `fix/p0-d2-revenue` · worktree `.claude/worktrees/d2` · e2e DB `emma_wt_ops_test` · migration slot `20261118060000_*` · started 2026-11-18 from `dev` `def94a3` · state: agent implementing
+- **Next step:** wait for agent → review → merge → gates → mark audit → STATUS → push `dev`. Then P0-D.3 (docs, last in phase).
 
 **Last completed (batch 7, 2026-11-18):** P0-C.5 (`21260b0`, migration `20261118040000_payment_reconciliation_indexes`); P0-C.6 (`c5c0714`, migration `20261118050000_refund_claims`). One rebase conflict in `paystack.client.ts` (+ spec): kept both `listTransactions` and `createRefund`. Combined gates on dev: unit 1382/1382, build ok, e2e 323/323 (Linux node:20), repro 17/21, drift 0. C.5: 5-min sweep (lock 70_412_002) re-verifies PAYSTACK PENDING/ABANDONED attempts 15 min–24 h old (newest first, batch 30) and reprocesses unprocessed WebhookEvents (cap 20 attempts); nightly diff 01:30 UTC (lock 70_412_003) of the previous UTC day's Paystack successes vs ledger (PAYSTACK_ONLY / UNSETTLED→settled / STATUS_MISMATCH / AMOUNT_MISMATCH as error logs, context `PaymentReconciliation`); repeated undecided status no longer bumps `updatedAt` (keeps order expiry working). C.6: return APPROVED→REFUND_PENDING + PENDING Refund (`return:<id>`) under attempt lock with Decimal cap; PENDING/FAILED→SENDING claim before one Paystack `POST /refund`; success → PROCESSED + `providerRef` + REFUNDED; 4xx → FAILED (resend allowed); timeout/5xx → stays SENDING (no resend); approve/reject conditional; admin `processPendingRefund` sends queued auto-refunds; axios no longer used in code. C.5 agent amended its own unpushed commit once (to drop an accidental README reformat). Follow-ups: refunds stuck in SENDING need `refund.*` webhook handling or list-refunds reconciliation + admin resolve; PROCESSED = accepted by Paystack, not settled; diff misses payments completed >1 day after checkout creation and COMPLETED attempts Paystack doesn't list; schedules run inside e2e apps (CRON-06); `runWithAdvisoryLock` holds a long transaction; `ApproveReturnInput.refundAmount` accepts 0; PaymentAttempt status not updated after refund (PAY-10); COD refunds impossible (RET-07).
 
@@ -44,7 +49,7 @@ _None._ Payments epic complete. Next: P0-D.2 (revenue on the new ledger), then P
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-D.2 revenue on the new ledger, then P0-D.3 docs (last in phase) | sequential | — |
+| 1 | P0-D.3 docs (last in phase) | alone | — |
 | 2 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
 | 3 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
 | 4 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
@@ -58,7 +63,7 @@ _None._ Payments epic complete. Next: P0-D.2 (revenue on the new ledger), then P
 | P0-C Payments | **7 / 7** | C.1 (`ddc81cb`), C.2 (`24b246f`), C.3 (`01f3f13`), C.4 (`118c16a`), C.5 (`21260b0`), C.6 (`c5c0714`), C.7 (`52a7c2d`) |
 | P0-I Identity & sessions | **6 / 6** | I.1 (`d2445ad`), I.2 (`dfac978`, `029fbce`), I.3 (`eed1ce9`), I.4 (`d52eb01`), I.5 (`fc59f37`), I.6 (`d11e961`) |
 | P0-O Deployability & ops | 6 / 7 | O.1 (`a98a123`), O.3 (`fd0543c`), O.4 (`c51ee81`), O.5 (`66eb517`), O.6 (`26efe7d`), O.7 (`e18cf27`) |
-| P0-D Audit & analytics | 1 / 3 | D.1 (`90b6bb8`) |
+| P0-D Audit & analytics | 2 / 3 | D.1 (`90b6bb8`), D.2 (`2324739`) |
 
 Repro tests turned green: **17 / 21** (PAY-01, PAY-05, PAY-02, PAY-03, PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05, SHZ-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
@@ -76,6 +81,8 @@ Repro tests turned green: **17 / 21** (PAY-01, PAY-05, PAY-02, PAY-03, PLAT-01, 
 - [ ] **P0-C.4/C.7 questions:** (1) webhook worst case ~25 s (3 × 8 s) — Paystack's delivery timeout unknown; lower to 2 attempts? (2) `charge.*` for an unknown reference (another app on the same Paystack account) gets 503 until Paystack gives up — acknowledge with `lastError` instead? (3) C.5 also sweeps `WebhookEvent` rows with `processedAt IS NULL`? (4) send the "delivered" email on COD collection? (5) partial/refused COD collection unsupported (refusal = cancel) — OK for now?
 - [ ] **Frontend/admin (P0-C.6):** `ReturnStatusEnum` gains `REFUND_PENDING` (also in `myReturnRequests`); new `processPendingRefund(refundId)` and `refunds(status)` (admin); new `RefundEntity`/`RefundStatusEnum` (PENDING, SENDING, PROCESSED, FAILED); `processRefund` → CONFLICT on repeat/concurrent, BAD_REQUEST over the cap or when Paystack refuses; approve/reject can return CONFLICT.
 - [ ] **P0-C.5/C.6 questions:** (1) confirm Paystack's list page-size param (`perPage` used; the OpenAPI spec says `per_page`) and the refund response (`data.id` read as refund id) with a test-key call; (2) widen the nightly diff to the last 3 days? (3) follow-up task for SENDING refunds (refund webhooks / reconciliation + admin resolve)? (4) remove the now-unused `axios` dependency?
+- [ ] **Frontend/admin (P0-D.2):** new `SalesReport.grossRevenue/refunds/netRevenue/itemSales`, `DashboardSummary.grossRevenueToday/refundsToday`; `SalesReport.totalRevenue` now = net revenue (deprecated); `orderCount`/`averageOrderValue`/`ordersToday` now count paid orders by payment time; `revenueToday` = net today; `topProducts`/`revenueByCategory` cover paid orders only (item sales).
+- [ ] **P0-D.2 questions:** (1) add an "orders placed today" field next to `ordersToday` (now = paid today)? (2) add `PaymentAttempt.settledAt` (migration + backfill) for exact recognition? (3) keep `totalRevenue` deprecated?
 - [ ] Deployment (P0-O.1): image is now Node 24, runs as non-root, CMD `node dist/main.js`, HEALTHCHECK on `/health/live`. Add a release step that runs `npx prisma migrate deploy` once per release with the image (e.g. `docker run --rm -e DATABASE_URL=… <image> npx prisma migrate deploy`). Consider marking the new CI `docker` job as required too.
 - [ ] Purge logs on any deployed server or log shipper (they may hold real refresh/reset tokens and PII from before P0-A.5); treat those tokens as compromised.
 - [ ] Add `NODE_ENV=development` to your local `.env` if it is missing (now required, P0-O.3), and update `.env.example` with: NODE_ENV, PORT, ALLOWED_ORIGINS, LOG_LEVEL, DATABASE_URL, JWT_SECRET/JWT_REFRESH_SECRET/JWT_RESET_SECRET (≥32 chars, all different), JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER, JWT_ACCESS/REFRESH/RESET_TOKEN_TTL, GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET, PAYSTACK_SECRET_KEY, PAYSTACK_CALLBACK_URL, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET, REDIS_HOST (prod)/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL, OTEL_ENABLED (true|false), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, SUPER_ADMIN_EMAIL/PASSWORD.
