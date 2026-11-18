@@ -3,6 +3,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PaymentRepository } from './payment.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
+import { StoreRepository } from '../store/store.repository';
 import { Order, Prisma } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
@@ -72,6 +73,10 @@ const mockOrdersRepository = {
   transitionStatus: jest.fn(),
 };
 
+const mockStoreRepository = {
+  findCurrency: jest.fn(),
+};
+
 const mockPrismaCashCollection = {
   create: jest.fn(),
 };
@@ -105,11 +110,13 @@ describe('PaymentRepository', () => {
         PaymentRepository,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: OrdersRepository, useValue: mockOrdersRepository },
+        { provide: StoreRepository, useValue: mockStoreRepository },
       ],
     }).compile();
 
     repository = module.get<PaymentRepository>(PaymentRepository);
     jest.clearAllMocks();
+    mockStoreRepository.findCurrency.mockResolvedValue('GHS');
   });
 
   describe('openAttempt', () => {
@@ -169,6 +176,17 @@ describe('PaymentRepository', () => {
             status: 'PENDING',
           }),
         }),
+      );
+    });
+
+    it('opens the intent in the store currency, read on the same transaction', async () => {
+      mockStoreRepository.findCurrency.mockResolvedValue('USD');
+
+      await repository.openAttempt(request, allowAll);
+
+      expect(mockStoreRepository.findCurrency).toHaveBeenCalledWith(mockTx);
+      expect(mockPrismaIntent.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: { orderId: 'order1', amount: mockOrder.totalAmount, currency: 'USD' } }),
       );
     });
 

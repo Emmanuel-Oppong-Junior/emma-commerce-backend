@@ -15,6 +15,7 @@ import { PickupLocationsService } from '../pickup-locations/pickup-locations.ser
 import { FulfillmentType } from '../generated/prisma/client';
 import { ReturnsService } from '../returns/returns.service';
 import { DiscountService } from '../discount/discount.service';
+import { StoreService } from '../store/store.service';
 
 const mockAuditService = { log: jest.fn() };
 const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
@@ -25,6 +26,7 @@ const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(ne
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
 const mockDiscountService = { findActiveDiscountsByProduct: jest.fn() };
+const mockStoreService = { getCurrency: jest.fn() };
 
 const mockOrdersRepository = {
   findById: jest.fn(),
@@ -166,6 +168,7 @@ describe('OrdersService', () => {
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
         { provide: ReturnsService, useValue: mockReturnsService },
         { provide: DiscountService, useValue: mockDiscountService },
+        { provide: StoreService, useValue: mockStoreService },
       ],
     }).compile();
 
@@ -173,6 +176,7 @@ describe('OrdersService', () => {
     ordersRepository = module.get<OrdersRepository>(OrdersRepository) as jest.Mocked<OrdersRepository>;
     cartService = module.get(CartService);
     jest.resetAllMocks();
+    mockStoreService.getCurrency.mockResolvedValue('GHS');
 
     // Default transaction mock: executes the callback with a stub tx
     mockOrdersRepository.runTransaction.mockImplementation(async (callback) => {
@@ -411,6 +415,18 @@ describe('OrdersService', () => {
         ),
       );
       expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+    });
+
+    it('checks products against the store currency, not a fixed GHS', async () => {
+      mockStoreService.getCurrency.mockResolvedValue('USD');
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+        new BadRequestException('"T-Shirt" is priced in GHS; only USD products can be checked out'),
+      );
     });
 
     it('should throw NotFoundException if cart is empty', async () => {

@@ -14,14 +14,14 @@ describe('CreatePaymentDto', () => {
     await expect(errorsFor({ currency: 'GHS' })).resolves.toEqual([]);
   });
 
-  it.each(['USD', 'NGN', 'ghs'])('rejects %s so the client cannot choose the charge currency', async (currency) => {
-    const errors = await errorsFor({ currency });
+  it('leaves the currency check to PaymentService, which knows the store currency', async () => {
+    await expect(errorsFor({ currency: 'USD' })).resolves.toEqual([]);
+  });
 
-    expect(errors).toHaveLength(1);
-    expect(errors[0].property).toBe('currency');
-    expect(Object.values(errors[0].constraints ?? {})).toEqual([
-      'currency must be GHS; payments are charged in GHS only',
-    ]);
+  it('rejects a currency that is not a string', async () => {
+    const errors = await errorsFor({ currency: 5 });
+
+    expect(errors.map((e) => e.property)).toEqual(['currency']);
   });
 
   it('accepts an idempotency key', async () => {

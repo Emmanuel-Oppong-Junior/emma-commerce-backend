@@ -11,7 +11,7 @@ import {
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
-import { CHARGE_CURRENCY } from './constant';
+import { StoreRepository } from '../store/store.repository';
 import {
   AttemptState,
   autoRefundKey,
@@ -103,6 +103,7 @@ export class PaymentRepository {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ordersRepository: OrdersRepository,
+    private readonly storeRepository: StoreRepository,
   ) {}
 
   /**
@@ -129,9 +130,10 @@ export class PaymentRepository {
         }
       }
 
+      const currency = await this.storeRepository.findCurrency(tx);
       const intent = await tx.paymentIntent.upsert({
         where: { orderId: request.orderId },
-        create: { orderId: request.orderId, amount: order.totalAmount, currency: CHARGE_CURRENCY },
+        create: { orderId: request.orderId, amount: order.totalAmount, currency },
         update: {},
       });
       await tx.paymentAttempt.updateMany({
@@ -185,9 +187,10 @@ export class PaymentRepository {
       assertCollectable(order);
 
       const amount = order.totalAmount;
+      const currency = await this.storeRepository.findCurrency(tx);
       const intent = await tx.paymentIntent.upsert({
         where: { orderId },
-        create: { orderId, amount, currency: CHARGE_CURRENCY, status: PaymentIntentStatus.PAID },
+        create: { orderId, amount, currency, status: PaymentIntentStatus.PAID },
         update: { status: PaymentIntentStatus.PAID },
       });
       const attempt = await tx.paymentAttempt.create({
@@ -195,13 +198,13 @@ export class PaymentRepository {
           intentId: intent.id,
           provider: PaymentProvider.CASH_ON_DELIVERY,
           amount,
-          currency: CHARGE_CURRENCY,
+          currency,
           channel: PaymentProvider.CASH_ON_DELIVERY,
           status: PaymentStatus.COMPLETED,
         },
       });
       const collection = await tx.cashCollection.create({
-        data: { orderId, attemptId: attempt.id, amount, currency: CHARGE_CURRENCY, recordedById },
+        data: { orderId, attemptId: attempt.id, amount, currency, recordedById },
       });
       const delivered = await this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.DELIVERED, [
         order.status,

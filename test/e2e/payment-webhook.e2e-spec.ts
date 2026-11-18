@@ -6,7 +6,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { createTestApp } from '../helpers/app.helper';
-import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
 
 describe('Paystack webhook (e2e)', () => {
   let app: INestApplication;
@@ -41,6 +41,7 @@ describe('Paystack webhook (e2e)', () => {
     orderCount += 1;
     const order = await prisma.order.create({
       data: {
+        orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
         totalAmount: 100,
         contactEmail: 'user@example.com',

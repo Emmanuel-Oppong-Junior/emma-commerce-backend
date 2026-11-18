@@ -47,6 +47,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PickupLocationsModule } from './pickup-locations/pickup-locations.module';
 import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
+import { StoreModule } from './store/store.module';
 
 @Module({
   imports: [
@@ -152,6 +153,7 @@ import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
     AnalyticsModule,
     PickupLocationsModule,
     ShippingZonesModule,
+    StoreModule,
     ScheduleModule.forRoot(),
   ],
   controllers: [AppController],

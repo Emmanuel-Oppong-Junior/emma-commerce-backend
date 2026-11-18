@@ -3,7 +3,7 @@ import { DiscountType } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 
 describe('Reviews & Coupons (e2e)', () => {
@@ -378,6 +378,7 @@ describe('Reviews & Coupons (e2e)', () => {
       });
       const fakeOrder = await prisma.order.create({
         data: {
+          orderNumber: await takeOrderNumber(prisma),
           userId: 'seed_user',
           totalAmount: 200,
           fulfillmentType: 'DELIVERY',

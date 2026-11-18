@@ -23,6 +23,7 @@ import { PickupLocationsService } from '../pickup-locations/pickup-locations.ser
 import { ReturnsService } from '../returns/returns.service';
 import { DiscountService } from '../discount/discount.service';
 import { priceCart } from '../discount/pricing';
+import { StoreService } from '../store/store.service';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
@@ -50,6 +51,7 @@ export class OrdersService {
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly returnsService: ReturnsService,
     private readonly discountService: DiscountService,
+    private readonly storeService: StoreService,
   ) {}
 
   /**
@@ -347,8 +349,9 @@ export class OrdersService {
     couponId?: string;
     couponDiscount?: Prisma.Decimal;
   }> {
+    const currency = await this.storeService.getCurrency();
     const products: Product[] = [];
-    for (const item of cartItems) products.push(await this.checkProductAvailability(item));
+    for (const item of cartItems) products.push(await this.checkProductAvailability(item, currency));
     const discounts = await this.discountService.findActiveDiscountsByProduct(products);
     const priced = priceCart(
       cartItems.map((item, index) => ({
@@ -393,13 +396,13 @@ export class OrdersService {
     };
   }
 
-  private async checkProductAvailability(item: CartItem): Promise<Product> {
+  private async checkProductAvailability(item: CartItem, currency: Currency): Promise<Product> {
     const product = await this.ordersRepository.findProductById(item.productId);
     if (!product) throw new NotFoundException(`Product "${item.productId}" not found`);
-    // Prices are summed and charged as GHS; until multi-currency exists any other currency would be mis-charged.
-    if (product.currency !== Currency.GHS) {
+    // Prices are summed and charged in the store currency; a product priced in another one would be mis-charged.
+    if (product.currency !== currency) {
       throw new BadRequestException(
-        `"${product.name}" is priced in ${product.currency ?? 'no currency'}; only GHS products can be checked out`,
+        `"${product.name}" is priced in ${product.currency ?? 'no currency'}; only ${currency} products can be checked out`,
       );
     }
     if (product.price === null) throw new BadRequestException(`"${product.name}" has no price and cannot be sold`);

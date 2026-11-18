@@ -109,7 +109,10 @@ describe('OrdersRepository', () => {
 
   describe('create', () => {
     it('should create an order via transaction', async () => {
-      const mockTx = { order: { create: jest.fn().mockResolvedValue(mockOrder) } };
+      const mockTx = {
+        order: { create: jest.fn().mockResolvedValue(mockOrder) },
+        $queryRaw: jest.fn().mockResolvedValue([{ orderNumber: 10042 }]),
+      };
 
       const result = await repository.create(mockTx as any, 'user1', {
         orderItems: [] as any,
@@ -127,6 +130,7 @@ describe('OrdersRepository', () => {
       expect(mockTx.order.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
+            orderNumber: 10042,
             userId: 'user1',
             shippingAddressId: 'addr1',
             subtotal: new Prisma.Decimal(90),
@@ -136,6 +140,24 @@ describe('OrdersRepository', () => {
         }),
       );
     });
+  });
+
+  it('refuses to create an order when there is no Store row to number it', async () => {
+    const mockTx = { order: { create: jest.fn() }, $queryRaw: jest.fn().mockResolvedValue([]) };
+
+    await expect(
+      repository.create(mockTx as any, 'user1', {
+        orderItems: [] as any,
+        subtotal: new Prisma.Decimal(90),
+        discountTotal: new Prisma.Decimal(0),
+        shippingFee: new Prisma.Decimal(10),
+        totalAmount: new Prisma.Decimal(100),
+        fulfillmentType: FulfillmentType.PICKUP,
+        contactEmail: 'test@example.com',
+        contactPhone: '+233244000000',
+      }),
+    ).rejects.toThrow('No Store row exists to number the order');
+    expect(mockTx.order.create).not.toHaveBeenCalled();
   });
 
   describe('findAddressById', () => {

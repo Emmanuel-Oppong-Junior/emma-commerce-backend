@@ -93,8 +93,10 @@ export class OrdersRepository {
       contactPhone: string;
     },
   ): Promise<OrderWithItems> {
+    const orderNumber = await this.takeOrderNumber(tx);
     return tx.order.create({
       data: {
+        orderNumber,
         userId,
         fulfillmentType: orderDetails.fulfillmentType,
         shippingAddressId: orderDetails.shippingAddressId,
@@ -115,6 +117,19 @@ export class OrdersRepository {
       },
       include: { items: { include: { product: true } } },
     }) as unknown as OrderWithItems;
+  }
+
+  /**
+   * Takes the store's next order number. The row lock it takes is held until the order transaction ends, so
+   * concurrent orders get distinct numbers; a rolled-back order leaves a gap.
+   */
+  private async takeOrderNumber(tx: Prisma.TransactionClient): Promise<number> {
+    const [taken] = await tx.$queryRaw<{ orderNumber: number }[]>`
+      UPDATE "Store" SET "nextOrderNumber" = "nextOrderNumber" + 1
+      WHERE "singleton"
+      RETURNING "nextOrderNumber" - 1 AS "orderNumber"`;
+    if (!taken) throw new Error('No Store row exists to number the order; apply the database migrations');
+    return taken.orderNumber;
   }
 
   async findAddressById(addressId: string): Promise<Address | null> {

@@ -7,7 +7,7 @@ import { PaymentReconciliationService } from '../../src/payment/payment-reconcil
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { LoggerService } from '../../src/commons/logger.service';
 import { createTestApp } from '../helpers/app.helper';
-import { clearPaymentLedger, resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
+import { clearPaymentLedger, resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
 
 const MINUTE_MS = 60 * 1000;
 
@@ -31,6 +31,7 @@ describe('Payment reconciliation (e2e)', () => {
     orderCount += 1;
     const order = await prisma.order.create({
       data: {
+        orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
         totalAmount: 100,
         contactEmail: 'user@example.com',

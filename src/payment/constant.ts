@@ -9,6 +9,3 @@ export const PAYSTACK_REFUND_URL = 'https://api.paystack.co/refund';
 export const PAYSTACK_WEBHOOK_CRYPTO_ALGO = 'sha512';
 export const PAYSTACK_WEBHOOK_SIGNATURE_KEY = 'x-paystack-signature';
 export const PAYSTACK_SUCCESS_STATUS = 'success';
-
-/** Order totals are GHS amounts, so the charge currency is fixed server-side. */
-export const CHARGE_CURRENCY = 'GHS';

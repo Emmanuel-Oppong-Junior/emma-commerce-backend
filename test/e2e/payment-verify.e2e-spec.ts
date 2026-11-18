@@ -8,7 +8,7 @@ import { NotificationsService } from '../../src/notifications/notifications.serv
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
-import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
 
 interface VerifyResult {
   reference: string;
@@ -49,6 +49,7 @@ describe('Payment verification (e2e)', () => {
     orderCount += 1;
     const order = await prisma.order.create({
       data: {
+        orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
         totalAmount: 100,
         contactEmail: 'user@example.com',

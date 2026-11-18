@@ -861,6 +861,9 @@ type Mutation {
   """Update a shipping zone (admin only)"""
   updateShippingZone(id: ID!, input: UpdateShippingZoneInput!): ShippingZoneEntity!
 
+  """Change the store settings (super admin only)"""
+  updateStoreSettings(input: UpdateStoreSettingsInput!): StoreSettings!
+
   """Updates an existing subcategory (admin only)"""
   updateSubCategory(
     """The ID of the subcategory to update"""
@@ -1354,6 +1357,11 @@ type Query {
   """Get all shipping zones (admin only)"""
   shippingZones: [ShippingZoneEntity!]!
 
+  """
+  The store settings: names, tax registration, currency, contact (public)
+  """
+  storeSettings: StoreSettings!
+
   """Retrieves a list of all subcategories, sorted alphabetically by name"""
   subCategories: [SubCategory!]!
 
@@ -1633,6 +1641,27 @@ enum StockStatus {
   PREORDER
 }
 
+"""The settings of the store this deployment serves"""
+type StoreSettings {
+  createdAt: DateTime!
+
+  """Currency of every price, charge and refund"""
+  currency: Currency!
+  id: ID!
+  legalName: String!
+
+  """Whether product prices already include tax"""
+  pricesIncludeTax: Boolean!
+  supportEmail: String
+  supportPhone: String
+
+  """Taxpayer Identification Number"""
+  tin: String
+  tradingName: String!
+  updatedAt: DateTime!
+  vatRegistered: Boolean!
+}
+
 type SubCategory {
   category: SubCategory
 
@@ -1885,6 +1914,26 @@ input UpdateShippingZoneInput {
   fee: Float
   isActive: Boolean
   name: String
+}
+
+"""
+Store settings to change; omitted fields keep their value, null clears an optional one
+"""
+input UpdateStoreSettingsInput {
+  """Registered legal name, as printed on receipts"""
+  legalName: String
+
+  """Whether product prices already include tax"""
+  pricesIncludeTax: Boolean
+  supportEmail: String
+  supportPhone: String
+
+  """Taxpayer Identification Number (letters, digits, hyphens)"""
+  tin: String
+
+  """Name customers see"""
+  tradingName: String
+  vatRegistered: Boolean
 }
 
 input UpdateSubCategoryInput {

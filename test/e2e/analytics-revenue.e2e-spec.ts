@@ -13,7 +13,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin } from '../helpers/auth.helper';
-import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
 
 const LAPTOP = 'seed_prod1';
 const PHONE = 'seed_prod2';
@@ -61,6 +61,7 @@ describe('Analytics revenue (e2e)', () => {
     orderCount += 1;
     const created = await prisma.order.create({
       data: {
+        orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
         status: order.status,
         totalAmount: order.totalAmount,

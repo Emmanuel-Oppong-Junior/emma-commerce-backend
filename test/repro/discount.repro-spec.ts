@@ -88,6 +88,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       {} as never,
       {} as never,
       discounts as never,
+      { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
     );
 
     await service.createOrderFromCart('user-1', {

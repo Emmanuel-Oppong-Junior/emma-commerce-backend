@@ -64,6 +64,14 @@ export async function clearPaymentLedger(prisma: PrismaService): Promise<void> {
   );
 }
 
+/** Takes the store's next order number the way OrdersRepository does, for orders inserted directly by a test. */
+export async function takeOrderNumber(prisma: PrismaService): Promise<number> {
+  const [{ orderNumber }] = await prisma.$queryRaw<{ orderNumber: number }[]>`
+    UPDATE "Store" SET "nextOrderNumber" = "nextOrderNumber" + 1 WHERE "singleton"
+    RETURNING "nextOrderNumber" - 1 AS "orderNumber"`;
+  return orderNumber;
+}
+
 /** Inserts a payment attempt (and the order's payment intent if it has none) directly into the database. */
 export async function seedPaymentAttempt(
   prisma: PrismaService,

@@ -28,10 +28,15 @@ describe('Hot-query indexes (e2e)', () => {
     await prisma.$executeRawUnsafe(`
       INSERT INTO "Product" ("id", "name", "updatedAt")
       SELECT 'idx_p_' || g, 'Index product ' || g, now() FROM generate_series(1, 200) g`);
+    // Order numbers come from the store counter: take a block of 500 and number the orders inside it.
+    const [{ first }] = await prisma.$queryRaw<{ first: number }[]>`
+      UPDATE "Store" SET "nextOrderNumber" = "nextOrderNumber" + 500 WHERE "singleton"
+      RETURNING "nextOrderNumber" - 500 AS "first"`;
     await prisma.$executeRawUnsafe(
-      `INSERT INTO "Order" ("id", "userId", "totalAmount", "contactEmail", "contactPhone", "updatedAt")
-       SELECT 'idx_o_' || g, $1, 10, 'index@example.com', '0240000000', now() FROM generate_series(1, 500) g`,
+      `INSERT INTO "Order" ("id", "orderNumber", "userId", "totalAmount", "contactEmail", "contactPhone", "updatedAt")
+       SELECT 'idx_o_' || g, $2 + g - 1, $1, 10, 'index@example.com', '0240000000', now() FROM generate_series(1, 500) g`,
       userIds.userId,
+      first,
     );
     await prisma.$executeRawUnsafe(`
       INSERT INTO "OrderItem" ("id", "orderId", "productId", "priceAtOrder", "originalPrice")

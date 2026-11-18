@@ -36,6 +36,7 @@ function buildPaymentService(
     { sendPaymentConfirmation: jest.fn() } as never,
     { log: jest.fn() } as never,
     paystack as never,
+    { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
   );
   return { service, repository, paystack };
 }

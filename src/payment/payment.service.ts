@@ -1,4 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { OrderStatus, PaymentProvider, Prisma } from '../generated/prisma/client';
@@ -12,6 +18,7 @@ import { decideVerification, isSettled, parseProviderVerification } from './paym
 import { assertCodCollectable } from './cash-on-delivery';
 import { AuditService } from '../commons/audit.service';
 import { InitializedTransaction, PaystackClient, VerifiedTransaction } from './paystack.client';
+import { StoreService } from '../store/store.service';
 
 @Injectable()
 export class PaymentService {
@@ -22,6 +29,7 @@ export class PaymentService {
     private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
     private readonly paystack: PaystackClient,
+    private readonly storeService: StoreService,
   ) {}
 
   /**
@@ -33,6 +41,7 @@ export class PaymentService {
     createPaymentDto: CreatePaymentDto,
   ): Promise<PaymentRecord & { authorizationUrl: string }> {
     const { orderId, idempotencyKey } = createPaymentDto;
+    await this.assertStoreCurrency(createPaymentDto.currency);
     const order = await this.paymentRepository.findOrderWithUser(orderId);
     assertOrderPayable(order, orderId, userId);
 
@@ -170,6 +179,15 @@ export class PaymentService {
   async restore(id: string) {
     await this.findPaymentOrThrow(id);
     return this.paymentRepository.update(id, { deleted: false, deletedAt: null });
+  }
+
+  /** The client may name the currency, but never choose it: the store currency is the only one charged. */
+  private async assertStoreCurrency(requested: string | undefined): Promise<void> {
+    if (requested === undefined) return;
+    const currency = await this.storeService.getCurrency();
+    if (requested !== currency) {
+      throw new BadRequestException(`currency must be ${currency}; payments are charged in ${currency} only`);
+    }
   }
 
   private async findPaymentOrThrow(id: string) {

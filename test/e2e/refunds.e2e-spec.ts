@@ -6,7 +6,7 @@ import { PaystackClient, PaystackRequestRejected } from '../../src/payment/payst
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
-import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
 
 interface GqlResult {
   data?: Record<string, { id?: string; status: string } | null> | null;
@@ -49,6 +49,7 @@ describe('Refunds (e2e)', () => {
     orderCount += 1;
     const order = await prisma.order.create({
       data: {
+        orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
         totalAmount: 100,
         status,

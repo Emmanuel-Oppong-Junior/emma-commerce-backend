@@ -53,6 +53,7 @@ const AUDITED: Record<string, string> = {
   deleteOrder: 'order.service.spec',
   updateShipping: 'order.service.spec',
   recordCodPayment: 'payment.service.spec (recordCodPayment)',
+  updateStoreSettings: 'store.service.spec',
 };
 
 // Privileged mutations deliberately left unaudited, with the reason. Adding to this list is a reviewed decision.

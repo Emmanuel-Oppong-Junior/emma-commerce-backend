@@ -1,5 +1,4 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
-import { CHARGE_CURRENCY } from '../constant';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreatePaymentDto {
   @IsString()
@@ -10,11 +9,9 @@ export class CreatePaymentDto {
   @IsNotEmpty()
   paymentMethod: string;
 
-  // Kept optional so existing clients that send "GHS" still validate; the server always charges CHARGE_CURRENCY.
+  // Kept optional so existing clients that send it still work; PaymentService refuses any but the store currency.
   @IsOptional()
-  @IsIn([CHARGE_CURRENCY], {
-    message: `currency must be ${CHARGE_CURRENCY}; payments are charged in ${CHARGE_CURRENCY} only`,
-  })
+  @IsString()
   currency?: string;
 
   @IsOptional()

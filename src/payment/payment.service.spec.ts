@@ -17,6 +17,7 @@ import { Role } from '../users/enums/role.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../commons/audit.service';
 import { PaystackClient } from './paystack.client';
+import { StoreService } from '../store/store.service';
 
 const mockPaystack = {
   initializeTransaction: jest.fn(),
@@ -56,6 +57,8 @@ const mockNotificationsService = {
   sendPaymentConfirmation: jest.fn(),
 };
 
+const mockStoreService = { getCurrency: jest.fn().mockResolvedValue('GHS') };
+
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
 describe('PaymentService', () => {
@@ -72,6 +75,7 @@ describe('PaymentService', () => {
         { provide: NotificationsService, useValue: mockNotificationsService },
         { provide: AuditService, useValue: mockAuditService },
         { provide: PaystackClient, useValue: mockPaystack },
+        { provide: StoreService, useValue: mockStoreService },
       ],
     }).compile();
 
@@ -152,14 +156,30 @@ describe('PaymentService', () => {
       expect(result).toEqual({ ...payment, authorizationUrl: 'http://paystack.test/auth' });
     });
 
-    it.each([{ currency: 'NGN' }, { currency: undefined }])(
-      'charges GHS whatever currency the request carries (%o)',
-      async ({ currency }) => {
-        await service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency });
+    it('charges the attempt currency when the request names none', async () => {
+      await service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency: undefined });
 
-        expect(mockPaystack.initializeTransaction).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
+      expect(mockPaystack.initializeTransaction).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
+    });
+
+    it.each(['USD', 'NGN', 'ghs'])(
+      'rejects %s so the client cannot choose the charge currency, before opening an attempt',
+      async (currency) => {
+        await expect(
+          service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency }),
+        ).rejects.toThrow(new BadRequestException('currency must be GHS; payments are charged in GHS only'));
+        expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
+        expect(mockPaystack.initializeTransaction).not.toHaveBeenCalled();
       },
     );
+
+    it('accepts the currency of the store, whichever it is', async () => {
+      mockStoreService.getCurrency.mockResolvedValueOnce('USD');
+
+      await expect(
+        service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency: 'USD' }),
+      ).resolves.toBeDefined();
+    });
 
     it('gives each initiation a different reference', async () => {
       await service.initiatePayment(userId, createPaymentDto);

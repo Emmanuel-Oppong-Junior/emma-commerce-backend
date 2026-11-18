@@ -6,7 +6,7 @@ import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
 
 interface InitializeParams {
   reference: string;
@@ -38,6 +38,7 @@ describe('Payment initiation (e2e)', () => {
     orderCount += 1;
     const order = await prisma.order.create({
       data: {
+        orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
         totalAmount: 100,
         contactEmail: 'user@example.com',

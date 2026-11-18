@@ -307,34 +307,34 @@ model CartItem {
 }
 
 model Order {
-  id                      String          @id @default(cuid())
-  orderNumber             Int             @unique @default(autoincrement())
+  id                      String           @id @default(cuid())
+  orderNumber             Int              @unique
   userId                  String
-  user                    User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user                    User             @relation(fields: [userId], references: [id], onDelete: Restrict)
   discountTotal           Decimal?
   totalWithOutDiscount    Decimal?
-  subtotal                Decimal?        @db.Decimal(10, 2)
-  shippingFee             Decimal?        @db.Decimal(10, 2)
-  totalAmount             Decimal         @db.Decimal(10, 2)
-  status                  OrderStatus     @default(PENDING)
-  fulfillmentType         FulfillmentType @default(DELIVERY)
+  subtotal                Decimal?         @db.Decimal(10, 2)
+  shippingFee             Decimal?         @db.Decimal(10, 2)
+  totalAmount             Decimal          @db.Decimal(10, 2)
+  status                  OrderStatus      @default(PENDING)
+  fulfillmentType         FulfillmentType  @default(DELIVERY)
   shippingAddressId       String?
-  shippingAddress         Address?        @relation(fields: [shippingAddressId], references: [id], onDelete: Restrict)
+  shippingAddress         Address?         @relation(fields: [shippingAddressId], references: [id], onDelete: Restrict)
   pickupLocationId        String?
-  pickupLocation          PickupLocation? @relation(fields: [pickupLocationId], references: [id], onDelete: Restrict)
+  pickupLocation          PickupLocation?  @relation(fields: [pickupLocationId], references: [id], onDelete: Restrict)
   shippingAddressSnapshot Json?
   pickupLocationSnapshot  Json?
   trackingNumber          String?
   carrier                 String?
   couponId                String?
-  coupon                  Coupon?         @relation(fields: [couponId], references: [id])
-  couponDiscount          Decimal?        @db.Decimal(10, 2)
-  paymentMethod           PaymentMethod   @default(ONLINE)
+  coupon                  Coupon?          @relation(fields: [couponId], references: [id])
+  couponDiscount          Decimal?         @db.Decimal(10, 2)
+  paymentMethod           PaymentMethod    @default(ONLINE)
   contactEmail            String
   contactPhone            String
-  createdAt               DateTime        @default(now())
-  updatedAt               DateTime        @updatedAt
-  deleted                 Boolean         @default(false)
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+  deleted                 Boolean          @default(false)
   deletedAt               DateTime?
   items                   OrderItem[]
   paymentIntent           PaymentIntent?
@@ -648,6 +648,22 @@ model ShippingZone {
   updatedAt DateTime @updatedAt
 
   @@index([isActive])
+}
+
+model Store {
+  id               String   @id @default(cuid())
+  singleton        Boolean  @unique @default(true)
+  legalName        String
+  tradingName      String
+  tin              String?
+  vatRegistered    Boolean  @default(false)
+  pricesIncludeTax Boolean  @default(true)
+  currency         Currency @default(GHS)
+  supportEmail     String?
+  supportPhone     String?
+  nextOrderNumber  Int      @default(10001)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model Tax {
