@@ -23,7 +23,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | Phase | Done | Status |
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
-| 1 — Foundations | 4 / 33 | 🔄 in progress |
+| 1 — Foundations | 5 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **50 / 154** | |
+| **All** | **51 / 154** | |
 
 ---
 
@@ -226,9 +226,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - The frontend breaks at the `Money` type change.
 - Mitigations: expand/contract, deprecation windows, reconciliation queries.
 
-### P1-K — CI/CD & deploy
+### P1-K — CI/CD & deploy  🔄 in progress
 > Accept: Gates block bad PRs; restore rehearsed · Run: ∥ · L · 🟥
-- [ ] **P1-K.1** `prisma migrate diff --exit-code` gate + `graphql-inspector` breaking-change gate
+- [x] **P1-K.1** `prisma migrate diff --exit-code` gate + `graphql-inspector` breaking-change gate (`13c25c2`)
 - [ ] **P1-K.2** Image build + push; staging deploy; `migrate deploy` release job per client DB (silo, ADR-0001)
 - [ ] **P1-K.3** IaC for one client environment (managed Postgres with PITR, Redis, object storage)
 - [ ] **P1-K.4** Backup restore rehearsal runbook (timed)

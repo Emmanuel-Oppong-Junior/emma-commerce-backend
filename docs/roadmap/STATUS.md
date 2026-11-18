@@ -5,7 +5,9 @@
 **Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise done (46/46); dependency upgrades done (Prisma 7, NestJS 12, tooling); all ADRs accepted; Phase 1 — Foundations next (P1-K.1) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Dependency upgrades finished 2026-11-18; next is Phase 1 (see Up next).
+None. P1-K.1 done; next is P1-K.2 (see Up next).
+
+**Last completed: P1-K.1 (2026-11-18)** `13c25c2`: CI now fails on (1) migration drift (e2e job runs `prisma migrate diff --from-config-datasource --to-schema … --exit-code` after `migrate deploy`); (2) a stale `schema.gql` (new job `api-schema` runs `npm run schema:generate`, new `scripts/generate-schema.ts`, no DB/env needed, output byte-identical to the committed file); (3) breaking GraphQL changes vs the base commit (`@graphql-inspector/cli` 7.0.5, approved; removing an already-deprecated field passes; an intentional break passes only when a commit in the range is marked `[breaking-api]`). Checked locally: unchanged/added field pass, removed field and new required input fail, deprecated removal passes only with the rule, marker/no-base cases, stale schema detected, dropped index → drift exit 2. Gates: typecheck/lint/format/build clean, unit 1412/1412, repro 21/21, audit 0 critical. Consider marking the `api-schema` job required in branch protection.
 
 **Last completed: dependency upgrades (P1-P.1/P.2, P1-U.1, P1-U.2), approved 2026-11-18.** All on `dev`:
   - [x] Step 1: Node 24 everywhere (CI, engines) + Prisma 7.10 (`prisma.config.ts`, `@prisma/adapter-pg`, client generated into `src/generated/prisma`) + one baseline migration `20261118160000_baseline` with order numbers from 10001 + CI job `migrations` rejecting edits to existing migration folders (P1-P.1/P.2, ADR-0017): `848cf59`, `c181408`, `c6e712a`. Combined gates on dev: typecheck/lint/format/build clean, unit 1409/1409, repro 21/21, audit 1 critical (allowlisted tar), e2e **343/343** on node:24 against a fresh DB, drift 0. Under the pg adapter P2002 carries the constraint name instead of `meta.target` (error-classification reads both); the ledger delete trigger now surfaces as P2003 (→ CONFLICT, was INTERNAL). Follow-ups: drift check in CI (P1-K.1), pg pool/connect-timeout options in `PrismaService`, ADR-0017 step 3 still names the removed `--from-url` flag, `@types/node` ^24 in Step 3
@@ -58,10 +60,9 @@ None. Dependency upgrades finished 2026-11-18; next is Phase 1 (see Up next).
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P1-K.1 CI gates: `prisma migrate diff --exit-code` drift check + `graphql-inspector` breaking-change check | → first | Approval to add `@graphql-inspector/cli` (dev dependency) |
-| 2 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
-| 3 | P1-J (worker, outbox, BullMQ), P1-R (RBAC + MFA), P1-S (Store, Money), P1-G (Ghana addresses), P1-L (observability) | ∥ lanes | J needs `@nestjs/bullmq`/`bullmq` approval; L.2 needs an error-tracking choice (Sentry or equivalent) |
-| 4 | P1-V → P1-N → P1-O (SKU model, inventory ledger, order snapshots) | → sequential, riskiest | after S.2 Money and V.1 |
+| 1 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
+| 2 | P1-J (worker, outbox, BullMQ), P1-R (RBAC + MFA), P1-S (Store, Money), P1-G (Ghana addresses), P1-L (observability) | ∥ lanes | J needs `@nestjs/bullmq`/`bullmq` approval; L.2 needs an error-tracking choice (Sentry or equivalent) |
+| 3 | P1-V → P1-N → P1-O (SKU model, inventory ledger, order snapshots) | → sequential, riskiest | after S.2 Money and V.1 |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
