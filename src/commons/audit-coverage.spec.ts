@@ -51,13 +51,13 @@ const AUDITED: Record<string, string> = {
   adminCancelOrder: 'order.service.spec',
   deleteOrder: 'order.service.spec',
   updateShipping: 'order.service.spec',
+  recordCodPayment: 'payment.service.spec (recordCodPayment)',
 };
 
 // Privileged mutations deliberately left unaudited, with the reason. Adding to this list is a reviewed decision.
-const PAYMENT_FOLLOW_UP = 'payment module is reworked separately; COD recording audit lands with P0-C.7';
+const PAYMENT_FOLLOW_UP = 'payment module is reworked separately; soft delete and restore are not yet audited';
 const CATALOGUE_FOLLOW_UP = 'catalogue taxonomy or moderation, no price, stock or access impact; not in P0-D.1 scope';
 const NOT_AUDITED: Record<string, string> = {
-  recordCodPayment: PAYMENT_FOLLOW_UP,
   softDeletePayment: PAYMENT_FOLLOW_UP,
   restorePayment: PAYMENT_FOLLOW_UP,
   createBrand: CATALOGUE_FOLLOW_UP,

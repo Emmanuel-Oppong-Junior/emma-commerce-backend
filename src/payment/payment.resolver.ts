@@ -47,7 +47,7 @@ export class PaymentResolver {
   @Roles(Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => Payment, {
     description:
-      'Record cash collection for a cash-on-delivery order. Marks payment as complete and order as DELIVERED.',
+      'Record the order total as cash collected for a SHIPPED cash-on-delivery order (delivery or pickup). Marks the payment complete and the order DELIVERED. Any other order is refused (CONFLICT for the wrong status or an already-recorded payment, BAD_REQUEST for a non-COD order) and nothing changes.',
   })
   recordCodPayment(@Args('orderId', { type: () => String }) orderId: string, @ActiveUser('id') adminId: string) {
     return this.paymentService.recordCodPayment(orderId, adminId);

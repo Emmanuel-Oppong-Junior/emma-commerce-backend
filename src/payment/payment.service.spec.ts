@@ -18,6 +18,7 @@ import { PaymentStatus, Prisma } from '@prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { Role } from '../users/enums/role.enum';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditService } from '../commons/audit.service';
 
 // Stable mock instance shared between service constructor and test references
 const mockPaystackTransaction = {
@@ -39,7 +40,6 @@ const mockPaymentRepository = {
   recordCashCollection: jest.fn(),
   findOrderWithUser: jest.fn(),
   findOrderById: jest.fn(),
-  forceUpdateOrderStatus: jest.fn(),
   settleAttempt: jest.fn(),
 };
 
@@ -51,6 +51,10 @@ const mockLoggerService = {
   log: jest.fn(),
   error: jest.fn(),
   warn: jest.fn(),
+};
+
+const mockAuditService = {
+  log: jest.fn(),
 };
 
 const mockNotificationsService = {
@@ -71,6 +75,7 @@ describe('PaymentService', () => {
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: AuditService, useValue: mockAuditService },
       ],
     }).compile();
 
@@ -672,27 +677,95 @@ describe('PaymentService', () => {
   });
 
   describe('recordCodPayment', () => {
-    const codOrder = { id: 'order1', userId: 'user1', totalAmount: 250, paymentMethod: 'CASH_ON_DELIVERY' };
+    const tx = { tx: true };
+    const attempt = { id: 'pay1', orderId: 'order1', status: PaymentStatus.COMPLETED };
+    const recorded = {
+      attempt,
+      collection: { id: 'cc1', amount: new Prisma.Decimal(250), currency: 'GHS' },
+      from: 'SHIPPED',
+    };
+    const shippedCod = {
+      status: 'SHIPPED',
+      deleted: false,
+      paymentMethod: 'CASH_ON_DELIVERY',
+      paymentIntent: null,
+    };
 
-    it('records the cash collection and marks the order DELIVERED', async () => {
-      const recorded = { id: 'pay1', orderId: 'order1', status: PaymentStatus.COMPLETED };
-      mockPaymentRepository.findOrderById.mockResolvedValue(codOrder);
-      mockPaymentRepository.findByOrderId.mockResolvedValue(null);
-      mockPaymentRepository.recordCashCollection.mockResolvedValue(recorded);
+    const runRecording = (order: unknown) =>
+      mockPaymentRepository.recordCashCollection.mockImplementation(
+        async (_orderId, _adminId, assertCollectable, onRecorded) => {
+          assertCollectable(order);
+          await onRecorded(tx, recorded);
+          return recorded;
+        },
+      );
+
+    it('records the collection for the order and returns the completed payment', async () => {
+      runRecording(shippedCod);
 
       const result = await service.recordCodPayment('order1', 'admin1');
 
-      expect(paymentRepository.recordCashCollection).toHaveBeenCalledWith('order1', 250, 'admin1');
-      expect(paymentRepository.forceUpdateOrderStatus).toHaveBeenCalledWith('order1', 'DELIVERED');
-      expect(result).toEqual(recorded);
+      expect(paymentRepository.recordCashCollection).toHaveBeenCalledWith(
+        'order1',
+        'admin1',
+        expect.any(Function),
+        expect.any(Function),
+      );
+      expect(result).toEqual(attempt);
     });
 
-    it('refuses to record a second collection for the same order', async () => {
-      mockPaymentRepository.findOrderById.mockResolvedValue(codOrder);
-      mockPaymentRepository.findByOrderId.mockResolvedValue({ id: 'pay1', status: PaymentStatus.COMPLETED });
+    it('writes the audit row on the recording transaction with the actor, amount and status change', async () => {
+      runRecording(shippedCod);
+
+      await service.recordCodPayment('order1', 'admin1');
+
+      expect(mockAuditService.log).toHaveBeenCalledWith(
+        {
+          entity: 'Order',
+          entityId: 'order1',
+          action: 'STATUS_CHANGE',
+          userId: 'admin1',
+          details: {
+            from: 'SHIPPED',
+            to: 'DELIVERED',
+            cashCollectionId: 'cc1',
+            paymentId: 'pay1',
+            amount: '250.00',
+            currency: 'GHS',
+          },
+        },
+        tx,
+      );
+    });
+
+    it.each(['PENDING', 'PROCESSING', 'CANCELLED', 'DELIVERED'])(
+      'refuses an order in %s under the lock and audits nothing',
+      async (status) => {
+        runRecording({ ...shippedCod, status });
+
+        await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(ConflictException);
+        expect(mockAuditService.log).not.toHaveBeenCalled();
+      },
+    );
+
+    it('refuses an online order', async () => {
+      runRecording({ ...shippedCod, paymentMethod: 'ONLINE' });
 
       await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(BadRequestException);
-      expect(paymentRepository.recordCashCollection).not.toHaveBeenCalled();
+    });
+
+    it('refuses a second collection for an order whose payment is already recorded', async () => {
+      runRecording({ ...shippedCod, paymentIntent: { status: 'PAID', attempts: [{ status: 'COMPLETED' }] } });
+
+      await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(
+        new ConflictException('Payment for order "order1" has already been recorded'),
+      );
+    });
+
+    it('treats a missing order as not found', async () => {
+      runRecording(null);
+
+      await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(NotFoundException);
     });
   });
 });

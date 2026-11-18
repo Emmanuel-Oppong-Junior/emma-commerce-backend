@@ -205,24 +205,86 @@ describe('PaymentRepository', () => {
   });
 
   describe('recordCashCollection', () => {
-    it('records a completed cash-on-delivery attempt and its cash collection', async () => {
-      const amount = new Prisma.Decimal(100);
+    const amount = new Prisma.Decimal(100);
+    const shippedCod = { ...mockOrder, status: 'SHIPPED', paymentMethod: 'CASH_ON_DELIVERY', paymentIntent: null };
+    const collection = { id: 'cc1', orderId: 'order1', attemptId: 'pay1', amount, currency: 'GHS' };
+    const completed = {
+      ...mockAttempt,
+      provider: 'CASH_ON_DELIVERY',
+      channel: 'CASH_ON_DELIVERY',
+      status: 'COMPLETED',
+    };
+    const allowAll = jest.fn();
+    const onRecorded = jest.fn();
+
+    beforeEach(() => {
+      mockPrismaOrder.findUnique.mockResolvedValue(shippedCod);
       mockPrismaIntent.upsert.mockResolvedValue({ id: 'intent1' });
-      mockPrismaAttempt.create.mockResolvedValue({ ...mockAttempt, provider: 'CASH_ON_DELIVERY', status: 'COMPLETED' });
+      mockPrismaAttempt.create.mockResolvedValue({ id: 'pay1' });
+      mockPrismaCashCollection.create.mockResolvedValue(collection);
+      mockPrismaAttempt.findUniqueOrThrow.mockResolvedValue(completed);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...shippedCod, status: 'DELIVERED' });
+    });
 
-      await repository.recordCashCollection('order1', amount, 'admin1');
-
-      expect(mockPrismaIntent.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { orderId: 'order1' }, update: { status: 'PAID' } }),
-      );
-      expect(mockPrismaAttempt.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ provider: 'CASH_ON_DELIVERY', status: 'COMPLETED', amount }),
-        }),
-      );
-      expect(mockPrismaCashCollection.create).toHaveBeenCalledWith({
-        data: { orderId: 'order1', attemptId: 'pay1', amount, recordedById: 'admin1' },
+    it('locks the order and re-checks it before writing anything', async () => {
+      const refusal = new ConflictException('not collectable');
+      const refuse = jest.fn(() => {
+        throw refusal;
       });
+
+      await expect(repository.recordCashCollection('order1', 'admin1', refuse, onRecorded)).rejects.toBe(refusal);
+
+      expect(mockTx.$queryRaw).toHaveBeenCalled();
+      expect(refuse).toHaveBeenCalledWith(shippedCod);
+      expect(mockPrismaIntent.upsert).not.toHaveBeenCalled();
+      expect(mockPrismaAttempt.create).not.toHaveBeenCalled();
+      expect(mockPrismaCashCollection.create).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.transitionStatus).not.toHaveBeenCalled();
+      expect(onRecorded).not.toHaveBeenCalled();
+    });
+
+    it('marks the intent PAID and records a completed cash attempt with its collection for the order total', async () => {
+      await repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded);
+
+      expect(mockPrismaIntent.upsert).toHaveBeenCalledWith({
+        where: { orderId: 'order1' },
+        create: { orderId: 'order1', amount, currency: 'GHS', status: 'PAID' },
+        update: { status: 'PAID' },
+      });
+      expect(mockPrismaAttempt.create).toHaveBeenCalledWith({
+        data: {
+          intentId: 'intent1',
+          provider: 'CASH_ON_DELIVERY',
+          amount,
+          currency: 'GHS',
+          channel: 'CASH_ON_DELIVERY',
+          status: 'COMPLETED',
+        },
+      });
+      expect(mockPrismaCashCollection.create).toHaveBeenCalledWith({
+        data: { orderId: 'order1', attemptId: 'pay1', amount, currency: 'GHS', recordedById: 'admin1' },
+      });
+    });
+
+    it('moves the order to DELIVERED only from the status it was locked in and hands the result to onRecorded', async () => {
+      const result = await repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded);
+
+      expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(mockTx, 'order1', 'DELIVERED', ['SHIPPED']);
+      expect(result).toEqual({
+        attempt: expect.objectContaining({ id: 'pay1', status: 'COMPLETED' }),
+        collection,
+        from: 'SHIPPED',
+      });
+      expect(onRecorded).toHaveBeenCalledWith(mockTx, result);
+    });
+
+    it('rolls back if the order changed under the lock', async () => {
+      mockOrdersRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(onRecorded).not.toHaveBeenCalled();
     });
   });
 

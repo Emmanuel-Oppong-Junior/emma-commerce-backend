@@ -1435,6 +1435,20 @@ Each call to `POST /payment/initialize` creates a new payment attempt with its o
 
 ---
 
+#### `recordCodPayment` (ADMIN, SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `orderId: String!`
+- **Description**: Records that the order total was collected in cash. In one step it marks the payment `COMPLETED` (provider `CASH_ON_DELIVERY`, amount = order total, GHS), stores who recorded it, moves the order to `DELIVERED` and writes an audit entry.
+- **Rules**: only a non-deleted cash-on-delivery order in `SHIPPED` (out for delivery, or ready at the pickup counter). A pickup order must be moved to `SHIPPED` with `updateOrderStatus` before cash is recorded; `PROCESSING` → `DELIVERED` is not an allowed step. Repeating the call for the same order (double click) records nothing more.
+- **Response**: `Payment`
+
+**Possible Errors**:
+- `NOT_FOUND` — order does not exist or is deleted.
+- `BAD_REQUEST` — the order is an `ONLINE` order.
+- `CONFLICT` — the order is not `SHIPPED` (e.g. `PENDING`, `PROCESSING`, `CANCELLED`, already `DELIVERED`), or its payment was already recorded.
+
+---
+
 #### `softDeletePayment` / `restorePayment` (ADMIN only)
 - **Type**: Mutation
 - **Args**: `id: String!`

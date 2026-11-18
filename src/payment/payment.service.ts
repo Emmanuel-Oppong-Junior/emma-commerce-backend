@@ -1,14 +1,8 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaystackWebhookDto } from './dto/paystack.dto';
-import { PaymentMethod, PaymentProvider, Prisma } from '@prisma/client';
+import { OrderStatus, PaymentProvider, Prisma } from '@prisma/client';
 import * as Paystack from 'paystack-api';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, randomBytes } from 'node:crypto';
@@ -18,6 +12,8 @@ import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
 import { decideVerification, isSettled, parseProviderVerification } from './payment-verification';
+import { assertCodCollectable } from './cash-on-delivery';
+import { AuditService } from '../commons/audit.service';
 
 @Injectable()
 export class PaymentService {
@@ -32,6 +28,7 @@ export class PaymentService {
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly notificationsService: NotificationsService,
+    private readonly auditService: AuditService,
   ) {
     this.paystack = Paystack(this.configService.get('PAYSTACK_SECRET_KEY'));
   }
@@ -127,30 +124,38 @@ export class PaymentService {
   }
 
   /**
-   * Records cash collection for a cash-on-delivery order (admin only).
-   * Records a COMPLETED attempt with its cash collection and advances the order to DELIVERED.
-   * @param orderId - The ID of the COD order.
-   * @param adminId - The ID of the admin recording the collection.
-   * @returns The created payment record.
+   * Records the order total as cash collected for a SHIPPED cash-on-delivery order (admin only) and moves the order
+   * to DELIVERED, with an audit row, in one transaction. Any other order is refused and nothing is written.
    */
   async recordCodPayment(orderId: string, adminId: string): Promise<PaymentRecord> {
-    const order = await this.paymentRepository.findOrderById(orderId);
-    if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
-
-    if ((order as unknown as { paymentMethod: PaymentMethod }).paymentMethod !== PaymentMethod.CASH_ON_DELIVERY) {
-      throw new BadRequestException(`Order "${orderId}" is not a cash-on-delivery order`);
-    }
-
-    const existing = await this.paymentRepository.findByOrderId(orderId);
-    if (existing) throw new BadRequestException(`Payment for order "${orderId}" has already been recorded`);
-
-    this.logger.log(`COD payment recorded | orderId: ${orderId} | adminId: ${adminId}`, 'PaymentService');
-
-    const payment = await this.paymentRepository.recordCashCollection(orderId, order.totalAmount, adminId);
-
-    await this.paymentRepository.forceUpdateOrderStatus(orderId, 'DELIVERED');
-
-    return payment;
+    const { attempt, collection } = await this.paymentRepository.recordCashCollection(
+      orderId,
+      adminId,
+      (order) => assertCodCollectable(order, orderId),
+      (tx, recorded) =>
+        this.auditService.log(
+          {
+            entity: 'Order',
+            entityId: orderId,
+            action: 'STATUS_CHANGE',
+            userId: adminId,
+            details: {
+              from: recorded.from,
+              to: OrderStatus.DELIVERED,
+              cashCollectionId: recorded.collection.id,
+              paymentId: recorded.attempt.id,
+              amount: recorded.collection.amount.toFixed(2),
+              currency: recorded.collection.currency,
+            },
+          },
+          tx,
+        ),
+    );
+    this.logger.log(
+      `COD payment recorded | orderId: ${orderId} | paymentId: ${attempt.id} | cashCollectionId: ${collection.id} | adminId: ${adminId}`,
+      'PaymentService',
+    );
+    return attempt;
   }
 
   /**

@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  CashCollection,
   Order,
   OrderStatus,
   PaymentAttempt,
@@ -60,6 +61,18 @@ const PAYABLE_ORDER = {
 } as const;
 
 export type OrderForPayment = Prisma.OrderGetPayload<{ include: typeof PAYABLE_ORDER }>;
+
+const COLLECTABLE_ORDER = {
+  paymentIntent: { select: { status: true, attempts: { select: { status: true } } } },
+} as const;
+
+export type OrderForCollection = Prisma.OrderGetPayload<{ include: typeof COLLECTABLE_ORDER }>;
+
+export interface RecordedCollection {
+  attempt: PaymentRecord;
+  collection: CashCollection;
+  from: OrderStatus;
+}
 
 type AttemptWithIntent = PaymentAttempt & { intent: { orderId: string; order?: Order } };
 
@@ -153,28 +166,52 @@ export class PaymentRepository {
     });
   }
 
-  /** Records cash collected for a cash-on-delivery order as a completed attempt plus a cash collection. */
-  async recordCashCollection(orderId: string, amount: Prisma.Decimal, recordedById: string): Promise<PaymentRecord> {
-    const attempt = await this.prisma.$transaction(async (tx) => {
+  /**
+   * Records the order total as cash collected and moves the order to DELIVERED, in one transaction: the intent is
+   * marked PAID, a COMPLETED cash-on-delivery attempt and its cash collection are created, and `onRecorded` runs on
+   * the same transaction (for the audit row). `assertCollectable` re-checks the order under its row lock and throws
+   * to refuse, so a repeated call finds the order already DELIVERED and writes nothing.
+   */
+  async recordCashCollection(
+    orderId: string,
+    recordedById: string,
+    assertCollectable: (order: OrderForCollection | null) => asserts order is OrderForCollection,
+    onRecorded: (tx: Prisma.TransactionClient, recorded: RecordedCollection) => Promise<void>,
+  ): Promise<RecordedCollection> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+      const order = await tx.order.findUnique({ where: { id: orderId }, include: COLLECTABLE_ORDER });
+      assertCollectable(order);
+
+      const amount = order.totalAmount;
       const intent = await tx.paymentIntent.upsert({
         where: { orderId },
-        create: { orderId, amount, status: PaymentIntentStatus.PAID },
+        create: { orderId, amount, currency: CHARGE_CURRENCY, status: PaymentIntentStatus.PAID },
         update: { status: PaymentIntentStatus.PAID },
       });
-      const created = await tx.paymentAttempt.create({
+      const attempt = await tx.paymentAttempt.create({
         data: {
           intentId: intent.id,
           provider: PaymentProvider.CASH_ON_DELIVERY,
           amount,
+          currency: CHARGE_CURRENCY,
           channel: PaymentProvider.CASH_ON_DELIVERY,
           status: PaymentStatus.COMPLETED,
         },
-        include: WITH_ORDER,
       });
-      await tx.cashCollection.create({ data: { orderId, attemptId: created.id, amount, recordedById } });
-      return created;
+      const collection = await tx.cashCollection.create({
+        data: { orderId, attemptId: attempt.id, amount, currency: CHARGE_CURRENCY, recordedById },
+      });
+      const delivered = await this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.DELIVERED, [
+        order.status,
+      ]);
+      if (!delivered) throw new ConflictException(`Order "${orderId}" changed while its cash collection was recorded`);
+
+      const settled = await tx.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id }, include: WITH_ORDER });
+      const recorded = { attempt: toPaymentRecord(settled), collection, from: order.status };
+      await onRecorded(tx, recorded);
+      return recorded;
     });
-    return toPaymentRecord(attempt);
   }
 
   async findById(id: string): Promise<PaymentRecord | null> {
@@ -244,13 +281,6 @@ export class PaymentRepository {
 
   async findOrderById(orderId: string): Promise<Order | null> {
     return this.prisma.order.findUnique({ where: { id: orderId } });
-  }
-
-  async forceUpdateOrderStatus(orderId: string, status: OrderStatus): Promise<void> {
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: { status },
-    });
   }
 
   /**
