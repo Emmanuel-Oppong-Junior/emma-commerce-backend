@@ -5,9 +5,11 @@
 **Last checkpoint:** 2026-11-18 · **Current phase:** Phase 0 — Stabilise (in progress) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-_None._ Next: P0-D.3 (docs: bring `FRONTEND_API_DOCUMENTATION.md` in line with `schema.gql`, last in phase). Remaining Phase 0 tasks after that are blocked on Emmanuel (B.3, B.10, B.11, O.2, F.3).
+_None._ All unblocked Phase 0 tasks are done (41/46). Remaining: P0-B.3, P0-B.10, P0-B.11 (stop-gap decisions), P0-O.2 (dependency approval), P0-F.3 (DB password rotation) — all waiting on Emmanuel. From now on update `FRONTEND_API_DOCUMENTATION.md` with every API change (CLAUDE.md non-negotiable).
 
-**Last completed (2026-11-18):** P0-D.2 (`2324739`, no migration). Gates on dev: unit 1382/1382, build ok, e2e 328/328 (Linux node:20), repro 17/21, drift 0. Revenue comes from the payment ledger only: accepted payment = COMPLETED attempt with no `reviewReason` (online, and the COD cash attempt), counted at `CashCollection.collectedAt` / attempt `updatedAt`; refunds = PROCESSED Refunds on accepted payments at `updatedAt`; net = gross − refunds; order count/AOV over paid orders; breakdowns report item sales on the same population (`Σ = itemSales`, `gross = itemSales + shipping − coupons`). Follow-ups: `PaymentAttempt.settledAt` would make online recognition exact (soft delete/restore touches `updatedAt`); ANA-04 (inclusive end date, server-local "today"), ANA-05 (all-time breakdowns, no caching), ANA-06/07 open.
+**Last completed (2026-11-18):** P0-D.3 (`ddb1d87`, docs only). `FRONTEND_API_DOCUMENTATION.md` now matches `schema.gql`: 152/152 operations documented once, no stale operations, REST endpoints match code, all 19 GraphQL examples validate; new "Platform rules" (limits, throttles, TTLs) and "Types & Enums" sections; every STATUS frontend item reflected. Code issues found while documenting (not fixed): (1) **`finalizeOrder` (customer-callable) overwrites `Order.totalAmount` with the undiscounted item total, dropping shipping/coupon, with no status check — if called before payment, Paystack charges the changed amount** (B.3 area); (2) **`UpdateProductInput.isActive`/`isTaxable` default to `false` in the schema, so an update omitting them deactivates the product and reprices it non-taxable** (same in `UpdateDiscountInput`); (3) product filter `subCategoryName` compares against `categoryName`, `inStock` filters nothing; (4) bad `users` `orderBy` → INTERNAL_SERVER_ERROR; (5) `userById`/`userByEmail`/`userByProviderId`/`viewOrder` return null for non-null types; (6) `payment(id)` of another user → 401; (7) several ADMIN-only resolvers refuse SUPER_ADMIN; (8) `category(id)`/`subCategories`/`tags`/`variants` need sign-in while `categories` is public; (9) never-populated fields (`Order.finalTotal`, `User.authProvider`/`facebookId`, `currentPrice`, `publishedAt`; `SubCategory.category` mistyped); (10) guards don't run on field resolvers (`Product.reviews` readable by guests); (11) `EmailService` logs the recipient email when `RESEND_API_KEY` is unset (PII); (12) minor: `addToCart` ignores PUBLISHED, no 100% cap on percentage coupons, `GET /` needs a token.
+
+**Earlier (2026-11-18):** P0-D.2 (`2324739`, no migration). Gates on dev: unit 1382/1382, build ok, e2e 328/328 (Linux node:20), repro 17/21, drift 0. Revenue comes from the payment ledger only: accepted payment = COMPLETED attempt with no `reviewReason` (online, and the COD cash attempt), counted at `CashCollection.collectedAt` / attempt `updatedAt`; refunds = PROCESSED Refunds on accepted payments at `updatedAt`; net = gross − refunds; order count/AOV over paid orders; breakdowns report item sales on the same population (`Σ = itemSales`, `gross = itemSales + shipping − coupons`). Follow-ups: `PaymentAttempt.settledAt` would make online recognition exact (soft delete/restore touches `updatedAt`); ANA-04 (inclusive end date, server-local "today"), ANA-05 (all-time breakdowns, no caching), ANA-06/07 open.
 
 **CI fix (2026-11-18):** e2e failed in CI on `7e33bf9` (logs need GitHub auth). Two flake sources fixed: cron jobs firing inside e2e apps (CRON-06: `createTestApp` now stops them; new `scheduler.e2e-spec.ts` fails without it) and `payment-verify` counting the detached confirmation email before it was sent (now waits). Unit 1382/1382; e2e 324/324 twice in a row (Linux node:20).
 
@@ -49,10 +51,9 @@ _None._ Next: P0-D.3 (docs: bring `FRONTEND_API_DOCUMENTATION.md` in line with `
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P0-D.3 docs (last in phase) | alone | — |
-| 2 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
-| 3 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
-| 4 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
+| 1 | P0-B.3 discounts, P0-B.10 tax, P0-B.11 variants | — | Emmanuel's stop-gap decisions |
+| 2 | P0-O.2 dependency upgrades | — | Emmanuel's approval |
+| 3 | P0-F.3 Environment inventory + gitleaks | — | Emmanuel rotates the DB password |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -63,7 +64,7 @@ _None._ Next: P0-D.3 (docs: bring `FRONTEND_API_DOCUMENTATION.md` in line with `
 | P0-C Payments | **7 / 7** | C.1 (`ddc81cb`), C.2 (`24b246f`), C.3 (`01f3f13`), C.4 (`118c16a`), C.5 (`21260b0`), C.6 (`c5c0714`), C.7 (`52a7c2d`) |
 | P0-I Identity & sessions | **6 / 6** | I.1 (`d2445ad`), I.2 (`dfac978`, `029fbce`), I.3 (`eed1ce9`), I.4 (`d52eb01`), I.5 (`fc59f37`), I.6 (`d11e961`) |
 | P0-O Deployability & ops | 6 / 7 | O.1 (`a98a123`), O.3 (`fd0543c`), O.4 (`c51ee81`), O.5 (`66eb517`), O.6 (`26efe7d`), O.7 (`e18cf27`) |
-| P0-D Audit & analytics | 2 / 3 | D.1 (`90b6bb8`), D.2 (`2324739`) |
+| P0-D Audit & analytics | **3 / 3** | D.1 (`90b6bb8`), D.2 (`2324739`), D.3 (`ddb1d87`) |
 
 Repro tests turned green: **17 / 21** (PAY-01, PAY-05, PAY-02, PAY-03, PLAT-01, IAM-07, SEC-01, PLAT-02 ×5, ORD-01, ORD-03, ORD-04, IAM-05, SHZ-01) (`test/repro/` on `dev`, `npm run test:repro`; CI job `repro`).
 
