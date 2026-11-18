@@ -1750,7 +1750,7 @@ input UpdateDiscountInput {
   id: ID!
 
   """Whether the discount is active"""
-  isActive: Boolean = false
+  isActive: Boolean
 
   """Minimum purchase amount to qualify for the discount"""
   minimumPurchase: Float
@@ -1823,10 +1823,10 @@ input UpdateProductInput {
   images: [String!]
 
   """Whether the product is visible to customers"""
-  isActive: Boolean = false
+  isActive: Boolean
 
   """Whether taxes apply to this product"""
-  isTaxable: Boolean = false
+  isTaxable: Boolean
 
   """Quantity threshold that triggers a low-stock alert (defaults to 5)"""
   lowStockAlert: Int

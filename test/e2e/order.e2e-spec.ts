@@ -525,5 +525,49 @@ describe('Orders (e2e)', () => {
       expect(res.body.errors).toBeUndefined();
       expect(res.body.data.finalizeOrder.id).toBe(finalizeOrderId);
     });
+
+    it('keeps the total the customer is charged, shipping fee included', async () => {
+      await addItemToCart(userToken, 'seed_prod1', 1);
+      const orderRes = await gqlRequest(
+        app,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id totalAmount shippingFee } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+      const created = orderRes.body.data.createOrder;
+
+      const res = await gqlRequest(
+        app,
+        `mutation { finalizeOrder(id: "${created.id}") { totalAmount } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.finalizeOrder.totalAmount).toBe(created.totalAmount);
+      const stored = await prisma.order.findUniqueOrThrow({ where: { id: created.id } });
+      expect(stored.totalAmount.toFixed(2)).toBe(Number(created.totalAmount).toFixed(2));
+    });
+
+    it('refuses an order that is no longer PENDING', async () => {
+      await addItemToCart(userToken, 'seed_prod1', 1);
+      const orderRes = await gqlRequest(
+        app,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+      const orderId = orderRes.body.data.createOrder.id;
+      await prisma.order.update({ where: { id: orderId }, data: { status: 'PROCESSING' } });
+
+      const res = await gqlRequest(
+        app,
+        `mutation { finalizeOrder(id: "${orderId}") { id } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+
+      expect(res.body.errors?.[0].extensions.code).toBe('CONFLICT');
+    });
   });
 });

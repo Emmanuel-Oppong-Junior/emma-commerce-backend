@@ -821,7 +821,7 @@ query {
 - **Args**: `productId: String!`, `updateProductInput: UpdateProductInput!`
 - **Response**: `Product!`
 
-`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `quantity`**: stock cannot be set here (sending it is a schema error, HTTP 400). Change stock with `restockProduct` or `adjustProductStock`. Note that `isActive` and `isTaxable` default to `false` in this input, so always send them explicitly.
+`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `quantity`**: stock cannot be set here (sending it is a schema error, HTTP 400). Change stock with `restockProduct` or `adjustProductStock`. Omitted fields, including `isActive` and `isTaxable`, are left unchanged.
 
 ---
 
@@ -1414,7 +1414,7 @@ All order operations require `Bearer` JWT.
   subtotal?: Float;                            // Sum of item prices at order time (null on older orders)
   shippingFee?: Float;                         // Delivery fee charged; 0 for PICKUP (null on older orders)
   couponDiscount?: Float;                      // Coupon discount applied at checkout
-  totalAmount: Float;                          // Amount charged: subtotal + shippingFee - couponDiscount (see finalizeOrder)
+  totalAmount: Float;                          // Amount charged: subtotal + shippingFee - couponDiscount
   discountTotal?: Float;                       // Set only by finalizeOrder
   finalTotal?: Float;                          // Never populated (always null)
   shippingAddressId?: string;                  // Set for DELIVERY orders
@@ -1608,7 +1608,8 @@ mutation {
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN` (own orders only; otherwise `NOT_FOUND`)
 - **Args**: `id: String!`
 - **Response**: `Order!`
-- **Description**: Records the best active discount per item as `OrderItem.discountAmount`/`appliedDiscount`, sets `Order.discountTotal`, and **overwrites `Order.totalAmount` with the undiscounted item total (price × quantity), dropping the shipping fee and coupon discount**. If this runs before the first `POST /payment/initialize`, that changed total is what Paystack charges. The status is not checked. Do not call it from the storefront; it is a known defect (discounts at checkout are an open product decision).
+- **Description**: Records the best active discount per item as `OrderItem.discountAmount`/`appliedDiscount` and sets `Order.discountTotal`, for information only. `Order.totalAmount` (what the customer is charged, shipping and coupon included) is never changed, because discounts are not charged at checkout (open product decision).
+- **Possible Errors**: `NOT_FOUND` (not your order); `CONFLICT` if the order is deleted or no longer `PENDING`.
 
 ---
 
@@ -1893,7 +1894,7 @@ Discounts are admin-configured price reductions attached to products, variants o
 - **Type**: Mutation
 - **Args**: `updateDiscountInput: UpdateDiscountInput!`
 - **Response**: `Discount!`
-- **Input: `UpdateDiscountInput`** — `id: ID!` plus the `CreateDiscountInput` fields, all optional. Note the schema defaults: an omitted `isActive` is sent as `false` and omitted `products`/`variants`/`categories` as `[]`, so send them explicitly.
+- **Input: `UpdateDiscountInput`** — `id: ID!` plus the `CreateDiscountInput` fields, all optional. An omitted `isActive` leaves the discount as it is; omitted `products`/`variants`/`categories` default to `[]`, which leaves the linked items unchanged.
 
 ---
 
@@ -3186,7 +3187,7 @@ There is no separate reservation: stock is decremented on order creation. An unp
 - For a product, the candidates are its own discounts and its category's discounts (plus the variant's, where a variant is involved). The **best** one wins: the highest `value`; on a tie, `PERCENTAGE` beats `FLAT`. (Note the comparison is on the raw value, so a 20% discount beats a GHS 15 flat discount regardless of price.)
 - `PERCENTAGE`: `discountedPrice = price - price × value / 100`. `FLAT`: `discountedPrice = price - value`.
 - `minimumPurchase`: `cartWithDiscount` fails with `BAD_REQUEST` when the cart total is below the minimum of any discount that matches an item.
-- **Checkout does not apply discounts**: `createOrder` prices items at `price`. `finalizeOrder` records discount amounts after the fact but overwrites `totalAmount` (see [`finalizeOrder`](#finalizeorder)); do not use it. Whether discounts are charged at checkout is an open product decision.
+- **Checkout does not apply discounts**: `createOrder` prices items at `price`. `finalizeOrder` only records discount amounts for information; it never changes `totalAmount`. Whether discounts are charged at checkout is an open product decision.
 
 ### Coupon Logic
 

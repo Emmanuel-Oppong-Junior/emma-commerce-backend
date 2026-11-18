@@ -1,10 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
-import { CartItem, Discount, Order, OrderItem, Product, Variant } from '@prisma/client';
+import { CartItem, Discount, Order, OrderItem, OrderStatus, Product, Variant } from '@prisma/client';
 import {
   CartItemWithProduct,
   CartWithDiscount,
@@ -282,15 +282,20 @@ export class DiscountService {
   }
 
   /**
-   * Finalizes discounts for an order by persisting them in order items.
-   * @param orderId - The ID of the order.
-   * @returns The updated order with applied discounts.
+   * Records the applicable discounts on a PENDING order's items without changing what the customer is charged.
    * @throws NotFoundException if the order is not found.
+   * @throws ConflictException if the order is deleted or no longer PENDING.
    */
   async finalizeDiscountsForOrder(orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.findOrderOrThrow(orderId);
-    const { total, discountTotal } = await this.getOrderItemsCalculation(order.items);
-    return this.discountRepository.updateOrderWithDiscount(orderId, total, discountTotal);
+    if (order.deleted || order.status !== OrderStatus.PENDING) {
+      throw new ConflictException(
+        `Discounts can only be finalized on a PENDING order; order "${orderId}" is ${order.deleted ? 'deleted' : order.status}`,
+      );
+    }
+    const { discountTotal } = await this.getOrderItemsCalculation(order.items);
+    // Discounts are not charged at checkout yet, so the total keeps the shipping fee and coupon createOrder set.
+    return this.discountRepository.updateOrderWithDiscount(orderId, Number(order.totalAmount), discountTotal);
   }
 
   private async validateDiscountInput(input: CreateOrUpdateDiscountInput, isUpdate = false): Promise<void> {

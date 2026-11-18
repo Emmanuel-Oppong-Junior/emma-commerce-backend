@@ -5,7 +5,7 @@ import { DiscountRepository } from './discount.repository';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { Discount, Prisma, Product } from '@prisma/client';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
@@ -367,6 +367,38 @@ describe('DiscountService', () => {
       mockDiscountRepository.findOrderById.mockResolvedValue(null);
 
       await expect(service.finalizeDiscountsForOrder('order2')).rejects.toThrow(NotFoundException);
+    });
+
+    const pendingOrder = {
+      id: 'order1',
+      status: 'PENDING',
+      deleted: false,
+      totalAmount: new Prisma.Decimal('530.00'),
+      items: [{ id: 'item1', productId: 'prod1', variantId: null, quantity: 2, product: { price: 250 } }],
+    };
+
+    it('keeps the charged total (shipping and coupon included) and records the discount', async () => {
+      mockDiscountRepository.findOrderById.mockResolvedValue(pendingOrder);
+      jest
+        .spyOn(service, 'getDiscountedPriceForProduct')
+        .mockResolvedValue({ discountedPrice: 225, discountAmount: 25, discountId: 'disc1' });
+      mockDiscountRepository.updateOrderItem.mockResolvedValue({});
+
+      await service.finalizeDiscountsForOrder('order1');
+
+      expect(mockDiscountRepository.updateOrderWithDiscount).toHaveBeenCalledWith('order1', 530, 50);
+    });
+
+    it.each([
+      ['PROCESSING', false],
+      ['CANCELLED', false],
+      ['PENDING', true],
+    ])('refuses a %s order (deleted: %s) and writes nothing', async (status, deleted) => {
+      mockDiscountRepository.findOrderById.mockResolvedValue({ ...pendingOrder, status, deleted });
+
+      await expect(service.finalizeDiscountsForOrder('order1')).rejects.toThrow(ConflictException);
+      expect(mockDiscountRepository.updateOrderItem).not.toHaveBeenCalled();
+      expect(mockDiscountRepository.updateOrderWithDiscount).not.toHaveBeenCalled();
     });
   });
 
