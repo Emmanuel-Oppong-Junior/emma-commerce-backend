@@ -9,8 +9,8 @@
 - **Branch:** `feat/p1-s-store-money` (agent, worktree `.claude/worktrees/money`, DB `emma_wt_money_test`) · **State:** in progress
 - **Decisions (Emmanuel 2026-11-18):** Money output fields replace `Float` in place in one `[breaking-api]` release (no deprecation window; nothing is live); money inputs use a `Decimal` string scalar; currency comes from the Store
 - **Steps:**
-  - [ ] S.1 Store row + settings query/mutation + order numbers from the Store counter ← **Next step** (agent)
-  - [ ] S.2 `Money` value object; float money maths replaced in pricing/checkout/payment/refund/coupon/shipping/analytics
+  - [x] S.1 Store row + settings query/mutation + order numbers from the Store counter (`476b203`, on the branch)
+  - [ ] S.2 ← **Next step** (agent, resumed 2026-11-19 after a network error; work uncommitted in the worktree) `Money` value object; float money maths replaced in pricing/checkout/payment/refund/coupon/shipping/analytics
   - [ ] S.3 Widen money columns to `Decimal(14,2)`, rates to `Decimal(9,6)`
   - [ ] S.4 GraphQL `Money { amount, currency }` outputs + `Decimal` inputs; lint ban on float money; schema.gql + API docs
   - [ ] Review, combined gates, merge, push, CI
