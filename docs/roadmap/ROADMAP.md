@@ -23,7 +23,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | Phase | Done | Status |
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
-| 1 — Foundations | 5 / 33 | 🔄 in progress |
+| 1 — Foundations | 9 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **51 / 154** | |
+| **All** | **55 / 154** | |
 
 ---
 
@@ -251,12 +251,12 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P1-R.2** Auth-matrix snapshot test over all operations
 - [ ] **P1-R.3** TOTP MFA for staff; step-up for sensitive actions
 
-### P1-S — Store & Money (ADR-0001/0004)  🔄 in progress
+### P1-S — Store & Money (ADR-0001/0004)  ✅ complete
 > Accept: Money arithmetic tests (allocation, rounding); no float money in pricing paths · Run: S.1 ∥ S.2 → S.3 → S.4 · L · 🟥
-- [ ] 🔄 **P1-S.1** `Store` row + settings from env; per-store order counter
-- [ ] 🔄 **P1-S.2** `Money` value object + lint ban on `Number()` money
-- [ ] 🔄 **P1-S.3** Widen money columns `Decimal(14,2)` (M6)
-- [ ] 🔄 **P1-S.4** GraphQL `Money` type alongside `Float`, deprecate `Float`
+- [x] **P1-S.1** `Store` row + settings from env; per-store order counter (`1750f17`)
+- [x] **P1-S.2** `Money` value object + lint ban on `Number()` money (`87e6746`)
+- [x] **P1-S.3** Widen money columns `Decimal(14,2)` (M6) (`3fdf84d`)
+- [x] **P1-S.4** GraphQL `Money` type replacing `Float` in place, `Decimal` inputs (Emmanuel 2026-11-18: no deprecation window) (`687829a`)
 
 ### P1-V — Variant as SKU + catalogue model (ADR-0002/0003)
 > Accept: Variants purchasable at variant price/stock (VAR-01 closed) · Run: V.1 → V.2 → V.3; V.4 ∥ · XL · 🟥
