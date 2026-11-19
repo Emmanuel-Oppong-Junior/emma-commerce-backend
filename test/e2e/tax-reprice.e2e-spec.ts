@@ -70,14 +70,14 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
   });
 
   it('a reprice that fails rolls back the tax change and its audit entry', async () => {
-    // basePrice × 1.05 overflows the Decimal(10, 2) price column, so the reprice UPDATE fails in Postgres.
+    // basePrice × 1.05 overflows the Decimal(14, 2) price column, so the reprice UPDATE fails in Postgres.
     await prisma.product.create({
       data: {
         id: 'tax_overflow',
         name: 'Overflow',
         isTaxable: true,
-        basePrice: '99999999.99',
-        price: '99999999.99',
+        basePrice: '999999999999.99',
+        price: '999999999999.99',
         categoryId: 'seed_cat',
       },
     });
