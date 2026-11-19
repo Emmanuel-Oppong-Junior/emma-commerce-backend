@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { FulfillmentType, OrderStatus, PaymentMethod } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
-import { gqlRequest } from '../helpers/graphql.helper';
+import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
 
@@ -36,7 +36,7 @@ describe('Cash-on-delivery collection (e2e)', () => {
   const recordCod = (orderId: string) =>
     gqlRequest(
       app,
-      `mutation { recordCodPayment(orderId: "${orderId}") { id status amount currency paymentMethod } }`,
+      `mutation { recordCodPayment(orderId: "${orderId}") { id status amount { amount currency } currency paymentMethod } }`,
       undefined,
       adminToken,
     ).expect(200);
@@ -71,7 +71,7 @@ describe('Cash-on-delivery collection (e2e)', () => {
     expect(res.body.errors).toBeUndefined();
     expect(res.body.data.recordCodPayment).toMatchObject({
       status: 'COMPLETED',
-      amount: 250.5,
+      amount: ghs('250.50'),
       currency: 'GHS',
       paymentMethod: 'CASH_ON_DELIVERY',
     });

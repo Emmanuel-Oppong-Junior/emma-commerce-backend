@@ -1,13 +1,14 @@
-import { Field, Float, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Field, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
 import { Tag } from '../../tag/entities/tag.entity';
 import { Discount } from '../../discount/entities/discount.entity';
-import { Prisma } from '../../generated/prisma/client';
 import { Category } from '../../categories/entities/category.entity';
 import { SubCategory } from '../../sub-categories/entities/sub-category.entity';
 import { Variant } from '../../variant/entities/variant.entity';
 import { Review } from '../../review/entities/review.entity';
 import { Brand } from '../../brand/entities/brand.entity';
 import { CurrencyEnum, DeliveryOptionsEnum, ProductStatusEnum, StockStatusEnum } from '../enums/product.enum';
+import { MoneyObject } from '../../commons/money/money.object';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class Product {
@@ -29,14 +30,14 @@ export class Product {
   @Field(() => [String], { description: 'Downloadable or supplementary file URLs', nullable: true })
   attachments?: string[];
 
-  @Field(() => Float, { description: 'Tax-inclusive display price', nullable: true })
-  price?: Prisma.Decimal;
+  @Field(() => MoneyObject, { description: 'Tax-inclusive display price', nullable: true })
+  price?: Decimal;
 
-  @Field(() => Float, { description: 'Base price before taxes (admin-entered)', nullable: true })
-  basePrice?: Prisma.Decimal;
+  @Field(() => MoneyObject, { description: 'Base price before taxes (admin-entered)', nullable: true })
+  basePrice?: Decimal;
 
-  @Field(() => Float, { description: 'Current selling price after any adjustments', nullable: true })
-  currentPrice?: Prisma.Decimal;
+  @Field(() => MoneyObject, { description: 'Current selling price after any adjustments', nullable: true })
+  currentPrice?: Decimal;
 
   @Field(() => CurrencyEnum, { description: 'Currency of the product price', nullable: true })
   currency?: string;
@@ -77,8 +78,8 @@ export class Product {
   @Field(() => GraphQLISODateTime, { description: 'Expiry or best-before date', nullable: true })
   expiryDate?: Date;
 
-  @Field(() => Float, { description: 'Discounted price, if a discount is active', nullable: true })
-  discountedPrice?: number;
+  @Field(() => MoneyObject, { description: 'Discounted price, if a discount is active', nullable: true })
+  discountedPrice?: Decimal;
 
   @Field(() => Discount, { description: 'Active discount applied to the product', nullable: true })
   appliedDiscount?: Discount;

@@ -1,5 +1,7 @@
-import { Field, Float, ID, InputType } from '@nestjs/graphql';
+import { Field, ID, InputType } from '@nestjs/graphql';
 import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class CreateVariantInput {
@@ -19,11 +21,9 @@ export class CreateVariantInput {
   @Min(0)
   quantity: number;
 
-  @Field(() => Float, { description: 'Price of the variant' })
-  @IsNotEmpty({ message: 'Price must not be empty' })
-  @IsNumber({}, { message: 'Price must be a number' })
-  @Min(0)
-  price: number;
+  @DecimalInputField({ description: 'Price of the variant' })
+  @IsMoneyAmount()
+  price: Decimal;
 
   @Field(() => ID, { description: 'ID of the associated product' })
   @IsNotEmpty({ message: 'Product ID must not be empty' })

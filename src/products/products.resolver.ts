@@ -1,4 +1,4 @@
-import { Args, Float, Info, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { Args, Info, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { ProductsService } from './products.service';
 import { Product } from './entities/product.entity';
 import { CreateProductInput } from './dto/create-product.input';
@@ -21,15 +21,22 @@ import { VariantsLoader } from './loaders/variants.loader';
 import { ReviewsLoader } from './loaders/reviews.loader';
 import { Variant } from '../variant/entities/variant.entity';
 import { Review } from '../review/entities/review.entity';
+import { MoneyObject } from '../commons/money/money.object';
 
 // Field resolvers and nested product lists must never be loaded through the Prisma select.
 const RESOLVED_FIELDS = ['discountedPrice', 'appliedDiscount', 'variants', 'reviews', 'products'];
+// Decimal columns served as Money: the GraphQL sub-selection { amount currency } is not part of the Prisma select.
+const MONEY_COLUMNS = ['price', 'basePrice', 'currentPrice'];
 
 const connectionSelect = (info?: GraphQLResolveInfo) =>
-  extractRequestedFieldsFromQuery(info!, { excludedFields: ['edges', 'cursor', 'node', ...RESOLVED_FIELDS], level: 3 });
+  extractRequestedFieldsFromQuery(info!, {
+    excludedFields: ['edges', 'cursor', 'node', ...RESOLVED_FIELDS],
+    scalarFields: MONEY_COLUMNS,
+    level: 3,
+  });
 
 const productSelect = (info?: GraphQLResolveInfo) =>
-  extractRequestedFieldsFromQuery(info!, { excludedFields: [...RESOLVED_FIELDS] });
+  extractRequestedFieldsFromQuery(info!, { excludedFields: [...RESOLVED_FIELDS], scalarFields: MONEY_COLUMNS });
 
 @Resolver(() => Product)
 export class ProductsResolver {
@@ -167,11 +174,10 @@ export class ProductsResolver {
     return this.reviewsLoader.loader.load(product.id);
   }
 
-  @ResolveField(() => Float, { nullable: true })
+  @ResolveField(() => MoneyObject, { nullable: true })
   async discountedPrice(@Parent() product: Product) {
-    const { discountedPrice } = await this.discountLoader.loader.load(product.id);
-    const originalPrice = Number(product.price);
-    return discountedPrice !== originalPrice ? discountedPrice : null;
+    const { discountedPrice, discountAmount } = await this.discountLoader.loader.load(product.id);
+    return discountAmount.isZero() ? null : discountedPrice;
   }
 
   @ResolveField(() => Discount, { nullable: true })

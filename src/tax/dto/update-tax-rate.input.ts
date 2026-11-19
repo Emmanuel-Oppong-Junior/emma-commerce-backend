@@ -1,5 +1,7 @@
-import { Field, Float, InputType } from '@nestjs/graphql';
-import { IsBoolean, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Field, InputType } from '@nestjs/graphql';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { DecimalInputField, IsRate } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class UpdateTaxInput {
@@ -8,12 +10,10 @@ export class UpdateTaxInput {
   @IsString()
   name?: string;
 
-  @Field(() => Float, { nullable: true })
+  @DecimalInputField({ nullable: true })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  @Max(1)
-  rate?: number;
+  @IsRate()
+  rate?: Decimal;
 
   @Field({ nullable: true })
   @IsOptional()

@@ -6,12 +6,13 @@ import {
   PaymentProvider,
   PaymentReviewReason,
   PaymentStatus,
+  Prisma,
   RefundStatus,
   ReturnStatus,
 } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
-import { gqlRequest } from '../helpers/graphql.helper';
+import { ghs, gqlRequest, MoneyValue } from '../helpers/graphql.helper';
 import { signInAdmin } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
 
@@ -20,16 +21,17 @@ const PHONE = 'seed_prod2';
 const NOVEL = 'analytics_novel';
 
 interface SalesReport {
-  grossRevenue: number;
-  refunds: number;
-  netRevenue: number;
-  totalRevenue: number;
-  itemSales: number;
+  grossRevenue: MoneyValue;
+  refunds: MoneyValue;
+  netRevenue: MoneyValue;
+  totalRevenue: MoneyValue;
+  itemSales: MoneyValue;
   orderCount: number;
-  averageOrderValue: number;
+  averageOrderValue: MoneyValue;
 }
 
-const SALES_FIELDS = 'grossRevenue refunds netRevenue totalRevenue itemSales orderCount averageOrderValue';
+const M = '{ amount currency }';
+const SALES_FIELDS = `grossRevenue ${M} refunds ${M} netRevenue ${M} totalRevenue ${M} itemSales ${M} orderCount averageOrderValue ${M}`;
 
 describe('Analytics revenue (e2e)', () => {
   let app: INestApplication;
@@ -249,36 +251,36 @@ describe('Analytics revenue (e2e)', () => {
 
   it("reports today's revenue from accepted payments minus processed refunds, ignoring unpaid and review payments", async () => {
     expect(await salesReport(startOfToday(), inAMinute())).toEqual({
-      grossRevenue: 375,
-      refunds: 40,
-      netRevenue: 335,
-      totalRevenue: 335,
-      itemSales: 340,
+      grossRevenue: ghs('375.00'),
+      refunds: ghs('40.00'),
+      netRevenue: ghs('335.00'),
+      totalRevenue: ghs('335.00'),
+      itemSales: ghs('340.00'),
       orderCount: 3,
-      averageOrderValue: 125,
+      averageOrderValue: ghs('125.00'),
     });
   });
 
   it('recognises a payment when it was accepted, so an all-time report also counts the 2020 order', async () => {
     expect(await salesReport(new Date('2000-01-01'), inAMinute())).toEqual({
-      grossRevenue: 405,
-      refunds: 40,
-      netRevenue: 365,
-      totalRevenue: 365,
-      itemSales: 370,
+      grossRevenue: ghs('405.00'),
+      refunds: ghs('40.00'),
+      netRevenue: ghs('365.00'),
+      totalRevenue: ghs('365.00'),
+      itemSales: ghs('370.00'),
       orderCount: 4,
-      averageOrderValue: 101.25,
+      averageOrderValue: ghs('101.25'),
     });
     expect(await salesReport(new Date('2020-06-01'), new Date('2020-06-02'))).toMatchObject({
-      grossRevenue: 30,
-      refunds: 0,
+      grossRevenue: ghs('30.00'),
+      refunds: ghs('0.00'),
       orderCount: 1,
     });
   });
 
   it("shows the same figures on the dashboard as today's sales report", async () => {
-    const { dashboardSummary } = await gql<{ dashboardSummary: Record<string, number> }>(
-      '{ dashboardSummary { ordersToday revenueToday grossRevenueToday refundsToday } }',
+    const { dashboardSummary } = await gql<{ dashboardSummary: Record<string, unknown> }>(
+      `{ dashboardSummary { ordersToday revenueToday ${M} grossRevenueToday ${M} refundsToday ${M} } }`,
     );
     const today = await salesReport(startOfToday(), inAMinute());
 
@@ -288,34 +290,40 @@ describe('Analytics revenue (e2e)', () => {
       grossRevenueToday: today.grossRevenue,
       refundsToday: today.refunds,
     });
-    expect(dashboardSummary).toEqual({ ordersToday: 3, revenueToday: 335, grossRevenueToday: 375, refundsToday: 40 });
+    expect(dashboardSummary).toEqual({
+      ordersToday: 3,
+      revenueToday: ghs('335.00'),
+      grossRevenueToday: ghs('375.00'),
+      refundsToday: ghs('40.00'),
+    });
   });
 
   it('breaks down item sales of paid orders only, adding up to the all-time item sales', async () => {
     const { topProducts, revenueByCategory } = await gql<{
-      topProducts: { productId: string; totalQuantitySold: number; totalRevenue: number }[];
-      revenueByCategory: { categoryName: string; totalRevenue: number; orderCount: number }[];
+      topProducts: { productId: string; totalQuantitySold: number; totalRevenue: MoneyValue }[];
+      revenueByCategory: { categoryName: string; totalRevenue: MoneyValue; orderCount: number }[];
     }>(
       `{
-        topProducts(limit: 10) { productId totalQuantitySold totalRevenue }
-        revenueByCategory { categoryName totalRevenue orderCount }
+        topProducts(limit: 10) { productId totalQuantitySold totalRevenue ${M} }
+        revenueByCategory { categoryName totalRevenue ${M} orderCount }
       }`,
     );
     const allTime = await salesReport(new Date('2000-01-01'), inAMinute());
 
     expect(topProducts).toEqual([
-      { productId: NOVEL, totalQuantitySold: 4, totalRevenue: 120 },
-      { productId: LAPTOP, totalQuantitySold: 2, totalRevenue: 200 },
-      { productId: PHONE, totalQuantitySold: 1, totalRevenue: 50 },
+      { productId: NOVEL, totalQuantitySold: 4, totalRevenue: ghs('120.00') },
+      { productId: LAPTOP, totalQuantitySold: 2, totalRevenue: ghs('200.00') },
+      { productId: PHONE, totalQuantitySold: 1, totalRevenue: ghs('50.00') },
     ]);
     expect(revenueByCategory).toEqual([
-      { categoryName: 'Electronics', totalRevenue: 250, orderCount: 2 },
-      { categoryName: 'Books', totalRevenue: 120, orderCount: 3 },
+      { categoryName: 'Electronics', totalRevenue: ghs('250.00'), orderCount: 2 },
+      { categoryName: 'Books', totalRevenue: ghs('120.00'), orderCount: 3 },
     ]);
-    const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
-    expect(sum(topProducts.map((p) => p.totalRevenue))).toBe(allTime.itemSales);
-    expect(sum(revenueByCategory.map((c) => c.totalRevenue))).toBe(allTime.itemSales);
+    const sum = (values: MoneyValue[]) =>
+      values.reduce((total, value) => total.add(value.amount), new Prisma.Decimal(0)).toFixed(2);
+    expect(sum(topProducts.map((p) => p.totalRevenue))).toBe(allTime.itemSales.amount);
+    expect(sum(revenueByCategory.map((c) => c.totalRevenue))).toBe(allTime.itemSales.amount);
     // Paid orders' shipping (20 + 15 + 10) minus their coupon discount (10).
-    expect(allTime.grossRevenue - allTime.itemSales).toBe(35);
+    expect(new Prisma.Decimal(allTime.grossRevenue.amount).sub(allTime.itemSales.amount).toFixed(2)).toBe('35.00');
   });
 });

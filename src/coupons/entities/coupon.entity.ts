@@ -1,6 +1,9 @@
-import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { DiscountTypeEnum } from '../enums/discount-type.enum';
 import { DiscountType } from '../../generated/prisma/client';
+import { MoneyObject } from '../../commons/money/money.object';
+import { GraphQLDecimal } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class Coupon {
@@ -13,8 +16,8 @@ export class Coupon {
   @Field(() => DiscountTypeEnum)
   discountType: DiscountType;
 
-  @Field(() => Float)
-  value: number;
+  @Field(() => GraphQLDecimal)
+  value: Decimal;
 
   @Field(() => Int, { nullable: true })
   usageLimit?: number;
@@ -28,8 +31,8 @@ export class Coupon {
   @Field()
   isActive: boolean;
 
-  @Field(() => Float, { nullable: true })
-  minimumOrderAmount?: number;
+  @Field(() => MoneyObject, { nullable: true })
+  minimumOrderAmount?: Decimal;
 
   @Field()
   createdAt: Date;

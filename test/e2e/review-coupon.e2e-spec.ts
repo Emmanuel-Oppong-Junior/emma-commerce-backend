@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { DiscountType } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
-import { gqlRequest } from '../helpers/graphql.helper';
+import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 
@@ -254,9 +254,9 @@ describe('Reviews & Coupons (e2e)', () => {
 
       const mutation = `
         mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: 200 }) {
+          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
             valid
-            discountAmount
+            discountAmount { amount currency }
             message
           }
         }
@@ -268,7 +268,8 @@ describe('Reviews & Coupons (e2e)', () => {
       // Assert
       expect(res.body.errors).toBeUndefined();
       expect(res.body.data.validateCoupon.valid).toBe(true);
-      expect(res.body.data.validateCoupon.discountAmount).toBeGreaterThan(0);
+      expect(res.body.data.validateCoupon.discountAmount).toEqual(ghs('20.00'));
+      expect(res.body.data.validateCoupon.message).toBe('Coupon applied. You save 20.00.');
     });
 
     it('fails with an expired coupon', async () => {
@@ -280,7 +281,7 @@ describe('Reviews & Coupons (e2e)', () => {
 
       const mutation = `
         mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: 200 }) {
+          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
             valid
           }
         }
@@ -300,7 +301,7 @@ describe('Reviews & Coupons (e2e)', () => {
 
       const mutation = `
         mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: 200 }) {
+          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
             valid
           }
         }
@@ -324,7 +325,7 @@ describe('Reviews & Coupons (e2e)', () => {
 
       const mutation = `
         mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: 200 }) {
+          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
             valid
           }
         }
@@ -347,7 +348,7 @@ describe('Reviews & Coupons (e2e)', () => {
 
       const mutation = `
         mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: 100 }) {
+          validateCoupon(input: { code: "${coupon.code}", orderTotal: "100" }) {
             valid
           }
         }
@@ -397,7 +398,7 @@ describe('Reviews & Coupons (e2e)', () => {
 
       const mutation = `
         mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: 200 }) {
+          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
             valid
           }
         }

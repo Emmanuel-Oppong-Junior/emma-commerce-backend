@@ -1,33 +1,35 @@
-import { Field, Float, Int, ObjectType } from '@nestjs/graphql';
+import { Field, Int, ObjectType } from '@nestjs/graphql';
+import { MoneyObject } from '../../commons/money/money.object';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType({
   description:
     'Revenue recognised in a period. A payment counts when it is accepted for its order (online payment settled, or cash collected); a refund counts when it is processed.',
 })
 export class SalesReport {
-  @Field(() => Float, {
+  @Field(() => MoneyObject, {
     description: 'Payments accepted for orders in the period (order totals incl. shipping, after coupons)',
   })
-  grossRevenue: number;
+  grossRevenue: Decimal;
 
-  @Field(() => Float, { description: 'Refunds processed in the period against accepted payments' })
-  refunds: number;
+  @Field(() => MoneyObject, { description: 'Refunds processed in the period against accepted payments' })
+  refunds: Decimal;
 
-  @Field(() => Float, { description: 'grossRevenue minus refunds' })
-  netRevenue: number;
+  @Field(() => MoneyObject, { description: 'grossRevenue minus refunds' })
+  netRevenue: Decimal;
 
-  @Field(() => Float, { deprecationReason: 'Same value as netRevenue; use netRevenue.' })
-  totalRevenue: number;
+  @Field(() => MoneyObject, { deprecationReason: 'Same value as netRevenue; use netRevenue.' })
+  totalRevenue: Decimal;
 
-  @Field(() => Float, {
+  @Field(() => MoneyObject, {
     description:
       'Item sales (unit price paid x quantity) of the orders paid in the period. grossRevenue = itemSales + shipping fees - coupon discounts.',
   })
-  itemSales: number;
+  itemSales: Decimal;
 
   @Field(() => Int, { description: 'Orders paid in the period' })
   orderCount: number;
 
-  @Field(() => Float, { description: 'grossRevenue / orderCount' })
-  averageOrderValue: number;
+  @Field(() => MoneyObject, { description: 'grossRevenue / orderCount' })
+  averageOrderValue: Decimal;
 }

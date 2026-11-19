@@ -51,7 +51,7 @@ input AdjustVariantStockInput {
 
 input ApproveReturnInput {
   adminNote: String
-  refundAmount: Float!
+  refundAmount: Decimal!
   returnRequestId: ID!
 }
 
@@ -83,10 +83,10 @@ type Cart {
   createdAt: DateTime!
 
   """Total discount amount applied"""
-  discountTotal: Float
+  discountTotal: Money
 
   """Final total after discounts; createOrder charges this for the items"""
-  finalTotal: Float
+  finalTotal: Money
 
   """Unique identifier of the cart"""
   id: ID!
@@ -95,7 +95,7 @@ type Cart {
   items: [CartItem!]!
 
   """Total original price of all items"""
-  total: Float
+  total: Money
 
   """Timestamp when the cart was last updated"""
   updatedAt: DateTime!
@@ -112,13 +112,13 @@ type CartItem {
   createdAt: DateTime!
 
   """Discounted price per unit, if applicable"""
-  discountedPrice: Float
+  discountedPrice: Money
 
   """Unique identifier of the cart item"""
   id: ID!
 
   """Original price per unit of the product or variant"""
-  originalPrice: Float
+  originalPrice: Money
 
   """The product in the cart"""
   product: Product!
@@ -182,15 +182,15 @@ type Coupon {
   expiresAt: DateTime
   id: ID!
   isActive: Boolean!
-  minimumOrderAmount: Float
+  minimumOrderAmount: Money
   updatedAt: DateTime!
   usageLimit: Int
   usedCount: Int!
-  value: Float!
+  value: Decimal!
 }
 
 type CouponValidation {
-  discountAmount: Float
+  discountAmount: Money
   message: String
   valid: Boolean!
 }
@@ -234,9 +234,9 @@ input CreateCouponInput {
   discountType: DiscountTypeEnum!
   expiresAt: DateTime
   isActive: Boolean! = true
-  minimumOrderAmount: Float
+  minimumOrderAmount: Decimal
   usageLimit: Int
-  value: Float!
+  value: Decimal!
 }
 
 input CreateDiscountInput {
@@ -253,7 +253,7 @@ input CreateDiscountInput {
   isActive: Boolean! = false
 
   """Minimum purchase amount to qualify for the discount"""
-  minimumPurchase: Float
+  minimumPurchase: Decimal
 
   """The name of the discount (e.g., "Summer Sale 2025")"""
   name: String!
@@ -268,7 +268,7 @@ input CreateDiscountInput {
   type: DiscountType!
 
   """The discount value (e.g., 20 for 20% or 10.00 for $10 off)"""
-  value: Float!
+  value: Decimal!
 
   """List of variant IDs to which the discount applies"""
   variants: [ID!] = []
@@ -325,7 +325,7 @@ input CreateProductInput {
   barcode: String
 
   """Base price before taxes — decimal string (e.g., "29.99")"""
-  basePrice: String!
+  basePrice: Decimal!
 
   """ID of the brand"""
   brandId: String
@@ -400,7 +400,7 @@ input CreateShippingZoneInput {
   cities: [String!]!
 
   """Shipping fee for this zone"""
-  fee: Float!
+  fee: Decimal!
   isActive: Boolean = true
 
   """Unique name for this shipping zone"""
@@ -428,7 +428,7 @@ input CreateTaxInput {
   name: String!
 
   """Tax rate as a decimal between 0 and 1 (e.g., 0.15 for 15%)"""
-  rate: Float!
+  rate: Decimal!
 }
 
 input CreateUserInput {
@@ -464,7 +464,7 @@ input CreateVariantInput {
   discountId: ID
 
   """Price of the variant"""
-  price: Float!
+  price: Decimal!
 
   """ID of the associated product"""
   productId: ID!
@@ -486,7 +486,7 @@ enum Currency {
 
 type DashboardSummary {
   """Payments accepted today (salesReport.grossRevenue for today)"""
-  grossRevenueToday: Float!
+  grossRevenueToday: Money!
   lowStockProductCount: Int!
   lowStockVariantCount: Int!
 
@@ -494,10 +494,10 @@ type DashboardSummary {
   ordersToday: Int!
 
   """Refunds processed today (salesReport.refunds for today)"""
-  refundsToday: Float!
+  refundsToday: Money!
 
   """Net revenue today (salesReport.netRevenue for today)"""
-  revenueToday: Float!
+  revenueToday: Money!
   totalUsers: Int!
 }
 
@@ -505,6 +505,11 @@ type DashboardSummary {
 A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
 """
 scalar DateTime
+
+"""
+An exact decimal number as a string, e.g. "12.50" or "0.15": digits with an optional "-" and decimal point; no exponent, NaN or Infinity. Money inputs allow at most 2 decimal places.
+"""
+scalar Decimal
 
 enum DeliveryOptions {
   INTERNATIONAL_DELIVERY
@@ -532,7 +537,7 @@ type Discount {
   isActive: Boolean!
 
   """Minimum purchase amount to qualify for the discount"""
-  minimumPurchase: Float
+  minimumPurchase: Money
 
   """Name of the discount (e.g., "Summer Sale 2025")"""
   name: String!
@@ -550,7 +555,7 @@ type Discount {
   updatedAt: DateTime!
 
   """Discount value (e.g., 20 for 20% or 10.00 for $10 off)"""
-  value: Float!
+  value: Decimal!
 
   """Variants to which the discount applies"""
   variants: [Variant!]
@@ -611,6 +616,15 @@ input ModifyDiscountItemsInput {
 
   """Variant IDs to add or remove"""
   variants: [ID!] = []
+}
+
+"""An amount of money in the store currency"""
+type Money {
+  """
+  The amount with exactly 2 decimal places, e.g. "480.00"
+  """
+  amount: String!
+  currency: Currency!
 }
 
 type Mutation {
@@ -908,14 +922,14 @@ type Order {
   contactPhone: String!
 
   """Coupon discount amount"""
-  couponDiscount: Float
+  couponDiscount: Money
   createdAt: DateTime!
 
   """Product discounts taken off the list prices at checkout"""
-  discountTotal: Float
+  discountTotal: Money
 
   """Final total after discounts"""
-  finalTotal: Float
+  finalTotal: Money
 
   """Whether the order is for delivery or pickup"""
   fulfillmentType: FulfillmentType!
@@ -943,16 +957,16 @@ type Order {
   """
   Shipping fee charged at order time (0 for pickup); null on older orders
   """
-  shippingFee: Float
+  shippingFee: Money
   status: OrderStatus!
 
   """
   Sum of item prices charged at order time, after product discounts; null on older orders
   """
-  subtotal: Float
+  subtotal: Money
 
   """Amount charged: subtotal + shippingFee - couponDiscount"""
-  totalAmount: Float!
+  totalAmount: Money!
 
   """Shipment tracking number"""
   trackingNumber: String
@@ -967,15 +981,15 @@ type OrderItem {
   createdAt: DateTime!
 
   """Discount taken off one unit at checkout"""
-  discountAmount: Float
+  discountAmount: Money
   id: ID!
   orderId: ID!
 
   """Original price per unit of the product or variant"""
-  originalPrice: Float
+  originalPrice: Money
 
   """Unit price charged: originalPrice - discountAmount"""
-  priceAtOrder: Float!
+  priceAtOrder: Money!
   product: Product!
   productId: ID!
   quantity: Float!
@@ -1016,7 +1030,7 @@ input PaginationArgs {
 }
 
 type Payment {
-  amount: Float!
+  amount: Money!
   createdAt: DateTime!
   currency: String!
   id: ID!
@@ -1066,7 +1080,7 @@ type Product {
   barcode: String
 
   """Base price before taxes (admin-entered)"""
-  basePrice: Float
+  basePrice: Money
   brand: Brand
   brandId: String
   category: Category
@@ -1077,7 +1091,7 @@ type Product {
   currency: Currency
 
   """Current selling price after any adjustments"""
-  currentPrice: Float
+  currentPrice: Money
 
   """Available delivery methods for this product"""
   deliveryOptions: [DeliveryOptions!]
@@ -1086,7 +1100,7 @@ type Product {
   description: String
 
   """Discounted price, if a discount is active"""
-  discountedPrice: Float
+  discountedPrice: Money
   discounts: [Discount!]
 
   """Expiry or best-before date"""
@@ -1111,7 +1125,7 @@ type Product {
   name: String!
 
   """Tax-inclusive display price"""
-  price: Float
+  price: Money
 
   """When the product was published"""
   publishedAt: DateTime
@@ -1176,10 +1190,10 @@ input ProductFilterArgs {
   isActive: Boolean = true
 
   """Filter by maximum price (inclusive)"""
-  priceMax: Float
+  priceMax: Decimal
 
   """Filter by minimum price (inclusive)"""
-  priceMin: Float
+  priceMin: Decimal
 
   """Filter by name, description, or tags (partial match)"""
   search: String
@@ -1297,7 +1311,7 @@ type Query {
   getMyPayments: [Payment!]!
 
   """Get the shipping fee for a saved address"""
-  getShippingFee(addressId: ID!): Float!
+  getShippingFee(addressId: ID!): Money!
   getUserPayment(userId: String!): [Payment!]!
 
   """Get all inventory logs (admin only)"""
@@ -1433,7 +1447,7 @@ input RefreshTokenInput {
 }
 
 type RefundEntity {
-  amount: Float!
+  amount: Money!
 
   """The payment (attempt) the refund returns money from"""
   attemptId: ID!
@@ -1505,7 +1519,7 @@ type ReturnRequestEntity {
   id: ID!
   orderId: ID!
   reason: String!
-  refundAmount: Float
+  refundAmount: Money
   status: ReturnStatusEnum!
   updatedAt: DateTime!
   userId: ID!
@@ -1529,7 +1543,7 @@ type RevenueByCategoryEntity {
   """
   Item sales of this category in paid orders (unit price paid x quantity)
   """
-  totalRevenue: Float!
+  totalRevenue: Money!
 }
 
 type Review {
@@ -1557,27 +1571,27 @@ Revenue recognised in a period. A payment counts when it is accepted for its ord
 """
 type SalesReport {
   """grossRevenue / orderCount"""
-  averageOrderValue: Float!
+  averageOrderValue: Money!
 
   """
   Payments accepted for orders in the period (order totals incl. shipping, after coupons)
   """
-  grossRevenue: Float!
+  grossRevenue: Money!
 
   """
   Item sales (unit price paid x quantity) of the orders paid in the period. grossRevenue = itemSales + shipping fees - coupon discounts.
   """
-  itemSales: Float!
+  itemSales: Money!
 
   """grossRevenue minus refunds"""
-  netRevenue: Float!
+  netRevenue: Money!
 
   """Orders paid in the period"""
   orderCount: Int!
 
   """Refunds processed in the period against accepted payments"""
-  refunds: Float!
-  totalRevenue: Float! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
+  refunds: Money!
+  totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
 }
 
 type ShippingZoneEntity {
@@ -1586,7 +1600,7 @@ type ShippingZoneEntity {
   createdAt: DateTime!
 
   """Shipping fee applied for orders delivered to cities in this zone"""
-  fee: Float!
+  fee: Money!
   id: ID!
 
   """Whether this zone is currently active"""
@@ -1709,7 +1723,7 @@ type TaxEntity {
   name: String!
 
   """Tax rate as a decimal (e.g., 0.15 for 15%)"""
-  rate: Float!
+  rate: Decimal!
   updatedAt: DateTime!
 }
 
@@ -1721,7 +1735,7 @@ type TopProduct {
   totalQuantitySold: Int!
 
   """Item sales of this product in paid orders (unit price paid x quantity)"""
-  totalRevenue: Float!
+  totalRevenue: Money!
 }
 
 input UpdateAddressInput {
@@ -1771,9 +1785,9 @@ input UpdateCouponInput {
   discountType: DiscountTypeEnum
   expiresAt: DateTime
   isActive: Boolean
-  minimumOrderAmount: Float
+  minimumOrderAmount: Decimal
   usageLimit: Int
-  value: Float
+  value: Decimal
 }
 
 input UpdateDiscountInput {
@@ -1793,7 +1807,7 @@ input UpdateDiscountInput {
   isActive: Boolean
 
   """Minimum purchase amount to qualify for the discount"""
-  minimumPurchase: Float
+  minimumPurchase: Decimal
 
   """The name of the discount (e.g., "Summer Sale 2025")"""
   name: String
@@ -1808,7 +1822,7 @@ input UpdateDiscountInput {
   type: DiscountType
 
   """The discount value (e.g., 20 for 20% or 10.00 for $10 off)"""
-  value: Float
+  value: Decimal
 
   """List of variant IDs to which the discount applies"""
   variants: [ID!] = []
@@ -1839,7 +1853,7 @@ input UpdateProductInput {
   barcode: String
 
   """Base price before taxes — decimal string (e.g., "29.99")"""
-  basePrice: String
+  basePrice: Decimal
 
   """ID of the brand"""
   brandId: String
@@ -1911,7 +1925,7 @@ input UpdateShippingInput {
 input UpdateShippingZoneInput {
   """Replaces the entire cities list"""
   cities: [String!]
-  fee: Float
+  fee: Decimal
   isActive: Boolean
   name: String
 }
@@ -1953,7 +1967,7 @@ input UpdateSubCategoryInput {
 input UpdateTaxInput {
   isActive: Boolean
   name: String
-  rate: Float
+  rate: Decimal
 }
 
 input UpdateUserInput {
@@ -1979,7 +1993,7 @@ input UpdateVariantInput {
   id: String!
 
   """Price of the variant"""
-  price: Float
+  price: Decimal
 
   """ID of the associated product"""
   productId: ID
@@ -2087,14 +2101,14 @@ input UserPaginateArgs {
 
 input ValidateCouponInput {
   code: String!
-  orderTotal: Float!
+  orderTotal: Decimal!
 }
 
 type Variant {
   color: String
   discountId: ID
   id: ID!
-  price: Float!
+  price: Money!
   product: Product!
   productId: ID!
   quantity: Float!

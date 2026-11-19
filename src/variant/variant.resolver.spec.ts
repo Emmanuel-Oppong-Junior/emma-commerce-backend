@@ -1,3 +1,4 @@
+import { Decimal } from '@prisma/client/runtime/client';
 import { Test, TestingModule } from '@nestjs/testing';
 import { VariantResolver } from './variant.resolver';
 import { VariantService } from './variant.service';
@@ -21,7 +22,7 @@ describe('VariantResolver', () => {
     size: 'M',
     color: 'Blue',
     quantity: 50,
-    price: 29.99,
+    price: new Decimal('29.99'),
     productId: 'prod1',
     product: { id: 'prod1', name: 'T-Shirt' },
     discountId: undefined,
@@ -31,7 +32,7 @@ describe('VariantResolver', () => {
     size: 'M',
     color: 'Blue',
     quantity: 50,
-    price: 29.99,
+    price: new Decimal('29.99'),
     productId: 'prod1',
     discountId: undefined,
   };

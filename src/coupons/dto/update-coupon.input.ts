@@ -1,7 +1,9 @@
-import { Field, Float, InputType, Int } from '@nestjs/graphql';
+import { Field, InputType, Int } from '@nestjs/graphql';
 import { IsBoolean, IsDate, IsEnum, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { DiscountTypeEnum } from '../enums/discount-type.enum';
 import { Type } from 'class-transformer';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class UpdateCouponInput {
@@ -16,11 +18,10 @@ export class UpdateCouponInput {
   @IsEnum(DiscountTypeEnum)
   discountType?: DiscountTypeEnum;
 
-  @Field(() => Float, { nullable: true })
+  @DecimalInputField({ nullable: true })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  value?: number;
+  @IsMoneyAmount()
+  value?: Decimal;
 
   @Field(() => Int, { nullable: true })
   @IsOptional()
@@ -39,9 +40,8 @@ export class UpdateCouponInput {
   @IsBoolean()
   isActive?: boolean;
 
-  @Field(() => Float, { nullable: true })
+  @DecimalInputField({ nullable: true })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  minimumOrderAmount?: number;
+  @IsMoneyAmount()
+  minimumOrderAmount?: Decimal;
 }

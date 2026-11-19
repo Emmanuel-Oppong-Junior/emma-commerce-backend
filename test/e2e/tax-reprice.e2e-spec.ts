@@ -39,10 +39,11 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
   });
 
   it('createTax reprices taxable products with numeric rounding and leaves the others', async () => {
-    const res = await admin(`mutation { createTax(input: { name: "VAT", rate: 0.15 }) { id rate } }`);
+    const res = await admin(`mutation { createTax(input: { name: "VAT", rate: "0.15" }) { id rate } }`);
 
     expect(res.body.errors).toBeUndefined();
     vatId = res.body.data.createTax.id;
+    expect(res.body.data.createTax.rate).toBe('0.15');
     expect(await priceOf('seed_prod1')).toBe('11.62');
     expect(await priceOf('seed_prod2')).toBe('20.00');
     expect(await priceOf('seed_prod_draft')).toBe('299.99');
@@ -50,7 +51,7 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
   });
 
   it('updateTax reprices taxable products at the new rate', async () => {
-    const res = await admin(`mutation { updateTax(id: "${vatId}", input: { rate: 0.2 }) { rate } }`);
+    const res = await admin(`mutation { updateTax(id: "${vatId}", input: { rate: "0.2" }) { rate } }`);
 
     expect(res.body.errors).toBeUndefined();
     expect(await priceOf('seed_prod1')).toBe('12.12');
@@ -58,7 +59,7 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
   });
 
   it('deleteTax reprices taxable products from the remaining active taxes', async () => {
-    const levy = await admin(`mutation { createTax(input: { name: "NHIL", rate: 0.025 }) { id } }`);
+    const levy = await admin(`mutation { createTax(input: { name: "NHIL", rate: "0.025" }) { id } }`);
     expect(levy.body.errors).toBeUndefined();
     expect(await priceOf('seed_prod1')).toBe('12.37');
 
@@ -85,7 +86,7 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
 
     const res = await gqlRequest(
       app,
-      `mutation { createTax(input: { name: "GETFund", rate: 0.025 }) { id } }`,
+      `mutation { createTax(input: { name: "GETFund", rate: "0.025" }) { id } }`,
       undefined,
       adminToken,
     );
@@ -110,10 +111,11 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
 
   it('updateProduct with a new basePrice prices it the same way the tax reprice does', async () => {
     const res = await admin(
-      `mutation { updateProduct(productId: "seed_prod1", updateProductInput: { basePrice: "1.40" }) { price } }`,
+      `mutation { updateProduct(productId: "seed_prod1", updateProductInput: { basePrice: "1.40" }) { price { amount currency } } }`,
     );
 
     expect(res.body.errors).toBeUndefined();
     expect(await priceOf('seed_prod1')).toBe('1.44');
+    expect(res.body.data.updateProduct.price).toEqual({ amount: '1.44', currency: 'GHS' });
   });
 });

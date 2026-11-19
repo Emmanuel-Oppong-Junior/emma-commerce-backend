@@ -9,6 +9,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
+import { Decimal } from '@prisma/client/runtime/client';
 
 const mockCacheManager = {
   get: jest.fn(),
@@ -113,7 +114,7 @@ describe('DiscountService', () => {
     const input: CreateDiscountInput = {
       name: 'Summer Sale',
       type: DiscountType.PERCENTAGE,
-      value: 20,
+      value: new Decimal('20'),
       startDate: new Date('2025-06-01'),
       endDate: new Date('2025-06-30'),
       isActive: true,
@@ -276,7 +277,11 @@ describe('DiscountService', () => {
 
       const result = await service.getDiscountedPriceForProduct('product1');
 
-      expect(result).toEqual({ discountedPrice: 80, discountAmount: 20, discountId: 'discount1' });
+      expect(result).toEqual({
+        discountedPrice: new Decimal('80'),
+        discountAmount: new Decimal('20'),
+        discountId: 'discount1',
+      });
     });
 
     it('should calculate discounted price for a variant', async () => {
@@ -288,7 +293,11 @@ describe('DiscountService', () => {
 
       const result = await service.getDiscountedPriceForProduct('product1', 'variant1');
 
-      expect(result).toEqual({ discountedPrice: 96, discountAmount: 24, discountId: 'discount1' });
+      expect(result).toEqual({
+        discountedPrice: new Decimal('96'),
+        discountAmount: new Decimal('24'),
+        discountId: 'discount1',
+      });
     });
 
     it('should return original price if no discounts apply', async () => {
@@ -298,7 +307,7 @@ describe('DiscountService', () => {
 
       const result = await service.getDiscountedPriceForProduct('product1');
 
-      expect(result).toEqual({ discountedPrice: 100, discountAmount: 0 });
+      expect(result).toEqual({ discountedPrice: new Decimal('100'), discountAmount: new Decimal('0') });
     });
 
     it('should throw NotFoundException for non-existent product', async () => {
@@ -329,9 +338,9 @@ describe('DiscountService', () => {
       expect(result).toEqual({
         ...mockCart,
         items: [{ ...mockCartItem, discountedPrice: 80, discountId: 'discount1' }],
-        total: 200,
-        discountTotal: 40,
-        finalTotal: 160,
+        total: new Decimal('200'),
+        discountTotal: new Decimal('40'),
+        finalTotal: new Decimal('160'),
       });
       expect(discountRepository.findActiveDiscountsFor).toHaveBeenCalledWith(['product1'], ['category1']);
       expect(discountRepository.updateCartItem).toHaveBeenCalledWith('cartItem1', {
@@ -352,7 +361,7 @@ describe('DiscountService', () => {
 
       const result = await service.applyDiscountsToCart('cart1');
 
-      expect(result.discountTotal).toBe(40);
+      expect(result.discountTotal).toEqual(new Decimal('40'));
       expect(discountRepository.updateCartItem).toHaveBeenCalledWith(
         'cartItem1',
         expect.objectContaining({ discountId: 'discount1' }),
@@ -375,7 +384,13 @@ describe('DiscountService', () => {
 
       const result = await service.applyDiscountsToCart('cart1');
 
-      expect(result).toEqual(expect.objectContaining({ total: 200, discountTotal: 0, finalTotal: 200 }));
+      expect(result).toEqual(
+        expect.objectContaining({
+          total: new Decimal('200'),
+          discountTotal: new Decimal('0'),
+          finalTotal: new Decimal('200'),
+        }),
+      );
     });
 
     it('rejects a cart holding a product without a price', async () => {
@@ -395,7 +410,7 @@ describe('DiscountService', () => {
       const input = {
         name: 'Test',
         type: DiscountType.PERCENTAGE,
-        value: -10,
+        value: new Decimal('-10'),
         startDate: new Date(),
         endDate: new Date(),
       } as CreateDiscountInput;
@@ -407,7 +422,7 @@ describe('DiscountService', () => {
       const input = {
         name: 'Test',
         type: DiscountType.PERCENTAGE,
-        value: 150,
+        value: new Decimal('150'),
         startDate: new Date(),
         endDate: new Date(),
       } as CreateDiscountInput;
@@ -555,7 +570,7 @@ describe('DiscountService', () => {
             {
               name: mockDiscount.name,
               type: DiscountType.PERCENTAGE,
-              value: 20,
+              value: new Decimal('20'),
               startDate: new Date('2025-06-01'),
               endDate: new Date('2025-06-30'),
               isActive: true,

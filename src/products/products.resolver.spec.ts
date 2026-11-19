@@ -12,6 +12,7 @@ import { PaginationArgs } from '../commons/dto/paginate.args';
 import { DiscountService } from '../discount/discount.service';
 import { Prisma } from '../generated/prisma/client';
 import { DiscountType } from '../discount/enums/discount-type.enum';
+import { Decimal } from '@prisma/client/runtime/client';
 
 const mockProductsService = {
   create: jest.fn(),
@@ -73,7 +74,7 @@ describe('ProductsResolver', () => {
     it('should create a product', async () => {
       const input: CreateProductInput = {
         name: 'T-Shirt',
-        basePrice: '19.99',
+        basePrice: new Decimal('19.99'),
         isTaxable: false,
         quantity: 100,
         categoryId: 'cat1',
@@ -93,7 +94,7 @@ describe('ProductsResolver', () => {
     it('should update a product', async () => {
       const input: UpdateProductInput = {
         name: 'Updated T-Shirt',
-        basePrice: '29.99',
+        basePrice: new Decimal('29.99'),
       };
       const product: Product = {
         ...mockProduct,
@@ -208,13 +209,21 @@ describe('ProductsResolver', () => {
   });
   describe('discountedPrice', () => {
     it('should return discounted price', async () => {
-      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 5, discountId: 'disc1' });
+      mockDiscountLoaderFn.mockResolvedValue({
+        discountedPrice: new Prisma.Decimal('5.00'),
+        discountAmount: new Prisma.Decimal('14.99'),
+        discountId: 'disc1',
+      });
       const result = await resolver.discountedPrice(mockProduct as unknown as Product);
       expect(mockDiscountLoaderFn).toHaveBeenCalledWith('prod1');
-      expect(result).toEqual(5);
+      expect(result).toEqual(new Prisma.Decimal('5.00'));
     });
     it('should return null if discounted price is equal to price', async () => {
-      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 19.99, discountId: null });
+      mockDiscountLoaderFn.mockResolvedValue({
+        discountedPrice: new Prisma.Decimal('19.99'),
+        discountAmount: new Prisma.Decimal(0),
+        discountId: null,
+      });
       const result = await resolver.discountedPrice(mockProduct as unknown as Product);
       expect(result).toEqual(null);
     });

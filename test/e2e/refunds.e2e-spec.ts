@@ -230,7 +230,7 @@ describe('Refunds (e2e)', () => {
     const { returnId } = await paidReturn(ReturnStatus.PENDING, null);
 
     const [approve, reject] = await Promise.all([
-      gql(`mutation { approveReturn(input: { returnRequestId: "${returnId}", refundAmount: 10 }) { status } }`),
+      gql(`mutation { approveReturn(input: { returnRequestId: "${returnId}", refundAmount: "10.00" }) { status } }`),
       gql(`mutation { rejectReturn(input: { returnRequestId: "${returnId}", adminNote: "No" }) { status } }`),
     ]);
 

@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
-import { gqlRequest } from '../helpers/graphql.helper';
+import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
 import { signInUser } from '../helpers/auth.helper';
 
@@ -241,11 +241,11 @@ describe('Cart (e2e)', () => {
             items {
               id
               productId
-              originalPrice
-              discountedPrice
+              originalPrice { amount currency }
+              discountedPrice { amount currency }
             }
-            discountTotal
-            finalTotal
+            discountTotal { amount currency }
+            finalTotal { amount currency }
           }
         }
       `;
@@ -259,10 +259,9 @@ describe('Cart (e2e)', () => {
       expect(cart).not.toBeNull();
       const discountedItem = cart.items.find((i: { productId: string }) => i.productId === 'seed_prod1');
       expect(discountedItem).toBeDefined();
-      // The discounted price should be less than the original price
-      if (discountedItem.discountedPrice !== null) {
-        expect(discountedItem.discountedPrice).toBeLessThan(discountedItem.originalPrice);
-      }
+      // 10% off 999.99 is 100.00 (99.999 rounded half-up), so the unit price drops to 899.99
+      expect(discountedItem.originalPrice).toEqual(ghs('999.99'));
+      expect(discountedItem.discountedPrice).toEqual(ghs('899.99'));
     });
   });
 

@@ -1,4 +1,5 @@
-import { Args, Float, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { MoneyObject } from '../commons/money/money.object';
 import { ShippingZonesService } from './shipping-zones.service';
 import { ShippingZoneEntity } from './entities/shipping-zone.entity';
 import { CreateShippingZoneInput } from './dto/create-shipping-zone.input';
@@ -48,7 +49,7 @@ export class ShippingZonesResolver {
     return this.service.findActive();
   }
   @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.USER)
-  @Query(() => Float, { description: 'Get the shipping fee for a saved address' })
+  @Query(() => MoneyObject, { description: 'Get the shipping fee for a saved address' })
   getShippingFee(@ActiveUser('id') userId: string, @Args('addressId', { type: () => ID }) addressId: string) {
     return this.service.getFeeForAddress(addressId, userId);
   }

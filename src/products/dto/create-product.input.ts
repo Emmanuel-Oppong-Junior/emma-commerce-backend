@@ -6,7 +6,6 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
-  IsNumberString,
   IsOptional,
   IsString,
   IsUrl,
@@ -18,6 +17,8 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { CurrencyEnum, DeliveryOptionsEnum, ProductStatusEnum, StockStatusEnum } from '../enums/product.enum';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class CreateProductInput {
@@ -54,12 +55,11 @@ export class CreateProductInput {
   )
   attachments?: string[];
 
-  @Field(() => String, {
+  @DecimalInputField({
     description: 'Base price before taxes — decimal string (e.g., "29.99")',
   })
-  @IsNotEmpty({ message: 'Base price is required' })
-  @IsNumberString({}, { message: 'Base price must be a valid decimal string (e.g., "29.99")' })
-  basePrice: string;
+  @IsMoneyAmount()
+  basePrice: Decimal;
 
   @Field(() => Boolean, { description: 'Whether taxes apply to this product', defaultValue: false })
   @IsBoolean()

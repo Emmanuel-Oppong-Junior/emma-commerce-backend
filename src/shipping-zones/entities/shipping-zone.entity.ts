@@ -1,5 +1,6 @@
-import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { Decimal } from '@prisma/client/runtime/client';
+import { MoneyObject } from '../../commons/money/money.object';
 
 @ObjectType()
 export class ShippingZoneEntity {
@@ -12,7 +13,7 @@ export class ShippingZoneEntity {
   @Field(() => [String], { description: 'List of cities covered by this zone (case-insensitive)' })
   cities: string[];
 
-  @Field(() => Float, { description: 'Shipping fee applied for orders delivered to cities in this zone' })
+  @Field(() => MoneyObject, { description: 'Shipping fee applied for orders delivered to cities in this zone' })
   fee: Decimal;
 
   @Field({ description: 'Whether this zone is currently active' })

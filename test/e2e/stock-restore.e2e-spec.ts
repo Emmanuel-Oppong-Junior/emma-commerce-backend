@@ -77,7 +77,7 @@ describe('Stock is restored exactly once (e2e)', () => {
 
     const returnRequest = await prisma.returnRequest.findFirstOrThrow({ where: { orderId } });
     const approve = await admin(
-      `mutation { approveReturn(input: { returnRequestId: "${returnRequest.id}", refundAmount: 100 }) { status } }`,
+      `mutation { approveReturn(input: { returnRequestId: "${returnRequest.id}", refundAmount: "100.00" }) { status } }`,
     );
     expect(approve.body.errors).toBeUndefined();
     const refund = await admin(`mutation { processRefund(returnRequestId: "${returnRequest.id}") { status } }`);

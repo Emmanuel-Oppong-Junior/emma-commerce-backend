@@ -35,8 +35,8 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
 
     const result = await service.getDiscountedPriceForProduct('product-1');
 
-    expect(result.discountAmount).toBe(300);
-    expect(result.discountedPrice).toBe(700);
+    expect(result.discountAmount.toFixed(2)).toBe('300.00');
+    expect(result.discountedPrice.toFixed(2)).toBe('700.00');
   });
 
   it('DISC-02: a GHS 8 flat discount beats 10% on a GHS 50 item', async () => {
@@ -50,7 +50,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
 
     const result = await service.getDiscountedPriceForProduct('product-1');
 
-    expect(result.discountAmount).toBe(8);
+    expect(result.discountAmount.toFixed(2)).toBe('8.00');
   });
 
   it('DISC-01: the API has no client-callable mutation that re-prices an existing order', () => {

@@ -303,9 +303,9 @@ export class DiscountService {
     return {
       ...cart,
       items: updatedItems,
-      total: priced.grossSubtotal.toNumber(),
-      discountTotal: priced.discountTotal.toNumber(),
-      finalTotal: priced.subtotal.toNumber(),
+      total: priced.grossSubtotal,
+      discountTotal: priced.discountTotal,
+      finalTotal: priced.subtotal,
     };
   }
 
@@ -403,10 +403,10 @@ export class DiscountService {
 
   private ensureDiscountInputIsValid(input: CreateOrUpdateDiscountInput) {
     if (input.value !== undefined && input.type !== undefined) {
-      if (input.type === 'PERCENTAGE' && input.value > 100) {
+      if (input.type === 'PERCENTAGE' && input.value.gt(100)) {
         throw new BadRequestException('Percentage discount value cannot exceed 100');
       }
-      if (input.value < 0) {
+      if (input.value.isNegative()) {
         throw new BadRequestException('Discount value must be non-negative');
       }
     }

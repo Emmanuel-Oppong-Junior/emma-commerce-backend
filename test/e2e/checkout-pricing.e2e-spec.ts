@@ -3,9 +3,11 @@ import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
-import { gqlRequest } from '../helpers/graphql.helper';
+import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
+
+const M = '{ amount currency }';
 
 interface InitializeParams {
   reference: string;
@@ -44,7 +46,7 @@ describe('Checkout pricing (e2e)', () => {
   const cartWithDiscount = async () => {
     const res = await gqlRequest(
       app,
-      `query { cartWithDiscount { total discountTotal finalTotal items { productId originalPrice discountedPrice } } }`,
+      `query { cartWithDiscount { total ${M} discountTotal ${M} finalTotal ${M} items { productId originalPrice ${M} discountedPrice ${M} } } }`,
       undefined,
       userToken,
     ).expect(200);
@@ -56,8 +58,8 @@ describe('Checkout pricing (e2e)', () => {
     gqlRequest(
       app,
       `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "pricing_pickup", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
-        id subtotal discountTotal shippingFee totalAmount
-        items { productId originalPrice discountAmount priceAtOrder quantity }
+        id subtotal ${M} discountTotal ${M} shippingFee ${M} totalAmount ${M}
+        items { productId originalPrice ${M} discountAmount ${M} priceAtOrder ${M} quantity }
       } }`,
       undefined,
       userToken,
@@ -104,16 +106,27 @@ describe('Checkout pricing (e2e)', () => {
     await addToCart('seed_prod1', 2);
 
     const cart = await cartWithDiscount();
-    expect(cart).toMatchObject({ total: 1999.98, discountTotal: 200, finalTotal: 1799.98 });
+    expect(cart).toMatchObject({ total: ghs('1999.98'), discountTotal: ghs('200.00'), finalTotal: ghs('1799.98') });
 
     const orderRes = await createPickupOrder();
     expect(orderRes.body.errors).toBeUndefined();
     const order = orderRes.body.data.createOrder;
-    expect(order).toMatchObject({ subtotal: 1799.98, discountTotal: 200, shippingFee: 0, totalAmount: 1799.98 });
+    expect(order).toMatchObject({
+      subtotal: ghs('1799.98'),
+      discountTotal: ghs('200.00'),
+      shippingFee: ghs('0.00'),
+      totalAmount: ghs('1799.98'),
+    });
     expect(order.items).toEqual([
-      { productId: 'seed_prod1', originalPrice: 999.99, discountAmount: 100, priceAtOrder: 899.99, quantity: 2 },
+      {
+        productId: 'seed_prod1',
+        originalPrice: ghs('999.99'),
+        discountAmount: ghs('100.00'),
+        priceAtOrder: ghs('899.99'),
+        quantity: 2,
+      },
     ]);
-    expect(order.totalAmount).toBe(cart.finalTotal);
+    expect(order.totalAmount).toEqual(cart.finalTotal);
 
     await request(app.getHttpServer())
       .post('/payment/initialize')
@@ -162,11 +175,11 @@ describe('Checkout pricing (e2e)', () => {
     await addToCart('pricing_kettle', 1);
 
     const cart = await cartWithDiscount();
-    expect(cart).toMatchObject({ total: 200, discountTotal: 50, finalTotal: 150 });
+    expect(cart).toMatchObject({ total: ghs('200.00'), discountTotal: ghs('50.00'), finalTotal: ghs('150.00') });
 
     const orderRes = await createPickupOrder();
     expect(orderRes.body.errors).toBeUndefined();
-    expect(orderRes.body.data.createOrder).toMatchObject({ discountTotal: 50, totalAmount: 150 });
+    expect(orderRes.body.data.createOrder).toMatchObject({ discountTotal: ghs('50.00'), totalAmount: ghs('150.00') });
     const [item] = await prisma.orderItem.findMany({ where: { orderId: orderRes.body.data.createOrder.id } });
     expect(item.discountId).toBe('pricing_cat25');
   });
@@ -238,7 +251,7 @@ describe('Checkout pricing (e2e)', () => {
       const res = await createPickupOrder();
 
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.data.createOrder).toMatchObject({ totalAmount: 499.99 });
+      expect(res.body.data.createOrder).toMatchObject({ totalAmount: ghs('499.99') });
     });
   });
 });

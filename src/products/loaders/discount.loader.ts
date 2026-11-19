@@ -1,6 +1,7 @@
 import { Injectable, Scope } from '@nestjs/common';
 import * as DataLoader from 'dataloader';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '../../generated/prisma/client';
 import { DiscountCalculation } from '../../discount/types';
 import { bestUnitPrice, CandidateDiscount, toDiscountCalculation } from '../../discount/pricing';
 
@@ -65,7 +66,7 @@ export class DiscountLoader {
       // Map results back in the same order as productIds
       return ids.map((productId) => {
         const product = products.find((p) => p.id === productId);
-        if (!product) return { discountedPrice: 0, discountAmount: 0 };
+        if (!product) return { discountedPrice: new Prisma.Decimal(0), discountAmount: new Prisma.Decimal(0) };
 
         const allDiscounts: CandidateDiscount[] = [
           ...product.discounts,

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ReturnsRepository } from './returns.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReturnRequest } from '../generated/prisma/client';
+import { Decimal } from '@prisma/client/runtime/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -113,14 +114,14 @@ describe('ReturnsRepository', () => {
       mockPrismaReturnRequest.findUniqueOrThrow.mockResolvedValue(updated);
 
       const result = await repository.transitionStatus('return1', 'PENDING', 'APPROVED', {
-        refundAmount: 50,
+        refundAmount: new Decimal('50'),
         adminNote: 'Approved by admin',
       });
 
       expect(result).toEqual(updated);
       expect(mockPrismaReturnRequest.updateMany).toHaveBeenCalledWith({
         where: { id: 'return1', status: 'PENDING' },
-        data: { status: 'APPROVED', refundAmount: 50, adminNote: 'Approved by admin' },
+        data: { status: 'APPROVED', refundAmount: new Decimal('50'), adminNote: 'Approved by admin' },
       });
     });
 

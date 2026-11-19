@@ -50,7 +50,7 @@ export class ProductsService {
     return this.auditService.record(
       (tx) =>
         this.productsRepository.create(
-          { ...rest, basePrice, price: price.toFixed(2), isTaxable: isTaxable ?? false },
+          { ...rest, basePrice: basePrice.toFixed(2), price: price.toFixed(2), isTaxable: isTaxable ?? false },
           { category: true, subcategory: true },
           tx,
         ),
@@ -214,7 +214,7 @@ export class ProductsService {
       const effectiveTaxable = isTaxable !== undefined ? isTaxable : existing.isTaxable;
       const price = await this.computePrice(effectiveBase, effectiveTaxable);
       updateData.price = price.toFixed(2);
-      if (basePrice !== undefined) updateData.basePrice = basePrice;
+      if (basePrice !== undefined) updateData.basePrice = basePrice.toFixed(2);
       if (isTaxable !== undefined) updateData.isTaxable = isTaxable;
     }
 

@@ -1,5 +1,7 @@
-import { Field, Float, ID, InputType } from '@nestjs/graphql';
-import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { Field, ID, InputType } from '@nestjs/graphql';
+import { IsOptional, IsString } from 'class-validator';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class ApproveReturnInput {
@@ -7,10 +9,9 @@ export class ApproveReturnInput {
   @IsString()
   returnRequestId: string;
 
-  @Field(() => Float)
-  @IsNumber()
-  @Min(0)
-  refundAmount: number;
+  @DecimalInputField()
+  @IsMoneyAmount()
+  refundAmount: Decimal;
 
   @Field({ nullable: true })
   @IsOptional()

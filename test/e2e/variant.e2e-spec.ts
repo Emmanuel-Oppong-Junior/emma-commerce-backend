@@ -13,6 +13,7 @@ import {
   getUserToken,
   graphqlRequest,
 } from '../e2e.utils';
+import { ghs } from '../helpers/graphql.helper';
 
 // GraphQL queries and mutations
 const GET_VARIANT = `
@@ -22,7 +23,7 @@ const GET_VARIANT = `
       size
       color
       quantity
-      price
+      price { amount currency }
       productId
     }
   }
@@ -35,7 +36,7 @@ const GET_PRODUCT_VARIANTS = `
       size
       color
       quantity
-      price
+      price { amount currency }
       productId
     }
   }
@@ -48,7 +49,7 @@ const GET_ALL_VARIANTS = `
       size
       color
       quantity
-      price
+      price { amount currency }
       productId
     }
   }
@@ -61,7 +62,7 @@ const CREATE_VARIANT = `
       size
       color
       quantity
-      price
+      price { amount currency }
       productId
     }
   }
@@ -74,7 +75,7 @@ const UPDATE_VARIANT = `
       size
       color
       quantity
-      price
+      price { amount currency }
       productId
     }
   }
@@ -87,7 +88,7 @@ const DELETE_VARIANT = `
       size
       color
       quantity
-      price
+      price { amount currency }
       productId
     }
   }
@@ -156,7 +157,7 @@ describe('Variant E2E Test', () => {
             size: 'Medium',
             color: 'Blue',
             quantity: 10,
-            price: 29.99,
+            price: ghs('29.99'),
           }),
         ]),
       );
@@ -186,7 +187,7 @@ describe('Variant E2E Test', () => {
             size: 'Large',
             color: 'Red',
             quantity: 5,
-            price: 34.99,
+            price: ghs('34.99'),
           }),
         ]),
       );
@@ -213,7 +214,7 @@ describe('Variant E2E Test', () => {
         size: 'Small',
         color: 'Green',
         quantity: 8,
-        price: 24.99,
+        price: ghs('24.99'),
       });
     });
 
@@ -223,7 +224,7 @@ describe('Variant E2E Test', () => {
         size: 'Medium',
         color: 'Black',
         quantity: 15,
-        price: 39.99,
+        price: '39.99',
       };
 
       const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
@@ -255,7 +256,7 @@ describe('Variant E2E Test', () => {
         id: variant.id,
         size: 'Large',
         color: 'White',
-        price: 59.99,
+        price: '59.99',
       };
 
       const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
@@ -323,7 +324,7 @@ describe('Variant E2E Test', () => {
             size: 'Medium',
             color: 'Blue',
             quantity: 15,
-            price: 29.99,
+            price: ghs('29.99'),
           }),
         ]),
       );
@@ -353,7 +354,7 @@ describe('Variant E2E Test', () => {
             size: 'Large',
             color: 'Red',
             quantity: 10,
-            price: 34.99,
+            price: ghs('34.99'),
           }),
         ]),
       );
@@ -380,7 +381,7 @@ describe('Variant E2E Test', () => {
         size: 'Small',
         color: 'Green',
         quantity: 8,
-        price: 24.99,
+        price: ghs('24.99'),
       });
     });
 
@@ -390,7 +391,7 @@ describe('Variant E2E Test', () => {
         size: 'Medium',
         color: 'Black',
         quantity: 15,
-        price: 39.99,
+        price: '39.99',
       };
 
       const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
@@ -403,7 +404,7 @@ describe('Variant E2E Test', () => {
         size: 'Medium',
         color: 'Black',
         quantity: 15,
-        price: createVariantInput.price,
+        price: ghs(createVariantInput.price),
       });
       expect(response.body.data.createVariant.id).toBeDefined();
 
@@ -429,7 +430,7 @@ describe('Variant E2E Test', () => {
         id: variant.id,
         size: 'Large',
         color: 'White',
-        price: 59.99,
+        price: '59.99',
       };
 
       const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
@@ -442,7 +443,7 @@ describe('Variant E2E Test', () => {
         size: 'Large',
         color: 'White',
         quantity: 20,
-        price: 59.99,
+        price: ghs('59.99'),
       });
 
       // Verify in database
@@ -475,7 +476,7 @@ describe('Variant E2E Test', () => {
         size: 'Small',
         color: 'Yellow',
         quantity: 12,
-        price: 19.99,
+        price: ghs('19.99'),
       });
 
       // Verify in database
@@ -491,7 +492,7 @@ describe('Variant E2E Test', () => {
         size: 'Medium',
         color: 'Black',
         quantity: 15,
-        price: 39.99,
+        price: '39.99',
       };
 
       const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
@@ -513,7 +514,7 @@ describe('Variant E2E Test', () => {
         id: 'non-existent-variant-id',
         size: 'Large',
         color: 'White',
-        price: 59.99,
+        price: '59.99',
       };
 
       const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
@@ -559,7 +560,7 @@ describe('Variant E2E Test', () => {
             size: 'Medium',
             color: 'Green',
             quantity: 15,
-            price: 29.99,
+            price: ghs('29.99'),
           }),
         ]),
       );
@@ -589,7 +590,7 @@ describe('Variant E2E Test', () => {
             size: 'Large',
             color: 'Blue',
             quantity: 10,
-            price: 34.99,
+            price: ghs('34.99'),
           }),
         ]),
       );
@@ -616,7 +617,7 @@ describe('Variant E2E Test', () => {
         size: 'Small',
         color: 'Red',
         quantity: 8,
-        price: 24.99,
+        price: ghs('24.99'),
       });
     });
 
@@ -626,7 +627,7 @@ describe('Variant E2E Test', () => {
         size: 'Medium',
         color: 'Black',
         quantity: 15,
-        price: 39.99,
+        price: '39.99',
       };
 
       const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
@@ -639,7 +640,7 @@ describe('Variant E2E Test', () => {
         size: 'Medium',
         color: 'Black',
         quantity: 15,
-        price: 39.99,
+        price: ghs('39.99'),
       });
       expect(response.body.data.createVariant.id).toBeDefined();
 
@@ -670,7 +671,7 @@ describe('Variant E2E Test', () => {
         id: variant.id,
         size: 'Large',
         color: 'White',
-        price: 59.99,
+        price: '59.99',
       };
 
       const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
@@ -715,7 +716,7 @@ describe('Variant E2E Test', () => {
         size: 'Small',
         color: 'Yellow',
         quantity: 12,
-        price: 19.99,
+        price: ghs('19.99'),
       });
 
       // Verify in database
@@ -731,7 +732,7 @@ describe('Variant E2E Test', () => {
         size: 'Medium',
         color: 'Black',
         quantity: 15,
-        price: 39.99,
+        price: '39.99',
       };
 
       const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
@@ -753,7 +754,7 @@ describe('Variant E2E Test', () => {
         id: 'non-existent-variant-id',
         size: 'Large',
         color: 'White',
-        price: 59.99,
+        price: '59.99',
       };
 
       const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })

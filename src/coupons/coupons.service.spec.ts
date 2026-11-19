@@ -7,6 +7,7 @@ import { CreateCouponInput } from './dto/create-coupon.input';
 import { DiscountTypeEnum } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
+import { Decimal } from '@prisma/client/runtime/client';
 
 const mockCouponsRepository = {
   create: jest.fn(),
@@ -60,7 +61,7 @@ describe('CouponsService', () => {
       const input: CreateCouponInput = {
         code: 'save10',
         discountType: DiscountTypeEnum.PERCENTAGE,
-        value: 10,
+        value: new Decimal('10'),
         isActive: true,
       };
       mockCouponsRepository.create.mockResolvedValue(mockCoupon);
@@ -75,7 +76,7 @@ describe('CouponsService', () => {
     });
 
     it('should default isActive to true if not provided', async () => {
-      const input: CreateCouponInput = { code: 'NEW', discountType: DiscountTypeEnum.FLAT, value: 5 };
+      const input: CreateCouponInput = { code: 'NEW', discountType: DiscountTypeEnum.FLAT, value: new Decimal('5') };
       mockCouponsRepository.create.mockResolvedValue({ ...mockCoupon, isActive: true });
 
       await service.createCoupon(input, 'admin1');
@@ -90,7 +91,7 @@ describe('CouponsService', () => {
       mockCouponsRepository.findById.mockResolvedValue(mockCoupon);
       mockCouponsRepository.update.mockResolvedValue(updated);
 
-      const result = await service.updateCoupon('coupon1', { value: 20 }, 'admin1');
+      const result = await service.updateCoupon('coupon1', { value: new Decimal('20') }, 'admin1');
 
       expect(result).toEqual(updated);
     });
@@ -111,7 +112,9 @@ describe('CouponsService', () => {
     it('should throw NotFoundException if coupon does not exist', async () => {
       mockCouponsRepository.findById.mockResolvedValue(null);
 
-      await expect(service.updateCoupon('nonexistent', { value: 20 }, 'admin1')).rejects.toThrow(NotFoundException);
+      await expect(service.updateCoupon('nonexistent', { value: new Decimal('20') }, 'admin1')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
@@ -336,7 +339,11 @@ describe('CouponsService', () => {
     it.each<[string, () => Promise<unknown>, object]>([
       [
         'createCoupon',
-        () => service.createCoupon({ code: 'save10', discountType: DiscountTypeEnum.PERCENTAGE, value: 10 }, 'admin1'),
+        () =>
+          service.createCoupon(
+            { code: 'save10', discountType: DiscountTypeEnum.PERCENTAGE, value: new Decimal('10') },
+            'admin1',
+          ),
         {
           action: 'CREATE',
           details: { after: expect.objectContaining({ code: 'SAVE10', value: '10', usageLimit: 100, isActive: true }) },
@@ -344,10 +351,10 @@ describe('CouponsService', () => {
       ],
       [
         'updateCoupon',
-        () => service.updateCoupon('coupon1', { value: 25, isActive: false }, 'admin1'),
+        () => service.updateCoupon('coupon1', { value: new Decimal('25'), isActive: false }, 'admin1'),
         {
           action: 'UPDATE',
-          details: { changes: { value: { from: '10', to: 25 }, isActive: { from: true, to: false } } },
+          details: { changes: { value: { from: '10', to: '25' }, isActive: { from: true, to: false } } },
         },
       ],
       [

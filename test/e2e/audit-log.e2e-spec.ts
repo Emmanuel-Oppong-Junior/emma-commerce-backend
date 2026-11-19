@@ -85,7 +85,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
     const returnId = request.createReturnRequest.id;
 
     await run(
-      `mutation { approveReturn(input: { returnRequestId: "${returnId}", refundAmount: 40 }) { status } }`,
+      `mutation { approveReturn(input: { returnRequestId: "${returnId}", refundAmount: "40.00" }) { status } }`,
       adminToken,
     );
     await run(`mutation { processRefund(returnRequestId: "${returnId}") { status } }`, adminToken);
@@ -124,7 +124,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
 
   it('rolls the change back when its audit row cannot be written', async () => {
     const created = await run(
-      'mutation { createCoupon(input: { code: "AUDIT10", discountType: PERCENTAGE, value: 10 }) { id } }',
+      'mutation { createCoupon(input: { code: "AUDIT10", discountType: PERCENTAGE, value: "10" }) { id } }',
       adminToken,
     );
     const couponId = created.createCoupon.id;
@@ -132,7 +132,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
 
     const res = await gqlRequest(
       app,
-      `mutation { updateCoupon(id: "${couponId}", input: { value: 50 }) { id } }`,
+      `mutation { updateCoupon(id: "${couponId}", input: { value: "50" }) { id } }`,
       undefined,
       adminToken,
     ).expect(200);

@@ -11,7 +11,7 @@ import { AllExceptionsFilter } from '../../src/commons/filters/all-exceptions.fi
 import { GqlThrottlerGuard } from '../../src/commons/guards/gql-throttler.guard';
 import { PaymentService } from '../../src/payment/payment.service';
 import { createTestApp } from '../helpers/app.helper';
-import { gqlRequest } from '../helpers/graphql.helper';
+import { ghs, gqlRequest, MoneyValue } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 
@@ -175,7 +175,7 @@ describe('Payments & Returns (e2e)', () => {
           getMyPayments {
             id
             status
-            amount
+            amount { amount currency }
           }
         }
       `;
@@ -185,8 +185,9 @@ describe('Payments & Returns (e2e)', () => {
 
       // Assert
       expect(res.body.errors).toBeUndefined();
-      const payments: Array<{ id: string }> = res.body.data.getMyPayments;
+      const payments: Array<{ id: string; amount: MoneyValue }> = res.body.data.getMyPayments;
       expect(payments.length).toBeGreaterThanOrEqual(1);
+      for (const payment of payments) expect(payment.amount).toEqual(ghs('100.00'));
     });
   });
 

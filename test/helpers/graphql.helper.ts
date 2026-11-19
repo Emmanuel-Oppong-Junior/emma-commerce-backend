@@ -28,3 +28,14 @@ export function gqlRequest(
 
   return req;
 }
+
+/** A Money field as the API returns it. */
+export interface MoneyValue {
+  amount: string;
+  currency: string;
+}
+
+/** The expected value of a Money field in the store currency (the test database's store is GHS). */
+export function ghs(amount: string): MoneyValue {
+  return { amount, currency: 'GHS' };
+}

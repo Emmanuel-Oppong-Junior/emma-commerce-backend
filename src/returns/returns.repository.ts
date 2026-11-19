@@ -34,7 +34,7 @@ export class ReturnsRepository {
     id: string,
     from: ReturnStatus,
     to: ReturnStatus,
-    changes: { refundAmount?: number; adminNote?: string },
+    changes: { refundAmount?: Prisma.Decimal; adminNote?: string },
     db: Prisma.TransactionClient = this.prisma,
   ): Promise<ReturnRequest | null> {
     const { count } = await db.returnRequest.updateMany({

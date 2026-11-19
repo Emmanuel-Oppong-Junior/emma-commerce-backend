@@ -5,6 +5,7 @@ import { NotFoundException } from '@nestjs/common';
 import { CreateVariantInput } from './dto/create-variant.input';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
+import { Decimal } from '@prisma/client/runtime/client';
 
 describe('VariantService', () => {
   let service: VariantService;
@@ -41,7 +42,7 @@ describe('VariantService', () => {
     size: 'M',
     color: 'Blue',
     quantity: 50,
-    price: 29.99,
+    price: new Decimal('29.99'),
     productId: mockProductId,
     discountId: undefined,
   };
@@ -241,8 +242,8 @@ describe('VariantService', () => {
       ],
       [
         'updateVariant',
-        () => service.updateVariant('var1', { id: 'var1', price: 35 }, 'admin1'),
-        { action: 'UPDATE', details: { changes: { price: { from: 29.99, to: 35 } } } },
+        () => service.updateVariant('var1', { id: 'var1', price: new Decimal('35') }, 'admin1'),
+        { action: 'UPDATE', details: { changes: { price: { from: 29.99, to: '35' } } } },
       ],
       [
         'deleteVariant',

@@ -1,5 +1,7 @@
-import { Field, Float, InputType } from '@nestjs/graphql';
-import { IsArray, IsBoolean, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { Field, InputType } from '@nestjs/graphql';
+import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class UpdateShippingZoneInput {
@@ -14,11 +16,10 @@ export class UpdateShippingZoneInput {
   @IsString({ each: true })
   cities?: string[];
 
-  @Field(() => Float, { nullable: true })
+  @DecimalInputField({ nullable: true })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  fee?: number;
+  @IsMoneyAmount()
+  fee?: Decimal;
 
   @Field({ nullable: true })
   @IsOptional()

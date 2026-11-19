@@ -1,18 +1,10 @@
-import { Field, Float, GraphQLISODateTime, ID, InputType } from '@nestjs/graphql';
-import {
-  IsArray,
-  IsBoolean,
-  IsDate,
-  IsEnum,
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsPositive,
-  IsString,
-} from 'class-validator';
+import { Field, GraphQLISODateTime, ID, InputType } from '@nestjs/graphql';
+import { IsArray, IsBoolean, IsDate, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { DiscountType } from '../enums/discount-type.enum';
 import { IsEndDateAfterStartDate } from '../../commons/validators/is-end-date-after-start-date.validator';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class CreateDiscountInput {
@@ -31,11 +23,9 @@ export class CreateDiscountInput {
   @IsEnum(DiscountType, { message: 'Discount type must be a valid enum value' })
   type: DiscountType;
 
-  @Field(() => Float, { description: 'The discount value (e.g., 20 for 20% or 10.00 for $10 off)' })
-  @IsNotEmpty({ message: 'Discount value is required' })
-  @IsPositive({ message: 'Discount value must be positive' })
-  @IsNumber({}, { message: 'Discount value must be a number' })
-  value: number;
+  @DecimalInputField({ description: 'The discount value (e.g., 20 for 20% or 10.00 for $10 off)' })
+  @IsMoneyAmount({ positive: true })
+  value: Decimal;
 
   @Field(() => GraphQLISODateTime, { description: 'The start date and time of the discount' })
   @IsNotEmpty({ message: 'Start date is required' })
@@ -85,9 +75,8 @@ export class CreateDiscountInput {
   @IsArray({ message: 'Categories must be an array of IDs' })
   categories: string[];
 
-  @Field(() => Float, { description: 'Minimum purchase amount to qualify for the discount', nullable: true })
+  @DecimalInputField({ description: 'Minimum purchase amount to qualify for the discount', nullable: true })
   @IsOptional()
-  @IsPositive({ message: 'Minimum purchase amount must be positive' })
-  @IsNumber({}, { message: 'Minimum purchase amount must be a number' })
-  minimumPurchase?: number;
+  @IsMoneyAmount({ positive: true })
+  minimumPurchase?: Decimal;
 }

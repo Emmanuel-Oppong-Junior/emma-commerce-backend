@@ -29,6 +29,7 @@
    - [Analytics](#219-analytics)
    - [Addresses](#220-addresses)
    - [Shipping Zones & Pickup Locations](#221-shipping-zones--pickup-locations)
+   - [Store settings](#222-store-settings)
 3. [REST API Reference](#3-rest-api-reference)
 4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
@@ -666,8 +667,8 @@ Reading an "owner or admin only" field of another user as a `USER` gives `FORBID
   status?: ProductStatus;     // DRAFT | PUBLISHED | ARCHIVED; ignored by public queries
   search?: string;            // Full-text match on name/description, or partial tag name
   createdAfter?: string;      // ISO date string
-  priceMin?: number;          // Inclusive, compared with price
-  priceMax?: number;          // Inclusive, compared with price
+  priceMin?: Decimal;          // Inclusive, compared with price
+  priceMax?: Decimal;          // Inclusive, compared with price
   brand?: string;             // Brand name, exact, case-insensitive
   inStock?: boolean;          // See note below
   tagId?: string;
@@ -702,12 +703,12 @@ Known filter defects (do not rely on them yet): `subCategoryName` compares the s
   description?: string;
   images?: string[];            // HTTPS URLs
   attachments?: string[];
-  basePrice?: Float;            // Admin-entered price before tax
-  price?: Float;                // Tax-inclusive selling price (charged at checkout)
-  currentPrice?: Float;         // Not set by any API operation (null unless set in the database)
+  basePrice?: Money;            // Admin-entered price before tax
+  price?: Money;                // Tax-inclusive selling price (charged at checkout)
+  currentPrice?: Money;         // Not set by any API operation (null unless set in the database)
   currency?: Currency;          // Default GHS; only GHS products can be checked out
   isTaxable: boolean;
-  discountedPrice?: Float;      // price after the best active discount; null when no discount applies
+  discountedPrice?: Money;      // price after the best active discount; null when no discount applies
   appliedDiscount?: Discount;   // The discount behind discountedPrice, or null
   discounts?: Discount[];
   sku?: string;
@@ -743,7 +744,7 @@ query {
     filterArgs: { categoryId: "clx_cat" }
     sortArgs: { sortBy: PRICE, sortOrder: ASC }
   ) {
-    edges { cursor node { id name price discountedPrice currency images } }
+    edges { cursor node { id name price { amount currency } discountedPrice { amount currency } currency images } }
     pageInfo { hasNextPage totalCount }
   }
 }
@@ -786,7 +787,7 @@ query {
 ```typescript
 {
   name: string;                  // Required. 1–255 chars.
-  basePrice: string;             // Required. Decimal string, e.g. "29.99". There is no `price` input.
+  basePrice: Decimal;            // Required. e.g. "29.99" (at most 2 decimal places). There is no `price` input.
   quantity: number;              // Required. Integer >= 0 (initial stock).
   isActive: boolean;             // Default false.
   isTaxable: boolean;            // Default false.
@@ -1140,7 +1141,7 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user. 
   size?: string;
   color?: string;
   quantity: Float;
-  price: Float;
+  price: Money;
   productId: string;
   product: Product;
   discountId?: string;
@@ -1174,7 +1175,7 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user. 
 ```typescript
 {
   productId: string;   // Required.
-  price: Float;        // Required. Min 0.
+  price: Decimal;        // Required. Min 0.
   quantity: Float;     // Required. Min 0 (initial stock).
   size?: string;
   color?: string;
@@ -1196,7 +1197,7 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user. 
 ```typescript
 {
   id: string;          // Required. Variant to update.
-  price?: Float;
+  price?: Decimal;
   size?: string;
   color?: string;
   productId?: string;
@@ -1234,9 +1235,9 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
   id: string;
   userId: string;
   items: CartItem[];
-  total?: Float;           // Set by cartWithDiscount: sum of price × quantity
-  discountTotal?: Float;   // Set by cartWithDiscount: product discounts
-  finalTotal?: Float;      // Set by cartWithDiscount: total - discountTotal; what createOrder charges for the items
+  total?: Money;           // Set by cartWithDiscount: sum of price × quantity
+  discountTotal?: Money;   // Set by cartWithDiscount: product discounts
+  finalTotal?: Money;      // Set by cartWithDiscount: total - discountTotal; what createOrder charges for the items
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -1250,8 +1251,8 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
   productId: string;
   product: Product;
   variant?: Variant;         // Always null today (variants cannot be added)
-  originalPrice?: Float;
-  discountedPrice?: Float;
+  originalPrice?: Money;
+  discountedPrice?: Money;
   appliedDiscount?: Discount;
   quantity: number;
   createdAt: DateTime;
@@ -1403,7 +1404,7 @@ All order operations require `Bearer` JWT.
 ```typescript
 {
   id: string;
-  orderNumber: number;                         // Sequential order reference
+  orderNumber: number;                         // Store order number from 10001 up; unique, may have gaps
   userId: string;
   user?: User;                                 // Owner or admin only (FORBIDDEN otherwise)
   status: OrderStatus;                         // PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
@@ -1411,12 +1412,12 @@ All order operations require `Bearer` JWT.
   paymentMethod: OrderPaymentMethod;           // ONLINE | CASH_ON_DELIVERY
   contactEmail: string;
   contactPhone: string;
-  subtotal?: Float;                            // Sum of item prices charged, after product discounts (null on older orders)
-  shippingFee?: Float;                         // Delivery fee charged; 0 for PICKUP (null on older orders)
-  couponDiscount?: Float;                      // Coupon discount applied at checkout
-  totalAmount: Float;                          // Amount charged: subtotal + shippingFee - couponDiscount
-  discountTotal?: Float;                       // Product discounts taken off at checkout (null on older orders)
-  finalTotal?: Float;                          // Never populated (always null)
+  subtotal?: Money;                            // Sum of item prices charged, after product discounts (null on older orders)
+  shippingFee?: Money;                         // Delivery fee charged; 0 for PICKUP (null on older orders)
+  couponDiscount?: Money;                      // Coupon discount applied at checkout
+  totalAmount: Money;                          // Amount charged: subtotal + shippingFee - couponDiscount
+  discountTotal?: Money;                       // Product discounts taken off at checkout (null on older orders)
+  finalTotal?: Money;                          // Never populated (always null)
   shippingAddressId?: string;                  // Set for DELIVERY orders
   shippingAddressSnapshot?: JSON;              // DELIVERY: { street, city, state, zipCode, country } at order time
   pickupLocationId?: string;                   // Set for PICKUP orders
@@ -1438,9 +1439,9 @@ All order operations require `Bearer` JWT.
   productId: string;
   variantId?: string;         // Always null today
   quantity: Float;
-  priceAtOrder: Float;        // Unit price charged: originalPrice - discountAmount
-  originalPrice?: Float;      // List price per unit at the time of the order
-  discountAmount?: Float;     // Product discount taken off one unit at checkout (0 if none)
+  priceAtOrder: Money;        // Unit price charged: originalPrice - discountAmount
+  originalPrice?: Money;      // List price per unit at the time of the order
+  discountAmount?: Money;     // Product discount taken off one unit at checkout (0 if none)
   appliedDiscount?: Discount;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -1531,7 +1532,7 @@ mutation {
     contactPhone: "+233201234567"
     couponCode: "SAVE10"
   }) {
-    id orderNumber status paymentMethod subtotal shippingFee couponDiscount totalAmount
+    id orderNumber status paymentMethod subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency }
   }
 }
 ```
@@ -1639,7 +1640,7 @@ mutation {
   id: string;
   orderId: string;
   order: Order;
-  amount: Float;
+  amount: Money;
   currency: string;          // "GHS"
   paymentMethod: string;     // Channel sent at initialize (e.g. "card"), or "CASH_ON_DELIVERY"
   status: PaymentStatus;     // PENDING | COMPLETED | FAILED | ABANDONED
@@ -1725,12 +1726,12 @@ Coupon codes are stored upper-case and matched case-insensitively.
   id: string;
   code: string;
   discountType: DiscountTypeEnum; // PERCENTAGE | FLAT
-  value: Float;
+  value: Decimal;
   usageLimit?: number;            // null = unlimited
   usedCount: number;
   expiresAt?: DateTime;
   isActive: boolean;
-  minimumOrderAmount?: Float;
+  minimumOrderAmount?: Money;
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -1756,11 +1757,11 @@ Coupon codes are stored upper-case and matched case-insensitively.
 {
   code: string;                   // Required. Max 50 chars. Stored upper-case; unique (CONFLICT).
   discountType: DiscountTypeEnum; // Required. PERCENTAGE | FLAT
-  value: Float;                   // Required. Min 0. Percent (PERCENTAGE) or GHS amount (FLAT).
+  value: Decimal;                   // Required. Min 0. Percent (PERCENTAGE) or GHS amount (FLAT).
   usageLimit?: number;            // Optional. Min 1 if provided.
   expiresAt?: DateTime;           // Optional.
   isActive: boolean;              // Default true.
-  minimumOrderAmount?: Float;     // Optional. Min 0.
+  minimumOrderAmount?: Decimal;     // Optional. Min 0.
 }
 ```
 
@@ -1793,7 +1794,7 @@ Coupon codes are stored upper-case and matched case-insensitively.
 ```typescript
 {
   code: string;        // Required.
-  orderTotal: Float;   // Required. Min 0. Use `cartWithDiscount.finalTotal` (createOrder applies the coupon to the subtotal after product discounts, before shipping).
+  orderTotal: Decimal;   // Required. Min 0. Use `cartWithDiscount.finalTotal` (createOrder applies the coupon to the subtotal after product discounts, before shipping).
 }
 ```
 
@@ -1802,8 +1803,8 @@ Coupon codes are stored upper-case and matched case-insensitively.
 ```typescript
 {
   valid: boolean;           // Always true when returned
-  discountAmount?: Float;   // PERCENTAGE: orderTotal × value / 100; FLAT: min(value, orderTotal)
-  message?: string;         // e.g., "Coupon applied. You save 10."
+  discountAmount?: Money;   // PERCENTAGE: orderTotal × value / 100, rounded half-up to 2 dp; FLAT: min(value, orderTotal)
+  message?: string;         // e.g., "Coupon applied. You save 10.00."
 }
 ```
 
@@ -1844,14 +1845,14 @@ Discounts are admin-configured price reductions attached to products, variants o
   name: string;               // Required.
   description?: string;
   type: DiscountType;         // Required. PERCENTAGE | FLAT
-  value: Float;               // Required. >= 0; at most 100 for PERCENTAGE.
+  value: Decimal;               // Required. >= 0; at most 100 for PERCENTAGE.
   startDate: DateTime;        // Required.
   endDate: DateTime;          // Required. Must be after startDate.
   isActive: boolean;          // Default false.
   products?: string[];        // Product IDs. Default [].
   variants?: string[];        // Variant IDs. Default [].
   categories?: string[];      // Category IDs. Default [].
-  minimumPurchase?: Float;    // Minimum cart total for cartWithDiscount.
+  minimumPurchase?: Decimal;    // Minimum cart total for cartWithDiscount.
 }
 ```
 
@@ -1865,14 +1866,14 @@ Discounts are admin-configured price reductions attached to products, variants o
   name: string;
   description?: string;
   type: DiscountType;         // PERCENTAGE | FLAT
-  value: Float;
+  value: Decimal;
   startDate: DateTime;
   endDate: DateTime;
   isActive: boolean;
   products?: Product[];
   variants?: Variant[];
   categories?: Category[];
-  minimumPurchase?: Float;
+  minimumPurchase?: Money;
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -2047,7 +2048,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes
   userId: string;
   reason: string;
   status: ReturnStatusEnum;  // PENDING | APPROVED | REJECTED | REFUND_PENDING | REFUNDED
-  refundAmount?: Float;
+  refundAmount?: Money;
   adminNote?: string;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -2066,7 +2067,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes
 ```typescript
 {
   returnRequestId: string; // Required.
-  refundAmount: Float;     // Required. Min 0.
+  refundAmount: Decimal;     // Required. Min 0.
   adminNote?: string;      // Optional.
 }
 ```
@@ -2124,7 +2125,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes
   id: string;
   attemptId: string;          // the payment the money is returned from
   returnRequestId?: string;   // set for refunds of return requests
-  amount: Float;
+  amount: Money;
   currency: string;
   status: RefundStatusEnum;   // PENDING | SENDING | PROCESSED | FAILED
   providerRef?: string;       // Paystack refund id
@@ -2274,7 +2275,7 @@ Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or regio
 {
   id: string;
   name: string;       // e.g. "VAT", "NHIS Levy". Unique.
-  rate: Float;        // Decimal 0–1 (0.15 = 15%)
+  rate: Decimal;        // Decimal 0–1 (0.15 = 15%)
   isActive: boolean;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -2300,7 +2301,7 @@ Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or regio
 ```typescript
 {
   name: string;       // Required. Unique (CONFLICT).
-  rate: Float;        // Required. 0 ≤ rate ≤ 1.
+  rate: Decimal;        // Required. 0 ≤ rate ≤ 1.
   isActive: boolean;  // Default true.
 }
 ```
@@ -2333,13 +2334,13 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 - **Response: `SalesReport`**:
 ```typescript
 {
-  grossRevenue: Float;      // Payments accepted for orders in the period
-  refunds: Float;           // Refunds processed in the period
-  netRevenue: Float;        // grossRevenue - refunds
-  totalRevenue: Float;      // Deprecated: same value as netRevenue
-  itemSales: Float;         // Item sales of the orders paid in the period
+  grossRevenue: Money;      // Payments accepted for orders in the period
+  refunds: Money;           // Refunds processed in the period
+  netRevenue: Money;        // grossRevenue - refunds
+  totalRevenue: Money;      // Deprecated: same value as netRevenue
+  itemSales: Money;         // Item sales of the orders paid in the period
   orderCount: number;       // Orders paid in the period
-  averageOrderValue: Float; // grossRevenue / orderCount
+  averageOrderValue: Money; // grossRevenue / orderCount
 }
 ```
 
@@ -2355,7 +2356,7 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
   productId: string;
   productName: string;
   totalQuantitySold: number; // Units sold in paid orders
-  totalRevenue: Float;       // Item sales in paid orders
+  totalRevenue: Money;       // Item sales in paid orders
 }
 ```
 
@@ -2369,7 +2370,7 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 {
   categoryId?: string;
   categoryName?: string;
-  totalRevenue: Float; // Item sales in paid orders
+  totalRevenue: Money; // Item sales in paid orders
   orderCount: number;  // Paid orders containing this category
 }
 ```
@@ -2384,9 +2385,9 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 {
   totalUsers: number;
   ordersToday: number;       // Orders paid today
-  revenueToday: Float;       // Net revenue today
-  grossRevenueToday: Float;  // Payments accepted today
-  refundsToday: Float;       // Refunds processed today
+  revenueToday: Money;       // Net revenue today
+  grossRevenueToday: Money;  // Payments accepted today
+  refundsToday: Money;       // Refunds processed today
   lowStockProductCount: number;
   lowStockVariantCount: number;
 }
@@ -2495,7 +2496,7 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
   id: string;
   name: string;      // Unique
   cities: string[];  // Stored normalised (lower-case, single spaces)
-  fee: Float;        // GHS
+  fee: Money;        // GHS
   isActive: boolean;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -2508,7 +2509,7 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
 - **Type**: Query
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `addressId: ID!`
-- **Response**: `Float!`, the fee `createOrder` would charge for delivery to that address
+- **Response**: `Money!`, the fee `createOrder` would charge for delivery to that address
 - **Possible Errors**: `NOT_FOUND` (not the caller's address); `BAD_REQUEST` ("Delivery is not available to city …") when no active zone covers the city.
 
 ---
@@ -2537,7 +2538,7 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
 {
   name: string;       // Required. Unique.
   cities: string[];   // Required. No blank entries; duplicates are merged.
-  fee: Float;         // Required. Min 0.
+  fee: Decimal;         // Required. Min 0.
   isActive?: boolean; // Default true.
 }
 ```
@@ -2624,6 +2625,54 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
 - **Args**: `id: ID!`
 - **Response**: `PickupLocationEntity!`
 - **Possible Errors**: `CONFLICT` if any order uses the location (deactivate it with `isActive: false` instead).
+
+---
+
+### 2.22 Store settings
+
+One deployment serves one store. Its settings hold the names and tax registration printed on receipts, the currency every price, charge and refund is in, and support contacts.
+
+#### `storeSettings`
+- **Type**: Query
+- **Auth Required**: No
+- **Response**: `StoreSettings!`
+
+```typescript
+{
+  id: string;
+  legalName: string;
+  tradingName: string;
+  tin?: string;             // Taxpayer Identification Number
+  vatRegistered: boolean;
+  pricesIncludeTax: boolean; // true: product prices already include tax
+  currency: Currency;        // The store currency; every Money field is in it
+  supportEmail?: string;
+  supportPhone?: string;
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+```
+
+#### `updateStoreSettings` (SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `input: UpdateStoreSettingsInput!`
+- **Response**: `StoreSettings!`
+- **Side effects**: writes an audit entry (entity `Store`) with the changed fields.
+- **Possible Errors**: `BAD_USER_INPUT` (validation), `FORBIDDEN` (`ADMIN` or `USER`).
+
+```typescript
+{
+  legalName?: string;        // Non-blank, max 200. Cannot be null.
+  tradingName?: string;      // Non-blank, max 200. Cannot be null.
+  tin?: string | null;       // 1-20 letters, digits or hyphens (Ghana Card PINs such as GHA-123456789-0 are accepted); null clears it
+  vatRegistered?: boolean;
+  pricesIncludeTax?: boolean;
+  supportEmail?: string | null; // Valid email; null clears it
+  supportPhone?: string | null; // International format, e.g. +233244000000; null clears it
+}
+```
+
+The currency cannot be changed through the API.
 
 ---
 
@@ -2790,7 +2839,51 @@ The GraphQL schema (`schema.gql`) is the contract; the database models behind it
 |---|---|
 | `DateTime` | ISO 8601 string in UTC, e.g. `2026-11-18T09:54:33.000Z` |
 | `JSON` | Any JSON value (used for address/pickup snapshots and `Payment.paymentDetails`) |
-| `Float` | Money values are GHS amounts with 2 decimals, sent as numbers |
+| `Decimal` | Exact decimal as a string, e.g. `"12.50"`, `"0.15"` (no exponent). Used for money inputs, tax rates and discount/coupon `value`. See [Money](#money) |
+| `Float` | Only stock quantities (`Variant.quantity`, `OrderItem.quantity`, `CreateVariantInput.quantity`); never money |
+
+### Money
+
+**Breaking change (P1-S.4):** every money field that was a `Float` is now a `Money` object, and every money input or argument that was a `Float` (or the `basePrice` string) is now a `Decimal` string. Field names are unchanged.
+
+```graphql
+type Money {
+  amount: String!      # always exactly 2 decimal places, e.g. "480.00"
+  currency: Currency!  # the store currency (storeSettings.currency), e.g. GHS
+}
+```
+
+- **Reading money:** select `{ amount currency }`, e.g. `order { totalAmount { amount currency } }`. Keep `amount` as a string or parse it with a decimal library; do not add amounts as JS numbers.
+- **Sending money (`Decimal` scalar):** a JSON string of digits with an optional leading `-` and decimal point, e.g. `"12.50"`. Exponent notation (`"1e3"`), `"NaN"`, `"Infinity"`, other text and JSON numbers (`12.5`) are rejected with `BAD_USER_INPUT`, as are money amounts with more than 2 decimal places, negative amounts and amounts of 1,000,000,000,000 or more. The client never chooses a currency: amounts are in the store currency.
+- **Decimal outputs:** `Tax.rate` (e.g. `"0.15"`), `Coupon.value` and `Discount.value` (a percent for `PERCENTAGE`, an amount for `FLAT`, so not `Money`) are `Decimal` strings without trailing zeros (`"10"`, `"12.5"`).
+- **Rounding:** one rule everywhere: half-up (half away from zero) to 2 decimal places, per line and per component (e.g. a 10% coupon on 59.98 is 6.00). This rule is pending confirmation by the store's tax adviser.
+
+| Changed fields (output, `Float` → `Money`) |
+|---|
+| `Order.subtotal`, `shippingFee`, `totalAmount`, `discountTotal`, `finalTotal`, `couponDiscount` |
+| `OrderItem.originalPrice`, `discountAmount`, `priceAtOrder` |
+| `Cart.total`, `discountTotal`, `finalTotal`; `CartItem.originalPrice`, `discountedPrice` |
+| `Product.price`, `basePrice`, `currentPrice`, `discountedPrice`; `Variant.price` |
+| `Payment.amount`; `RefundEntity.amount`; `ReturnRequestEntity.refundAmount` |
+| `Coupon.minimumOrderAmount`; `CouponValidation.discountAmount`; `Discount.minimumPurchase` |
+| `ShippingZoneEntity.fee`; query `getShippingFee` (`Float!` → `Money!`) |
+| `SalesReport.grossRevenue`, `refunds`, `netRevenue`, `totalRevenue`, `itemSales`, `averageOrderValue` |
+| `DashboardSummary.revenueToday`, `grossRevenueToday`, `refundsToday`; `TopProduct.totalRevenue`; `RevenueByCategoryEntity.totalRevenue` |
+
+| Changed fields (output, `Float` → `Decimal`) |
+|---|
+| `Coupon.value`, `Discount.value`, `TaxEntity.rate` |
+
+| Changed inputs and arguments (→ `Decimal`) |
+|---|
+| `CreateProductInput.basePrice` / `UpdateProductInput.basePrice` (`String` → `Decimal`) |
+| `CreateVariantInput.price` / `UpdateVariantInput.price` |
+| `CreateCouponInput.value`, `minimumOrderAmount`; `UpdateCouponInput.value`, `minimumOrderAmount`; `ValidateCouponInput.orderTotal` |
+| `CreateDiscountInput.value`, `minimumPurchase`; `UpdateDiscountInput.value`, `minimumPurchase` (both must be greater than 0) |
+| `CreateShippingZoneInput.fee`, `UpdateShippingZoneInput.fee` |
+| `CreateTaxInput.rate`, `UpdateTaxInput.rate` (0 to 1, at most 6 decimal places) |
+| `ApproveReturnInput.refundAmount` |
+| `ProductFilterArgs.priceMin`, `priceMax` |
 
 ### Enums
 
@@ -3208,12 +3301,12 @@ There is no separate reservation: stock is decremented on order creation. An unp
 
 ### Currency
 
-- All charges are in **GHS**. `createOrder` refuses products whose `currency` is not `GHS`, and `POST /payment/initialize` accepts only `currency: "GHS"` (or none).
+- All charges are in the **store currency** (`storeSettings.currency`, GHS). `createOrder` refuses products whose `currency` is not the store currency, and `POST /payment/initialize` accepts only `currency` equal to it (or none); any other value is a 400 `currency must be GHS; payments are charged in GHS only`.
 - `Product.currency` can hold `USD`, `EUR`, `GBP`, `NGN`, but there is no conversion: no API operation converts amounts. (A `CurrencyService` with hard-coded rates exists in the code but is not used by any operation.)
 
 ### Rounding
 
-Order amounts (`subtotal`, `shippingFee`, `totalAmount`) and product `price` are stored with 2 decimals. Coupon and discount amounts returned by `validateCoupon`/`cartWithDiscount` are not rounded (e.g. `5.998`).
+Every amount is stored with 2 decimals and returned as `Money` with exactly 2 decimals. Discounts, coupons and tax-inclusive prices are rounded half-up to 2 decimals per line and per component, so `validateCoupon` returns `6.00` for 10% of 59.98 (it used to return `5.998`). See [Money](#money).
 
 ---
 
@@ -3368,7 +3461,7 @@ query {
   ) {
     edges {
       cursor
-      node { id name price }
+      node { id name price { amount currency } }
     }
     pageInfo {
       hasNextPage
@@ -3521,13 +3614,13 @@ Both dates are inclusive.
 
 ```typescript
 {
-  grossRevenue: Float;          // Accepted payments in the period
-  refunds: Float;               // Processed refunds in the period
-  netRevenue: Float;            // grossRevenue - refunds
-  totalRevenue: Float;          // Deprecated: same value as netRevenue
-  itemSales: Float;             // Item sales of the orders paid in the period
+  grossRevenue: Money;          // Accepted payments in the period
+  refunds: Money;               // Processed refunds in the period
+  netRevenue: Money;            // grossRevenue - refunds
+  totalRevenue: Money;          // Deprecated: same value as netRevenue
+  itemSales: Money;             // Item sales of the orders paid in the period
   orderCount: number;           // Orders paid in the period
-  averageOrderValue: Float;     // grossRevenue / orderCount (0 when there are no paid orders)
+  averageOrderValue: Money;     // grossRevenue / orderCount (0 when there are no paid orders)
 }
 ```
 
@@ -3540,7 +3633,7 @@ Returns the best-selling products of paid orders by quantity, descending:
   productId: string;
   productName: string;
   totalQuantitySold: number;
-  totalRevenue: Float;          // Item sales
+  totalRevenue: Money;          // Item sales
 }]
 ```
 
@@ -3554,7 +3647,7 @@ Returns item sales of paid orders grouped by category, highest first:
 [{
   categoryId?: string;
   categoryName?: string;
-  totalRevenue: Float;          // Item sales
+  totalRevenue: Money;          // Item sales
   orderCount: number;           // Paid orders containing this category
 }]
 ```
@@ -3567,9 +3660,9 @@ Snapshot of key admin metrics:
 {
   totalUsers: number;
   ordersToday: number;          // Orders paid today
-  revenueToday: Float;          // Net revenue today
-  grossRevenueToday: Float;     // Accepted payments today
-  refundsToday: Float;          // Processed refunds today
+  revenueToday: Money;          // Net revenue today
+  grossRevenueToday: Money;     // Accepted payments today
+  refundsToday: Money;          // Processed refunds today
   lowStockProductCount: number;
   lowStockVariantCount: number;
 }
@@ -3827,21 +3920,21 @@ refetchQueries: [{ query: ADMIN_PRODUCTS_QUERY }]
 
 ```graphql
 fragment ProductSummary on Product {
-  id name price discountedPrice currency isActive status
+  id name price { amount currency } discountedPrice { amount currency } currency isActive status
   images quantity categoryId
   category { id name }
   brand { id name logo }
 }
 
 fragment CartItemFull on CartItem {
-  id productId quantity originalPrice discountedPrice
-  product { id name images price currency quantity }
+  id productId quantity originalPrice { amount currency } discountedPrice { amount currency }
+  product { id name images price { amount currency } currency quantity }
 }
 
 fragment OrderSummary on Order {
   id orderNumber status fulfillmentType paymentMethod
-  subtotal shippingFee couponDiscount totalAmount createdAt
-  items { id quantity priceAtOrder product { id name } }
+  subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency } createdAt
+  items { id quantity priceAtOrder { amount currency } product { id name } }
 }
 
 fragment AuthTokens on AuthEntity {
@@ -3959,8 +4052,8 @@ query {
       node {
         id
         name
-        price
-        discountedPrice
+        price { amount currency }
+        discountedPrice { amount currency }
         images
         currency
         brand { name }
@@ -3984,10 +4077,10 @@ query {
 ```graphql
 query {
   product(productId: "clx_product_abc123") {
-    id name description price currentPrice
-    discountedPrice appliedDiscount { name type value }
+    id name description price { amount currency } currentPrice { amount currency }
+    discountedPrice { amount currency } appliedDiscount { name type value }
     images sku quantity stockStatus
-    variants { id size color price quantity }
+    variants { id size color price { amount currency } quantity }
     reviews { score comment user { displayName } }
     category { id name }
     brand { id name }
@@ -4019,7 +4112,7 @@ mutation {
 
 ```graphql
 query {
-  getShippingFee(addressId: "clx_address_xyz")
+  getShippingFee(addressId: "clx_address_xyz") { amount currency }
 }
 ```
 
@@ -4038,7 +4131,7 @@ mutation {
     id
     items {
       id productId quantity
-      product { name images price }
+      product { name images price { amount currency } }
     }
   }
 }
@@ -4051,9 +4144,9 @@ mutation {
 ```graphql
 query {
   cartWithDiscount {
-    id total discountTotal finalTotal
+    id total { amount currency } discountTotal { amount currency } finalTotal { amount currency }
     items {
-      id quantity originalPrice discountedPrice
+      id quantity originalPrice { amount currency } discountedPrice { amount currency }
       product { name }
       appliedDiscount { name type value }
     }
@@ -4071,10 +4164,10 @@ query {
 mutation {
   validateCoupon(input: {
     code: "SAVE10"
-    orderTotal: 59.98
+    orderTotal: "59.98"
   }) {
     valid
-    discountAmount
+    discountAmount { amount currency }
     message
   }
 }
@@ -4086,8 +4179,8 @@ mutation {
   "data": {
     "validateCoupon": {
       "valid": true,
-      "discountAmount": 5.998,
-      "message": "Coupon applied. You save 5.998."
+      "discountAmount": { "amount": "6.00", "currency": "GHS" },
+      "message": "Coupon applied. You save 6.00."
     }
   }
 }
@@ -4107,9 +4200,9 @@ mutation {
     couponCode: "SAVE10"
   }) {
     id orderNumber status paymentMethod
-    subtotal shippingFee couponDiscount totalAmount
+    subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency }
     items {
-      id quantity priceAtOrder
+      id quantity priceAtOrder { amount currency }
       product { name }
     }
   }
@@ -4122,13 +4215,13 @@ mutation {
   "data": {
     "createOrder": {
       "id": "clx_order_789",
-      "orderNumber": 1042,
+      "orderNumber": 10042,
       "status": "PENDING",
       "paymentMethod": "ONLINE",
-      "subtotal": 59.98,
-      "shippingFee": 15,
-      "couponDiscount": 6,
-      "totalAmount": 68.98,
+      "subtotal": { "amount": "59.98", "currency": "GHS" },
+      "shippingFee": { "amount": "15.00", "currency": "GHS" },
+      "couponDiscount": { "amount": "6.00", "currency": "GHS" },
+      "totalAmount": { "amount": "68.98", "currency": "GHS" },
       "items": [...]
     }
   }
@@ -4185,9 +4278,9 @@ mutation {
   verifyPayment(verifyPaymentInput: {
     reference: "clx_order_789-1731900000000-a1b2c3d4"
   }) {
-    id status amount currency
+    id status amount { amount currency } currency
     order {
-      id status totalAmount
+      id status totalAmount { amount currency }
     }
   }
 }
@@ -4200,12 +4293,12 @@ mutation {
     "verifyPayment": {
       "id": "clx_attempt_1",
       "status": "COMPLETED",
-      "amount": 68.98,
+      "amount": { "amount": "68.98", "currency": "GHS" },
       "currency": "GHS",
       "order": {
         "id": "clx_order_789",
         "status": "PROCESSING",
-        "totalAmount": 68.98
+        "totalAmount": { "amount": "68.98", "currency": "GHS" }
       }
     }
   }

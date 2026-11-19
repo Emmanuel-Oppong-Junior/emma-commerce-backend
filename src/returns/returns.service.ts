@@ -149,7 +149,7 @@ export class ReturnsService {
     id: string,
     to: ReturnStatus,
     adminUserId: string,
-    changes: { refundAmount?: number; adminNote?: string },
+    changes: { refundAmount?: Prisma.Decimal; adminNote?: string },
   ): Promise<ReturnRequest> {
     const returnRequest = await this.findReturnOrThrow(id);
     if (returnRequest.status !== ReturnStatus.PENDING) {

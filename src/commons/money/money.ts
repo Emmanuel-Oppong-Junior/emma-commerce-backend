@@ -19,7 +19,7 @@ export function roundHalfUp(value: Decimal.Value): Decimal {
 /** Whole minor units (pesewas), as payment providers take them. Throws if `amount` has more than 2 decimal places. */
 export function toMinorUnits(amount: Decimal.Value): number {
   const minor = exactMinorUnits(new Decimal(amount));
-  // The one Decimal-to-number conversion on the money path: provider APIs take an integer JSON number.
+  // eslint-disable-next-line no-restricted-syntax -- providers take an integer JSON number; checked safe below
   const units = minor.toNumber();
   if (!Number.isSafeInteger(units)) throw new RangeError(`${minor.toString()} minor units is too large to send`);
   return units;

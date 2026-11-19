@@ -3,6 +3,7 @@ import { Prisma } from '../generated/prisma/client';
 import { TaxService } from './tax.service';
 import { TaxRepository } from './tax.repository';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
+import { Decimal } from '@prisma/client/runtime/client';
 
 const vat = {
   id: 'tax1',
@@ -36,13 +37,13 @@ describe('TaxService', () => {
   it.each<[string, () => Promise<unknown>, object]>([
     [
       'create',
-      () => service.create({ name: 'VAT', rate: 0.15 }, 'admin1'),
-      { action: 'CREATE', details: { after: { name: 'VAT', rate: 0.15, isActive: true } } },
+      () => service.create({ name: 'VAT', rate: new Decimal('0.15') }, 'admin1'),
+      { action: 'CREATE', details: { after: { name: 'VAT', rate: '0.15', isActive: true } } },
     ],
     [
       'update',
-      () => service.update('tax1', { rate: 0.2 }, 'admin1'),
-      { action: 'UPDATE', details: { changes: { rate: { from: '0.15', to: 0.2 } } } },
+      () => service.update('tax1', { rate: new Decimal('0.2') }, 'admin1'),
+      { action: 'UPDATE', details: { changes: { rate: { from: '0.15', to: '0.2' } } } },
     ],
     [
       'delete',
@@ -60,8 +61,8 @@ describe('TaxService', () => {
   });
 
   it.each<[string, () => Promise<unknown>]>([
-    ['create', () => service.create({ name: 'VAT', rate: 0.15 }, 'admin1')],
-    ['update', () => service.update('tax1', { rate: 0.2 }, 'admin1')],
+    ['create', () => service.create({ name: 'VAT', rate: new Decimal('0.15') }, 'admin1')],
+    ['update', () => service.update('tax1', { rate: new Decimal('0.2') }, 'admin1')],
     ['delete', () => service.delete('tax1', 'admin1')],
   ])('%s reprices taxable products from the rate read on the audit transaction', async (_name, act) => {
     await act();
@@ -74,7 +75,7 @@ describe('TaxService', () => {
     const failure = new Error('reprice failed');
     repository.repriceTaxableProducts.mockRejectedValue(failure);
 
-    await expect(service.create({ name: 'VAT', rate: 0.15 }, 'admin1')).rejects.toBe(failure);
+    await expect(service.create({ name: 'VAT', rate: new Decimal('0.15') }, 'admin1')).rejects.toBe(failure);
     expect(audit.record).toHaveBeenCalledTimes(1);
     expect(audit.log).not.toHaveBeenCalled();
   });
@@ -88,7 +89,7 @@ describe('TaxService', () => {
   it('rejects an update of an unknown tax without writing or repricing', async () => {
     repository.findById.mockResolvedValue(null);
 
-    await expect(service.update('missing', { rate: 0.2 }, 'admin1')).rejects.toThrow(
+    await expect(service.update('missing', { rate: new Decimal('0.2') }, 'admin1')).rejects.toThrow(
       new NotFoundException('Tax "missing" not found'),
     );
     expect(repository.update).not.toHaveBeenCalled();

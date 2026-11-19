@@ -1,7 +1,8 @@
-import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { RefundStatus } from '../../generated/prisma/client';
 import { Decimal } from '@prisma/client/runtime/client';
 import { RefundStatusEnum } from '../enums/refund-status.enum';
+import { MoneyObject } from '../../commons/money/money.object';
 
 @ObjectType()
 export class RefundEntity {
@@ -14,7 +15,7 @@ export class RefundEntity {
   @Field(() => ID, { nullable: true, description: 'Set when the refund belongs to a return request' })
   returnRequestId?: string | null;
 
-  @Field(() => Float)
+  @Field(() => MoneyObject)
   amount: Decimal;
 
   @Field()

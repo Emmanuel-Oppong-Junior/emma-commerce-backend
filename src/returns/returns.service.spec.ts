@@ -8,6 +8,7 @@ import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 import { RefundsService } from './refunds.service';
 import { RefundRepository } from './refund.repository';
+import { Decimal } from '@prisma/client/runtime/client';
 
 const mockReturnsRepository = {
   create: jest.fn(),
@@ -135,7 +136,7 @@ describe('ReturnsService', () => {
       mockReturnsRepository.transitionStatus.mockResolvedValue(approved);
 
       const result = await service.approveReturn(
-        { returnRequestId: 'return1', refundAmount: 50, adminNote: 'Approved' },
+        { returnRequestId: 'return1', refundAmount: new Decimal('50'), adminNote: 'Approved' },
         'admin1',
       );
 
@@ -144,7 +145,7 @@ describe('ReturnsService', () => {
         'return1',
         'PENDING',
         'APPROVED',
-        { refundAmount: 50, adminNote: 'Approved' },
+        { refundAmount: new Decimal('50'), adminNote: 'Approved' },
         AUDIT_TX,
       );
     });
@@ -157,7 +158,7 @@ describe('ReturnsService', () => {
         refundAmount: 50,
       });
 
-      await service.approveReturn({ returnRequestId: 'return1', refundAmount: 50 }, 'admin1');
+      await service.approveReturn({ returnRequestId: 'return1', refundAmount: new Decimal('50') }, 'admin1');
 
       expect(mockAuditService.log).toHaveBeenCalledWith(
         {
@@ -175,9 +176,9 @@ describe('ReturnsService', () => {
       mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
       mockReturnsRepository.transitionStatus.mockResolvedValue(null);
 
-      await expect(service.approveReturn({ returnRequestId: 'return1', refundAmount: 50 }, 'admin1')).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.approveReturn({ returnRequestId: 'return1', refundAmount: new Decimal('50') }, 'admin1'),
+      ).rejects.toThrow(ConflictException);
       expect(mockAuditService.log).not.toHaveBeenCalled();
     });
 
@@ -185,16 +186,16 @@ describe('ReturnsService', () => {
       mockReturnsRepository.findById.mockResolvedValue(null);
 
       await expect(
-        service.approveReturn({ returnRequestId: 'nonexistent', refundAmount: 50 }, 'admin1'),
+        service.approveReturn({ returnRequestId: 'nonexistent', refundAmount: new Decimal('50') }, 'admin1'),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw BadRequestException if return is not pending', async () => {
       mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'APPROVED' });
 
-      await expect(service.approveReturn({ returnRequestId: 'return1', refundAmount: 50 }, 'admin1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.approveReturn({ returnRequestId: 'return1', refundAmount: new Decimal('50') }, 'admin1'),
+      ).rejects.toThrow(BadRequestException);
       expect(mockAuditService.log).not.toHaveBeenCalled();
     });
   });

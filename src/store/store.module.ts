@@ -3,10 +3,11 @@ import { CommonsModule } from '../commons/commons.module';
 import { StoreRepository } from './store.repository';
 import { StoreService } from './store.service';
 import { StoreResolver } from './store.resolver';
+import { MoneyResolver } from './money.resolver';
 
 @Module({
   imports: [CommonsModule],
-  providers: [StoreRepository, StoreService, StoreResolver],
+  providers: [StoreRepository, StoreService, StoreResolver, MoneyResolver],
   exports: [StoreRepository, StoreService],
 })
 export class StoreModule {}

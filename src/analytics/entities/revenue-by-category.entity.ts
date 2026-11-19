@@ -1,4 +1,6 @@
-import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
+import { MoneyObject } from '../../commons/money/money.object';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class RevenueByCategoryEntity {
@@ -8,8 +10,8 @@ export class RevenueByCategoryEntity {
   @Field({ nullable: true })
   categoryName?: string;
 
-  @Field(() => Float, { description: 'Item sales of this category in paid orders (unit price paid x quantity)' })
-  totalRevenue: number;
+  @Field(() => MoneyObject, { description: 'Item sales of this category in paid orders (unit price paid x quantity)' })
+  totalRevenue: Decimal;
 
   @Field(() => Int, { description: 'Paid orders containing this category' })
   orderCount: number;

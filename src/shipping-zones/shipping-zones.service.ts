@@ -94,17 +94,16 @@ export class ShippingZonesService {
     if (!zone) {
       throw new BadRequestException(`Delivery is not available to city "${city}": no active shipping zone covers it`);
     }
-    return zone.fee as unknown as Decimal;
+    return zone.fee;
   }
 
   /**
    * Returns the shipping fee for a user's saved address.
    * Verifies the address belongs to the requesting user before looking up the fee.
    */
-  async getFeeForAddress(addressId: string, userId: string): Promise<number> {
+  async getFeeForAddress(addressId: string, userId: string): Promise<Decimal> {
     const address = await this.addressesService.getAddress(userId, addressId);
-    const fee = await this.getFeeForCity(address.city);
-    return Number(fee);
+    return this.getFeeForCity(address.city);
   }
 
   private normaliseCities(cities: string[]): string[] {

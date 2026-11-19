@@ -1,5 +1,7 @@
-import { Field, Float, InputType } from '@nestjs/graphql';
-import { IsNumber, IsString, Min } from 'class-validator';
+import { Field, InputType } from '@nestjs/graphql';
+import { IsString } from 'class-validator';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class ValidateCouponInput {
@@ -7,8 +9,7 @@ export class ValidateCouponInput {
   @IsString()
   code: string;
 
-  @Field(() => Float)
-  @IsNumber()
-  @Min(0)
-  orderTotal: number;
+  @DecimalInputField()
+  @IsMoneyAmount()
+  orderTotal: Decimal;
 }

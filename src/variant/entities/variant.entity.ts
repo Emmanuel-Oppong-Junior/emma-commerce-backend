@@ -1,5 +1,7 @@
-import { Field, Float, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { Product } from '../../products/entities/product.entity';
+import { MoneyObject } from '../../commons/money/money.object';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class Variant {
@@ -15,8 +17,8 @@ export class Variant {
   @Field()
   quantity: number;
 
-  @Field(() => Float)
-  price: number;
+  @Field(() => MoneyObject)
+  price: Decimal;
 
   @Field(() => ID)
   productId: string;

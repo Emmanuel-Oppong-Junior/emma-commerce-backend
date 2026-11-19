@@ -1,4 +1,6 @@
-import { Field, Float, Int, ObjectType } from '@nestjs/graphql';
+import { Field, Int, ObjectType } from '@nestjs/graphql';
+import { MoneyObject } from '../../commons/money/money.object';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class DashboardSummary {
@@ -8,14 +10,14 @@ export class DashboardSummary {
   @Field(() => Int, { description: 'Orders paid today (salesReport.orderCount for today)' })
   ordersToday: number;
 
-  @Field(() => Float, { description: 'Net revenue today (salesReport.netRevenue for today)' })
-  revenueToday: number;
+  @Field(() => MoneyObject, { description: 'Net revenue today (salesReport.netRevenue for today)' })
+  revenueToday: Decimal;
 
-  @Field(() => Float, { description: 'Payments accepted today (salesReport.grossRevenue for today)' })
-  grossRevenueToday: number;
+  @Field(() => MoneyObject, { description: 'Payments accepted today (salesReport.grossRevenue for today)' })
+  grossRevenueToday: Decimal;
 
-  @Field(() => Float, { description: 'Refunds processed today (salesReport.refunds for today)' })
-  refundsToday: number;
+  @Field(() => MoneyObject, { description: 'Refunds processed today (salesReport.refunds for today)' })
+  refundsToday: Decimal;
 
   @Field(() => Int)
   lowStockProductCount: number;

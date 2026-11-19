@@ -13,6 +13,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { ProductStatusEnum } from './enums/product.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
+import { Decimal } from '@prisma/client/runtime/client';
 
 const mockProductsRepository = {
   create: jest.fn(),
@@ -58,7 +59,7 @@ describe('ProductsService', () => {
   describe('create', () => {
     const input: CreateProductInput = {
       name: 'T-Shirt',
-      basePrice: '19.99',
+      basePrice: new Decimal('19.99'),
       isTaxable: false,
       quantity: 100,
       categoryId: 'cat1',
@@ -80,7 +81,7 @@ describe('ProductsService', () => {
       expect(productsRepository.findCategoryById).toHaveBeenCalledWith('cat1');
       expect(productsRepository.findSubCategoryById).toHaveBeenCalledWith('sub1');
       expect(productsRepository.create).toHaveBeenCalledWith(
-        { ...input, price: '19.99' },
+        { ...input, basePrice: '19.99', price: '19.99' },
         { category: true, subcategory: true },
         AUDIT_TX,
       );
@@ -94,7 +95,7 @@ describe('ProductsService', () => {
       mockProductsRepository.findFirst.mockResolvedValue(null);
       mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.15'));
 
-      await service.create({ ...input, basePrice: '100.00', isTaxable: true }, 'admin1');
+      await service.create({ ...input, basePrice: new Decimal('100.00'), isTaxable: true }, 'admin1');
 
       expect(productsRepository.create).toHaveBeenCalledWith(
         expect.objectContaining({ basePrice: '100.00', price: '115.00', isTaxable: true }),
@@ -328,7 +329,7 @@ describe('ProductsService', () => {
   });
 
   describe('update', () => {
-    const updateInput: UpdateProductInput = { name: 'Updated T-Shirt', basePrice: '29.99' };
+    const updateInput: UpdateProductInput = { name: 'Updated T-Shirt', basePrice: new Decimal('29.99') };
 
     it('should update a product successfully', async () => {
       const product = {
@@ -536,7 +537,10 @@ describe('ProductsService', () => {
       [
         'create',
         () =>
-          service.create({ name: 'Mug', basePrice: '10.00', isTaxable: true, quantity: 1, isActive: true }, 'admin1'),
+          service.create(
+            { name: 'Mug', basePrice: new Decimal('10.00'), isTaxable: true, quantity: 1, isActive: true },
+            'admin1',
+          ),
         {
           entityId: 'prod2',
           action: 'CREATE',
@@ -547,7 +551,7 @@ describe('ProductsService', () => {
       ],
       [
         'update (price)',
-        () => service.update('prod1', { basePrice: '150.00', isTaxable: true }, 'admin1'),
+        () => service.update('prod1', { basePrice: new Decimal('150.00'), isTaxable: true }, 'admin1'),
         {
           entityId: 'prod1',
           action: 'UPDATE',

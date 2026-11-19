@@ -71,8 +71,8 @@ export function bestUnitPrice(price: Decimal.Value, discounts: readonly Candidat
 
 export function toDiscountCalculation(unit: UnitPrice): DiscountCalculation {
   return {
-    discountedPrice: unit.discountedUnitPrice.toNumber(),
-    discountAmount: unit.unitDiscount.toNumber(),
+    discountedPrice: unit.discountedUnitPrice,
+    discountAmount: unit.unitDiscount,
     ...(unit.discountId && { discountId: unit.discountId }),
   };
 }

@@ -70,7 +70,7 @@ export const getTodayDate = () => {
  */
 export const extractRequestedFieldsFromQuery = (
   info: GraphQLResolveInfo,
-  options: { excludedFields?: string[]; level?: 1 | 2 | 3 } = { excludedFields: [], level: 1 },
+  options: { excludedFields?: string[]; scalarFields?: string[]; level?: 1 | 2 | 3 } = { excludedFields: [], level: 1 },
 ): object => {
   if (!info) return {};
   const prismaSelect: Record<string, unknown> = {};
@@ -92,7 +92,8 @@ export const extractRequestedFieldsFromQuery = (
       if (sel.kind === 'Field') {
         // Check if the field should be excluded
         if (!(options.excludedFields ?? []).includes(sel?.name?.value ?? '')) {
-          if (sel.selectionSet) {
+          // A column exposed as an object type (a Money amount) is still one scalar to select.
+          if (sel.selectionSet && !(options.scalarFields ?? []).includes(sel.name!.value)) {
             // Include at least the id to prevent an error if the excluded field was the only child
             currentSelect[sel.name!.value] = { id: true };
             parseSelectionSet(sel.selectionSet, currentSelect[sel.name!.value] as Record<string, unknown>);

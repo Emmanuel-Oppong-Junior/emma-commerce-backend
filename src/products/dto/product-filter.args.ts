@@ -1,6 +1,8 @@
-import { Field, Float, InputType } from '@nestjs/graphql';
-import { IsBoolean, IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { Field, InputType } from '@nestjs/graphql';
+import { IsBoolean, IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
 import { ProductStatusEnum } from '../enums/product.enum';
+import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
 export class ProductFilterArgs {
@@ -60,23 +62,21 @@ export class ProductFilterArgs {
   @IsDateString()
   createdAfter?: string;
 
-  @Field(() => Float, {
+  @DecimalInputField({
     nullable: true,
     description: 'Filter by minimum price (inclusive)',
   })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  priceMin?: number;
+  @IsMoneyAmount()
+  priceMin?: Decimal;
 
-  @Field(() => Float, {
+  @DecimalInputField({
     nullable: true,
     description: 'Filter by maximum price (inclusive)',
   })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  priceMax?: number;
+  @IsMoneyAmount()
+  priceMax?: Decimal;
 
   @Field(() => String, {
     nullable: true,

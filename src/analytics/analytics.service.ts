@@ -69,15 +69,15 @@ export class AnalyticsService {
       FROM totals t, items i, refunded r
     `;
 
-    const netRevenue = Number(row.netRevenue);
+    const netRevenue = new Prisma.Decimal(row.netRevenue);
     return {
-      grossRevenue: Number(row.grossRevenue),
-      refunds: Number(row.refunds),
+      grossRevenue: new Prisma.Decimal(row.grossRevenue),
+      refunds: new Prisma.Decimal(row.refunds),
       netRevenue,
       totalRevenue: netRevenue,
-      itemSales: Number(row.itemSales),
+      itemSales: new Prisma.Decimal(row.itemSales),
       orderCount: row.orderCount,
-      averageOrderValue: Number(row.averageOrderValue),
+      averageOrderValue: new Prisma.Decimal(row.averageOrderValue),
     };
   }
 
@@ -109,8 +109,9 @@ export class AnalyticsService {
     return rows.map((r) => ({
       productId: r.productId,
       productName: r.productName,
+      // eslint-disable-next-line no-restricted-syntax -- a unit count (SUM returns bigint), not money
       totalQuantitySold: Number(r.totalQuantitySold),
-      totalRevenue: Number(r.totalRevenue),
+      totalRevenue: new Prisma.Decimal(r.totalRevenue),
     }));
   }
 
@@ -139,7 +140,8 @@ export class AnalyticsService {
     return rows.map((r) => ({
       categoryId: r.categoryId ?? undefined,
       categoryName: r.categoryName ?? undefined,
-      totalRevenue: Number(r.totalRevenue),
+      totalRevenue: new Prisma.Decimal(r.totalRevenue),
+      // eslint-disable-next-line no-restricted-syntax -- an order count (COUNT returns bigint), not money
       orderCount: Number(r.orderCount),
     }));
   }
@@ -159,11 +161,15 @@ export class AnalyticsService {
       this.prisma.$queryRaw<[{ count: bigint }]>`
         SELECT COUNT(*)::bigint AS count FROM "Product"
         WHERE "isActive" = true AND quantity <= COALESCE("lowStockAlert", 5)
-      `.then((r) => Number(r[0].count)),
+      `
+        // eslint-disable-next-line no-restricted-syntax -- a row count (COUNT returns bigint), not money
+        .then((r) => Number(r[0].count)),
       this.prisma.$queryRaw<[{ count: bigint }]>`
         SELECT COUNT(*)::bigint AS count FROM "Variant"
         WHERE quantity <= COALESCE("lowStockThreshold", 5)
-      `.then((r) => Number(r[0].count)),
+      `
+        // eslint-disable-next-line no-restricted-syntax -- a row count (COUNT returns bigint), not money
+        .then((r) => Number(r[0].count)),
     ]);
 
     return {

@@ -1,10 +1,11 @@
-import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
+import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { FulfillmentTypeEnum, OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
 import { FulfillmentType, OrderStatus, PaymentMethod } from '../../generated/prisma/client';
 import { OrderItem } from './order-item.entity';
 import { Decimal } from '@prisma/client/runtime/client';
 import GraphQLJSON from 'graphql-type-json';
 import { User } from '../../users/entities/user.entity';
+import { MoneyObject } from '../../commons/money/money.object';
 
 @ObjectType()
 export class Order {
@@ -17,28 +18,28 @@ export class Order {
   @Field(() => ID)
   userId: string;
 
-  @Field(() => Float, {
+  @Field(() => MoneyObject, {
     nullable: true,
     description: 'Sum of item prices charged at order time, after product discounts; null on older orders',
   })
   subtotal?: Decimal;
 
-  @Field(() => Float, {
+  @Field(() => MoneyObject, {
     nullable: true,
     description: 'Shipping fee charged at order time (0 for pickup); null on older orders',
   })
   shippingFee?: Decimal;
 
-  @Field(() => Float, { description: 'Amount charged: subtotal + shippingFee - couponDiscount' })
+  @Field(() => MoneyObject, { description: 'Amount charged: subtotal + shippingFee - couponDiscount' })
   totalAmount: Decimal;
 
-  @Field(() => Float, { description: 'Product discounts taken off the list prices at checkout', nullable: true })
+  @Field(() => MoneyObject, { description: 'Product discounts taken off the list prices at checkout', nullable: true })
   discountTotal?: Decimal;
 
-  @Field(() => Float, { description: 'Final total after discounts', nullable: true })
+  @Field(() => MoneyObject, { description: 'Final total after discounts', nullable: true })
   finalTotal?: Decimal;
 
-  @Field(() => Float, { nullable: true, description: 'Coupon discount amount' })
+  @Field(() => MoneyObject, { nullable: true, description: 'Coupon discount amount' })
   couponDiscount?: Decimal;
 
   @Field(() => OrderStatusEnum)

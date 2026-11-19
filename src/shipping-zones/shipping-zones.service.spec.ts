@@ -73,7 +73,10 @@ describe('ShippingZonesService', () => {
 
   describe('create', () => {
     it('stores normalised, de-duplicated cities', async () => {
-      await service.create({ name: 'Greater Accra', cities: [' Accra ', 'accra', 'East  Legon'], fee: 15 }, 'admin1');
+      await service.create(
+        { name: 'Greater Accra', cities: [' Accra ', 'accra', 'East  Legon'], fee: new Decimal('15') },
+        'admin1',
+      );
 
       expect(repository.create).toHaveBeenCalledWith(
         expect.objectContaining({ cities: ['accra', 'east legon'] }),
@@ -84,7 +87,9 @@ describe('ShippingZonesService', () => {
     it('rejects a city that another zone already covers', async () => {
       repository.findCoveringAnyCity.mockResolvedValue([greaterAccra]);
 
-      await expect(service.create({ name: 'Coastal', cities: ['Tema', 'Ada'], fee: 20 }, 'admin1')).rejects.toThrow(
+      await expect(
+        service.create({ name: 'Coastal', cities: ['Tema', 'Ada'], fee: new Decimal('20') }, 'admin1'),
+      ).rejects.toThrow(
         new ConflictException('Cities already covered by another shipping zone: "tema" (zone "Greater Accra")'),
       );
       expect(repository.findCoveringAnyCity).toHaveBeenCalledWith(['tema', 'ada'], undefined);
@@ -92,9 +97,9 @@ describe('ShippingZonesService', () => {
     });
 
     it('rejects a blank city', async () => {
-      await expect(service.create({ name: 'Blank', cities: ['Accra', '   '], fee: 5 }, 'admin1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.create({ name: 'Blank', cities: ['Accra', '   '], fee: new Decimal('5') }, 'admin1'),
+      ).rejects.toThrow(BadRequestException);
       expect(repository.create).not.toHaveBeenCalled();
     });
   });
@@ -117,10 +122,10 @@ describe('ShippingZonesService', () => {
     });
 
     it('does not check overlap when the cities are unchanged', async () => {
-      await service.update('zone-accra', { fee: 20 }, 'admin1');
+      await service.update('zone-accra', { fee: new Decimal('20') }, 'admin1');
 
       expect(repository.findCoveringAnyCity).not.toHaveBeenCalled();
-      expect(repository.update).toHaveBeenCalledWith('zone-accra', { fee: 20 }, AUDIT_TX);
+      expect(repository.update).toHaveBeenCalledWith('zone-accra', { fee: new Decimal('20') }, AUDIT_TX);
     });
   });
 
@@ -130,16 +135,16 @@ describe('ShippingZonesService', () => {
     it.each<[string, () => Promise<unknown>, object]>([
       [
         'create',
-        () => service.create({ name: 'Greater Accra', cities: ['Accra', 'Tema'], fee: 15 }, 'admin1'),
+        () => service.create({ name: 'Greater Accra', cities: ['Accra', 'Tema'], fee: new Decimal('15') }, 'admin1'),
         {
           action: 'CREATE',
-          details: { after: { name: 'Greater Accra', cities: ['accra', 'tema'], fee: 15, isActive: true } },
+          details: { after: { name: 'Greater Accra', cities: ['accra', 'tema'], fee: '15', isActive: true } },
         },
       ],
       [
         'update',
-        () => service.update('zone-accra', { fee: 20 }, 'admin1'),
-        { action: 'UPDATE', details: { changes: { fee: { from: '15', to: 20 } } } },
+        () => service.update('zone-accra', { fee: new Decimal('20') }, 'admin1'),
+        { action: 'UPDATE', details: { changes: { fee: { from: '15', to: '20' } } } },
       ],
       [
         'delete',
@@ -162,7 +167,7 @@ describe('ShippingZonesService', () => {
     it('rejects an update of an unknown zone without writing', async () => {
       repository.findById.mockResolvedValue(null);
 
-      await expect(service.update('missing', { fee: 20 }, 'admin1')).rejects.toThrow(
+      await expect(service.update('missing', { fee: new Decimal('20') }, 'admin1')).rejects.toThrow(
         'Shipping zone "missing" not found',
       );
       expect(repository.update).not.toHaveBeenCalled();

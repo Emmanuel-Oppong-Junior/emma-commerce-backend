@@ -1,8 +1,11 @@
-import { Field, Float, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
+import { Field, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
 import { DiscountType } from '../enums/discount-type.enum';
 import { Product } from '../../products/entities/product.entity';
 import { Variant } from '../../variant/entities/variant.entity';
 import { Category } from '../../categories/entities/category.entity';
+import { MoneyObject } from '../../commons/money/money.object';
+import { GraphQLDecimal } from '../../commons/money/decimal.scalar';
+import { Decimal } from '@prisma/client/runtime/client';
 
 /**
  * GraphQL entity representing a discount in the e-commerce system.
@@ -21,8 +24,8 @@ export class Discount {
   @Field(() => DiscountType, { description: 'Type of discount (e.g., PERCENTAGE or FIXED_AMOUNT)' })
   type: DiscountType;
 
-  @Field(() => Float, { description: 'Discount value (e.g., 20 for 20% or 10.00 for $10 off)' })
-  value: number;
+  @Field(() => GraphQLDecimal, { description: 'Discount value (e.g., 20 for 20% or 10.00 for $10 off)' })
+  value: Decimal;
 
   @Field(() => GraphQLISODateTime, { description: 'Start date and time of the discount' })
   startDate: Date;
@@ -42,8 +45,8 @@ export class Discount {
   @Field(() => [Category], { description: 'Categories to which the discount applies', nullable: true })
   categories: Category[];
 
-  @Field(() => Float, { description: 'Minimum purchase amount to qualify for the discount', nullable: true })
-  minimumPurchase?: number;
+  @Field(() => MoneyObject, { description: 'Minimum purchase amount to qualify for the discount', nullable: true })
+  minimumPurchase?: Decimal;
 
   @Field(() => GraphQLISODateTime, { description: 'Timestamp when the discount was created' })
   createdAt: Date;

@@ -64,13 +64,13 @@ describe('AnalyticsService', () => {
       const result = await service.getSalesReport(new Date('2025-01-01'), new Date('2025-01-31'));
 
       expect(result).toEqual({
-        grossRevenue: 375,
-        refunds: 40,
-        netRevenue: 335,
-        totalRevenue: 335,
-        itemSales: 340,
+        grossRevenue: new Prisma.Decimal('375'),
+        refunds: new Prisma.Decimal('40'),
+        netRevenue: new Prisma.Decimal('335'),
+        totalRevenue: new Prisma.Decimal('335'),
+        itemSales: new Prisma.Decimal('340'),
         orderCount: 3,
-        averageOrderValue: 125,
+        averageOrderValue: new Prisma.Decimal('125'),
       });
     });
 
@@ -90,7 +90,12 @@ describe('AnalyticsService', () => {
 
       const result = await service.getSalesReport(start, end);
 
-      expect(result).toMatchObject({ grossRevenue: 0, netRevenue: 0, orderCount: 0, averageOrderValue: 0 });
+      expect(result).toMatchObject({
+        grossRevenue: new Prisma.Decimal('0'),
+        netRevenue: new Prisma.Decimal('0'),
+        orderCount: 0,
+        averageOrderValue: new Prisma.Decimal('0'),
+      });
       const call = mockPrisma.$queryRaw.mock.calls[0];
       const sql = sqlOf(call);
       expect(sql).toContain(`pa.status = 'COMPLETED' AND pa."reviewReason" IS NULL AND pa.deleted = false`);
@@ -120,8 +125,8 @@ describe('AnalyticsService', () => {
       const result = await service.getTopProducts(5);
 
       expect(result).toEqual([
-        { productId: 'p1', productName: 'T-Shirt', totalQuantitySold: 50, totalRevenue: 999.5 },
-        { productId: 'p2', productName: 'Hoodie', totalQuantitySold: 30, totalRevenue: 1500 },
+        { productId: 'p1', productName: 'T-Shirt', totalQuantitySold: 50, totalRevenue: new Prisma.Decimal('999.5') },
+        { productId: 'p2', productName: 'Hoodie', totalQuantitySold: 30, totalRevenue: new Prisma.Decimal('1500') },
       ]);
       expect(sqlOf(mockPrisma.$queryRaw.mock.calls[0])).toContain(`pa."reviewReason" IS NULL`);
     });
@@ -148,8 +153,8 @@ describe('AnalyticsService', () => {
       const result = await service.getRevenueByCategory();
 
       expect(result).toEqual([
-        { categoryId: 'cat1', categoryName: 'Clothing', totalRevenue: 3000, orderCount: 15 },
-        { categoryId: undefined, categoryName: undefined, totalRevenue: 500, orderCount: 5 },
+        { categoryId: 'cat1', categoryName: 'Clothing', totalRevenue: new Prisma.Decimal('3000'), orderCount: 15 },
+        { categoryId: undefined, categoryName: undefined, totalRevenue: new Prisma.Decimal('500'), orderCount: 5 },
       ]);
       expect(sqlOf(mockPrisma.$queryRaw.mock.calls[0])).toContain(`pa."reviewReason" IS NULL`);
     });
@@ -179,9 +184,9 @@ describe('AnalyticsService', () => {
       expect(result).toEqual({
         totalUsers: 100,
         ordersToday: 5,
-        revenueToday: 1250,
-        grossRevenueToday: 1300,
-        refundsToday: 50,
+        revenueToday: new Prisma.Decimal('1250'),
+        grossRevenueToday: new Prisma.Decimal('1300'),
+        refundsToday: new Prisma.Decimal('50'),
         lowStockProductCount: 3,
         lowStockVariantCount: 7,
       });
@@ -213,7 +218,12 @@ describe('AnalyticsService', () => {
 
       const result = await service.getDashboardSummary();
 
-      expect(result).toMatchObject({ totalUsers: 0, ordersToday: 0, revenueToday: 0, refundsToday: 0 });
+      expect(result).toMatchObject({
+        totalUsers: 0,
+        ordersToday: 0,
+        revenueToday: new Prisma.Decimal('0'),
+        refundsToday: new Prisma.Decimal('0'),
+      });
     });
   });
 });
