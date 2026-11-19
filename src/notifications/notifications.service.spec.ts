@@ -21,7 +21,7 @@ describe('NotificationsService', () => {
     ['sendWelcomeEmail', (s) => s.sendWelcomeEmail('kwame@gmail.com', 'Kwame'), 'sendWelcomeEmail'],
     [
       'sendOrderConfirmation',
-      (s) => s.sendOrderConfirmation('kwame@gmail.com', 'o1', 10),
+      (s) => s.sendOrderConfirmation('kwame@gmail.com', 'o1', '10.00'),
       'sendOrderConfirmationEmail',
     ],
     [
@@ -31,7 +31,7 @@ describe('NotificationsService', () => {
     ],
     [
       'sendPaymentConfirmation',
-      (s) => s.sendPaymentConfirmation('kwame@gmail.com', 'o1', 10),
+      (s) => s.sendPaymentConfirmation('kwame@gmail.com', 'o1', '10.00'),
       'sendPaymentConfirmationEmail',
     ],
     ['sendPasswordReset', (s) => s.sendPasswordReset('kwame@gmail.com', 'token-123'), 'sendPasswordResetEmail'],
@@ -67,8 +67,8 @@ describe('NotificationsService', () => {
     const { service, emailService } = buildNotificationsService();
     emailService.sendPaymentConfirmationEmail.mockResolvedValue(undefined);
 
-    service.sendPaymentConfirmation('kwame@gmail.com', 'order-1', 250);
+    service.sendPaymentConfirmation('kwame@gmail.com', 'order-1', '250.00');
 
-    expect(emailService.sendPaymentConfirmationEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order-1', 250);
+    expect(emailService.sendPaymentConfirmationEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order-1', '250.00');
   });
 });

@@ -14,7 +14,7 @@ export function welcomeEmailHtml(name: string): string {
   return `<h1>Welcome${name ? `, ${escapeHtml(name)}` : ''}!</h1><p>Thanks for joining Emma Commerce. Start shopping today.</p>`;
 }
 
-export function orderConfirmationEmailHtml(orderId: string, totalAmount: number): string {
+export function orderConfirmationEmailHtml(orderId: string, totalAmount: string): string {
   return `<h1>Order Confirmed</h1><p>Your order <strong>#${escapeHtml(orderId)}</strong> has been placed successfully. Total: <strong>${escapeHtml(totalAmount)}</strong>.</p>`;
 }
 
@@ -23,7 +23,7 @@ export function orderStatusEmailHtml(orderId: string, status: string, trackingNu
   return `<h1>Order Update</h1><p>Your order <strong>#${escapeHtml(orderId)}</strong> is now <strong>${escapeHtml(status)}</strong>.</p>${tracking}`;
 }
 
-export function paymentConfirmationEmailHtml(orderId: string, amount: number): string {
+export function paymentConfirmationEmailHtml(orderId: string, amount: string): string {
   return `<h1>Payment Confirmed</h1><p>We received your payment of <strong>${escapeHtml(amount)}</strong> for order <strong>#${escapeHtml(orderId)}</strong>.</p>`;
 }
 

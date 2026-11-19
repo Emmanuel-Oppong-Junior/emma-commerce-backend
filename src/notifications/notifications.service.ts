@@ -24,7 +24,7 @@ export class NotificationsService {
    * @param orderId - The ID of the placed order.
    * @param totalAmount - The total amount charged for the order.
    */
-  sendOrderConfirmation(to: string, orderId: string, totalAmount: number): void {
+  sendOrderConfirmation(to: string, orderId: string, totalAmount: string): void {
     this.fireAndForget('order confirmation', this.emailService.sendOrderConfirmationEmail(to, orderId, totalAmount));
   }
 
@@ -45,7 +45,7 @@ export class NotificationsService {
    * @param orderId - The ID of the order that was paid.
    * @param amount - The amount that was charged.
    */
-  sendPaymentConfirmation(to: string, orderId: string, amount: number): void {
+  sendPaymentConfirmation(to: string, orderId: string, amount: string): void {
     this.fireAndForget('payment confirmation', this.emailService.sendPaymentConfirmationEmail(to, orderId, amount));
   }
 

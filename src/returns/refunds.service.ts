@@ -4,6 +4,7 @@ import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
 import { PaystackClient, PaystackRequestRejected } from '../payment/paystack.client';
 import { assertRefundable } from './refund-cap';
+import { toMinorUnits } from '../commons/money/money';
 import { RecordedRefund, RefundRepository } from './refund.repository';
 
 /**
@@ -93,7 +94,7 @@ export class RefundsService {
     try {
       ({ id: providerRefundId } = await this.paystack.createRefund({
         transaction: reference,
-        amount: refund.amount.mul(100).toNumber(),
+        amount: toMinorUnits(refund.amount),
       }));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

@@ -4,6 +4,7 @@ import { CouponsRepository } from './coupons.repository';
 import { CreateCouponInput } from './dto/create-coupon.input';
 import { UpdateCouponInput } from './dto/update-coupon.input';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+import { roundHalfUp } from '../commons/money/money';
 
 const AUDITED_COUPON_FIELDS = [
   'code',
@@ -127,15 +128,15 @@ export class CouponsService {
    * @param code - The coupon code to validate.
    * @param userId - The ID of the user applying the coupon.
    * @param orderTotal - The current order subtotal before the discount.
-   * @returns The calculated discount amount and the coupon record.
+   * @returns The discount amount, rounded half-up to 2 dp, and the coupon record.
    * @throws NotFoundException if the coupon code does not exist.
    * @throws BadRequestException if the coupon is inactive, expired, over its usage limit, or the order total is too low.
    */
   async validateCoupon(
     code: string,
     userId: string,
-    orderTotal: number,
-  ): Promise<{ discountAmount: number; coupon: Coupon }> {
+    orderTotal: Prisma.Decimal,
+  ): Promise<{ discountAmount: Prisma.Decimal; coupon: Coupon }> {
     const coupon = await this.couponsRepository.findByCode(code.toUpperCase());
     if (!coupon) throw new NotFoundException(`Coupon code "${code}" not found`);
     if (!coupon.isActive) throw new BadRequestException('This coupon is no longer active');
@@ -143,16 +144,17 @@ export class CouponsService {
     if (coupon.usageLimit !== null && coupon.usageLimit !== undefined && coupon.usedCount >= coupon.usageLimit) {
       throw new BadRequestException('This coupon has reached its usage limit');
     }
-    if (coupon.minimumOrderAmount && orderTotal < Number(coupon.minimumOrderAmount)) {
+    if (coupon.minimumOrderAmount && orderTotal.lt(coupon.minimumOrderAmount)) {
       throw new BadRequestException(`Order total must be at least ${coupon.minimumOrderAmount} to use this coupon`);
     }
     const alreadyUsed = await this.couponsRepository.hasUserUsedCoupon(coupon.id, userId);
     if (alreadyUsed) throw new BadRequestException('You have already used this coupon');
 
-    const discountAmount =
+    const discountAmount = roundHalfUp(
       coupon.discountType === 'PERCENTAGE'
-        ? (orderTotal * Number(coupon.value)) / 100
-        : Math.min(Number(coupon.value), orderTotal);
+        ? orderTotal.mul(coupon.value).div(100)
+        : Prisma.Decimal.min(coupon.value, orderTotal),
+    );
 
     return { discountAmount, coupon };
   }

@@ -8,6 +8,7 @@ import { ValidateCouponInput } from './dto/validate-coupon.input';
 import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { Role } from '../users/enums/role.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
+import { Prisma } from '../generated/prisma/client';
 
 @Resolver(() => Coupon)
 export class CouponsResolver {
@@ -53,7 +54,15 @@ export class CouponsResolver {
     @ActiveUser('id') userId: string,
     @Args('input') input: ValidateCouponInput,
   ): Promise<CouponValidation> {
-    const { discountAmount } = await this.couponsService.validateCoupon(input.code, userId, input.orderTotal);
-    return { valid: true, discountAmount, message: `Coupon applied. You save ${discountAmount}.` };
+    const { discountAmount } = await this.couponsService.validateCoupon(
+      input.code,
+      userId,
+      new Prisma.Decimal(input.orderTotal),
+    );
+    return {
+      valid: true,
+      discountAmount: discountAmount.toNumber(),
+      message: `Coupon applied. You save ${discountAmount.toFixed(2)}.`,
+    };
   }
 }

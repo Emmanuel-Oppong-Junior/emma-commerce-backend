@@ -394,7 +394,11 @@ describe('PaymentService', () => {
       await service.verifyPayment(reference);
       await flushPromises();
 
-      expect(mockNotificationsService.sendPaymentConfirmation).toHaveBeenCalledWith('buyer@example.com', 'order1', 250);
+      expect(mockNotificationsService.sendPaymentConfirmation).toHaveBeenCalledWith(
+        'buyer@example.com',
+        'order1',
+        '250.00',
+      );
     });
 
     it('does not email again when the attempt was already settled (repeat webhook or re-verify)', async () => {

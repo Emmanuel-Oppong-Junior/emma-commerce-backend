@@ -27,7 +27,7 @@ describe('EmailService', () => {
     mockSend.mockResolvedValue({ data: { id: 'email-1' }, error: null });
     const { service, logger } = buildEmailService('re_test_key');
 
-    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', 120);
+    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00');
 
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining(`Email sent`), 'EmailService');
     expect(logger.error).not.toHaveBeenCalled();
@@ -42,7 +42,7 @@ describe('EmailService', () => {
     });
     const { service, logger } = buildEmailService('re_test_key');
 
-    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', 120);
+    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00');
 
     expect(logger.log).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(
@@ -57,7 +57,7 @@ describe('EmailService', () => {
     mockSend.mockRejectedValue(new Error('socket hang up'));
     const { service, logger } = buildEmailService('re_test_key');
 
-    await service.sendPaymentConfirmationEmail(RECIPIENT, 'order-1', 120);
+    await service.sendPaymentConfirmationEmail(RECIPIENT, 'order-1', '120.00');
 
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('Failed to send email'),

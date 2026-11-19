@@ -24,6 +24,7 @@ import { ReturnsService } from '../returns/returns.service';
 import { DiscountService } from '../discount/discount.service';
 import { priceCart } from '../discount/pricing';
 import { StoreService } from '../store/store.service';
+import { roundHalfUp } from '../commons/money/money';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
@@ -365,13 +366,9 @@ export class OrdersService {
     let couponId: string | undefined;
     let couponDiscount: Prisma.Decimal | undefined;
     if (couponCode) {
-      const { discountAmount, coupon } = await this.couponsService.validateCoupon(
-        couponCode,
-        userId,
-        priced.subtotal.toNumber(),
-      );
+      const { discountAmount, coupon } = await this.couponsService.validateCoupon(couponCode, userId, priced.subtotal);
       couponId = coupon.id;
-      couponDiscount = new Prisma.Decimal(discountAmount).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+      couponDiscount = discountAmount;
     }
 
     const totalAmount = Prisma.Decimal.max(0, priced.subtotal.add(shippingFee).sub(couponDiscount ?? 0));
@@ -389,8 +386,8 @@ export class OrdersService {
       ),
       subtotal: priced.subtotal,
       discountTotal: priced.discountTotal,
-      shippingFee: shippingFee.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
-      totalAmount: totalAmount.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
+      shippingFee: roundHalfUp(shippingFee),
+      totalAmount: roundHalfUp(totalAmount),
       couponId,
       couponDiscount: couponDiscount?.isZero() ? undefined : couponDiscount,
     };
@@ -560,7 +557,7 @@ export class OrdersService {
       .findUserById(userId)
       .then((user) => {
         if (user?.email) {
-          this.notificationsService.sendOrderConfirmation(user.email, order.id, Number(order.totalAmount));
+          this.notificationsService.sendOrderConfirmation(user.email, order.id, order.totalAmount.toFixed(2));
         }
       })
       .catch((error: unknown) => this.logEmailFailure('order confirmation', order.id, error));

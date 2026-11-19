@@ -34,11 +34,11 @@ describe('email templates', () => {
   });
 
   it.each([
-    ['order confirmation', orderConfirmationEmailHtml(SCRIPT, 10)],
+    ['order confirmation', orderConfirmationEmailHtml(SCRIPT, '10.00')],
     ['order status (id)', orderStatusEmailHtml(SCRIPT, 'SHIPPED')],
     ['order status (status)', orderStatusEmailHtml('order-1', SCRIPT)],
     ['order status (tracking number)', orderStatusEmailHtml('order-1', 'SHIPPED', SCRIPT)],
-    ['payment confirmation', paymentConfirmationEmailHtml(SCRIPT, 10)],
+    ['payment confirmation', paymentConfirmationEmailHtml(SCRIPT, '10.00')],
     ['password reset', passwordResetEmailHtml(SCRIPT)],
     ['email verification', emailVerificationEmailHtml(SCRIPT, 24)],
     ['email change notice', emailChangeRequestedEmailHtml(SCRIPT)],

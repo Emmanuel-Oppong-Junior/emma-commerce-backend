@@ -283,11 +283,14 @@ describe('OrdersService', () => {
       });
 
       it('takes the coupon off the discounted subtotal, before shipping', async () => {
-        mockCouponsService.validateCoupon.mockResolvedValue({ discountAmount: 18, coupon: { id: 'coupon1' } });
+        mockCouponsService.validateCoupon.mockResolvedValue({
+          discountAmount: new Decimal('18.00'),
+          coupon: { id: 'coupon1' },
+        });
 
         await ordersService.createOrderFromCart(mockUserId, { ...deliveryParams, couponCode: 'SAVE10' });
 
-        expect(mockCouponsService.validateCoupon).toHaveBeenCalledWith('SAVE10', mockUserId, 180);
+        expect(mockCouponsService.validateCoupon).toHaveBeenCalledWith('SAVE10', mockUserId, new Decimal('180'));
         expect(mockOrdersRepository.create).toHaveBeenCalledWith(
           expect.anything(),
           mockUserId,

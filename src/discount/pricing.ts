@@ -1,6 +1,7 @@
 import { DiscountType, Prisma } from '../generated/prisma/client';
 import { Decimal } from '@prisma/client/runtime/client';
 import { DiscountCalculation } from './types';
+import { roundHalfUp } from '../commons/money/money';
 
 type Money = Prisma.Decimal;
 const ZERO = new Prisma.Decimal(0);
@@ -40,7 +41,7 @@ export interface PricedCart {
 }
 
 function toCedis(value: Decimal.Value): Money {
-  return new Prisma.Decimal(value).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+  return roundHalfUp(value);
 }
 
 function unitSaving(unitPrice: Money, discount: CandidateDiscount): Money {

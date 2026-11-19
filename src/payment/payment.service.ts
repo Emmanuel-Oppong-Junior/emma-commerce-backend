@@ -19,6 +19,7 @@ import { assertCodCollectable } from './cash-on-delivery';
 import { AuditService } from '../commons/audit.service';
 import { InitializedTransaction, PaystackClient, VerifiedTransaction } from './paystack.client';
 import { StoreService } from '../store/store.service';
+import { toMinorUnits } from '../commons/money/money';
 
 @Injectable()
 export class PaymentService {
@@ -199,7 +200,7 @@ export class PaymentService {
     try {
       const transaction = await this.paystack.initializeTransaction({
         email,
-        amount: attempt.amount.mul(100).toNumber(),
+        amount: toMinorUnits(attempt.amount),
         currency: attempt.currency,
         reference,
         callback_url: this.configService.get('PAYSTACK_CALLBACK_URL'),
@@ -278,7 +279,7 @@ export class PaymentService {
 
     const { outcome, attempt } = settled;
     if (outcome.kind === 'paid') {
-      this.sendPaymentConfirmationEmail(attempt.orderId, Number(attempt.amount));
+      this.sendPaymentConfirmationEmail(attempt.orderId, attempt.amount.toFixed(2));
     } else if (outcome.kind === 'review') {
       this.logger.warn(
         `Payment needs review, order left unchanged and refund queued | reason: ${outcome.reason} | orderId: ${attempt.orderId} | paymentId: ${attempt.id} | refundId: ${settled.refundId} | provider amount: ${verified.amount} ${verified.currency}`,
@@ -289,7 +290,7 @@ export class PaymentService {
   }
 
   // Sent only on the PENDING -> PROCESSING transition, so repeat webhooks and re-verifies do not email twice.
-  private sendPaymentConfirmationEmail(orderId: string, amount: number): void {
+  private sendPaymentConfirmationEmail(orderId: string, amount: string): void {
     this.paymentRepository
       .findOrderWithUser(orderId)
       .then((order) => {

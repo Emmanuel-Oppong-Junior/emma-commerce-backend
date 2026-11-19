@@ -154,7 +154,7 @@ describe('CouponsService', () => {
 
   describe('validateCoupon', () => {
     const userId = 'user1';
-    const orderTotal = 100;
+    const orderTotal = new Prisma.Decimal(100);
 
     it('should validate a valid coupon and return discount amount for PERCENTAGE type', async () => {
       mockCouponsRepository.findByCode.mockResolvedValue(mockCoupon);
@@ -162,7 +162,7 @@ describe('CouponsService', () => {
 
       const result = await service.validateCoupon('SAVE10', userId, orderTotal);
 
-      expect(result.discountAmount).toBe(10);
+      expect(result.discountAmount.toFixed(2)).toBe('10.00');
       expect(result.coupon).toEqual(mockCoupon);
     });
 
@@ -173,7 +173,7 @@ describe('CouponsService', () => {
 
       const result = await service.validateCoupon('FLAT15', userId, orderTotal);
 
-      expect(result.discountAmount).toBe(15);
+      expect(result.discountAmount.toFixed(2)).toBe('15.00');
     });
 
     it('should cap FLAT discount at order total', async () => {
@@ -181,9 +181,9 @@ describe('CouponsService', () => {
       mockCouponsRepository.findByCode.mockResolvedValue(flatCoupon);
       mockCouponsRepository.hasUserUsedCoupon.mockResolvedValue(false);
 
-      const result = await service.validateCoupon('FLAT200', userId, 50);
+      const result = await service.validateCoupon('FLAT200', userId, new Prisma.Decimal(50));
 
-      expect(result.discountAmount).toBe(50);
+      expect(result.discountAmount.toFixed(2)).toBe('50.00');
     });
 
     it('should throw NotFoundException if coupon code not found', async () => {
@@ -220,7 +220,9 @@ describe('CouponsService', () => {
       const couponWithMin = { ...mockCoupon, minimumOrderAmount: new Prisma.Decimal(200) };
       mockCouponsRepository.findByCode.mockResolvedValue(couponWithMin);
 
-      await expect(service.validateCoupon('SAVE10', userId, 50)).rejects.toThrow(BadRequestException);
+      await expect(service.validateCoupon('SAVE10', userId, new Prisma.Decimal(50))).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should throw BadRequestException if user already used coupon', async () => {
@@ -239,7 +241,35 @@ describe('CouponsService', () => {
 
       const result = await service.validateCoupon('SAVE10', userId, orderTotal);
 
-      expect(result.discountAmount).toBe(10);
+      expect(result.discountAmount.toFixed(2)).toBe('10.00');
+    });
+
+    it('computes a percentage in exact decimals: 15% of 4.10 is 0.62, where float maths gave 0.61', async () => {
+      mockCouponsRepository.findByCode.mockResolvedValue({ ...mockCoupon, value: new Prisma.Decimal(15) });
+      mockCouponsRepository.hasUserUsedCoupon.mockResolvedValue(false);
+
+      const result = await service.validateCoupon('SAVE15', userId, new Prisma.Decimal('4.10'));
+
+      expect(result.discountAmount.toString()).toBe('0.62');
+    });
+
+    it('rounds a percentage discount half-up to 2 dp', async () => {
+      mockCouponsRepository.findByCode.mockResolvedValue({ ...mockCoupon, value: new Prisma.Decimal('33.33') });
+      mockCouponsRepository.hasUserUsedCoupon.mockResolvedValue(false);
+
+      const result = await service.validateCoupon('THIRD', userId, new Prisma.Decimal('10.05'));
+
+      expect(result.discountAmount.toString()).toBe('3.35');
+    });
+
+    it('accepts an order total exactly at the minimum', async () => {
+      mockCouponsRepository.findByCode.mockResolvedValue({
+        ...mockCoupon,
+        minimumOrderAmount: new Prisma.Decimal('49.99'),
+      });
+      mockCouponsRepository.hasUserUsedCoupon.mockResolvedValue(false);
+
+      await expect(service.validateCoupon('SAVE10', userId, new Prisma.Decimal('49.99'))).resolves.toBeDefined();
     });
   });
 

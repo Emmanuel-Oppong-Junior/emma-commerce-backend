@@ -36,7 +36,7 @@ export class EmailService {
     await this.send(to, 'Welcome to Emma Commerce!', welcomeEmailHtml(name));
   }
 
-  async sendOrderConfirmationEmail(to: string, orderId: string, totalAmount: number): Promise<void> {
+  async sendOrderConfirmationEmail(to: string, orderId: string, totalAmount: string): Promise<void> {
     await this.send(to, `Order Confirmed – #${orderId}`, orderConfirmationEmailHtml(orderId, totalAmount));
   }
 
@@ -44,7 +44,7 @@ export class EmailService {
     await this.send(to, `Your order #${orderId} is ${status}`, orderStatusEmailHtml(orderId, status, trackingNumber));
   }
 
-  async sendPaymentConfirmationEmail(to: string, orderId: string, amount: number): Promise<void> {
+  async sendPaymentConfirmationEmail(to: string, orderId: string, amount: string): Promise<void> {
     await this.send(to, `Payment received for order #${orderId}`, paymentConfirmationEmailHtml(orderId, amount));
   }
 
