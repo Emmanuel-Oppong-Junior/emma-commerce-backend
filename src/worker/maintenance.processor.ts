@@ -5,6 +5,7 @@ import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
 import { runJobInContext } from '../jobs/job-context';
 import { reportFailedJob } from '../observability/error-reporting';
+import { AppMetrics } from '../observability/metrics';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { LowStockTask } from '../inventory/tasks/low-stock.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
@@ -23,12 +24,13 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly lowStock: LowStockTask,
     private readonly payments: PaymentReconciliationTask,
     private readonly logger: LoggerService,
+    private readonly metrics: AppMetrics,
   ) {
     super();
   }
 
   process(job: Job): Promise<void> {
-    return runJobInContext(job, () => this.run(job));
+    return runJobInContext(job, () => this.metrics.observeJob(job, () => this.run(job)));
   }
 
   private async run(job: Job): Promise<void> {

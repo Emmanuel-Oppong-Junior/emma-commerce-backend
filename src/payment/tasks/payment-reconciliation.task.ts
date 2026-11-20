@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../../commons/logger.service';
 import { PaymentReconciliationService } from '../payment-reconciliation.service';
+import { AppMetrics } from '../../observability/metrics';
 
 const CONTEXT = 'PaymentReconciliationTask';
 
@@ -9,6 +10,7 @@ export class PaymentReconciliationTask {
   constructor(
     private readonly reconciliation: PaymentReconciliationService,
     private readonly logger: LoggerService,
+    private readonly metrics: AppMetrics,
   ) {}
 
   async sweep(): Promise<void> {
@@ -26,6 +28,10 @@ export class PaymentReconciliationTask {
 
   async diffPreviousDay(): Promise<void> {
     const summary = await this.reconciliation.diffPreviousDay(new Date());
-    if (summary === null) this.logger.log('Skipped: another instance is already diffing payments', CONTEXT);
+    if (summary === null) {
+      this.logger.log('Skipped: another instance is already diffing payments', CONTEXT);
+      return;
+    }
+    this.metrics.recordReconciliationMismatches(summary.mismatches);
   }
 }

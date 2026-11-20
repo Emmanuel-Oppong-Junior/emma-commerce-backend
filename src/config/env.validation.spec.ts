@@ -151,6 +151,22 @@ describe('envValidationSchema', () => {
     });
   });
 
+  describe('metrics', () => {
+    it('are on by default on port 9464', () => {
+      const { error, value } = validate({ ...baseEnv, NODE_ENV: 'development' });
+      expect(error).toBeUndefined();
+      expect(value).toMatchObject({ METRICS_ENABLED: 'true', METRICS_PORT: 9464 });
+    });
+
+    it.each(['yes', 'FALSE', '0'])('rejects METRICS_ENABLED=%s, which telemetry.ts would read as on', (flag) => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'development', METRICS_ENABLED: flag })).toContain('"METRICS_ENABLED"');
+    });
+
+    it('rejects a METRICS_PORT that is not a port', () => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'development', METRICS_PORT: '70000' })).toContain('"METRICS_PORT"');
+    });
+  });
+
   describe('Sentry', () => {
     it('is optional in every environment and defaults the traces sample rate to 0', () => {
       const { error, value } = validate(productionEnv);

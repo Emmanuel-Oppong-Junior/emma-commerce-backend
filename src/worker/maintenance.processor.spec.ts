@@ -15,6 +15,7 @@ function buildProcessor() {
     lowStock as never,
     payments as never,
     logger as never,
+    { observeJob: (_job: unknown, work: () => Promise<unknown>) => work() } as never,
   );
   return { processor, expiredOrders, lowStock, payments, logger };
 }

@@ -110,7 +110,7 @@ feature/
 
 Feature modules: `users`, `products`, `categories`, `sub-categories`, `brand`, `tag`, `variant`, `cart`, `order`, `payment`, `addresses`, `discount`, `coupons`, `wishlist`, `review`, `returns`, `inventory`, `analytics`, `tax`, `shipping-zones`, `pickup-locations`.
 
-Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `env.validation.ts`, cache config), `currency`, `notifications` (Resend email + templates), `health` (health controller/indicators), `redis` (shared ioredis client), `jobs` (BullMQ queues), `outbox` (domain events + relay), `worker` (the `ROLE=worker` root module), plus `instrument.ts` (main.ts's first import: starts Sentry, then `tracing.ts` OpenTelemetry, enabled via `OTEL_ENABLED`) and `observability/` (Sentry options and PII scrubbing, `reportError`/`reportFailedJob`).
+Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `env.validation.ts`, cache config), `currency`, `notifications` (Resend email + templates), `health` (health controller/indicators), `redis` (shared ioredis client), `jobs` (BullMQ queues), `outbox` (domain events + relay), `worker` (the `ROLE=worker` root module), plus `instrument.ts` (main.ts's first import: starts Sentry, then `telemetry.ts`: one OpenTelemetry NodeSDK for traces, enabled via `OTEL_ENABLED`, and Prometheus metrics) and `observability/` (Sentry options and PII scrubbing, `reportError`/`reportFailedJob`, `AppMetrics`, the HTTP metrics middleware and the GraphQL metrics plugin).
 
 ### Authentication & Authorization (`src/iam/`)
 
@@ -139,6 +139,7 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 - **Production safeguards:** GraphQL introspection is off when `NODE_ENV=production`; `ALLOWED_ORIGINS` is required at startup in production; helmet sets CSP and HSTS.
 - **Correlation:** `LoggerMiddleware` keeps a client `X-Request-ID` matching `^[A-Za-z0-9-]{1,64}$` (else generates a UUID), echoes it in the response and runs the request inside an `AsyncLocalStorage` context (`src/commons/correlation.ts`), so every log record carries `requestId` (and `userId` once authenticated) without passing it around. Jobs carry it as `meta.requestId` in their data (`withJobMeta`; outbox rows store it in `OutboxEvent.requestId` and the relay copies it); processors run each job inside `runJobInContext` (requestId + jobId + queue; scheduled jobs get a fresh id).
 - **Error tracking (Sentry):** on only when `SENTRY_DSN` is set, in both roles, initialised before the app. Reported: 5xx/`INTERNAL_SERVER_ERROR` from REST and GraphQL (`AllExceptionsFilter`, and `formatError` for errors the filter never saw), and BullMQ jobs with no attempts left; expected client errors (4xx, `BAD_USER_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`) are not. Events carry `requestId`/`jobId`/`queue` tags and the user id only; `dataCollection` is all off and `scrubEvent` strips request bodies, headers, cookies, query strings and breadcrumbs. Use `reportError(exception)` for a caught server failure that must not vanish.
+- **Metrics (Prometheus):** unless `METRICS_ENABLED=false`, each process serves `GET /metrics` from the OpenTelemetry Prometheus exporter's own server on `METRICS_PORT` (default 9464, all interfaces; never the API port, so do not expose it publicly). API: `http_request_duration_seconds` (method, route template, status class), `graphql_operation_duration_seconds` (operation name capped at 100 distinct names, type, outcome), `api_errors_total` (transport, code), `webhook_processing_failures_total`. Worker: `job_duration_seconds`/`job_failures_total` (queue, name), `queue_jobs` (queue, state), `outbox_unpublished_events`, `outbox_oldest_unpublished_age_seconds`, `payment_reconciliation_mismatches_total`. Record through `AppMetrics` (global `ObservabilityModule`); labels must stay bounded (no ids, raw paths or variable values). Alert rules: `ops/prometheus/alerts.yml` (drills in `alerts.test.yml`; see `docs/roadmap/environments.md` → Observability). A port clash fails startup; the API and worker need different ports when they share a network namespace.
 - **Prisma enums/models** also cover fulfillment (`FulfillmentType`, pickup locations, shipping zones), taxes, coupons/usage, return requests and inventory logs.
 
 ### Environment variables
@@ -159,7 +160,8 @@ Optional:  PORT, ROLE (api | worker, default api), ALLOWED_ORIGINS, LOG_LEVEL, P
            REDIS_PORT (6379), REDIS_PASSWORD, REDIS_DB (0-15, default 0), RESEND_API_KEY, RESEND_FROM_EMAIL,
            OTEL_ENABLED ('true' | 'false'), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT (http(s) URI),
            SENTRY_DSN (http(s) URI; Sentry is off when unset), SENTRY_ENVIRONMENT (default NODE_ENV),
-           SENTRY_RELEASE, SENTRY_TRACES_SAMPLE_RATE (0-1, default 0)
+           SENTRY_RELEASE, SENTRY_TRACES_SAMPLE_RATE (0-1, default 0),
+           METRICS_ENABLED ('true' | 'false', default 'true'), METRICS_PORT (default 9464)
 Seeding:   SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD
 ```
 

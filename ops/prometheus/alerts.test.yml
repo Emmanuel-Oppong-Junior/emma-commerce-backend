@@ -1,0 +1,130 @@
+# Synthetic drills for alerts.yml: promtool test rules ops/prometheus/alerts.test.yml
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: internal errors above 2% of traffic page, a quiet service does not
+    interval: 1m
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="emma-api"}'
+        values: '0+60x20'
+      - series: 'api_errors_total{job="emma-api",transport="graphql",code="INTERNAL_SERVER_ERROR"}'
+        values: '0+6x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ApiInternalErrorRateHigh
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ApiInternalErrorRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: More than 2% of API requests fail with an internal error
+              description: Check Sentry for the new issue and the API logs by requestId.
+
+  - name: slow GraphQL operations raise the p95 alert
+    interval: 1m
+    input_series:
+      - series: 'graphql_operation_duration_seconds_bucket{job="emma-api",le="1"}'
+        values: '0+10x30'
+      - series: 'graphql_operation_duration_seconds_bucket{job="emma-api",le="2.5"}'
+        values: '0+100x30'
+      - series: 'graphql_operation_duration_seconds_bucket{job="emma-api",le="+Inf"}'
+        values: '0+100x30'
+      - series: 'graphql_operation_duration_seconds_count{job="emma-api"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: GraphqlLatencyP95High
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: GraphQL p95 latency above 1s for 10 minutes
+              description: >-
+                Break it down with
+                histogram_quantile(0.95, sum by (le, operation_name) (rate(graphql_operation_duration_seconds_bucket[5m]))).
+
+  - name: webhook settlement failures alert at once
+    interval: 1m
+    input_series:
+      - series: 'webhook_processing_failures_total{job="emma-api",provider="paystack",reason="settlement_failed"}'
+        values: '0 1 2 3 4 5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: PaymentWebhookSettlementFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: Paystack webhooks are failing to settle payments
+              description: Stored webhook events are retried by the webhooks queue and the payment sweep; check Paystack reachability and the worker logs.
+
+  - name: a growing failed set and a stale outbox raise worker alerts
+    interval: 1m
+    input_series:
+      - series: 'queue_jobs{job="emma-worker",queue="notifications",state="failed"}'
+        values: '0+1x40'
+      - series: 'queue_jobs{job="emma-worker",queue="webhooks",state="failed"}'
+        values: '2x40'
+      - series: 'outbox_unpublished_events{job="emma-worker"}'
+        values: '1x40'
+      - series: 'outbox_oldest_unpublished_age_seconds{job="emma-worker"}'
+        values: '0+60x40'
+      - series: 'up{job="emma-worker",instance="worker-1:9464"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: FailedJobsGrowing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              queue: notifications
+            exp_annotations:
+              summary: 'Jobs on the notifications queue are failing with no attempts left'
+              description: List them with the SUPER_ADMIN failedJobs query; fix the cause, then retryFailedJob.
+      - eval_time: 12m
+        alertname: OutboxBacklogStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: An outbox event has waited more than 5 minutes to be published
+              description: >-
+                The relay is down or failing (lastError on the OutboxEvent row). Rows that spent their 10 attempts stay
+                unpublished and keep this alert firing until handled.
+      - eval_time: 35m
+        alertname: WorkerDependencyUnavailable
+        exp_alerts: []
+
+  - name: a worker that cannot reach Redis, and a target that stops answering
+    interval: 1m
+    input_series:
+      - series: 'up{job="emma-worker",instance="worker-1:9464"}'
+        values: '1x10'
+      - series: 'outbox_unpublished_events{job="emma-worker"}'
+        values: '0x10'
+      - series: 'up{job="emma-api",instance="api-1:9464"}'
+        values: '1 1 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: WorkerDependencyUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: The worker cannot read Redis or Postgres
+              description: Check /health/ready on the worker and the QueueMetrics warnings in its logs.
+      - eval_time: 5m
+        alertname: TargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: emma-api
+              instance: api-1:9464
+            exp_annotations:
+              summary: 'emma-api instance api-1:9464 is not answering scrapes'
+              description: The process is down or METRICS_PORT is unreachable from Prometheus.

@@ -1,4 +1,4 @@
-import { tracingSdk } from './instrument';
+import { telemetry } from './instrument';
 import * as Sentry from '@sentry/nestjs';
 import { NestFactory } from '@nestjs/core';
 import { createValidationPipe } from './commons/validation-pipe';
@@ -13,6 +13,7 @@ import { selectProcessRole } from './process-role';
 import { REQUEST_ID_HEADER } from './commons/middlewares/logger.middleware';
 
 async function bootstrapApi() {
+  await telemetry?.metricsServer;
   // The Paystack webhook signature covers the exact request bytes, so the raw body is kept next to the parsed one.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   app.set('trust proxy', 1); // Trust requests from the loopback address
@@ -83,6 +84,7 @@ async function bootstrapApi() {
 
 /** The worker: outbox relay and queue processors, no GraphQL/HTTP API (src/worker/worker.module.ts). */
 async function bootstrapWorker() {
+  await telemetry?.metricsServer;
   const app = await NestFactory.createApplicationContext(WorkerModule, { bufferLogs: true });
   const logger = app.get(LoggerService);
   app.useLogger(logger);
@@ -97,7 +99,7 @@ function closeOnSignals(app: INestApplicationContext, logger: LoggerService) {
   const shutdown = async (signal: string) => {
     logger.log(`${signal} received — closing application gracefully`, 'Bootstrap');
     await app.close();
-    await tracingSdk?.shutdown();
+    await telemetry?.sdk.shutdown();
     await Sentry.close(SENTRY_FLUSH_TIMEOUT_MS);
     process.exit(0);
   };

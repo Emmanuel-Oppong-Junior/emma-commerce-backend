@@ -109,6 +109,7 @@ describe('Sentry error reporting (fake transport)', () => {
     Sentry.init({
       ...sentryOptions({ SENTRY_DSN: DSN, NODE_ENV: 'test' }),
       defaultIntegrations: false,
+      integrations: [],
       enableRuntimeChannelInjection: false,
       transport: (options) =>
         Sentry.createTransport(options, async (request) => {

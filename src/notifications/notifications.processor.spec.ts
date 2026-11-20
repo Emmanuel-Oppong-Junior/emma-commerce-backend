@@ -5,7 +5,8 @@ function buildProcessor(alreadySent = false) {
   const sender = { send: jest.fn().mockResolvedValue(undefined) };
   const redis = { exists: jest.fn().mockResolvedValue(alreadySent ? 1 : 0), set: jest.fn().mockResolvedValue('OK') };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
-  const processor = new NotificationsProcessor(sender as never, redis as never, logger as never);
+  const metrics = { observeJob: (_job: unknown, work: () => Promise<unknown>) => work() };
+  const processor = new NotificationsProcessor(sender as never, redis as never, logger as never, metrics as never);
   return { processor, sender, redis, logger };
 }
 

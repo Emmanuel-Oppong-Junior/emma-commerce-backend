@@ -47,6 +47,9 @@ import { PickupLocationsModule } from './pickup-locations/pickup-locations.modul
 import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
 import { StoreModule } from './store/store.module';
 import { FailedJobsModule } from './jobs/failed-jobs.module';
+import { AppMetrics } from './observability/metrics';
+import { graphqlMetricsPlugin } from './observability/graphql-metrics.plugin';
+import { HttpMetricsMiddleware } from './observability/http-metrics.middleware';
 
 const THROTTLERS: ThrottlerOptions[] = [
   {
@@ -102,7 +105,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
       imports: [CommonsModule],
-      useFactory: (logger: LoggerService) => ({
+      useFactory: (logger: LoggerService, metrics: AppMetrics) => ({
         playground: false,
         introspection: process.env.NODE_ENV !== 'production',
         // Apollo 5 answers bad variable values with HTTP 400; keep v4's 200 until the frontend is checked against it.
@@ -113,13 +116,14 @@ const THROTTLERS: ThrottlerOptions[] = [
             ? ApolloServerPluginLandingPageDisabled()
             : ApolloServerPluginLandingPageLocalDefault(),
           queryCostPlugin(),
+          graphqlMetricsPlugin(metrics),
         ],
         validationRules: [depthLimitRule(), aliasLimitRule()],
         sortSchema: true,
         autoSchemaFile: 'schema.gql',
         context: ({ req, res }: { req: unknown; res: unknown }) => ({ req, res }),
       }),
-      inject: [LoggerService],
+      inject: [LoggerService, AppMetrics],
     }),
     CommonsModule,
     ProductsModule,
@@ -168,6 +172,6 @@ const THROTTLERS: ThrottlerOptions[] = [
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(LoggerMiddleware).forRoutes('{*splat}');
+    consumer.apply(LoggerMiddleware, HttpMetricsMiddleware).forRoutes('{*splat}');
   }
 }

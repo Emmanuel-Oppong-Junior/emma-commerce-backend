@@ -6,8 +6,9 @@ import { cacheConfig } from './config/cache.config';
 import { RedisModule } from './redis/redis.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { JobsModule } from './jobs/jobs.module';
+import { ObservabilityModule } from './observability/observability.module';
 
-/** Global infrastructure both processes need: validated config, Redis (cache, shared client, queues) and Prisma. */
+/** Global infrastructure both processes need: validated config, Redis (cache, shared client, queues), Prisma, metrics. */
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -21,6 +22,7 @@ import { JobsModule } from './jobs/jobs.module';
     RedisModule,
     PrismaModule,
     JobsModule,
+    ObservabilityModule,
   ],
 })
 export class PlatformModule {}

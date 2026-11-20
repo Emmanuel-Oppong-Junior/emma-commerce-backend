@@ -1,0 +1,115 @@
+# Prometheus alert rules for emma-commerce-backend (P1-L.3).
+# Scrape both processes on METRICS_PORT (default 9464), each under its own job name:
+#   job="emma-api"    -> ROLE=api instances
+#   job="emma-worker" -> ROLE=worker instances
+# Check:  promtool check rules ops/prometheus/alerts.yml
+# Drill:  promtool test rules ops/prometheus/alerts.test.yml (synthetic series); live drills in staging are listed in
+#         docs/roadmap/environments.md ("Observability").
+groups:
+  - name: emma-api
+    rules:
+      - alert: ApiInternalErrorRateHigh
+        # INTERNAL_SERVER_ERROR answers (REST 5xx and GraphQL errors) as a share of all HTTP requests, with a traffic floor
+        # so a single failure on an idle service does not page.
+        expr: |
+          sum(rate(api_errors_total{code="INTERNAL_SERVER_ERROR"}[5m]))
+            / sum(rate(http_request_duration_seconds_count[5m])) > 0.02
+          and sum(rate(http_request_duration_seconds_count[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: More than 2% of API requests fail with an internal error
+          description: Check Sentry for the new issue and the API logs by requestId.
+
+      - alert: GraphqlLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(graphql_operation_duration_seconds_bucket[5m]))) > 1
+          and sum(rate(graphql_operation_duration_seconds_count[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: GraphQL p95 latency above 1s for 10 minutes
+          description: >-
+            Break it down with
+            histogram_quantile(0.95, sum by (le, operation_name) (rate(graphql_operation_duration_seconds_bucket[5m]))).
+
+      - alert: PaymentWebhookSettlementFailing
+        expr: sum(increase(webhook_processing_failures_total{reason="settlement_failed"}[15m])) > 3
+        labels:
+          severity: critical
+        annotations:
+          summary: Paystack webhooks are failing to settle payments
+          description: Stored webhook events are retried by the webhooks queue and the payment sweep; check Paystack reachability and the worker logs.
+
+      - alert: PaymentWebhookSignatureRejections
+        expr: sum(increase(webhook_processing_failures_total{reason="invalid_signature"}[15m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: Many Paystack webhook deliveries rejected for a bad signature
+          description: Either PAYSTACK_SECRET_KEY does not match the Paystack dashboard, or someone is posting forged webhooks.
+
+  - name: emma-worker
+    rules:
+      - alert: FailedJobsGrowing
+        expr: sum by (queue) (delta(queue_jobs{state="failed"}[30m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Jobs on the {{ $labels.queue }} queue are failing with no attempts left'
+          description: List them with the SUPER_ADMIN failedJobs query; fix the cause, then retryFailedJob.
+
+      - alert: QueueBacklogHigh
+        expr: sum by (queue) (queue_jobs{state="waiting"}) > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than 500 jobs waiting on the {{ $labels.queue }} queue for 10 minutes'
+          description: Workers are down, stuck or too few for the load.
+
+      - alert: OutboxBacklogStale
+        expr: max(outbox_oldest_unpublished_age_seconds) > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: An outbox event has waited more than 5 minutes to be published
+          description: >-
+            The relay is down or failing (lastError on the OutboxEvent row). Rows that spent their 10 attempts stay
+            unpublished and keep this alert firing until handled.
+
+      - alert: PaymentReconciliationMismatch
+        expr: sum by (kind) (increase(payment_reconciliation_mismatches_total[1d])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: 'The daily Paystack reconciliation found {{ $labels.kind }} differences'
+          description: Details are in the worker logs (context PaymentReconciliationService).
+
+      - alert: WorkerDependencyUnavailable
+        # The worker is up but its scrape-time reads of Redis (queue_jobs) or Postgres (outbox gauges) fail.
+        expr: |
+          (count(up{job="emma-worker"} == 1) > 0) unless (count(queue_jobs) > 0)
+          or
+          (count(up{job="emma-worker"} == 1) > 0) unless (count(outbox_unpublished_events) > 0)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The worker cannot read Redis or Postgres
+          description: Check /health/ready on the worker and the QueueMetrics warnings in its logs.
+
+  - name: emma-targets
+    rules:
+      - alert: TargetDown
+        expr: up{job=~"emma-api|emma-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.job }} instance {{ $labels.instance }} is not answering scrapes'
+          description: The process is down or METRICS_PORT is unreachable from Prometheus.

@@ -12,6 +12,7 @@ import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliati
 import { WorkerHealthServer } from './worker-health.server';
 import { MaintenanceScheduler } from './maintenance.scheduler';
 import { MaintenanceProcessor } from './maintenance.processor';
+import { QueueMetrics } from './queue-metrics';
 import { NotificationsProcessor } from '../notifications/notifications.processor';
 import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
 
@@ -32,6 +33,7 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
     MaintenanceProcessor,
     NotificationsProcessor,
     PaymentWebhookProcessor,
+    QueueMetrics,
   ],
 })
 export class WorkerModule {}

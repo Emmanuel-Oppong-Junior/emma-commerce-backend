@@ -5,7 +5,8 @@ import { PAYSTACK_WEBHOOK_JOB } from './payment-webhook.service';
 describe('PaymentWebhookProcessor', () => {
   const webhooks = { processStoredEvent: jest.fn() };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
-  const processor = new PaymentWebhookProcessor(webhooks as never, logger as never);
+  const metrics = { observeJob: (_job: unknown, work: () => Promise<unknown>) => work() };
+  const processor = new PaymentWebhookProcessor(webhooks as never, logger as never, metrics as never);
   const job = (name = PAYSTACK_WEBHOOK_JOB) => ({ name, data: { webhookEventId: 'evt1' } }) as Job;
 
   beforeEach(() => jest.clearAllMocks());

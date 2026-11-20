@@ -8,6 +8,7 @@ import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
 import { runJobInContext } from '../jobs/job-context';
 import { reportFailedJob } from '../observability/error-reporting';
+import { AppMetrics } from '../observability/metrics';
 import { NotificationSender } from './notification-sender';
 
 export const SENT_MARKER_PREFIX = 'notifications:sent';
@@ -26,12 +27,13 @@ export class NotificationsProcessor extends WorkerHost {
     private readonly sender: NotificationSender,
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly logger: LoggerService,
+    private readonly metrics: AppMetrics,
   ) {
     super();
   }
 
   process(job: Job): Promise<void> {
-    return runJobInContext(job, () => this.send(job));
+    return runJobInContext(job, () => this.metrics.observeJob(job, () => this.send(job)));
   }
 
   private async send(job: Job): Promise<void> {

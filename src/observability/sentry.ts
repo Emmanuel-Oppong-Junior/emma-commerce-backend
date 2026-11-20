@@ -28,6 +28,8 @@ export function sentryOptions(env: NodeJS.ProcessEnv): NodeOptions | undefined {
       stackFrameVariables: false,
     },
     beforeSend: scrubEvent,
+    // The SDK's default only warns; keep Node's behaviour of exiting, so a failed bootstrap does not leave a zombie.
+    integrations: [Sentry.onUnhandledRejectionIntegration({ mode: 'strict' })],
   };
 }
 

@@ -7,6 +7,7 @@ import { LoggerService } from '../commons/logger.service';
 import { describeErrorForLog } from '../commons/filters/error-classification';
 import { JobQueue } from '../jobs/job-queues';
 import { withJobMeta, WithJobMeta } from '../jobs/job-context';
+import { AppMetrics } from '../observability/metrics';
 import { PaymentService } from './payment.service';
 import { isSettlingEvent, isValidPaystackSignature, parsePaystackWebhook } from './paystack-webhook';
 import { WebhookEventRepository } from './webhook-event.repository';
@@ -29,6 +30,7 @@ export class PaymentWebhookService {
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     @InjectQueue(JobQueue.WEBHOOKS) private readonly webhookQueue: Queue,
+    private readonly metrics: AppMetrics,
   ) {}
 
   /**
@@ -41,6 +43,7 @@ export class PaymentWebhookService {
     const secret = this.configService.getOrThrow<string>('PAYSTACK_SECRET_KEY');
     if (!isValidPaystackSignature(rawBody, signature, secret)) {
       this.logger.warn('Webhook rejected | reason: invalid signature', CONTEXT);
+      this.metrics.recordWebhookFailure('invalid_signature');
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
@@ -95,6 +98,7 @@ export class PaymentWebhookService {
     } catch (error) {
       const lastError = describeErrorForLog(error);
       await this.webhookEvents.recordFailure(event.id, 1, lastError);
+      this.metrics.recordWebhookFailure('settlement_failed');
       this.logger.warn(
         `Webhook processing failed | ${summary} | attempts: ${event.attempts + 1} | ${lastError}`,
         CONTEXT,

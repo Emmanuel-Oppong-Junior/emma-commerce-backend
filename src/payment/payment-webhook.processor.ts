@@ -5,6 +5,7 @@ import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
 import { runJobInContext } from '../jobs/job-context';
 import { reportFailedJob } from '../observability/error-reporting';
+import { AppMetrics } from '../observability/metrics';
 import { PAYSTACK_WEBHOOK_JOB, PaymentWebhookService, PaystackWebhookJobData } from './payment-webhook.service';
 
 const CONTEXT = 'PaymentWebhookProcessor';
@@ -15,15 +16,18 @@ export class PaymentWebhookProcessor extends WorkerHost {
   constructor(
     private readonly webhooks: PaymentWebhookService,
     private readonly logger: LoggerService,
+    private readonly metrics: AppMetrics,
   ) {
     super();
   }
 
   process(job: Job<PaystackWebhookJobData>): Promise<void> {
-    return runJobInContext(job, async () => {
-      if (job.name !== PAYSTACK_WEBHOOK_JOB) throw new Error(`Unknown webhook job "${job.name}"`);
-      await this.webhooks.processStoredEvent(job.data.webhookEventId);
-    });
+    return runJobInContext(job, () =>
+      this.metrics.observeJob(job, async () => {
+        if (job.name !== PAYSTACK_WEBHOOK_JOB) throw new Error(`Unknown webhook job "${job.name}"`);
+        await this.webhooks.processStoredEvent(job.data.webhookEventId);
+      }),
+    );
   }
 
   @OnWorkerEvent('failed')

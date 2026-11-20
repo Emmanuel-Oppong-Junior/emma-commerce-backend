@@ -184,8 +184,9 @@ jobs:
       - name: Start API and worker containers
         run: |
           docker run -d --name emma-smoke --network host --env-file "$RUNNER_TEMP/smoke.env" emma-backend:ci
+          # Host networking: the worker needs its own metrics port next to the API's 9464.
           docker run -d --name emma-smoke-worker --network host --env-file "$RUNNER_TEMP/smoke.env" \
-            -e ROLE=worker -e PORT=3001 emma-backend:ci
+            -e ROLE=worker -e PORT=3001 -e METRICS_PORT=9465 emma-backend:ci
       - name: Wait for API /health/live and worker /health/ready
         run: |
           for url in http://localhost:3000/health/live http://localhost:3001/health/ready; do
@@ -197,6 +198,10 @@ jobs:
             if [ -z "$ok" ]; then docker logs emma-smoke; docker logs emma-smoke-worker; exit 1; fi
             echo
           done
+      - name: Both serve Prometheus metrics on their METRICS_PORT
+        run: |
+          curl -fsS http://localhost:9464/metrics | grep -q '^http_request_duration_seconds_count'
+          curl -fsS http://localhost:9465/metrics | grep -q '^queue_jobs'
       - name: Both stop cleanly on SIGTERM
         run: |
           for name in emma-smoke emma-smoke-worker; do

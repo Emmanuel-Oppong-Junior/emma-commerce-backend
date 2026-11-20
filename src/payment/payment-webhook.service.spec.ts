@@ -26,12 +26,14 @@ describe('PaymentWebhookService', () => {
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const config = { getOrThrow: jest.fn(() => SECRET) };
   const queue = { add: jest.fn() };
+  const metrics = { recordWebhookFailure: jest.fn() };
   const service = new PaymentWebhookService(
     webhookEvents as never,
     paymentService as never,
     config as never,
     logger as never,
     queue as never,
+    metrics as never,
   );
 
   beforeEach(() => {
@@ -80,6 +82,7 @@ describe('PaymentWebhookService', () => {
     await expect(service.handlePaystackWebhook(raw, signature)).rejects.toThrow(UnauthorizedException);
     expect(webhookEvents.record).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
+    expect(metrics.recordWebhookFailure).toHaveBeenCalledWith('invalid_signature');
   });
 
   it('rejects a request without a raw body', async () => {
@@ -156,6 +159,7 @@ describe('PaymentWebhookService', () => {
       );
       expect(webhookEvents.recordFailure).toHaveBeenCalledWith('evt1', 1, 'Payment with reference "ref1" not found');
       expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
+      expect(metrics.recordWebhookFailure).toHaveBeenCalledWith('settlement_failed');
     });
 
     it('does nothing for an event already processed (by the sweep or a redelivery)', async () => {

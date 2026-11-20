@@ -22,6 +22,12 @@ const INTERNAL: ClassifiedError = {
   message: 'Internal server error',
 };
 
+/** The error code a response with this HTTP status stands for, as classifyError assigns it. */
+export function errorCodeForStatus(status: number): string {
+  if (status >= HttpStatus.INTERNAL_SERVER_ERROR) return INTERNAL.code;
+  return CODE_BY_STATUS[status] ?? 'BAD_REQUEST';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -109,5 +115,5 @@ export function classifyError(exception: unknown): ClassifiedError {
   if (!(exception instanceof HttpException)) return INTERNAL;
   const status = exception.getStatus();
   if (status >= HttpStatus.INTERNAL_SERVER_ERROR) return { ...INTERNAL, status };
-  return { status, code: CODE_BY_STATUS[status] ?? 'BAD_REQUEST', message: httpMessage(exception) };
+  return { status, code: errorCodeForStatus(status), message: httpMessage(exception) };
 }

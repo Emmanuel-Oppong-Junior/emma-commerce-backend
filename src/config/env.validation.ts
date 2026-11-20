@@ -109,6 +109,11 @@ export const envValidationSchema = Joi.object({
     .uri({ scheme: ['http', 'https'] })
     .optional(),
 
+  // Metrics: src/telemetry.ts serves Prometheus on METRICS_PORT unless METRICS_ENABLED is exactly 'false'. The API and
+  // the worker each need their own port when they share a network namespace.
+  METRICS_ENABLED: Joi.string().valid('true', 'false').default('true'),
+  METRICS_PORT: Joi.number().port().default(9464),
+
   // Error tracking: Sentry is on only when SENTRY_DSN is set (src/observability/sentry.ts reads these before this
   // validation runs, so a bad value still stops startup here).
   SENTRY_DSN: Joi.string()
