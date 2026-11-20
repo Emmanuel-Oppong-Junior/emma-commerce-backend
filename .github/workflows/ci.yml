@@ -157,35 +157,59 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t emma-backend:ci .
       - run: docker run --rm --entrypoint npx emma-backend:ci prisma --version
-      # PrismaService and the Redis client connect on boot, so the app needs both even for liveness.
+      # PrismaService and the Redis client connect on boot, so both processes need them even for liveness.
       # Dummy, non-secret values that satisfy env validation outside production.
-      - name: Start container
-        run: >-
-          docker run -d --name emma-smoke --network host
-          -e NODE_ENV=development
-          -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/emma_smoke
-          -e REDIS_HOST=localhost
-          -e JWT_SECRET=ci-smoke-access-secret-0123456789abcdef
-          -e JWT_REFRESH_SECRET=ci-smoke-refresh-secret-0123456789abcdef
-          -e JWT_RESET_SECRET=ci-smoke-reset-secret-0123456789abcdef
-          -e JWT_TOKEN_AUDIENCE=localhost
-          -e JWT_TOKEN_ISSUER=localhost
-          -e GOOGLE_CLIENT_ID=ci-smoke -e GOOGLE_CLIENT_SECRET=ci-smoke
-          -e FACEBOOK_APP_ID=ci-smoke -e FACEBOOK_APP_SECRET=ci-smoke
-          -e PAYSTACK_SECRET_KEY=ci-smoke
-          -e CLOUDINARY_CLOUD_NAME=ci-smoke -e CLOUDINARY_API_KEY=ci-smoke -e CLOUDINARY_API_SECRET=ci-smoke
-          emma-backend:ci
-      - name: Wait for /health/live
+      - name: Smoke environment
         run: |
-          for i in $(seq 1 30); do
-            if curl -fsS http://localhost:3000/health/live; then exit 0; fi
-            sleep 2
+          cat > "$RUNNER_TEMP/smoke.env" <<'EOF'
+          NODE_ENV=development
+          DATABASE_URL=postgresql://smoke:smoke@localhost:5432/emma_smoke
+          REDIS_HOST=localhost
+          JWT_SECRET=ci-smoke-access-secret-0123456789abcdef
+          JWT_REFRESH_SECRET=ci-smoke-refresh-secret-0123456789abcdef
+          JWT_RESET_SECRET=ci-smoke-reset-secret-0123456789abcdef
+          JWT_TOKEN_AUDIENCE=localhost
+          JWT_TOKEN_ISSUER=localhost
+          GOOGLE_CLIENT_ID=ci-smoke
+          GOOGLE_CLIENT_SECRET=ci-smoke
+          FACEBOOK_APP_ID=ci-smoke
+          FACEBOOK_APP_SECRET=ci-smoke
+          PAYSTACK_SECRET_KEY=ci-smoke
+          CLOUDINARY_CLOUD_NAME=ci-smoke
+          CLOUDINARY_API_KEY=ci-smoke
+          CLOUDINARY_API_SECRET=ci-smoke
+          EOF
+      # The worker's relay reads the outbox table, so the schema must exist before it starts.
+      - run: docker run --rm --network host --env-file "$RUNNER_TEMP/smoke.env" emma-backend:ci npx prisma migrate deploy
+      - name: Start API and worker containers
+        run: |
+          docker run -d --name emma-smoke --network host --env-file "$RUNNER_TEMP/smoke.env" emma-backend:ci
+          docker run -d --name emma-smoke-worker --network host --env-file "$RUNNER_TEMP/smoke.env" \
+            -e ROLE=worker -e PORT=3001 emma-backend:ci
+      - name: Wait for API /health/live and worker /health/ready
+        run: |
+          for url in http://localhost:3000/health/live http://localhost:3001/health/ready; do
+            ok=
+            for i in $(seq 1 30); do
+              if curl -fsS "$url"; then ok=1; break; fi
+              sleep 2
+            done
+            if [ -z "$ok" ]; then docker logs emma-smoke; docker logs emma-smoke-worker; exit 1; fi
+            echo
           done
-          docker logs emma-smoke
-          exit 1
+      - name: Both stop cleanly on SIGTERM
+        run: |
+          for name in emma-smoke emma-smoke-worker; do
+            docker stop --time 30 "$name"
+            code=$(docker inspect -f '{{.State.ExitCode}}' "$name")
+            echo "$name exited with $code"
+            [ "$code" = 0 ] || exit 1
+          done
       - name: Container logs
         if: always()
-        run: docker logs emma-smoke || true
+        run: |
+          docker logs emma-smoke || true
+          docker logs emma-smoke-worker || true
 
   audit:
     name: Production dependency audit (critical, allowlisted)

@@ -494,6 +494,21 @@ model WishList {
   updatedAt DateTime  @updatedAt
 }
 
+/// Transactional outbox (ADR-0009): written in the same transaction as the state change, published to BullMQ by the
+/// worker's relay. `type` is a versioned event name such as `order.placed.v1`.
+model OutboxEvent {
+  id          String    @id @default(cuid())
+  type        String
+  aggregateId String
+  payload     Json
+  createdAt   DateTime  @default(now())
+  publishedAt DateTime?
+  attempts    Int       @default(0)
+  lastError   String?
+
+  @@index([publishedAt, createdAt])
+}
+
 model AuditLog {
   id        String   @id @default(cuid())
   entity    String

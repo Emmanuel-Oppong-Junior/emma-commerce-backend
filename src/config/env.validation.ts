@@ -1,4 +1,5 @@
 import * as Joi from 'joi';
+import { PROCESS_ROLES } from '../process-role';
 
 const PRODUCTION_SECRET_KEYS = [
   'JWT_SECRET',
@@ -53,6 +54,10 @@ export const envValidationSchema = Joi.object({
     .required()
     .messages({ 'any.required': 'NODE_ENV is required: set it to development, test or production' }),
   ALLOWED_ORIGINS: requiredInProduction(Joi.string()),
+  // main.ts picks the process from ROLE before config loads (src/process-role.ts); this keeps the value documented.
+  ROLE: Joi.string()
+    .valid(...PROCESS_ROLES)
+    .default('api'),
 
   // JWT
   JWT_SECRET: Joi.string().min(32).required(),

@@ -114,6 +114,20 @@ describe('envValidationSchema', () => {
     });
   });
 
+  describe('ROLE', () => {
+    it('defaults to api', () => {
+      expect(validate({ ...baseEnv, NODE_ENV: 'test' }).value.ROLE).toBe('api');
+    });
+
+    it('accepts worker', () => {
+      expect(validate({ ...baseEnv, NODE_ENV: 'test', ROLE: 'worker' }).error).toBeUndefined();
+    });
+
+    it('rejects an unknown role', () => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'test', ROLE: 'scheduler' })).toContain('"ROLE" must be one of');
+    });
+  });
+
   describe('tracing', () => {
     it('accepts a valid tracing configuration', () => {
       const env = {

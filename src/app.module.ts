@@ -1,17 +1,13 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerOptions } from '@nestjs/throttler';
 import { GqlThrottlerGuard } from './commons/guards/gql-throttler.guard';
-import { CacheModule } from '@nestjs/cache-manager';
-import { cacheConfig } from './config/cache.config';
 import { Redis } from 'ioredis';
-import { REDIS_CLIENT, RedisModule } from './redis/redis.module';
+import { REDIS_CLIENT } from './redis/redis.module';
+import { PlatformModule } from './platform.module';
 import { RedisThrottlerStorage } from './commons/throttler/redis-throttler.storage';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { PrismaModule } from './prisma/prisma.module';
 import { UsersModule } from './users/users.module';
-import { envValidationSchema } from './config/env.validation';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { ApolloServerPluginLandingPageLocalDefault } from '@apollo/server/plugin/landingPage/default';
@@ -97,20 +93,11 @@ const THROTTLERS: ThrottlerOptions[] = [
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      // Tests get their env from .env.test only; never fall through to a developer's .env (real email, Redis).
-      ignoreEnvFile: process.env.NODE_ENV === 'test',
-      validationSchema: envValidationSchema,
-      validationOptions: { libraryOptions: { abortEarly: false } },
-    }),
-    CacheModule.registerAsync(cacheConfig),
-    RedisModule,
+    PlatformModule,
     ThrottlerModule.forRootAsync({
       inject: [REDIS_CLIENT],
       useFactory: (redis: Redis) => ({ storage: new RedisThrottlerStorage(redis), throttlers: THROTTLERS }),
     }),
-    PrismaModule,
     UsersModule,
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,

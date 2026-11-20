@@ -46,7 +46,8 @@ Make each checkpoint a small edit to `STATUS.md` in the same turn as the work, n
 # Development
 npm run start:dev       # Start with live reload (development)
 npm run start:debug     # Start with debugger and watch
-npm run start:prod      # Run compiled output
+npm run start:prod      # Run compiled output (ROLE=api by default)
+npm run start:worker    # Run the compiled worker (same as ROLE=worker node dist/main)
 
 # Build
 npm run build           # Compile TypeScript via NestJS CLI
@@ -108,7 +109,7 @@ feature/
 
 Feature modules: `users`, `products`, `categories`, `sub-categories`, `brand`, `tag`, `variant`, `cart`, `order`, `payment`, `addresses`, `discount`, `coupons`, `wishlist`, `review`, `returns`, `inventory`, `analytics`, `tax`, `shipping-zones`, `pickup-locations`.
 
-Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `env.validation.ts`, cache config), `currency`, `notifications` (Resend email + templates), `health` (health controller/indicators), plus `tracing.ts` (OpenTelemetry, enabled via `OTEL_ENABLED`).
+Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `env.validation.ts`, cache config), `currency`, `notifications` (Resend email + templates), `health` (health controller/indicators), `redis` (shared ioredis client), `jobs` (BullMQ queues), `outbox` (domain events + relay), `worker` (the `ROLE=worker` root module), plus `tracing.ts` (OpenTelemetry, enabled via `OTEL_ENABLED`).
 
 ### Authentication & Authorization (`src/iam/`)
 
@@ -130,6 +131,8 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 ### Platform behaviour
 
 - **Redis is required** in every environment (`REDIS_HOST`; startup fails without it). It backs the global `CacheModule` (5 min default TTL), the throttler storage (`RedisThrottlerStorage`, one Lua script, so limits hold across instances) and the shared ioredis client (`REDIS_CLIENT` from `src/redis/redis.module.ts`, closed on shutdown). `/health/ready` probes it with `PING`.
+- **Two processes, one image:** `ROLE=api` (default) serves GraphQL/REST; `ROLE=worker` (`src/worker/worker.module.ts`, or `--role=worker`) runs the outbox relay and the BullMQ processors and serves only `GET /health/live` and `/health/ready` on `PORT`. Queue processors are registered only in `WorkerModule`, so the API never consumes jobs. Both shut down gracefully on SIGTERM.
+- **Outbox (ADR-0009):** write a domain event with `OutboxService.record(tx, event)` inside the business transaction; event types are versioned (`src/outbox/domain-events.ts`). The worker's `OutboxRelay` publishes unpublished rows (`FOR UPDATE SKIP LOCKED`) to BullMQ with `jobId = event id`; consumers must be idempotent on that id.
 - **Production safeguards:** GraphQL introspection is off when `NODE_ENV=production`; `ALLOWED_ORIGINS` is required at startup in production; helmet sets CSP and HSTS.
 - **Prisma enums/models** also cover fulfillment (`FulfillmentType`, pickup locations, shipping zones), taxes, coupons/usage, return requests and inventory logs.
 
@@ -146,7 +149,7 @@ Required:  NODE_ENV (development | test | production; no default),
            REDIS_HOST (every environment)
 Production: ALLOWED_ORIGINS is also required; placeholder secrets
            (change-me, your-..., xxx, ...) and a JWT secret reused across the three are rejected
-Optional:  PORT, ALLOWED_ORIGINS, LOG_LEVEL, PAYSTACK_CALLBACK_URL,
+Optional:  PORT, ROLE (api | worker, default api), ALLOWED_ORIGINS, LOG_LEVEL, PAYSTACK_CALLBACK_URL,
            JWT_ACCESS_TOKEN_TTL, JWT_REFRESH_TOKEN_TTL, JWT_RESET_TOKEN_TTL,
            REDIS_PORT (6379), REDIS_PASSWORD, REDIS_DB (0-15, default 0), RESEND_API_KEY, RESEND_FROM_EMAIL,
            OTEL_ENABLED ('true' | 'false'), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT (http(s) URI)

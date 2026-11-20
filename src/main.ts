@@ -6,8 +6,11 @@ import { LoggerService } from './commons/logger.service';
 import { AllExceptionsFilter } from './commons/filters/all-exceptions.filter';
 import helmet from 'helmet';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { INestApplicationContext } from '@nestjs/common';
+import { WorkerModule } from './worker/worker.module';
+import { selectProcessRole } from './process-role';
 
-async function bootstrap() {
+async function bootstrapApi() {
   // The Paystack webhook signature covers the exact request bytes, so the raw body is kept next to the parsed one.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   app.set('trust proxy', 1); // Trust requests from the loopback address
@@ -72,8 +75,20 @@ async function bootstrap() {
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
   logger.log(`Application running on port ${port}`, 'Bootstrap');
+  closeOnSignals(app, logger);
+}
 
-  // Graceful shutdown
+/** The worker: outbox relay and queue processors, no GraphQL/HTTP API (src/worker/worker.module.ts). */
+async function bootstrapWorker() {
+  const app = await NestFactory.createApplicationContext(WorkerModule, { bufferLogs: true });
+  const logger = app.get(LoggerService);
+  app.useLogger(logger);
+  logger.log('Worker running', 'Bootstrap');
+  closeOnSignals(app, logger);
+}
+
+// Graceful shutdown: app.close() lets jobs in flight finish, then closes queues, Redis and Prisma.
+function closeOnSignals(app: INestApplicationContext, logger: LoggerService) {
   const shutdown = async (signal: string) => {
     logger.log(`${signal} received — closing application gracefully`, 'Bootstrap');
     await app.close();
@@ -85,4 +100,5 @@ async function bootstrap() {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-bootstrap();
+const role = selectProcessRole(process.env.ROLE, process.argv);
+void (role === 'worker' ? bootstrapWorker() : bootstrapApi());

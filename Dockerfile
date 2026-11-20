@@ -39,6 +39,8 @@ USER node
 
 EXPOSE 3000
 
+# One image, two processes: ROLE=api (default) serves GraphQL/REST; ROLE=worker runs the outbox relay and queue
+# processors and serves only /health/live and /health/ready on PORT, so this check fits both.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/health/live').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"
 
