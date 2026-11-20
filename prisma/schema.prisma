@@ -209,6 +209,9 @@ model Variant {
   discountId        String?
   lowStockThreshold Int?           @default(5)
   inventoryLogs     InventoryLog[]
+  stockLevels       StockLevel[]
+  stockMovements    StockMovement[]
+  stockReservations StockReservation[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -462,6 +465,7 @@ model Order {
   paymentIntent           PaymentIntent?
   cashCollections         CashCollection[]
   returnRequests          ReturnRequest[]
+  stockReservations       StockReservation[]
 
   @@index([userId, status])
   @@index([createdAt])
@@ -486,6 +490,7 @@ model OrderItem {
   discountAmount Decimal?  @db.Decimal(14, 2)
   discount       Discount? @relation(fields: [discountId], references: [id])
   discountId     String?
+  reservations   StockReservation[]
 
   @@index([orderId])
   @@index([productId, orderId])
@@ -809,6 +814,7 @@ model Store {
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   memberships      StoreMembership[]
+  stockLocations   StockLocation[]
 }
 
 /// A staff role (ADR-0013). Permissions are code constants (src/iam/authorization/permissions.ts); system roles are
@@ -848,4 +854,113 @@ model Tax {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+enum StockLocationType {
+  WAREHOUSE
+  BRANCH
+  PICKUP_POINT
+}
+
+/// Where stock is held (ADR-0008). Each store has exactly one default location, created by migration; all stock lives
+/// there until fulfilment picks locations by rule.
+model StockLocation {
+  id           String             @id @default(cuid())
+  storeId      String
+  name         String
+  type         StockLocationType  @default(WAREHOUSE)
+  isActive     Boolean            @default(true)
+  isDefault    Boolean            @default(false)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  store        Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  levels       StockLevel[]
+  reservations StockReservation[]
+  movements    StockMovement[]
+
+  @@unique([storeId], map: "StockLocation_one_default_per_store", where: raw("\"isDefault\""))
+}
+
+/// Stock of one variant (SKU) at one location. available = onHand - reserved. The database rejects a negative onHand
+/// or reserved and reserved > onHand; every change writes a StockMovement in the same transaction.
+model StockLevel {
+  id         String        @id @default(cuid())
+  variantId  String
+  locationId String
+  onHand     Int           @default(0)
+  reserved   Int           @default(0)
+  version    Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  variant    Variant       @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location   StockLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([variantId, locationId])
+  @@index([locationId])
+}
+
+enum StockReservationStatus {
+  ACTIVE
+  CONSUMED
+  RELEASED
+}
+
+/// Stock held for an order line. ACTIVE counts in StockLevel.reserved; CONSUMED has left onHand (payment or dispatch);
+/// RELEASED has gone back (cancel or expiry). Each transition is a conditional update on the status.
+model StockReservation {
+  id          String                 @id @default(cuid())
+  variantId   String
+  locationId  String
+  orderId     String
+  orderItemId String
+  quantity    Int
+  status      StockReservationStatus @default(ACTIVE)
+  /// When the unpaid order becomes eligible for expiry; null for cash-on-delivery orders and migrated ones
+  expiresAt   DateTime?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  variant     Variant                @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location    StockLocation          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  order       Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem              @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@unique([orderItemId, locationId])
+  @@index([orderId])
+  @@index([variantId, locationId, status])
+}
+
+enum StockMovementReason {
+  OPENING_BALANCE
+  RECEIPT
+  SALE
+  RETURN_RESTOCK
+  ADJUSTMENT
+  TRANSFER
+  RESERVE
+  RELEASE
+}
+
+/// Append-only stock ledger (ADR-0008): one row per StockLevel change, in the same transaction. Per (variant,
+/// location), the sum of onHandDelta is onHand and the sum of reservedDelta is reserved. A trigger refuses updates
+/// and direct deletes.
+model StockMovement {
+  id            String              @id @default(cuid())
+  variantId     String
+  locationId    String
+  onHandDelta   Int
+  reservedDelta Int                 @default(0)
+  reason        StockMovementReason
+  /// What caused the movement, e.g. ("Order", orderId) or ("ReturnRequest", returnRequestId)
+  refType       String?
+  refId         String?
+  actorId       String?
+  note          String?
+  createdAt     DateTime            @default(now())
+  variant       Variant             @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location      StockLocation       @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@index([variantId, createdAt])
+  @@index([locationId])
+  @@index([refType, refId])
+  @@index([createdAt])
 }
