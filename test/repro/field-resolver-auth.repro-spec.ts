@@ -15,7 +15,7 @@ import { OrdersLoader } from '../../src/users/loaders/orders.loader';
 import { ProductsLoader } from '../../src/products/loaders/products.loader';
 import { AuthenticationGuard } from '../../src/iam/authentication/guards/authentication.guard';
 import { AccessTokenGuard } from '../../src/iam/authentication/guards/access-token.guard';
-import { RolesGuard } from '../../src/iam/authentication/guards/roles.guard';
+import { AuthorizationGuard } from '../../src/iam/authorization/authorization.guard';
 import { REQUEST_USER_KEY } from '../../src/iam/iam.constants';
 
 const reviewer = {
@@ -91,7 +91,7 @@ describe('Field-level authorisation (audit repro: SEC-01)', () => {
           },
         },
         { provide: APP_GUARD, useClass: AuthenticationGuard },
-        { provide: APP_GUARD, useClass: RolesGuard },
+        { provide: APP_GUARD, useClass: AuthorizationGuard },
       ],
     }).compile();
     app = moduleRef.createNestApplication();

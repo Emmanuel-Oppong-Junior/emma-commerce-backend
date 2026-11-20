@@ -7,8 +7,7 @@ import { UserConnection } from './entities/user-connection.entity';
 import { UserPaginateArgs } from './dto/user-paginate.args';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role, User as UserRecord } from '../generated/prisma/client';
+import { User as UserRecord } from '../generated/prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { AddressesLoader } from './loaders/addresses.loader';
@@ -16,11 +15,12 @@ import { OrdersLoader } from './loaders/orders.loader';
 import { Address } from '../addresses/entities/address.entity';
 import { Order } from '../order/entities/order.entity';
 import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
+import { ActiveAccess, RequirePermission } from '../iam/authorization/policy.decorators';
+import { StaffAccess } from '../iam/authorization/staff-access';
 
 const selfOrAdmin = ownerOrAdmin<User>((user) => user.id);
 
 @Auth(AuthType.Bearer)
-@Roles(Role.SUPER_ADMIN)
 @Resolver(() => User)
 export class UsersResolver {
   constructor(
@@ -29,14 +29,19 @@ export class UsersResolver {
     private readonly ordersLoader: OrdersLoader,
   ) {}
 
+  @RequirePermission('staff.manage')
   @Mutation(() => User, {
     description: 'Create a new user with email and password',
   })
-  createUser(@Args('createUserInput') createUserInput: CreateUserInput, @ActiveUser('id') actorId: string) {
-    return this.usersService.adminCreateUser(createUserInput, actorId);
+  createUser(
+    @Args('createUserInput') createUserInput: CreateUserInput,
+    @ActiveUser('id') actorId: string,
+    @ActiveAccess() access: StaffAccess,
+  ) {
+    return this.usersService.adminCreateUser(createUserInput, { id: actorId, access });
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.view')
   @Query(() => UserConnection, {
     name: 'users',
     description: 'Fetch a paginated list of users',
@@ -45,13 +50,13 @@ export class UsersResolver {
     return this.usersService.findAll(filter);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.view')
   @Query(() => User, { name: 'userById', description: 'Fetch a user by ID' })
   findUserById(@Args('id', { type: () => String }) id: string) {
     return this.usersService.findOne(id);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.view')
   @Query(() => User, {
     name: 'userByEmail',
     description: 'Fetch a user by email',
@@ -59,7 +64,7 @@ export class UsersResolver {
   findUserByEmail(@Args('email', { type: () => String }) email: string) {
     return this.usersService.findUserByEmail(email);
   }
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.view')
   @Query(() => User, {
     name: 'userByProviderId',
     description: 'Fetch a user by OAuth provider ID',
@@ -68,21 +73,20 @@ export class UsersResolver {
     return this.usersService.findUserByProviderId(providerId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.manage')
   @Mutation(() => User, {
     description:
-      'Update an existing user (super admin accounts cannot be modified; admin accounts only by a super admin)',
+      'Update an existing user (user.manage). Staff accounts also need staff.manage and every permission they hold; Owner accounts only by an Owner.',
   })
   updateUser(
     @Args('id', { type: () => String }) id: string,
     @Args('updateUserInput') updateUserInput: UpdateUserInput,
-    @ActiveUser('role') actorRole: Role,
     @ActiveUser('id') actorId: string,
+    @ActiveAccess() access: StaffAccess,
   ) {
-    return this.usersService.adminUpdateUser(id, updateUserInput, actorRole, actorId);
+    return this.usersService.adminUpdateUser(id, updateUserInput, { id: actorId, access });
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, {
     description:
       'Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.',
@@ -100,7 +104,6 @@ export class UsersResolver {
     return this.usersService.update(id, updateMyProfileInput, currentPassword ?? undefined);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Mutation(() => User, {
     description: 'Change the password of the active user',
   })
@@ -112,37 +115,36 @@ export class UsersResolver {
     return this.usersService.changePassword(id, input);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.manage')
   @Mutation(() => User, { description: 'Delete a user permanently' })
   removeUser(
     @Args('id', { type: () => String }) id: string,
-    @ActiveUser('role') actorRole: Role,
     @ActiveUser('id') actorId: string,
+    @ActiveAccess() access: StaffAccess,
   ) {
-    return this.usersService.remove(id, actorRole, actorId);
+    return this.usersService.remove(id, { id: actorId, access });
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.manage')
   @Mutation(() => User, { description: 'Archive (soft delete) a user' })
   archiveUser(
     @Args('id', { type: () => String }) id: string,
-    @ActiveUser('role') actorRole: Role,
     @ActiveUser('id') actorId: string,
+    @ActiveAccess() access: StaffAccess,
   ) {
-    return this.usersService.archiveUser(id, actorRole, actorId);
+    return this.usersService.archiveUser(id, { id: actorId, access });
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.manage')
   @Mutation(() => User, { description: 'Restore an archived user' })
   deArchiveUser(
     @Args('id', { type: () => String }) id: string,
-    @ActiveUser('role') actorRole: Role,
     @ActiveUser('id') actorId: string,
+    @ActiveAccess() access: StaffAccess,
   ) {
-    return this.usersService.deArchiveUser(id, actorRole, actorId);
+    return this.usersService.deArchiveUser(id, { id: actorId, access });
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
   @Query(() => User, {
     name: 'userProfile',
     description: "Fetch a user's profile with related data",

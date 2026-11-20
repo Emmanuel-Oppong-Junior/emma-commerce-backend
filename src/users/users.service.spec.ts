@@ -12,6 +12,22 @@ import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { EmailVerificationService } from './email-verification.service';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
+import { StaffService } from './staff/staff.service';
+import { StaffRepository } from './staff/staff.repository';
+import { MANAGER_ACCESS, MANAGER_ROLE, OWNER_ACCESS, OWNER_ROLE } from '../../test/helpers/staff.helper';
+
+const MANAGER = { id: 'admin1', access: MANAGER_ACCESS };
+const OWNER = { id: 'super1', access: OWNER_ACCESS };
+
+const mockStaffRepository = {
+  findMembership: jest.fn(),
+  findRoleByKey: jest.fn(),
+  assignRole: jest.fn(),
+};
+
+const mockStaffService = {
+  assertAnotherOwnerRemains: jest.fn(),
+};
 
 const mockUsersRepository = {
   create: jest.fn(),
@@ -74,6 +90,8 @@ describe('UsersService', () => {
         { provide: HashingService, useValue: mockHashingService },
         { provide: EmailVerificationService, useValue: mockEmailVerificationService },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: StaffService, useValue: mockStaffService },
+        { provide: StaffRepository, useValue: mockStaffRepository },
       ],
     }).compile();
 
@@ -82,6 +100,8 @@ describe('UsersService', () => {
     hashingService = module.get(HashingService);
 
     jest.clearAllMocks();
+    mockStaffRepository.findMembership.mockResolvedValue(null);
+    mockStaffService.assertAnotherOwnerRemains.mockResolvedValue(undefined);
   });
 
   describe('createUserByCredentials', () => {
@@ -340,7 +360,7 @@ describe('UsersService', () => {
         pendingEmail: 'new@example.com',
       });
 
-      await service.adminUpdateUser('1', { email: 'new@example.com' }, Role.ADMIN, 'admin1');
+      await service.adminUpdateUser('1', { email: 'new@example.com' }, MANAGER);
 
       expect(mockEmailVerificationService.requestEmailChange).toHaveBeenCalledWith(
         mockUser,
@@ -358,7 +378,7 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.update.mockResolvedValue({ ...mockUser, ...input });
 
-      await service.adminUpdateUser('1', input, Role.ADMIN, 'admin1');
+      await service.adminUpdateUser('1', input, MANAGER);
 
       expect(usersRepository.update).toHaveBeenCalledWith('1', input, AUDIT_TX);
       expect(usersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
@@ -407,7 +427,7 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.delete.mockResolvedValue(mockUser);
 
-      const result = await service.remove('1', Role.ADMIN, 'admin1');
+      const result = await service.remove('1', MANAGER);
 
       expect(usersRepository.delete).toHaveBeenCalledWith('1', AUDIT_TX);
       expect(result).toEqual(mockUser);
@@ -416,7 +436,7 @@ describe('UsersService', () => {
     it('should throw if user not found', async () => {
       mockUsersRepository.findById.mockResolvedValue(null);
 
-      await expect(service.remove('1', Role.ADMIN, 'admin1')).rejects.toThrow(NotFoundException);
+      await expect(service.remove('1', MANAGER)).rejects.toThrow(NotFoundException);
       expect(mockAuditService.log).not.toHaveBeenCalled();
     });
   });
@@ -428,7 +448,7 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(mockUser);
       mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(archivedUser);
 
-      const result = await service.archiveUser('1', Role.ADMIN, 'admin1');
+      const result = await service.archiveUser('1', MANAGER);
 
       expect(usersRepository.updateAndRevokeSessions).toHaveBeenCalledWith('1', { isActive: false }, AUDIT_TX);
       expect(result).toEqual(archivedUser);
@@ -443,7 +463,7 @@ describe('UsersService', () => {
       mockUsersRepository.findById.mockResolvedValue(inactiveUser);
       mockUsersRepository.update.mockResolvedValue(activeUser);
 
-      const result = await service.deArchiveUser('1', Role.ADMIN, 'admin1');
+      const result = await service.deArchiveUser('1', MANAGER);
 
       expect(usersRepository.update).toHaveBeenCalledWith('1', { isActive: true }, AUDIT_TX);
       expect(result).toEqual(activeUser);
@@ -453,21 +473,27 @@ describe('UsersService', () => {
   describe('admin account management', () => {
     const adminTarget: User = { ...mockUser, id: 'admin-2', role: Role.ADMIN };
     const superAdminTarget: User = { ...mockUser, id: 'super-1', role: Role.SUPER_ADMIN };
+    type Actor = typeof MANAGER;
 
-    const adminActions: Array<[string, (id: string, actorRole: Role) => Promise<unknown>]> = [
-      [
-        'adminUpdateUser',
-        (id, actorRole) => service.adminUpdateUser(id, { email: 'taken@example.com' }, actorRole, 'actor1'),
-      ],
-      ['remove', (id, actorRole) => service.remove(id, actorRole, 'actor1')],
-      ['archiveUser', (id, actorRole) => service.archiveUser(id, actorRole, 'actor1')],
-      ['deArchiveUser', (id, actorRole) => service.deArchiveUser(id, actorRole, 'actor1')],
+    const adminActions: Array<[string, (id: string, actor: Actor) => Promise<unknown>]> = [
+      ['adminUpdateUser', (id, actor) => service.adminUpdateUser(id, { email: 'taken@example.com' }, actor)],
+      ['remove', (id, actor) => service.remove(id, actor)],
+      ['archiveUser', (id, actor) => service.archiveUser(id, actor)],
+      ['deArchiveUser', (id, actor) => service.deArchiveUser(id, actor)],
     ];
+
+    beforeEach(() => {
+      mockStaffRepository.findMembership.mockImplementation(async (userId: string) => {
+        if (userId === adminTarget.id) return { userId, role: MANAGER_ROLE };
+        if (userId === superAdminTarget.id) return { userId, role: OWNER_ROLE };
+        return null;
+      });
+    });
 
     it.each(adminActions)('%s rejects an ADMIN acting on another ADMIN account', async (_name, act) => {
       mockUsersRepository.findById.mockResolvedValue(adminTarget);
 
-      await expect(act(adminTarget.id, Role.ADMIN)).rejects.toThrow(ForbiddenException);
+      await expect(act(adminTarget.id, MANAGER)).rejects.toThrow(ForbiddenException);
       expect(mockAuditService.log).not.toHaveBeenCalled();
       expect(mockUsersRepository.update).not.toHaveBeenCalled();
       expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
@@ -482,18 +508,52 @@ describe('UsersService', () => {
       mockUsersRepository.delete.mockResolvedValue(adminTarget);
       mockEmailVerificationService.requestEmailChange.mockResolvedValue(adminTarget);
 
-      await expect(act(adminTarget.id, Role.SUPER_ADMIN)).resolves.toEqual(adminTarget);
+      await expect(act(adminTarget.id, OWNER)).resolves.toEqual(adminTarget);
     });
 
-    it.each(adminActions)('%s rejects any caller acting on a SUPER_ADMIN account', async (_name, act) => {
+    // P1-R decision: only an Owner may act on an Owner, so a Manager is refused and another Owner is allowed.
+    it.each(adminActions)('%s rejects an ADMIN acting on a SUPER_ADMIN account', async (_name, act) => {
       mockUsersRepository.findById.mockResolvedValue(superAdminTarget);
 
-      await expect(act(superAdminTarget.id, Role.ADMIN)).rejects.toThrow(ForbiddenException);
-      await expect(act(superAdminTarget.id, Role.SUPER_ADMIN)).rejects.toThrow(ForbiddenException);
+      await expect(act(superAdminTarget.id, MANAGER)).rejects.toThrow(ForbiddenException);
       expect(mockUsersRepository.update).not.toHaveBeenCalled();
       expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
       expect(mockUsersRepository.delete).not.toHaveBeenCalled();
       expect(mockEmailVerificationService.requestEmailChange).not.toHaveBeenCalled();
+    });
+
+    it.each(adminActions)('%s lets an Owner act on another Owner account', async (_name, act) => {
+      mockUsersRepository.findById.mockResolvedValue(superAdminTarget);
+      mockUsersRepository.update.mockResolvedValue(superAdminTarget);
+      mockUsersRepository.updateAndRevokeSessions.mockResolvedValue(superAdminTarget);
+      mockUsersRepository.delete.mockResolvedValue(superAdminTarget);
+      mockEmailVerificationService.requestEmailChange.mockResolvedValue(superAdminTarget);
+
+      await expect(act(superAdminTarget.id, OWNER)).resolves.toEqual(superAdminTarget);
+    });
+
+    it.each([
+      ['remove', (id: string) => service.remove(id, OWNER)],
+      ['archiveUser', (id: string) => service.archiveUser(id, OWNER)],
+    ])('%s checks that another Owner remains, in the transaction, before dropping an Owner', async (_name, act) => {
+      mockUsersRepository.findById.mockResolvedValue(superAdminTarget);
+      mockStaffService.assertAnotherOwnerRemains.mockRejectedValue(
+        new ForbiddenException('The store must keep at least one active Owner'),
+      );
+
+      await expect(act(superAdminTarget.id)).rejects.toThrow('The store must keep at least one active Owner');
+      expect(mockStaffService.assertAnotherOwnerRemains).toHaveBeenCalledWith(AUDIT_TX, superAdminTarget.id);
+      expect(mockUsersRepository.delete).not.toHaveBeenCalled();
+      expect(mockUsersRepository.updateAndRevokeSessions).not.toHaveBeenCalled();
+    });
+
+    it('does not run the last-Owner check for a customer', async () => {
+      mockUsersRepository.findById.mockResolvedValue(mockUser);
+      mockUsersRepository.delete.mockResolvedValue(mockUser);
+
+      await service.remove(mockUser.id, MANAGER);
+
+      expect(mockStaffService.assertAnotherOwnerRemains).not.toHaveBeenCalled();
     });
 
     it.each(adminActions)('%s lets an ADMIN act on a customer account', async (_name, act) => {
@@ -503,7 +563,7 @@ describe('UsersService', () => {
       mockUsersRepository.delete.mockResolvedValue(mockUser);
       mockEmailVerificationService.requestEmailChange.mockResolvedValue(mockUser);
 
-      await expect(act(mockUser.id, Role.ADMIN)).resolves.toEqual(mockUser);
+      await expect(act(mockUser.id, MANAGER)).resolves.toEqual(mockUser);
     });
   });
 
@@ -521,9 +581,17 @@ describe('UsersService', () => {
       mockHashingService.hash.mockResolvedValue('hashed');
       mockUsersRepository.create.mockResolvedValue({ ...mockUser, id: 'new1', role: Role.ADMIN, password: 'hashed' });
 
-      await service.adminCreateUser(input, 'super1');
+      mockStaffRepository.findRoleByKey.mockResolvedValue({ id: 'staff_role_manager', ...MANAGER_ROLE });
+
+      await service.adminCreateUser(input, OWNER);
 
       expect(usersRepository.create).toHaveBeenCalledWith({ ...input, password: 'hashed' }, AUDIT_TX);
+      expect(mockStaffRepository.assignRole).toHaveBeenCalledWith(
+        AUDIT_TX,
+        'new1',
+        expect.objectContaining({ key: 'MANAGER' }),
+        Role.ADMIN,
+      );
       expect(mockAuditService.log).toHaveBeenCalledWith(
         {
           entity: 'User',
@@ -555,7 +623,7 @@ describe('UsersService', () => {
     it.each<[string, () => Promise<unknown>, User, object]>([
       [
         'adminUpdateUser (profile fields)',
-        () => service.adminUpdateUser('1', { name: 'Renamed', phoneNumber: undefined }, Role.ADMIN, 'admin1'),
+        () => service.adminUpdateUser('1', { name: 'Renamed', phoneNumber: undefined }, MANAGER),
         mockUser,
         {
           action: 'UPDATE',
@@ -564,7 +632,7 @@ describe('UsersService', () => {
       ],
       [
         'adminUpdateUser (email)',
-        () => service.adminUpdateUser('1', { email: 'new@example.com' }, Role.ADMIN, 'admin1'),
+        () => service.adminUpdateUser('1', { email: 'new@example.com' }, MANAGER),
         mockUser,
         {
           action: 'UPDATE',
@@ -573,19 +641,19 @@ describe('UsersService', () => {
       ],
       [
         'remove',
-        () => service.remove('1', Role.ADMIN, 'admin1'),
+        () => service.remove('1', MANAGER),
         mockUser,
         { action: 'DELETE', details: { before: { role: Role.USER, isActive: true } } },
       ],
       [
         'archiveUser',
-        () => service.archiveUser('1', Role.ADMIN, 'admin1'),
+        () => service.archiveUser('1', MANAGER),
         mockUser,
         { action: 'ARCHIVE', details: { role: Role.USER, changes: { isActive: { from: true, to: false } } } },
       ],
       [
         'deArchiveUser',
-        () => service.deArchiveUser('1', Role.ADMIN, 'admin1'),
+        () => service.deArchiveUser('1', MANAGER),
         inactiveUser,
         { action: 'RESTORE', details: { role: Role.USER, changes: { isActive: { from: false, to: true } } } },
       ],

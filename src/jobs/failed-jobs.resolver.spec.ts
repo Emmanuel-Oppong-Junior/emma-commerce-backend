@@ -1,19 +1,18 @@
 import { Reflector } from '@nestjs/core';
-import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
+import { PERMISSIONS_KEY } from '../iam/authorization/policy.decorators';
 import { FailedJobsResolver } from './failed-jobs.resolver';
 import { JobQueue } from './job-queues';
 
 describe('FailedJobsResolver', () => {
   const service = { list: jest.fn(), retry: jest.fn() };
   const resolver = new FailedJobsResolver(service as never);
-  const rolesOf = (handler: unknown) =>
-    new Reflector().getAllAndOverride<Role[]>(ROLES_KEY, [handler as () => void, FailedJobsResolver]);
+  const permissionsOf = (handler: unknown) =>
+    new Reflector().getAllAndOverride<string[]>(PERMISSIONS_KEY, [handler as () => void, FailedJobsResolver]);
 
   beforeEach(() => jest.clearAllMocks());
 
-  it.each(['failedJobs', 'retryFailedJob'] as const)('restricts %s to SUPER_ADMIN only', (handler) => {
-    expect(rolesOf(FailedJobsResolver.prototype[handler])).toEqual([Role.SUPER_ADMIN]);
+  it.each(['failedJobs', 'retryFailedJob'] as const)('restricts %s to jobs.manage (the Owner only)', (handler) => {
+    expect(permissionsOf(FailedJobsResolver.prototype[handler])).toEqual(['jobs.manage']);
   });
 
   it('lists the queue for the acting super admin', async () => {

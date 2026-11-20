@@ -1,7 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Role } from '../generated/prisma/client';
-import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';
+import { PERMISSIONS_KEY } from '../iam/authorization/policy.decorators';
 import { CloudinaryService } from './cloudinary.service';
 import { UploadController } from './upload.controller';
 
@@ -21,13 +20,13 @@ describe('UploadController', () => {
     cloudinary.uploadImage.mockReset().mockResolvedValue({ secure_url: 'https://cdn.test/a.png', public_id: 'a' });
   });
 
-  it.each(['uploadProductImages', 'uploadCategoryImage'] as const)('restricts %s to ADMIN and SUPER_ADMIN', (name) => {
-    const roles = new Reflector().getAllAndOverride<Role[]>(ROLES_KEY, [
+  it.each(['uploadProductImages', 'uploadCategoryImage'] as const)('restricts %s to catalog.media.upload', (name) => {
+    const permissions = new Reflector().getAllAndOverride<string[]>(PERMISSIONS_KEY, [
       UploadController.prototype[name],
       UploadController,
     ]);
 
-    expect(roles).toEqual([Role.ADMIN, Role.SUPER_ADMIN]);
+    expect(permissions).toEqual(['catalog.media.upload']);
   });
 
   it('uploads a valid PNG', async () => {

@@ -81,7 +81,7 @@ These describe what the code enforces today. ADR-0004 (money), ADR-0008 (invento
 
 - **Stock** changes only through logged `restock*`/`adjust*Stock` mutations or the order/cancel transactions, using conditional updates. Never write an absolute quantity. The database rejects negative stock.
 - **Order status** changes only through the transition table in `src/order/order-status.ts`, applied with a conditional `updateMany` claim, never a plain update.
-- **Authorization:** every resolver, and every sensitive field resolver, has an explicit policy (`@Auth`, `@Roles`, field middleware). Never expose `User` on a public type; use `PublicProfile`.
+- **Authorization:** every resolver, and every sensitive field resolver, has an explicit policy (`@Auth`, `@RequirePermission`, `@CustomerOnly`, field middleware). Permissions are code constants in `src/iam/authorization/permissions.ts`; never check `User.role` (deprecated, kept in step for old clients). Never expose `User` on a public type; use `PublicProfile`.
 - Guards and interceptors must work in both `http` and `graphql` contexts.
 - **Money:** charges are in GHS. Never do float arithmetic on money in new code; use Prisma `Decimal`.
 - **Side effects** (email, webhook processing) run in the worker, never on the request path. After a state change, write an outbox event in the same transaction (`OutboxService.record(tx, ...)`); for an email with no surrounding transaction, use `NotificationsService` (it queues the job). Consumers are idempotent on the job id; errors and logs carry no addresses or tokens.
@@ -116,7 +116,8 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 
 - **JWT**: Access token (1h) + Refresh token (24h) + password-reset token (15m, `JWT_RESET_SECRET`). TTLs are overridable via `JWT_*_TTL` env vars. Refresh rotation runs in a Prisma `$transaction`. All routes are protected by default via `AuthenticationGuard`.
 - Mark public routes with `@Auth(AuthType.None)`.
-- Mark admin routes with `@Roles(Role.ADMIN)` or `@Roles(Role.SUPER_ADMIN)`.
+- Mark staff routes with `@RequirePermission('order.refund', ...)` (ADR-0013) and customer self-service routes staff must not use with `@CustomerOnly()`. Mark routes open to any signed-in user with `@Auth(AuthType.Bearer)`.
+- Roles are data: `StaffRole` (system roles Owner, Manager, InventoryClerk, Cashier, Support seeded by migration; Owner always holds every permission) assigned through one `StoreMembership` per user. `AccessTokenGuard` loads the membership with the user on every request (`request.access`, `@ActiveAccess()`); `AuthorizationGuard` enforces the policy. Staff-account and role changes follow `src/iam/authorization/staff-rules.ts` (no escalation, only an Owner acts on an Owner, the last Owner stays) and are audited.
 - Social login: Google and Facebook via `GoogleAuthenticationService` / `FacebookAuthenticationService`, linked to users through the `AuthProvider` model.
 
 ### Commons (`src/commons/`)

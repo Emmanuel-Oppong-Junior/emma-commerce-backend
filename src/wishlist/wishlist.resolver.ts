@@ -2,10 +2,10 @@ import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { WishlistService } from './wishlist.service';
 import { Wishlist } from './entities/wishlist.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 
-@Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+@Auth(AuthType.Bearer)
 @Resolver(() => Wishlist)
 export class WishlistResolver {
   constructor(private readonly wishlistService: WishlistService) {}

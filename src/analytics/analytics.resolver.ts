@@ -6,10 +6,9 @@ import { RevenueByCategoryEntity } from './entities/revenue-by-category.entity';
 import { DashboardSummary } from './entities/dashboard-summary.entity';
 import { SalesReportArgs } from './dto/sales-report.args';
 import { TopProductsArgs } from './dto/top-products.args';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
+import { RequirePermission } from '../iam/authorization/policy.decorators';
 
-@Roles(Role.ADMIN, Role.SUPER_ADMIN)
+@RequirePermission('report.view')
 @Resolver()
 export class AnalyticsResolver {
   constructor(private readonly analyticsService: AnalyticsService) {}

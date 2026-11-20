@@ -63,6 +63,14 @@ export class UsersRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
+  /** The user with their staff membership and its role (customers have none), for the access-token guard. */
+  async findWithStaffRole(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: { storeMemberships: { include: { role: true }, take: 1 } },
+    });
+  }
+
   async findByEmail(email: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { email } });
   }

@@ -9,22 +9,24 @@ import { UsersResolver } from '../../users/users.resolver';
 import { UsersService } from '../../users/users.service';
 import { AddressesLoader } from '../../users/loaders/addresses.loader';
 import { OrdersLoader } from '../../users/loaders/orders.loader';
+import { CUSTOMER_ACCESS, StaffAccess } from './staff-access';
+import { MANAGER_ACCESS, OWNER_ACCESS } from '../../../test/helpers/staff.helper';
 
 describe('ownerOrAdmin', () => {
   const middleware = ownerOrAdmin<{ ownerId: string }>((source) => source.ownerId);
   const info = { parentType: { name: 'User' }, fieldName: 'email' } as unknown as GraphQLResolveInfo;
-  const run = (viewer: object | undefined) => {
+  const run = (viewer: object | undefined, access: StaffAccess = CUSTOMER_ACCESS) => {
     const next = jest.fn().mockResolvedValue('value');
-    const ctx = { source: { ownerId: 'owner-1' }, args: {}, context: { req: { user: viewer } }, info };
+    const ctx = { source: { ownerId: 'owner-1' }, args: {}, context: { req: { user: viewer, access } }, info };
     return { result: () => middleware(ctx as unknown as MiddlewareContext, next), next };
   };
 
   it.each([
-    ['the owner', { id: 'owner-1', role: 'USER' }],
-    ['an admin', { id: 'admin-1', role: 'ADMIN' }],
-    ['a super admin', { id: 'root-1', role: 'SUPER_ADMIN' }],
-  ])('lets %s read the field', async (_who, viewer) => {
-    const { result, next } = run(viewer);
+    ['the owner', { id: 'owner-1', role: 'USER' }, CUSTOMER_ACCESS],
+    ['an admin', { id: 'admin-1', role: 'ADMIN' }, MANAGER_ACCESS],
+    ['a super admin', { id: 'root-1', role: 'SUPER_ADMIN' }, OWNER_ACCESS],
+  ])('lets %s read the field', async (_who, viewer, access) => {
+    const { result, next } = run(viewer, access);
 
     await expect(result()).resolves.toBe('value');
     expect(next).toHaveBeenCalled();

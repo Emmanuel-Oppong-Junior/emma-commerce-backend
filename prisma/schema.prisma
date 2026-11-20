@@ -16,18 +16,18 @@ datasource db {
 }
 
 model User {
-  id                        String          @id @default(cuid())
+  id                        String            @id @default(cuid())
   name                      String?
-  email                     String          @unique
+  email                     String            @unique
   password                  String?
-  phoneNumber               String?         @unique
-  role                      Role            @default(USER)
-  isActive                  Boolean         @default(true)
-  createdAt                 DateTime        @default(now())
-  updatedAt                 DateTime        @updatedAt
+  phoneNumber               String?           @unique
+  role                      Role              @default(USER)
+  isActive                  Boolean           @default(true)
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
   lastLoginAt               DateTime?
   profilePicture            String?
-  failedLoginAttempts       Int             @default(0)
+  failedLoginAttempts       Int               @default(0)
   lockedUntil               DateTime?
   addresses                 Address[]
   reviews                   Review[]
@@ -41,10 +41,11 @@ model User {
   passwordResetTokenExp     DateTime?
   emailVerifiedAt           DateTime?
   pendingEmail              String?
-  emailVerificationToken    String?         @unique
+  emailVerificationToken    String?           @unique
   emailVerificationTokenExp DateTime?
   couponUsages              CouponUsage[]
   returnRequests            ReturnRequest[]
+  storeMemberships          StoreMembership[]
 }
 
 model RefreshToken {
@@ -693,19 +694,50 @@ model ShippingZone {
 }
 
 model Store {
-  id               String   @id @default(cuid())
-  singleton        Boolean  @unique @default(true)
+  id               String            @id @default(cuid())
+  singleton        Boolean           @unique @default(true)
   legalName        String
   tradingName      String
   tin              String?
-  vatRegistered    Boolean  @default(false)
-  pricesIncludeTax Boolean  @default(true)
-  currency         Currency @default(GHS)
+  vatRegistered    Boolean           @default(false)
+  pricesIncludeTax Boolean           @default(true)
+  currency         Currency          @default(GHS)
   supportEmail     String?
   supportPhone     String?
-  nextOrderNumber  Int      @default(10001)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  nextOrderNumber  Int               @default(10001)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  memberships      StoreMembership[]
+}
+
+/// A staff role (ADR-0013). Permissions are code constants (src/iam/authorization/permissions.ts); system roles are
+/// seeded by migration and immutable. Named StaffRole so it does not clash with the legacy Role enum.
+model StaffRole {
+  id          String            @id @default(cuid())
+  key         String            @unique
+  name        String
+  permissions String[]
+  isSystem    Boolean           @default(false)
+  mfaRequired Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  memberships StoreMembership[]
+}
+
+/// A user's staff role in the store. Customers have none; one per user per store.
+model StoreMembership {
+  id        String    @id @default(cuid())
+  userId    String
+  storeId   String
+  roleId    String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  role      StaffRole @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, storeId])
+  @@index([roleId])
 }
 
 model Tax {

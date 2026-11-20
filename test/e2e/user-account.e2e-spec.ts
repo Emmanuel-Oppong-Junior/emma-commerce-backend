@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { grantStaffMemberships, resetDb, seedMinimal } from '../helpers/db.helper';
 import { signInUser, signInAdmin, signInSuperAdmin, signUpUser } from '../helpers/auth.helper';
 
 describe('User Account (e2e)', () => {
@@ -328,6 +328,7 @@ describe('User Account (e2e)', () => {
       const peer = await prisma.user.create({
         data: { email: 'peer-admin@example.com', name: 'Peer Admin', role: 'ADMIN' },
       });
+      await grantStaffMemberships(prisma);
       const superAdminToken = await signInSuperAdmin(app);
 
       // Act

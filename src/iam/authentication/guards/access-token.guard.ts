@@ -6,6 +6,7 @@ import { Request } from 'express';
 import { REQUEST_USER_KEY } from '../../iam.constants';
 import { UsersService } from '../../../users/users.service';
 import { getRequest } from '../../../commons/request-context';
+import { staffAccessFor } from '../../authorization/staff-access';
 
 @Injectable()
 export class AccessTokenGuard implements CanActivate {
@@ -23,9 +24,11 @@ export class AccessTokenGuard implements CanActivate {
     try {
       const authenticatedUser = await this.jwtService.verifyAsync(token, this.jwtConfiguration);
       const id = authenticatedUser.sub;
-      const user = await this.userService.findOne(id);
-      if (!user || !user.isActive) throw new UnauthorizedException();
+      const found = await this.userService.findWithStaffRole(id);
+      if (!found || !found.isActive) throw new UnauthorizedException();
+      const { storeMemberships, ...user } = found;
       request[REQUEST_USER_KEY] = user;
+      request.access = staffAccessFor(storeMemberships[0]?.role);
     } catch {
       throw new UnauthorizedException();
     }

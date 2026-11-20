@@ -5,7 +5,6 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Role } from '../users/enums/role.enum';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { OrderStatus, PaymentProvider, Prisma } from '../generated/prisma/client';
 import { ConfigService } from '@nestjs/config';
@@ -90,17 +89,16 @@ export class PaymentService {
 
   /**
    * Retrieves a payment by ID.
-   * Admins can access any payment; regular users can only access their own.
+   * Staff with payment.view can access any payment; everyone else only their own.
    * @param paymentId - The ID of the payment.
    * @param requestingUserId - The ID of the requesting user.
-   * @param requestingUserRole - The role of the requesting user.
+   * @param canViewAnyPayment - Whether the requester holds payment.view.
    * @returns Payment record.
    */
-  async getPayment(paymentId: string, requestingUserId: string, requestingUserRole: Role): Promise<PaymentRecord> {
+  async getPayment(paymentId: string, requestingUserId: string, canViewAnyPayment: boolean): Promise<PaymentRecord> {
     const payment = await this.paymentRepository.findById(paymentId);
     if (!payment) throw new NotFoundException(`Payment "${paymentId}" not found`);
-    const isAdmin = requestingUserRole === Role.ADMIN || requestingUserRole === Role.SUPER_ADMIN;
-    if (!isAdmin) {
+    if (!canViewAnyPayment) {
       const order = await this.paymentRepository.findOrderById(payment.orderId);
       if (order?.userId !== requestingUserId) {
         throw new UnauthorizedException('You do not have access to this payment');

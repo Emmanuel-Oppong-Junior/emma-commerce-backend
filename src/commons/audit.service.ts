@@ -12,7 +12,9 @@ export type AuditAction =
   | 'REFUND'
   | 'STOCK_ADJUSTMENT'
   | 'VIEW'
-  | 'RETRY';
+  | 'RETRY'
+  | 'ROLE_ASSIGN'
+  | 'ROLE_REMOVE';
 
 export interface AuditEntry {
   entity: string;

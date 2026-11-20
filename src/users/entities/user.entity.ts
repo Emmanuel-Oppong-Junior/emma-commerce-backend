@@ -50,7 +50,10 @@ export class User {
   @Field(() => String, { nullable: true, description: 'Profile picture URL' })
   profilePicture?: string;
 
-  @Field(() => String, { description: 'Role of the user' })
+  @Field(() => String, {
+    description: 'Legacy role: SUPER_ADMIN for an Owner, ADMIN for any other staff role, USER for customers',
+    deprecationReason: 'Use staffRole and permissions; role is kept in step for old clients only',
+  })
   role: string;
 
   @Field(() => Date, { description: 'Date of account creation' })

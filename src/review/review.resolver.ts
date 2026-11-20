@@ -2,16 +2,17 @@ import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/g
 import { ReviewService } from './review.service';
 import { Review } from './entities/review.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
 import { CreateReviewInput } from './dto/create-review.input';
 import { UpdateReviewInput } from './dto/update-review.input';
 import { UsersLoader } from '../users/loaders/users.loader';
 import { ProductsLoader } from '../products/loaders/products.loader';
 import { PublicProfile, toPublicProfile } from '../users/entities/public-profile.entity';
 import { Product } from '../products/entities/product.entity';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import { RequirePermission, CustomerOnly } from '../iam/authorization/policy.decorators';
 
-@Roles(Role.USER, Role.SUPER_ADMIN, Role.ADMIN)
+@Auth(AuthType.Bearer)
 @Resolver(() => Review)
 export class ReviewResolver {
   constructor(
@@ -43,7 +44,7 @@ export class ReviewResolver {
   async getUserReviews(@ActiveUser('id') userId: string) {
     return this.reviewService.getUserReviews(userId);
   }
-  @Roles(Role.USER)
+  @CustomerOnly()
   @Mutation(() => Review, {
     name: 'createReview',
     description: 'Creates a review for a product',
@@ -55,7 +56,7 @@ export class ReviewResolver {
     return this.reviewService.createReview(userId, input);
   }
 
-  @Roles(Role.USER)
+  @CustomerOnly()
   @Mutation(() => Review, {
     name: 'updateReview',
     description: "Updates a user's review",
@@ -67,7 +68,7 @@ export class ReviewResolver {
     return this.reviewService.updateReview(userId, input);
   }
 
-  @Roles(Role.USER)
+  @CustomerOnly()
   @Mutation(() => Review, {
     name: 'deleteReview',
     description: "Deletes the authenticated user's own review",
@@ -76,7 +77,7 @@ export class ReviewResolver {
     return this.reviewService.deleteReview(userId, reviewId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('review.moderate')
   @Mutation(() => Review, {
     name: 'adminDeleteReview',
     description: 'Admin: permanently delete any review for moderation purposes',

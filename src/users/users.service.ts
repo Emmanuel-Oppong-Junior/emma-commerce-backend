@@ -14,6 +14,10 @@ import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { UsersRepository } from './users.repository';
 import { EmailVerificationService } from './email-verification.service';
 import { AuditEntry, AuditService, fieldChanges } from '../commons/audit.service';
+import { StaffActor, StaffService } from './staff/staff.service';
+import { StaffRepository } from './staff/staff.repository';
+import { assertMayGrantRole, assertMayManageStaff } from '../iam/authorization/staff-rules';
+import { MANAGER_ROLE_KEY, OWNER_ROLE_KEY } from '../iam/authorization/permissions';
 
 @Injectable()
 export class UsersService {
@@ -22,6 +26,8 @@ export class UsersService {
     private readonly passwordService: HashingService,
     private readonly emailVerificationService: EmailVerificationService,
     private readonly auditService: AuditService,
+    private readonly staffService: StaffService,
+    private readonly staffRepository: StaffRepository,
   ) {}
 
   /**
@@ -34,16 +40,28 @@ export class UsersService {
     return this.usersRepository.create(await this.withHashedPassword(createUserInput));
   }
 
-  /** Creates an account on behalf of an admin, recording who created it and with which role. */
-  async adminCreateUser(createUserInput: CreateUserInput, actorId: string) {
+  /**
+   * Creates an account on behalf of staff, recording who created it and with which role. The legacy ADMIN role
+   * becomes a Manager membership, under the same escalation rules as assignStaffRole.
+   */
+  async adminCreateUser(createUserInput: CreateUserInput, actor: StaffActor) {
     const data = await this.withHashedPassword(createUserInput);
     return this.auditService.record(
-      (tx) => this.usersRepository.create(data, tx),
+      async (tx) => {
+        const user = await this.usersRepository.create(data, tx);
+        if (user.role === Role.ADMIN) {
+          const manager = await this.staffRepository.findRoleByKey(MANAGER_ROLE_KEY, tx);
+          if (!manager) throw new NotFoundException(`Staff role ${MANAGER_ROLE_KEY} not found`);
+          assertMayGrantRole(actor.access, manager);
+          await this.staffRepository.assignRole(tx, user.id, manager, Role.ADMIN);
+        }
+        return user;
+      },
       (user) => ({
         entity: 'User',
         entityId: user.id,
         action: 'CREATE',
-        userId: actorId,
+        userId: actor.id,
         details: { role: user.role, isActive: user.isActive },
       }),
     );
@@ -203,6 +221,10 @@ export class UsersService {
     return this.usersRepository.findById(id);
   }
 
+  findWithStaffRole(id: string) {
+    return this.usersRepository.findWithStaffRole(id);
+  }
+
   /**
    * Retrieves a user by their email address.
    * @param email - The email address to look up.
@@ -247,9 +269,9 @@ export class UsersService {
    * @throws ForbiddenException if the actor may not manage the target account.
    * @throws ConflictException if another account already uses the new email.
    */
-  async adminUpdateUser(id: string, updateUserInput: UpdateUserInput, actorRole: Role, actorId: string) {
+  async adminUpdateUser(id: string, updateUserInput: UpdateUserInput, actor: StaffActor) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureActorMayManage(user, actorRole, 'updated');
+    await this.ensureActorMayManage(user, actor, 'updated');
     const { email, ...otherChanges } = updateUserInput;
     const newEmail = email && email !== user.email ? email : undefined;
     // Field names only: the values are personal data and stay out of the audit log.
@@ -265,7 +287,7 @@ export class UsersService {
         entity: 'User',
         entityId: user.id,
         action: 'UPDATE',
-        userId: actorId,
+        userId: actor.id,
         details: { fields, role: user.role, emailChangePending: !!newEmail },
       }),
     );
@@ -290,20 +312,23 @@ export class UsersService {
   /**
    * Permanently deletes a user by ID.
    * @param id - The ID of the user to delete.
-   * @param actorRole - Role of the caller; only a SUPER_ADMIN may act on ADMIN accounts.
+   * @param actor - The caller; staff accounts need staff.manage and Owners an Owner (assertMayManageStaff).
    * @returns The deleted user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async remove(id: string, actorRole: Role, actorId: string) {
+  async remove(id: string, actor: StaffActor) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureActorMayManage(user, actorRole, 'deleted');
+    const staffRole = await this.ensureActorMayManage(user, actor, 'deleted');
     return this.auditService.record(
-      (tx) => this.usersRepository.delete(id, tx),
+      async (tx) => {
+        if (staffRole?.key === OWNER_ROLE_KEY) await this.staffService.assertAnotherOwnerRemains(tx, id);
+        return this.usersRepository.delete(id, tx);
+      },
       () => ({
         entity: 'User',
         entityId: id,
         action: 'DELETE',
-        userId: actorId,
+        userId: actor.id,
         details: { before: { role: user.role, isActive: user.isActive } },
       }),
     );
@@ -312,32 +337,35 @@ export class UsersService {
   /**
    * Deactivates a user account by setting isActive to false.
    * @param id - The ID of the user to archive.
-   * @param actorRole - Role of the caller; only a SUPER_ADMIN may act on ADMIN accounts.
+   * @param actor - The caller; staff accounts need staff.manage and Owners an Owner (assertMayManageStaff).
    * @returns The updated user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async archiveUser(id: string, actorRole: Role, actorId: string) {
+  async archiveUser(id: string, actor: StaffActor) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureActorMayManage(user, actorRole, 'archived');
+    const staffRole = await this.ensureActorMayManage(user, actor, 'archived');
     return this.auditService.record(
-      (tx) => this.usersRepository.updateAndRevokeSessions(id, { isActive: false }, tx),
-      (archived) => this.activeFlagChange(user, archived, 'ARCHIVE', actorId),
+      async (tx) => {
+        if (staffRole?.key === OWNER_ROLE_KEY) await this.staffService.assertAnotherOwnerRemains(tx, id);
+        return this.usersRepository.updateAndRevokeSessions(id, { isActive: false }, tx);
+      },
+      (archived) => this.activeFlagChange(user, archived, 'ARCHIVE', actor.id),
     );
   }
 
   /**
    * Reactivates a previously archived user account by setting isActive to true.
    * @param id - The ID of the user to restore.
-   * @param actorRole - Role of the caller; only a SUPER_ADMIN may act on ADMIN accounts.
+   * @param actor - The caller; staff accounts need staff.manage and Owners an Owner (assertMayManageStaff).
    * @returns The updated user record.
    * @throws NotFoundException if the user does not exist.
    */
-  async deArchiveUser(id: string, actorRole: Role, actorId: string) {
+  async deArchiveUser(id: string, actor: StaffActor) {
     const user = await this.findUserByIdOrThrow(id);
-    this.ensureActorMayManage(user, actorRole, 'restored');
+    await this.ensureActorMayManage(user, actor, 'restored');
     return this.auditService.record(
       (tx) => this.usersRepository.update(id, { isActive: true }, tx),
-      (restored) => this.activeFlagChange(user, restored, 'RESTORE', actorId),
+      (restored) => this.activeFlagChange(user, restored, 'RESTORE', actor.id),
     );
   }
 
@@ -398,12 +426,10 @@ export class UsersService {
     return user;
   }
 
-  private ensureActorMayManage(target: User, actorRole: Role, action: string): void {
-    if (target.role === Role.SUPER_ADMIN) {
-      throw new ForbiddenException(`Super admin accounts cannot be ${action}`);
-    }
-    if (target.role === Role.ADMIN && actorRole !== Role.SUPER_ADMIN) {
-      throw new ForbiddenException(`Admin accounts can only be ${action} by a super admin`);
-    }
+  /** Applies the staff-account rules to the target's membership and returns its role (null for a customer). */
+  private async ensureActorMayManage(target: User, actor: StaffActor, action: string) {
+    const membership = await this.staffRepository.findMembership(target.id);
+    assertMayManageStaff(actor.access, membership?.role, action);
+    return membership?.role ?? null;
   }
 }

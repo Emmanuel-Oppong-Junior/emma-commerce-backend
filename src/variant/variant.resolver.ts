@@ -2,17 +2,17 @@ import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { VariantService } from './variant.service';
 import { Variant } from './entities/variant.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
 import { CreateVariantInput } from './dto/create-variant.input';
 import { UpdateVariantInput } from './dto/update-variant.input';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import { RequirePermission } from '../iam/authorization/policy.decorators';
 
-@Roles(Role.ADMIN, Role.SUPER_ADMIN)
 @Resolver(() => Variant)
 export class VariantResolver {
   constructor(private readonly variantService: VariantService) {}
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.USER)
+  @Auth(AuthType.Bearer)
   @Query(() => Variant, {
     name: 'variant',
     description: 'Retrieves a specific variant by ID',
@@ -21,7 +21,7 @@ export class VariantResolver {
     return this.variantService.getVariant(variantId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.USER)
+  @Auth(AuthType.Bearer)
   @Query(() => [Variant], {
     name: 'productVariants',
     description: 'Retrieves all variants for a product',
@@ -30,7 +30,7 @@ export class VariantResolver {
     return this.variantService.getProductVariants(productId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.USER)
+  @Auth(AuthType.Bearer)
   @Query(() => [Variant], {
     name: 'variants',
     description: 'Retrieves all variants (admin only)',
@@ -39,6 +39,7 @@ export class VariantResolver {
     return this.variantService.getAllVariants();
   }
 
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Variant, {
     name: 'createVariant',
     description: 'Creates a new variant for a product',
@@ -47,6 +48,7 @@ export class VariantResolver {
     return this.variantService.createVariant(input, actorId);
   }
 
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Variant, {
     name: 'updateVariant',
     description: 'Updates an existing variant',
@@ -55,6 +57,7 @@ export class VariantResolver {
     return this.variantService.updateVariant(input.id, input, actorId);
   }
 
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Variant, {
     name: 'deleteVariant',
     description: 'Deletes a variant',

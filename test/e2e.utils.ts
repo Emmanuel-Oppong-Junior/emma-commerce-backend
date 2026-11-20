@@ -8,7 +8,7 @@ import { ConfigModule } from '@nestjs/config';
 import { genSalt, hash } from 'bcrypt';
 import { Role, User } from '../src/generated/prisma/client';
 import { ThrottlerStorage } from '@nestjs/throttler';
-import { resetDb } from './helpers/db.helper';
+import { grantStaffMemberships, resetDb } from './helpers/db.helper';
 
 const noopThrottlerStorage = {
   increment: async () => ({ totalHits: 1, timeToExpire: 0, isBlocked: false, timeToBlockExpire: 0 }),
@@ -49,9 +49,11 @@ export async function clearDatabase(prisma: PrismaService) {
 export async function insertUserIntoDatabase(userData: User, prisma: PrismaService) {
   const salt = await genSalt();
   const hashPassword = (await hash(userData.password!, salt)) as string;
-  return prisma.user.create({
+  const user = await prisma.user.create({
     data: { ...userData, password: hashPassword },
   });
+  await grantStaffMemberships(prisma);
+  return user;
 }
 
 export function createSuperAdmin(prisma: PrismaService) {
