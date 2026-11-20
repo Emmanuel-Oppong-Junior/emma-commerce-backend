@@ -132,7 +132,7 @@ describe('Public Catalogue (e2e)', () => {
             name
             totalStock
             isActive
-            variants { price { amount currency } quantity sku }
+            variants { price { amount currency } available sku }
           }
         }
       `;
