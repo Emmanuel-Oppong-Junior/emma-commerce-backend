@@ -276,10 +276,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P1-O.1** Order totals/currency/pricingVersion + line snapshots + `OrderAdjustment` + `OrderLineTax` (M8; legacy = pricingVersion 0, no invented tax)
 - [ ] **P1-O.2** Order/payment/fulfilment state machines complete (statuses `PLACED…COMPLETED`, `PAYMENT_REVIEW`, history table M4)
 
-### P1-G — Ghana addresses
+### P1-G — Ghana addresses  🔄 in progress
 > Accept: Checkout works without zip code · Run: ∥ · M · 🟥
-- [ ] **P1-G.1** Address model (region enum, city/town, area, landmark, optional GhanaPostGPS with lenient validation, recipient, phone, lat/lng; zipCode optional) (M9, ADR-01)
-- [ ] **P1-G.2** Phone E.164 normalisation + uniqueness (M13)
+- [ ] 🔄 **P1-G.1** Address model (region enum, city/town, area, landmark, optional GhanaPostGPS with lenient validation, recipient, phone, lat/lng; zipCode optional) (M9, ADR-01)
+- [ ] 🔄 **P1-G.2** Phone E.164 normalisation + uniqueness (M13)
 
 ### P1-L — Observability
 > Accept: Alerts fire in staging drills · Run: ∥ · M · 🟥

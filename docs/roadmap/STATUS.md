@@ -5,7 +5,14 @@
 **Last checkpoint:** 2026-11-19 · **Current phase:** Phase 1 — Foundations (9/33: P1-P, P1-U, P1-K.1, P1-S done); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- none. Next: pick from **Up next**.
+- **Task:** P1-G — Ghana addresses (G.1 Address model, G.2 phone E.164 + uniqueness) (M9, M13; audit ADR-01, ADR-04, USR-05)
+- **Branch:** not created yet · **State:** planning, waiting on Emmanuel's design answers (API shape, phone scope, required fields)
+- **Steps:**
+  - [ ] Agree the plan ← **Next step**
+  - [ ] G.1 Address model + migration + validation + API
+  - [ ] G.2 Phone normalisation + uniqueness
+  - [ ] Review, combined gates, merge, push, CI
+- **Uncommitted work:** none
 
 **Last completed: P1-S Store & Money (2026-11-19)** (ADR-0001, ADR-0004): S.1 `1750f17`, S.2 `87e6746`, S.3 `3fdf84d`, S.4 `687829a` `[breaking-api]`.
   - S.1: `Store` table (single row enforced by unique + CHECK on `singleton`), migration `20261119000000_store` inserts the row and continues numbering after the highest order; the `Order_orderNumber_seq` sequence is dropped and `createOrder` takes the number with a conditional `UPDATE "Store" … RETURNING` in its transaction (order creation serialises on that row until commit; rollbacks leave gaps). Public `storeSettings`, SUPER_ADMIN-only audited `updateStoreSettings`; store currency replaces `CHARGE_CURRENCY`.
