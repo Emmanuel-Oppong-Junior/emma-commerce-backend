@@ -12,7 +12,6 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { OrderModule } from '../order/order.module';
 import { StoreModule } from '../store/store.module';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
-import { PaymentReconciliationTask } from './tasks/payment-reconciliation.task';
 
 @Module({
   imports: [CommonsModule, NotificationsModule, OrderModule, StoreModule],
@@ -24,9 +23,9 @@ import { PaymentReconciliationTask } from './tasks/payment-reconciliation.task';
     WebhookEventRepository,
     PaystackClient,
     PaymentReconciliationService,
-    PaymentReconciliationTask,
     ConfigService,
   ],
   controllers: [PaymentController],
+  exports: [PaymentReconciliationService],
 })
 export class PaymentModule {}

@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { InventoryRepository } from '../inventory.repository';
 import { LoggerService } from '../../commons/logger.service';
 
@@ -10,7 +9,6 @@ export class LowStockTask {
     private readonly logger: LoggerService,
   ) {}
 
-  @Cron(CronExpression.EVERY_6_HOURS)
   async checkLowStock(): Promise<void> {
     const [products, variants] = await Promise.all([
       this.inventoryRepository.findLowStockProducts(),

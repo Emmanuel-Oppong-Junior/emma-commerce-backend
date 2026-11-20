@@ -8,7 +8,6 @@ import { OrdersRepository } from './order.repository';
 import { CouponsModule } from '../coupons/coupons.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { ExpiredOrdersTask } from './tasks/expired-orders.task';
 import { ShippingZonesModule } from '../shipping-zones/shipping-zones.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
 import { ReturnsModule } from '../returns/returns.module';
@@ -16,7 +15,7 @@ import { UsersModule } from '../users/users.module';
 import { StoreModule } from '../store/store.module';
 
 @Module({
-  providers: [OrdersService, OrdersResolver, OrdersRepository, ExpiredOrdersTask],
+  providers: [OrdersService, OrdersResolver, OrdersRepository],
   imports: [
     CartModule,
     DiscountModule,

@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { OrdersService } from '../order.service';
 import { LoggerService } from '../../commons/logger.service';
 
@@ -12,7 +11,6 @@ export class ExpiredOrdersTask {
     private readonly logger: LoggerService,
   ) {}
 
-  @Cron(CronExpression.EVERY_HOUR)
   async cancelAbandonedOrders(): Promise<void> {
     this.logger.log(`Running expired orders cleanup | threshold: ${ORDER_EXPIRY_HOURS}h`, 'ExpiredOrdersTask');
 

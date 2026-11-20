@@ -4,19 +4,23 @@ import { getQueueToken } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { WorkerModule } from '../../src/worker/worker.module';
 import { WorkerHealthServer } from '../../src/worker/worker-health.server';
+import { MaintenanceScheduler } from '../../src/worker/maintenance.scheduler';
 import { LoggerService } from '../../src/commons/logger.service';
 import { JobQueue } from '../../src/jobs/job-queues';
 
 /**
  * Starts the `ROLE=worker` process in-process: relay loop and queue processors run against the test database and
  * Redis. Only suites that test background work start one; API test apps never consume jobs.
- * The health server is left out so several workers can run side by side without competing for PORT.
+ * Left out: the health server (several workers can then run side by side without competing for PORT) and the
+ * production maintenance schedules (they would fire on the wall clock mid-suite); tests add the schedules they need.
  */
 export async function createTestWorker(
   override: (builder: TestingModuleBuilder) => TestingModuleBuilder = (builder) => builder,
 ): Promise<INestApplicationContext> {
   const builder = Test.createTestingModule({ imports: [WorkerModule] })
     .overrideProvider(WorkerHealthServer)
+    .useValue({})
+    .overrideProvider(MaintenanceScheduler)
     .useValue({});
   const worker = await override(builder).compile();
   worker.useLogger(worker.get(LoggerService));

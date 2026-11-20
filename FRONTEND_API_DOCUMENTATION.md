@@ -83,7 +83,7 @@ feature/
 | Email | Resend |
 | Logging | Winston (via custom `LoggerService`) |
 | Tracing | OpenTelemetry (OTLP/HTTP exporter, opt-in via `OTEL_ENABLED=true`) |
-| Scheduling | `@nestjs/schedule`: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), low-stock log check (every 6 hours) |
+| Background jobs | BullMQ on Redis, run by a separate `ROLE=worker` process. Repeatable jobs, each run once per cluster: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), low-stock log check (every 6 hours) |
 | Rate Limiting | `@nestjs/throttler` with per-named-throttler rules |
 
 ### GraphQL Approach
@@ -3122,7 +3122,7 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 
 - On `createOrder`: each item's quantity is decremented from the **product** stock with a conditional update inside the order transaction (never below zero). An `InventoryLog` record is created with `action = ORDER_DEDUCTION`.
 - On `cancelOrder`, `adminCancelOrder`, `updateOrderStatus(CANCELLED)` or expiry: stock is restored once, logged as `RETURN_RESTORE`. `deleteOrder` never moves stock.
-- Low-stock check: a cron job every 6 hours logs warnings (server log only) for products/variants at or below their threshold.
+- Low-stock check: a repeatable background job every 6 hours logs warnings (server log only) for products/variants at or below their threshold.
 
 ### Return Request Flow
 
@@ -3274,7 +3274,7 @@ A background sweep every 5 minutes also re-checks open attempts with Paystack an
 ### Low Stock Logic
 
 - `Product.lowStockAlert` (default 5) and the variant's internal threshold (default 5, not exposed in GraphQL).
-- A cron job every 6 hours logs warnings for items at or below their threshold. No emails or notifications.
+- A repeatable background job every 6 hours logs warnings for items at or below their threshold. No emails or notifications.
 - `dashboardSummary.lowStockProductCount` / `lowStockVariantCount` report the counts.
 
 ### Reserved Stock

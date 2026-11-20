@@ -6,7 +6,6 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { LoggerService } from '../../src/commons/logger.service';
 import { AllExceptionsFilter } from '../../src/commons/filters/all-exceptions.filter';
 import { ThrottlerStorage } from '@nestjs/throttler';
-import { SchedulerRegistry } from '@nestjs/schedule';
 
 /**
  * A no-op ThrottlerStorage implementation.
@@ -70,8 +69,6 @@ export async function createTestApp(
   app.useGlobalPipes(createValidationPipe());
 
   await app.init();
-  // Cron jobs would fire on the wall clock mid-suite and touch other tests' rows; task specs call the jobs directly.
-  for (const job of moduleFixture.get(SchedulerRegistry).getCronJobs().values()) await job.stop();
 
   return { app, prisma };
 }
