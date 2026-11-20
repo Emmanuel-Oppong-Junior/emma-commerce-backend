@@ -6,7 +6,12 @@ import { CreateVariantInput } from './dto/create-variant.input';
 import { UpdateVariantInput } from './dto/update-variant.input';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
-import { RequirePermission } from '../iam/authorization/policy.decorators';
+import { RequirePermission, RequireStepUp, StepUpCondition } from '../iam/authorization/policy.decorators';
+
+const CHANGES_PRICE: StepUpCondition = {
+  label: 'input.price is set',
+  applies: (args) => (args.input as { price?: unknown } | undefined)?.price != null,
+};
 
 @Resolver(() => Variant)
 export class VariantResolver {
@@ -49,6 +54,7 @@ export class VariantResolver {
   }
 
   @RequirePermission('catalog.product.write')
+  @RequireStepUp(CHANGES_PRICE)
   @Mutation(() => Variant, {
     name: 'updateVariant',
     description: 'Updates an existing variant',

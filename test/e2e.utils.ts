@@ -8,7 +8,8 @@ import { ConfigModule } from '@nestjs/config';
 import { genSalt, hash } from 'bcrypt';
 import { Role, User } from '../src/generated/prisma/client';
 import { ThrottlerStorage } from '@nestjs/throttler';
-import { grantStaffMemberships, resetDb } from './helpers/db.helper';
+import { prepareStaffAccounts, resetDb } from './helpers/db.helper';
+import { signInWithPassword } from './helpers/auth.helper';
 
 const noopThrottlerStorage = {
   increment: async () => ({ totalHits: 1, timeToExpire: 0, isBlocked: false, timeToBlockExpire: 0 }),
@@ -52,7 +53,7 @@ export async function insertUserIntoDatabase(userData: User, prisma: PrismaServi
   const user = await prisma.user.create({
     data: { ...userData, password: hashPassword },
   });
-  await grantStaffMemberships(prisma);
+  await prepareStaffAccounts(prisma);
   return user;
 }
 
@@ -104,27 +105,11 @@ export function graphqlRequest(app: INestApplication, query: string, variables?:
 }
 
 export async function getSuperAdminToken(app: INestApplication) {
-  const signInMutation = `
-        mutation {
-          signIn(input: { email: "super_admin@example.com", password: "SuperAdmin@123" }) {
-            accessToken
-          }
-        }
-      `;
-  const response = await graphqlRequest(app, signInMutation).expect(200);
-  return response.body.data?.signIn?.accessToken;
+  return (await signInWithPassword(app, 'super_admin@example.com', 'SuperAdmin@123')).accessToken;
 }
 
 export async function getAdminToken(app: INestApplication) {
-  const signInMutation = `
-        mutation {
-          signIn(input: { email: "admin@example.com", password: "Admin@123" }) {
-            accessToken
-          }
-        }
-      `;
-  const response = await graphqlRequest(app, signInMutation).expect(200);
-  return response.body.data?.signIn?.accessToken;
+  return (await signInWithPassword(app, 'admin@example.com', 'Admin@123')).accessToken;
 }
 
 export async function getUserToken(app: INestApplication) {

@@ -15,8 +15,18 @@ import { OrdersLoader } from './loaders/orders.loader';
 import { Address } from '../addresses/entities/address.entity';
 import { Order } from '../order/entities/order.entity';
 import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
-import { ActiveAccess, RequirePermission } from '../iam/authorization/policy.decorators';
+import {
+  ActiveAccess,
+  RequirePermission,
+  RequireStepUp,
+  StepUpCondition,
+} from '../iam/authorization/policy.decorators';
 import { StaffAccess } from '../iam/authorization/staff-access';
+
+const GRANTS_ADMIN: StepUpCondition = {
+  label: 'createUserInput.role is ADMIN (grants the Manager role)',
+  applies: (args) => (args.createUserInput as { role?: string } | undefined)?.role === 'ADMIN',
+};
 
 const selfOrAdmin = ownerOrAdmin<User>((user) => user.id);
 
@@ -30,6 +40,7 @@ export class UsersResolver {
   ) {}
 
   @RequirePermission('staff.manage')
+  @RequireStepUp(GRANTS_ADMIN)
   @Mutation(() => User, {
     description: 'Create a new user with email and password',
   })

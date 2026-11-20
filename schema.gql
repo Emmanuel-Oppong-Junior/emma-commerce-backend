@@ -195,6 +195,16 @@ input ChangeUserPasswordInput {
   oldPassword: String!
 }
 
+input CompleteMfaSignInInput {
+  """
+  extensions.mfaChallenge from the MFA_REQUIRED signIn error (valid 5 minutes)
+  """
+  challenge: String!
+
+  """A 6-digit authenticator code or an unused recovery code"""
+  code: String!
+}
+
 type Coupon {
   code: String!
   createdAt: DateTime!
@@ -714,6 +724,25 @@ enum JobQueue {
   WEBHOOKS
 }
 
+"""
+A started two-factor enrolment; confirm it with a code from the authenticator app
+"""
+type MfaEnrollment {
+  """otpauth:// URI to show as a QR code (SHA1, 6 digits, 30 seconds)"""
+  otpauthUri: String!
+
+  """
+  The TOTP secret in base32, for typing into an app that cannot scan the QR code
+  """
+  secret: String!
+}
+
+"""Single-use recovery codes, returned only once"""
+type MfaRecoveryCodes {
+  """Each code works once in place of an authenticator code"""
+  recoveryCodes: [String!]!
+}
+
 input ModifyDiscountItemsInput {
   """Category IDs to add or remove"""
   categories: [ID!] = []
@@ -788,6 +817,16 @@ type Mutation {
 
   """Clears the user’s wishlist"""
   clearWishlist: Wishlist!
+
+  """
+  Finish a sign-in that failed with extensions.reason MFA_REQUIRED, using its extensions.mfaChallenge and an authenticator or recovery code
+  """
+  completeMfaSignIn(input: CompleteMfaSignInInput!): AuthEntity!
+
+  """
+  Finish enrolment with the first code from the authenticator app. Turns two-factor authentication on and returns 10 single-use recovery codes, shown only this once. Counts as a step-up for this session. Audited.
+  """
+  confirmMfaEnrollment(code: String!): MfaRecoveryCodes!
 
   """Creates a new address for the user"""
   createAddress(input: CreateAddressInput!): Address!
@@ -961,6 +1000,16 @@ type Mutation {
   """Register a new user with email and password"""
   signUp(input: SignUpInput!): AuthEntity!
   softDeletePayment(id: String!): Payment!
+
+  """
+  Start two-factor enrolment: returns a new TOTP secret and otpauth URI (replacing an unconfirmed one). CONFLICT if already enabled.
+  """
+  startMfaEnrollment: MfaEnrollment!
+
+  """
+  Verify this session with an authenticator or recovery code. Sensitive actions (role changes, refunds, price changes, exports) are then allowed for 10 minutes. Audited.
+  """
+  stepUp(code: String!): StepUpResult!
 
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
@@ -1842,6 +1891,12 @@ type StaffRole {
   updatedAt: DateTime!
 }
 
+"""A successful step-up verification"""
+type StepUpResult {
+  """Sensitive actions are allowed in this session until then"""
+  validUntil: DateTime!
+}
+
 enum StockStatus {
   BACKORDER
   IN_STOCK
@@ -2260,6 +2315,11 @@ type User {
 
   """Date of last login"""
   lastLoginAt: DateTime
+
+  """
+  Whether two-factor authentication is on (the user themself or user.view)
+  """
+  mfaEnabled: Boolean!
 
   """User’s full name"""
   name: String

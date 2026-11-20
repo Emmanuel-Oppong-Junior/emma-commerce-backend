@@ -33,7 +33,7 @@ describe('REST requests (audit repro: PLAT-01, IAM-07)', () => {
     const accessTokenGuard = new AccessTokenGuard(
       { verifyAsync: async () => ({ sub: 'user-1' }) } as never,
       {} as never,
-      { findOne: async () => ({ id: 'user-1', isActive: true }) } as never,
+      { findWithStaffRole: async () => ({ id: 'user-1', isActive: true, storeMemberships: [] }) } as never,
     );
     const guard = new AuthenticationGuard(new Reflector(), accessTokenGuard);
     const request = { headers: { authorization: 'Bearer token' } };

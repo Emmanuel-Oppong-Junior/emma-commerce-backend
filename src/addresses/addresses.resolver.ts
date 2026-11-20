@@ -7,8 +7,18 @@ import { UpdateAddressInput } from './dto/update-address.input';
 import { ForbiddenException } from '@nestjs/common';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
-import { ActiveAccess, RequirePermission } from '../iam/authorization/policy.decorators';
+import {
+  ActiveAccess,
+  RequirePermission,
+  RequireStepUp,
+  StepUpCondition,
+} from '../iam/authorization/policy.decorators';
 import { hasPermission, StaffAccess } from '../iam/authorization/staff-access';
+
+const EXPORTS_ALL: StepUpCondition = {
+  label: 'userId is omitted (exports every address)',
+  applies: (args) => !args.userId,
+};
 
 @Resolver(() => Address)
 export class AddressesResolver {
@@ -37,19 +47,22 @@ export class AddressesResolver {
    * Regular users should use `userAddresses` instead.
    */
   @RequirePermission('user.view')
+  @RequireStepUp(EXPORTS_ALL)
   @Query(() => [Address], {
     name: 'addresses',
     description:
       'Staff (user.view): retrieves the addresses of one user. Omitting userId lists every address and needs customer.data.export (the Owner).',
   })
   async getAllAddresses(
+    @ActiveUser('id') actorId: string,
     @ActiveAccess() access: StaffAccess,
     @Args('userId', { type: () => String, nullable: true }) userId?: string,
   ) {
-    if (!userId && !hasPermission(access, 'customer.data.export')) {
+    if (userId) return this.addressService.getAllAddresses(userId);
+    if (!hasPermission(access, 'customer.data.export')) {
       throw new ForbiddenException('Supply a userId: listing every address needs the customer.data.export permission');
     }
-    return this.addressService.getAllAddresses(userId);
+    return this.addressService.exportAllAddresses(actorId);
   }
 
   @Auth(AuthType.Bearer)

@@ -89,6 +89,11 @@ const THROTTLERS: ThrottlerOptions[] = [
     ttl: 60000, // 1 minute
     limit: 10, // 10 uploads per minute per user
   },
+  {
+    name: 'mfa',
+    ttl: 60000, // 1 minute
+    limit: 5, // two-factor enrolment, sign-in completion and step-up attempts
+  },
 ];
 
 @Module({

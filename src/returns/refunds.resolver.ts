@@ -4,7 +4,7 @@ import { ActiveUser } from '../iam/authentication/decorators/active-user.decorat
 import { RefundEntity } from './entities/refund.entity';
 import { RefundStatusEnum } from './enums/refund-status.enum';
 import { RefundsService } from './refunds.service';
-import { RequirePermission } from '../iam/authorization/policy.decorators';
+import { RequirePermission, RequireStepUp } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => RefundEntity)
 export class RefundsResolver {
@@ -17,6 +17,7 @@ export class RefundsResolver {
   }
 
   @RequirePermission('order.refund')
+  @RequireStepUp()
   @Mutation(() => RefundEntity, {
     description: 'Send a PENDING refund (e.g. an auto-refund of a flagged payment) or resend a FAILED one (admin only)',
   })

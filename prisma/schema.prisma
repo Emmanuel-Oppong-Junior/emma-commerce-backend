@@ -46,6 +46,25 @@ model User {
   couponUsages              CouponUsage[]
   returnRequests            ReturnRequest[]
   storeMemberships          StoreMembership[]
+  /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
+  mfaSecret                 String?
+  /// Set once the first code confirmed enrolment; MFA is active only from then
+  mfaEnabledAt              DateTime?
+  /// Last accepted TOTP time step; codes for this step or earlier are replays
+  mfaLastUsedStep           Int?
+  mfaRecoveryCodes          MfaRecoveryCode[]
+}
+
+/// Single-use MFA recovery code, stored as a keyed hash (src/iam/mfa/mfa-crypto.ts).
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @unique
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model RefreshToken {

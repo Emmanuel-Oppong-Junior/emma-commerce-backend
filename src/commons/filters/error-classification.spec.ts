@@ -39,6 +39,18 @@ describe('classifyError', () => {
     expect(classifyError(exception)).toEqual({ status, code, message });
   });
 
+  it('passes on the extensions an HttpException carries (e.g. an MFA reason)', () => {
+    const error = new ForbiddenException({ message: 'Step up first', extensions: { reason: 'STEP_UP_REQUIRED' } });
+
+    expect(classifyError(error)).toEqual({
+      status: 403,
+      code: 'FORBIDDEN',
+      message: 'Step up first',
+      extensions: { reason: 'STEP_UP_REQUIRED' },
+    });
+    expect(classifyError(new ForbiddenException('Plain'))).not.toHaveProperty('extensions');
+  });
+
   it('labels ValidationPipe failures BAD_USER_INPUT and joins their messages', () => {
     const exception = new InputValidationException(['email must be an email', 'name is too short']);
 

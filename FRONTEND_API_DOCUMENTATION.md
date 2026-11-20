@@ -32,6 +32,7 @@
    - [Store settings](#222-store-settings)
    - [Background jobs](#223-background-jobs)
    - [Staff roles and permissions](#224-staff-roles-and-permissions)
+   - [Two-factor authentication and step-up](#225-two-factor-authentication-and-step-up)
 3. [REST API Reference](#3-rest-api-reference)
 4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
@@ -105,6 +106,7 @@ feature/
 - A session can be refreshed for at most **30 days** after sign-in; then the user must sign in again.
 - Password reset tokens: 15-minute TTL signed with separate secret (`JWT_RESET_SECRET`).
 - **Account lockout**: 5 consecutive failed logins trigger a 15-minute lockout (tracked in `User.failedLoginAttempts` and `User.lockedUntil`).
+- **Two-factor authentication (TOTP)**: any user may enrol; Owners and Managers must. Accounts with it complete `signIn` (and social sign-in) with `completeMfaSignIn`. Sensitive staff actions need a verification in the last 10 minutes (`stepUp`). See [2.25](#225-two-factor-authentication-and-step-up).
 
 ### Payment Integration
 
@@ -159,6 +161,7 @@ Introspection does not count towards the limits and is disabled in production.
 | `forgotPassword` | 3 / hour per IP and 3 / hour per email address |
 | `resetPassword` | 3 / hour |
 | `resendVerificationEmail` | 5 / hour (plus one email per minute per account) |
+| `completeMfaSignIn`, `startMfaEnrollment`, `confirmMfaEnrollment`, `stepUp` | 5 / minute |
 | `POST /payment/initialize` | 5 / minute |
 | `POST /upload/*` | 10 / minute |
 | `refreshToken`, `signOut` | exempt from all limits |
@@ -239,6 +242,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 **Possible Errors**:
 - `UNAUTHENTICATED` — Invalid email or password.
 - `UNAUTHENTICATED` — Account locked (includes remaining lock time in seconds in message).
+- `UNAUTHENTICATED` with `extensions.reason: "MFA_REQUIRED"` and `extensions.mfaChallenge` — the password was right but the account has two-factor authentication: no tokens are issued; finish with `completeMfaSignIn` (see [2.25](#225-two-factor-authentication-and-step-up)). `signInWithGoogle` / `signInWithFacebook` behave the same for such accounts. Accounts without two-factor authentication are unaffected.
 
 ---
 
@@ -2767,6 +2771,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 - Only an Owner can assign the Owner role or change, demote, archive or delete an Owner.
 - The last active Owner cannot be removed, demoted, archived or deleted (`FORBIDDEN`, "The store must keep at least one active Owner").
 - Changes apply on the affected user's next request; no sign-out is needed.
+- Role and permission changes are step-up actions (see [2.25](#225-two-factor-authentication-and-step-up)), and holders of `mfaRequired` roles must enrol two-factor authentication before any staff operation.
 
 **Permission catalogue** (also returned by `staffPermissions`):
 
@@ -2859,6 +2864,64 @@ Every other operation is public or open to any signed-in user, as its section sa
 - **Description**: Changes a custom role; holders get the new permissions on their next request. You must hold every permission of the role before and after the change.
 - **Side effects**: audit entry (entity `StaffRole`, action `UPDATE`, before and after).
 - **Possible Errors**: `NOT_FOUND`, `FORBIDDEN` ("System roles cannot be changed", or a permission you do not hold), `BAD_REQUEST` (unknown permission).
+
+---
+
+### 2.25 Two-factor authentication and step-up
+
+Time-based one-time passwords (RFC 6238: SHA1, 6 digits, 30-second steps, any authenticator app). Any signed-in user may enrol. Roles with `mfaRequired` (Owner and Manager) **must** enrol: until they do, every permission-guarded operation returns `FORBIDDEN` with `reason: "MFA_ENROLLMENT_REQUIRED"`; the enrolment mutations, their profile and other customer-level operations keep working. Codes are accepted one step either side of now, and each code works only once (a replay within its step is refused). The TOTP secret is stored encrypted; recovery codes are stored hashed.
+
+**Enrolment flow**
+1. `startMfaEnrollment` → `{ secret, otpauthUri }`. Draw `otpauthUri` as a QR code; show `secret` for manual entry.
+2. The user scans it and types the current code: `confirmMfaEnrollment(code)` → `{ recoveryCodes }` (10 codes). Show them once and ask the user to store them; they are never returned again. Two-factor authentication is on from now, and this session counts as freshly verified.
+
+**Sign-in flow** (password, Google or Facebook)
+1. `signIn` fails with `UNAUTHENTICATED`, `reason: "MFA_REQUIRED"`, `extensions.mfaChallenge` (valid 5 minutes, not usable as an access token).
+2. `completeMfaSignIn(input: { challenge, code })` with a 6-digit code or a recovery code (case, spaces and dashes ignored; each works once) → `AuthEntity`. The new session counts as freshly verified.
+
+**Step-up.** These operations additionally need a two-factor verification **of the current session** in the last 10 minutes (`stepUp`, `completeMfaSignIn` or `confirmMfaEnrollment`), otherwise `FORBIDDEN` with `reason: "STEP_UP_REQUIRED"`. The operation is not performed; call `stepUp(code)` and retry. All are audited.
+
+| Kind | Operations |
+|---|---|
+| Role and permission changes | `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, `createUser` with `role: ADMIN` |
+| Refunds | `approveReturn`, `processRefund`, `processPendingRefund` |
+| Price changes | `updateProduct` when `basePrice` is sent, `updateVariant` when `price` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax` |
+| Data exports | `addresses` without `userId` |
+
+A refreshed access token keeps its session, so a verification survives `refreshToken`; a new sign-in starts a new session. Tokens issued before this release have no session id: sign in again before stepping up.
+
+```typescript
+{ secret: string; otpauthUri: string }   // MfaEnrollment
+{ recoveryCodes: string[] }              // MfaRecoveryCodes
+{ validUntil: DateTime }                 // StepUpResult
+User.mfaEnabled: boolean                 // The user themself or user.view
+```
+
+#### `startMfaEnrollment`
+- **Type**: Mutation · **Auth**: any signed-in user · **Rate Limit**: 5/minute
+- **Response**: `MfaEnrollment!`. Starting again before confirming replaces the secret.
+- **Possible Errors**: `CONFLICT` (already enabled), `UNAUTHENTICATED`.
+
+#### `confirmMfaEnrollment`
+- **Type**: Mutation · **Auth**: any signed-in user · **Rate Limit**: 5/minute
+- **Args**: `code: String!` (current 6-digit code)
+- **Response**: `MfaRecoveryCodes!`
+- **Side effects**: audit entry (entity `User`, action `MFA_ENABLE`).
+- **Possible Errors**: `BAD_REQUEST` ("Invalid two-factor code", or "Start enrolment with startMfaEnrollment first"), `CONFLICT` (already enabled).
+
+#### `completeMfaSignIn`
+- **Type**: Mutation · **Auth Required**: No · **Rate Limit**: 5/minute
+- **Args**: `input: CompleteMfaSignInInput!` = `{ challenge: string; code: string }` (code 6-32 chars)
+- **Response**: `AuthEntity!`
+- **Side effects**: using a recovery code writes an audit entry (action `MFA_RECOVERY_CODE_USED`).
+- **Possible Errors**: `UNAUTHENTICATED` ("Invalid or expired challenge" → start again with `signIn`; "Invalid two-factor code" → ask again), `BAD_USER_INPUT`.
+
+#### `stepUp`
+- **Type**: Mutation · **Auth**: any signed-in user · **Rate Limit**: 5/minute
+- **Args**: `code: String!` (6-digit code or recovery code)
+- **Response**: `StepUpResult!`
+- **Side effects**: audit entry (entity `User`, action `STEP_UP`, `details.method` `totp` or `recovery`).
+- **Possible Errors**: `BAD_REQUEST` ("Invalid two-factor code", "Enrol two-factor authentication first"), `UNAUTHENTICATED` (token without a session id: sign in again).
 
 ---
 
@@ -3540,6 +3603,16 @@ GraphQL errors follow the standard Apollo format:
 | Schema errors: unknown field or argument, wrong type, missing required value (HTTP 400) | `GRAPHQL_VALIDATION_FAILED` / `BAD_USER_INPUT` (Apollo) |
 | Any 5xx, and unexpected errors (incl. a null returned for a non-null field) | `INTERNAL_SERVER_ERROR` (message "Internal server error"; `extensions.status` carries e.g. 503 for a provider outage) |
 
+**`extensions.reason`** narrows some `FORBIDDEN` / `UNAUTHENTICATED` errors so the frontend can react (details in [2.25](#225-two-factor-authentication-and-step-up)):
+
+| `code` | `reason` | Meaning | What to do |
+|---|---|---|---|
+| `UNAUTHENTICATED` | `MFA_REQUIRED` | Password or social sign-in succeeded; second factor needed. `extensions.mfaChallenge` holds the challenge (5 minutes) | Ask for a code, call `completeMfaSignIn` |
+| `FORBIDDEN` | `MFA_ENROLLMENT_REQUIRED` | The staff role requires two-factor authentication and the user has not enrolled | Run the enrolment flow, then retry |
+| `FORBIDDEN` | `STEP_UP_REQUIRED` | Sensitive action without a two-factor verification in the last 10 minutes | Ask for a code, call `stepUp`, retry |
+
+REST endpoints return the same `reason` field in their JSON error body.
+
 **Query cost:** each field costs 1; a list costs its page size (`first`, or 10 when not given) times the cost of its fields. A page of 50 products with variants and reviews costs about 2,800.
 
 ### Production vs. Development
@@ -3890,6 +3963,7 @@ Backend configuration, validated at startup (`src/config/env.validation.ts`); li
 | `JWT_ACCESS_TOKEN_TTL` | ❌ | `3600` | Access token TTL in seconds |
 | `JWT_REFRESH_TOKEN_TTL` | ❌ | `86400` | Refresh token TTL in seconds |
 | `JWT_RESET_TOKEN_TTL` | ❌ | `900` | Reset token TTL in seconds |
+| `MFA_ENCRYPTION_KEY` | ✅ | — | AES-256-GCM key for TOTP secrets at rest and recovery-code hashing: 64 hex characters (`openssl rand -hex 32`). A key made of a repeated pattern is rejected in production. Changing it invalidates every enrolment. |
 
 ### OAuth
 

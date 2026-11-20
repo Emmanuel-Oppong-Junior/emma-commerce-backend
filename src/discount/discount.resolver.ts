@@ -5,13 +5,14 @@ import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
-import { RequirePermission } from '../iam/authorization/policy.decorators';
+import { RequirePermission, RequireStepUp } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => Discount)
 export class DiscountResolver {
   constructor(private readonly discountService: DiscountService) {}
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Discount)
   createDiscount(
     @ActiveUser('id') actorId: string,
@@ -33,6 +34,7 @@ export class DiscountResolver {
   }
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Discount)
   updateDiscount(
     @ActiveUser('id') actorId: string,
@@ -42,12 +44,14 @@ export class DiscountResolver {
   }
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Discount)
   addToDiscount(@ActiveUser('id') actorId: string, @Args('modifyDiscountItemsInput') input: ModifyDiscountItemsInput) {
     return this.discountService.addToDiscount(input, actorId);
   }
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Discount)
   removeFromDiscount(
     @ActiveUser('id') actorId: string,
@@ -57,6 +61,7 @@ export class DiscountResolver {
   }
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Discount)
   removeDiscount(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
     return this.discountService.deleteDiscount(id, actorId);

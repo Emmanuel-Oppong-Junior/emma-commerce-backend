@@ -2,6 +2,15 @@ import { LoggerService } from '../logger.service';
 import { GraphQLError, GraphQLFormattedError } from 'graphql';
 
 const INTERNAL_ERROR_CODE = 'INTERNAL_SERVER_ERROR';
+// Extensions returned to the client but kept out of logs: the MFA challenge is half of a sign-in.
+const UNLOGGED_EXTENSIONS = ['mfaChallenge'];
+
+function loggableExtensions(extensions: GraphQLFormattedError['extensions']) {
+  if (!extensions) return extensions;
+  return Object.fromEntries(
+    Object.entries(extensions).map(([key, value]) => [key, UNLOGGED_EXTENSIONS.includes(key) ? '[redacted]' : value]),
+  );
+}
 
 const isSafeToExpose = (extensions: GraphQLFormattedError['extensions']): boolean => {
   const code = extensions?.code as string | undefined;
@@ -25,7 +34,7 @@ export const formatError =
     const { message, locations, path, extensions } = formattedError;
     const stack = error instanceof GraphQLError ? error.stack : undefined;
     logger.error(
-      `GraphQL Error: ${message} | Path: ${path?.join(' > ')} | Locations: ${JSON.stringify(locations)} | Extensions: ${JSON.stringify(extensions)}`,
+      `GraphQL Error: ${message} | Path: ${path?.join(' > ')} | Locations: ${JSON.stringify(locations)} | Extensions: ${JSON.stringify(loggableExtensions(extensions))}`,
       stack,
       'GraphQL',
     );

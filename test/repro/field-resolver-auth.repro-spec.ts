@@ -16,6 +16,7 @@ import { ProductsLoader } from '../../src/products/loaders/products.loader';
 import { AuthenticationGuard } from '../../src/iam/authentication/guards/authentication.guard';
 import { AccessTokenGuard } from '../../src/iam/authentication/guards/access-token.guard';
 import { AuthorizationGuard } from '../../src/iam/authorization/authorization.guard';
+import { StepUpStore } from '../../src/iam/mfa/step-up.store';
 import { REQUEST_USER_KEY } from '../../src/iam/iam.constants';
 
 const reviewer = {
@@ -91,6 +92,7 @@ describe('Field-level authorisation (audit repro: SEC-01)', () => {
           },
         },
         { provide: APP_GUARD, useClass: AuthenticationGuard },
+        { provide: StepUpStore, useValue: { lastVerifiedAt: async () => null } },
         { provide: APP_GUARD, useClass: AuthorizationGuard },
       ],
     }).compile();

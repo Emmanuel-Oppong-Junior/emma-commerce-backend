@@ -5,62 +5,64 @@ exports[`Authorization matrix matches the reviewed matrix 1`] = `
 Mutation addProductsToTag                permission: catalog.taxonomy.write
 Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
-Mutation addToDiscount                   permission: promotion.manage
+Mutation addToDiscount                   permission: promotion.manage; step-up
 Mutation addToWishlist                   authenticated
 Mutation adjustProductStock              permission: inventory.adjust
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
 Mutation adminDeleteReview               permission: review.moderate
-Mutation approveReturn                   permission: return.manage + order.refund
+Mutation approveReturn                   permission: return.manage + order.refund; step-up
 Mutation archiveProduct                  permission: catalog.product.write
 Mutation archiveUser                     permission: user.manage
-Mutation assignStaffRole                 permission: staff.manage
+Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
 Mutation changeUserPassword              authenticated
 Mutation clearCart                       authenticated
 Mutation clearWishlist                   authenticated
+Mutation completeMfaSignIn               public
+Mutation confirmMfaEnrollment            authenticated
 Mutation createAddress                   authenticated
 Mutation createBrand                     permission: catalog.taxonomy.write
 Mutation createCategory                  permission: catalog.taxonomy.write
-Mutation createCoupon                    permission: promotion.manage
-Mutation createDiscount                  permission: promotion.manage
+Mutation createCoupon                    permission: promotion.manage; step-up
+Mutation createDiscount                  permission: promotion.manage; step-up
 Mutation createOrder                     authenticated
 Mutation createPickupLocation            permission: shipping.manage
 Mutation createProduct                   permission: catalog.product.write
 Mutation createReturnRequest             authenticated
 Mutation createReview                    customer only
 Mutation createShippingZone              permission: shipping.manage
-Mutation createStaffRole                 permission: staff.manage
+Mutation createStaffRole                 permission: staff.manage; step-up
 Mutation createSubCategory               permission: catalog.taxonomy.write
 Mutation createTag                       permission: catalog.taxonomy.write
-Mutation createTax                       permission: tax.manage
-Mutation createUser                      permission: staff.manage
+Mutation createTax                       permission: tax.manage; step-up
+Mutation createUser                      permission: staff.manage; step-up when createUserInput.role is ADMIN (grants the Manager role)
 Mutation createVariant                   permission: catalog.product.write
 Mutation deArchiveUser                   permission: user.manage
 Mutation deleteAddress                   authenticated
 Mutation deleteBrand                     permission: catalog.taxonomy.write
-Mutation deleteCoupon                    permission: promotion.manage
+Mutation deleteCoupon                    permission: promotion.manage; step-up
 Mutation deleteOrder                     permission: order.manage
 Mutation deletePickupLocation            permission: shipping.manage
 Mutation deleteReview                    customer only
 Mutation deleteShippingZone              permission: shipping.manage
 Mutation deleteTag                       permission: catalog.taxonomy.write
-Mutation deleteTax                       permission: tax.manage
+Mutation deleteTax                       permission: tax.manage; step-up
 Mutation deleteVariant                   permission: catalog.product.write
 Mutation forgotPassword                  public
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
-Mutation processPendingRefund            permission: order.refund
-Mutation processRefund                   permission: order.refund
+Mutation processPendingRefund            permission: order.refund; step-up
+Mutation processRefund                   permission: order.refund; step-up
 Mutation recordCodPayment                permission: payment.record
 Mutation refreshToken                    public
 Mutation rejectReturn                    permission: return.manage
 Mutation removeCategory                  permission: catalog.taxonomy.write
-Mutation removeDiscount                  permission: promotion.manage
+Mutation removeDiscount                  permission: promotion.manage; step-up
 Mutation removeFromCart                  authenticated
-Mutation removeFromDiscount              permission: promotion.manage
+Mutation removeFromDiscount              permission: promotion.manage; step-up
 Mutation removeFromWishlist              authenticated
 Mutation removeProductsFromTag           permission: catalog.taxonomy.write
-Mutation removeStaffRole                 permission: staff.manage
+Mutation removeStaffRole                 permission: staff.manage; step-up
 Mutation removeSubCategory               permission: catalog.taxonomy.write
 Mutation removeTagFromProduct            permission: catalog.product.write
 Mutation removeUser                      permission: user.manage
@@ -77,33 +79,35 @@ Mutation signInWithGoogle                public
 Mutation signOut                         authenticated
 Mutation signUp                          public
 Mutation softDeletePayment               permission: payment.manage
+Mutation startMfaEnrollment              authenticated
+Mutation stepUp                          authenticated
 Mutation updateAddress                   authenticated
 Mutation updateBrand                     permission: catalog.taxonomy.write
 Mutation updateCartItem                  authenticated
 Mutation updateCategory                  permission: catalog.taxonomy.write
-Mutation updateCoupon                    permission: promotion.manage
-Mutation updateDiscount                  permission: promotion.manage
+Mutation updateCoupon                    permission: promotion.manage; step-up
+Mutation updateDiscount                  permission: promotion.manage; step-up
 Mutation updateMyProfile                 authenticated
 Mutation updateOrderStatus               permission: order.manage
 Mutation updatePickupLocation            permission: shipping.manage
-Mutation updateProduct                   permission: catalog.product.write
+Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.basePrice is set
 Mutation updateReview                    customer only
 Mutation updateShipping                  permission: order.manage
 Mutation updateShippingZone              permission: shipping.manage
-Mutation updateStaffRole                 permission: staff.manage
+Mutation updateStaffRole                 permission: staff.manage; step-up
 Mutation updateStoreSettings             permission: store.settings.manage
 Mutation updateSubCategory               permission: catalog.taxonomy.write
 Mutation updateTag                       permission: catalog.taxonomy.write
-Mutation updateTax                       permission: tax.manage
+Mutation updateTax                       permission: tax.manage; step-up
 Mutation updateUser                      permission: user.manage
-Mutation updateVariant                   permission: catalog.product.write
+Mutation updateVariant                   permission: catalog.product.write; step-up when input.price is set
 Mutation validateCoupon                  authenticated
 Mutation verifyEmail                     public
 Mutation verifyPayment                   customer only
 Query activePickupLocations              public
 Query activeShippingZones                public
 Query address                            authenticated
-Query addresses                          permission: user.view
+Query addresses                          permission: user.view; step-up when userId is omitted (exports every address)
 Query adminProduct                       permission: catalog.product.read
 Query adminProducts                      permission: catalog.product.read
 Query brand                              public

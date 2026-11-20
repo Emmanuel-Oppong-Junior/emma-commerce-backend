@@ -3,6 +3,8 @@ import { genSalt, hash } from 'bcrypt';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseMfaKey, sealSecret } from '../../src/iam/mfa/mfa-crypto';
+import { TEST_TOTP_SEED } from './staff.helper';
 
 const STAFF_ROLES_MIGRATION = join(__dirname, '../../prisma/migrations/20261120100000_staff_roles/migration.sql');
 
@@ -15,11 +17,23 @@ export function staffMembershipBackfillSql(): string {
 }
 
 /**
- * Gives every ADMIN / SUPER_ADMIN user created directly in the database the staff membership the migration backfill
- * gives existing staff, since permissions now come from memberships, not User.role.
+ * Makes ADMIN / SUPER_ADMIN users created directly in the database usable as staff, as they would be in production:
+ * the migration backfill gives them their membership (permissions come from memberships, not User.role), and those
+ * whose role requires two-factor authentication are enrolled with TEST_TOTP_SEED (see signInWithPassword).
  */
-export async function grantStaffMemberships(prisma: PrismaService): Promise<void> {
+export async function prepareStaffAccounts(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe(staffMembershipBackfillSql());
+  const key = parseMfaKey(process.env.MFA_ENCRYPTION_KEY ?? '');
+  const unenrolled = await prisma.user.findMany({
+    where: { mfaEnabledAt: null, storeMemberships: { some: { role: { mfaRequired: true } } } },
+    select: { id: true },
+  });
+  for (const { id } of unenrolled) {
+    await prisma.user.update({
+      where: { id },
+      data: { mfaSecret: sealSecret(key, TEST_TOTP_SEED, id), mfaEnabledAt: new Date(), mfaLastUsedStep: null },
+    });
+  }
 }
 
 /**
@@ -191,7 +205,7 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
     ],
   });
 
-  await grantStaffMemberships(prisma);
+  await prepareStaffAccounts(prisma);
 
   // Brand
   const brand = await prisma.brand.create({

@@ -1,7 +1,8 @@
 import { Args, ID, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { User } from '../entities/user.entity';
+import { User as UserRecord } from '../../generated/prisma/client';
 import { ActiveUser } from '../../iam/authentication/decorators/active-user.decorator';
-import { ActiveAccess, RequirePermission } from '../../iam/authorization/policy.decorators';
+import { ActiveAccess, RequirePermission, RequireStepUp } from '../../iam/authorization/policy.decorators';
 import { effectivePermissions, StaffAccess } from '../../iam/authorization/staff-access';
 import { ownerOrAdmin } from '../../iam/authorization/owner-or-admin.field-middleware';
 import { StaffService, toStaffRoleEntity } from './staff.service';
@@ -34,6 +35,7 @@ export class StaffResolver {
   }
 
   @RequirePermission('staff.manage')
+  @RequireStepUp()
   @Mutation(() => StaffMemberEntity, {
     description:
       'Give a user a staff role, replacing their current one (staff.manage). You may only assign a role whose permissions you all hold; only an Owner assigns or changes an Owner; the last Owner cannot be demoted. Audited.',
@@ -48,6 +50,7 @@ export class StaffResolver {
   }
 
   @RequirePermission('staff.manage')
+  @RequireStepUp()
   @Mutation(() => User, {
     description:
       "Take away a user's staff role so they become a customer (staff.manage). Only an Owner removes an Owner; the last Owner cannot be removed. Audited.",
@@ -61,6 +64,7 @@ export class StaffResolver {
   }
 
   @RequirePermission('staff.manage')
+  @RequireStepUp()
   @Mutation(() => StaffRoleEntity, {
     description: 'Create a custom staff role from permissions you hold (staff.manage). Audited.',
   })
@@ -73,6 +77,7 @@ export class StaffResolver {
   }
 
   @RequirePermission('staff.manage')
+  @RequireStepUp()
   @Mutation(() => StaffRoleEntity, {
     description:
       'Change a custom staff role (staff.manage); system roles are immutable. Applies to its holders on their next request. Audited.',
@@ -108,5 +113,13 @@ export class UserStaffFieldsResolver {
   async permissions(@Parent() user: User) {
     const role = await this.staffRolesLoader.loader.load(user.id);
     return role ? effectivePermissions(role) : [];
+  }
+
+  @ResolveField(() => Boolean, {
+    description: 'Whether two-factor authentication is on (the user themself or user.view)',
+    middleware: [selfOrAdmin],
+  })
+  mfaEnabled(@Parent() user: UserRecord) {
+    return !!user.mfaEnabledAt;
   }
 }

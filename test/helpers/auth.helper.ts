@@ -1,5 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import { gqlRequest } from './graphql.helper';
+import { PrismaService } from '../../src/prisma/prisma.service';
+import { base32Decode, totp } from '../../src/iam/mfa/totp';
+import { TEST_TOTP_SEED } from './staff.helper';
 
 /** Credentials used for the seeded regular user (mirrors `seedMinimal`). */
 const USER_CREDENTIALS = { email: 'user@example.com', password: 'User@123' };
@@ -42,6 +45,47 @@ export async function signUpUser(app: INestApplication, input: SignUpInput): Pro
   return response.body.data.signUp as AuthTokens;
 }
 
+/** The current authenticator code of a user enrolled by prepareStaffAccounts. */
+export function testTotpCode(): string {
+  return totp(base32Decode(TEST_TOTP_SEED), Date.now());
+}
+
+/**
+ * Lets the next code be accepted again. The server refuses a TOTP code whose 30-second step was already used, and
+ * tests sign the same staff user in several times within one step.
+ */
+export async function allowTotpReuse(app: INestApplication, email: string): Promise<void> {
+  await app.get(PrismaService).user.update({ where: { email }, data: { mfaLastUsedStep: null } });
+}
+
+/**
+ * Signs in with email and password and, when the account has two-factor authentication (staff enrolled by
+ * prepareStaffAccounts), completes the sign-in with a code, as the frontend does. The session is then freshly
+ * verified, so step-up actions work for 10 minutes.
+ */
+export async function signInWithPassword(app: INestApplication, email: string, password: string): Promise<AuthTokens> {
+  const signIn = await gqlRequest(
+    app,
+    'mutation SignIn($input: SignInInput!) { signIn(input: $input) { accessToken refreshToken } }',
+    { input: { email, password } },
+  ).expect(200);
+  if (!signIn.body.errors) return signIn.body.data.signIn as AuthTokens;
+  const [error] = signIn.body.errors;
+  // Apps built without AllExceptionsFilter (test/e2e.utils.ts) leave the extensions under originalError.
+  const extensions = error.extensions?.reason ? error.extensions : error.extensions?.originalError?.extensions;
+  if (extensions?.reason !== 'MFA_REQUIRED') throw new Error(`signIn failed for ${email}: ${error.message}`);
+
+  await allowTotpReuse(app, email);
+  const completed = await gqlRequest(
+    app,
+    'mutation Complete($input: CompleteMfaSignInInput!) { completeMfaSignIn(input: $input) { accessToken refreshToken } }',
+    { input: { challenge: extensions.mfaChallenge, code: testTotpCode() } },
+  ).expect(200);
+  if (completed.body.errors)
+    throw new Error(`completeMfaSignIn failed for ${email}: ${completed.body.errors[0].message}`);
+  return completed.body.data.completeMfaSignIn as AuthTokens;
+}
+
 /**
  * Signs in the seeded regular user and returns the access token.
  * Requires the database to contain the user created by `seedMinimal`.
@@ -68,16 +112,7 @@ export async function signInUser(app: INestApplication): Promise<string> {
  * @param app - The bootstrapped NestJS test application.
  */
 export async function signInAdmin(app: INestApplication): Promise<string> {
-  const mutation = `
-    mutation {
-      signIn(input: { email: "${ADMIN_CREDENTIALS.email}", password: "${ADMIN_CREDENTIALS.password}" }) {
-        accessToken
-      }
-    }
-  `;
-
-  const response = await gqlRequest(app, mutation).expect(200);
-  return response.body.data.signIn.accessToken as string;
+  return (await signInWithPassword(app, ADMIN_CREDENTIALS.email, ADMIN_CREDENTIALS.password)).accessToken;
 }
 
 /**
@@ -87,16 +122,7 @@ export async function signInAdmin(app: INestApplication): Promise<string> {
  * @param app - The bootstrapped NestJS test application.
  */
 export async function signInSuperAdmin(app: INestApplication): Promise<string> {
-  const mutation = `
-    mutation {
-      signIn(input: { email: "${SUPER_ADMIN_CREDENTIALS.email}", password: "${SUPER_ADMIN_CREDENTIALS.password}" }) {
-        accessToken
-      }
-    }
-  `;
-
-  const response = await gqlRequest(app, mutation).expect(200);
-  return response.body.data.signIn.accessToken as string;
+  return (await signInWithPassword(app, SUPER_ADMIN_CREDENTIALS.email, SUPER_ADMIN_CREDENTIALS.password)).accessToken;
 }
 
 /**

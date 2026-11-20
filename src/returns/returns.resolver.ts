@@ -6,7 +6,7 @@ import { ApproveReturnInput, RejectReturnInput } from './dto/review-return.input
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
-import { RequirePermission } from '../iam/authorization/policy.decorators';
+import { RequirePermission, RequireStepUp } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => ReturnRequestEntity)
 export class ReturnsResolver {
@@ -19,6 +19,7 @@ export class ReturnsResolver {
   }
 
   @RequirePermission('return.manage', 'order.refund')
+  @RequireStepUp()
   @Mutation(() => ReturnRequestEntity, { description: 'Approve a return request (admin only)' })
   approveReturn(@ActiveUser('id') adminUserId: string, @Args('input') input: ApproveReturnInput) {
     return this.returnsService.approveReturn(input, adminUserId);
@@ -31,6 +32,7 @@ export class ReturnsResolver {
   }
 
   @RequirePermission('order.refund')
+  @RequireStepUp()
   @Mutation(() => ReturnRequestEntity, { description: 'Process a refund for an approved return (admin only)' })
   processRefund(
     @ActiveUser('id') adminUserId: string,

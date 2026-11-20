@@ -15,6 +15,8 @@ import { createHash } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { LoggerService } from '../../commons/logger.service';
 import { EmailVerificationService } from '../../users/email-verification.service';
+import { MfaService } from '../mfa/mfa.service';
+import { StepUpStore } from '../mfa/step-up.store';
 
 const mockUsersService = {
   findUserByEmail: jest.fn(),
@@ -75,6 +77,14 @@ const mockLogger = {
   warn: jest.fn(),
 };
 
+const mockMfaService = {
+  verifySecondFactor: jest.fn(),
+};
+
+const mockStepUpStore = {
+  markVerified: jest.fn(),
+};
+
 const flushBackgroundWork = () => new Promise((resolve) => setImmediate(resolve));
 
 const baseUser: Partial<User> = {
@@ -107,6 +117,8 @@ describe('AuthenticationService', () => {
         { provide: NotificationsService, useValue: mockNotificationsService },
         { provide: LoggerService, useValue: mockLogger },
         { provide: EmailVerificationService, useValue: mockEmailVerificationService },
+        { provide: MfaService, useValue: mockMfaService },
+        { provide: StepUpStore, useValue: mockStepUpStore },
       ],
     }).compile();
 
@@ -477,6 +489,106 @@ describe('AuthenticationService', () => {
       const { sessionStart } = refreshPayload as { sessionStart: number };
       expect(sessionStart).toBeGreaterThanOrEqual(before);
       expect(sessionStart).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+    });
+  });
+
+  describe('two-factor sign-in', () => {
+    const mfaUser = { ...baseUser, mfaEnabledAt: new Date() } as User;
+    const reasonOf = (error: unknown) =>
+      ((error as UnauthorizedException).getResponse() as { extensions: { reason: string; mfaChallenge: string } })
+        .extensions;
+
+    it('demands the second factor instead of issuing tokens, with a short-lived challenge', async () => {
+      mockJwtService.signAsync.mockResolvedValue('challenge-token');
+
+      const error = await service.generateTokens(mfaUser).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(UnauthorizedException);
+      expect(reasonOf(error)).toEqual({ reason: 'MFA_REQUIRED', mfaChallenge: 'challenge-token' });
+      const [payload, options] = jwtService.signAsync.mock.calls[0];
+      expect(payload).toEqual({ sub: '1', purpose: 'mfa-challenge' });
+      expect(options).toEqual(expect.objectContaining({ expiresIn: 300 }));
+      // Never signed with the access-token secret, so a challenge is not an access token.
+      expect((options as { secret: string }).secret).not.toBe(mockJwtConfig.secret);
+      expect(usersRepository.createRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('applies to password sign-in', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(mfaUser);
+      mockHashingService.compare.mockResolvedValue(true);
+      mockJwtService.signAsync.mockResolvedValue('challenge-token');
+
+      await expect(service.signIn({ email: 'test@example.com', password: 'pw' } as SignInInput)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      expect(usersRepository.createRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('completes with a valid code: tokens share a new session id that counts as verified for step-up', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', purpose: 'mfa-challenge' });
+      mockUsersService.findOne.mockResolvedValue(mfaUser);
+      mockMfaService.verifySecondFactor.mockResolvedValue('totp');
+      mockJwtService.signAsync.mockResolvedValueOnce('access').mockResolvedValueOnce('refresh');
+
+      const result = await service.completeMfaSignIn('challenge', '123456');
+
+      expect(result).toEqual({ accessToken: 'access', refreshToken: 'refresh' });
+      expect(mockMfaService.verifySecondFactor).toHaveBeenCalledWith('1', '123456');
+      const [[accessPayload], [refreshPayload]] = jwtService.signAsync.mock.calls as [{ sid: string }][];
+      expect(accessPayload.sid).toEqual(expect.any(String));
+      expect(refreshPayload.sid).toBe(accessPayload.sid);
+      expect(mockStepUpStore.markVerified).toHaveBeenCalledWith('1', accessPayload.sid, expect.any(Number));
+    });
+
+    it('rejects a wrong code without issuing tokens', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', purpose: 'mfa-challenge' });
+      mockUsersService.findOne.mockResolvedValue(mfaUser);
+      mockMfaService.verifySecondFactor.mockResolvedValue(null);
+
+      await expect(service.completeMfaSignIn('challenge', '000000')).rejects.toThrow('Invalid two-factor code');
+      expect(jwtService.signAsync).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid challenge, another kind of token and an account that is inactive or without MFA', async () => {
+      mockJwtService.verifyAsync.mockRejectedValueOnce(new Error('jwt expired'));
+      await expect(service.completeMfaSignIn('expired', '123456')).rejects.toThrow('Invalid or expired challenge');
+
+      mockJwtService.verifyAsync.mockResolvedValueOnce({ sub: '1', purpose: 'password-reset' });
+      await expect(service.completeMfaSignIn('reset-token', '123456')).rejects.toThrow('Invalid or expired challenge');
+
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: '1', purpose: 'mfa-challenge' });
+      mockUsersService.findOne.mockResolvedValueOnce({ ...mfaUser, isActive: false });
+      await expect(service.completeMfaSignIn('c', '123456')).rejects.toThrow(UnauthorizedException);
+      mockUsersService.findOne.mockResolvedValueOnce({ ...mfaUser, mfaEnabledAt: null });
+      await expect(service.completeMfaSignIn('c', '123456')).rejects.toThrow(UnauthorizedException);
+      expect(mockMfaService.verifySecondFactor).not.toHaveBeenCalled();
+    });
+
+    it('does not mark a password-only session as verified', async () => {
+      mockJwtService.signAsync.mockResolvedValue('token');
+
+      await service.generateTokens(baseUser as User);
+
+      expect(mockStepUpStore.markVerified).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('session ids', () => {
+    it('keeps the session id across refresh', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({
+        sub: '1',
+        sessionStart: Math.floor(Date.now() / 1000),
+        sid: 'sess-1',
+      });
+      mockUsersService.findOne.mockResolvedValue(baseUser);
+      mockUsersRepository.rotateRefreshToken.mockResolvedValue('rotated');
+      mockJwtService.signAsync.mockResolvedValue('token');
+
+      await service.refreshToken({ refreshToken: 'raw' });
+
+      const [[accessPayload], [refreshPayload]] = jwtService.signAsync.mock.calls as [{ sid: string }][];
+      expect(accessPayload.sid).toBe('sess-1');
+      expect(refreshPayload.sid).toBe('sess-1');
     });
   });
 });

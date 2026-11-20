@@ -119,13 +119,16 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 - Mark staff routes with `@RequirePermission('order.refund', ...)` (ADR-0013) and customer self-service routes staff must not use with `@CustomerOnly()`. Mark routes open to any signed-in user with `@Auth(AuthType.Bearer)`.
 - Roles are data: `StaffRole` (system roles Owner, Manager, InventoryClerk, Cashier, Support seeded by migration; Owner always holds every permission) assigned through one `StoreMembership` per user. `AccessTokenGuard` loads the membership with the user on every request (`request.access`, `@ActiveAccess()`); `AuthorizationGuard` enforces the policy. Staff-account and role changes follow `src/iam/authorization/staff-rules.ts` (no escalation, only an Owner acts on an Owner, the last Owner stays) and are audited.
 - Social login: Google and Facebook via `GoogleAuthenticationService` / `FacebookAuthenticationService`, linked to users through the `AuthProvider` model.
+- **MFA (`src/iam/mfa/`):** own RFC 6238 TOTP on `node:crypto` (SHA1, 6 digits, 30 s, ±1 step, replayed steps refused via `User.mfaLastUsedStep`); secrets AES-256-GCM encrypted with `MFA_ENCRYPTION_KEY` (user id as AAD), 10 single-use recovery codes stored as keyed hashes. `AuthenticationService.generateTokens` is the only way to start a session after a first factor and fails with `UNAUTHENTICATED` + `reason: MFA_REQUIRED` + a 5-minute `mfaChallenge` for MFA users (so password and social sign-in cannot skip it); `completeMfaSignIn` finishes it. Roles with `mfaRequired` (Owner, Manager) get `FORBIDDEN` + `reason: MFA_ENROLLMENT_REQUIRED` on every permission-guarded operation until enrolled.
+- **Step-up:** mark sensitive resolvers `@RequireStepUp()` (optionally with an argument condition) next to `@RequirePermission`. Access tokens carry a session id (`sid`, kept across refresh); `stepUp`, `completeMfaSignIn` and `confirmMfaEnrollment` record a verification per session in Redis (`StepUpStore`, 10 minutes); otherwise `FORBIDDEN` + `reason: STEP_UP_REQUIRED`. Covered: role/permission changes, refunds, price changes (product/variant price, discounts, coupons, taxes), data exports (`addresses` without `userId`).
+- e2e helpers: `prepareStaffAccounts` gives directly inserted ADMIN/SUPER_ADMIN users their membership and enrols Owner/Manager MFA with `TEST_TOTP_SEED`; `signInWithPassword` completes the second factor (fresh step-up).
 
 ### Commons (`src/commons/`)
 
 - `LoggerService` — Winston-based logger, used app-wide
 - `CloudinaryService` — image upload/storage (`upload.controller.ts` exposes the REST upload)
 - `AuditService` — writes to the `AuditLog` model
-- Global exception filter (`AllExceptionsFilter` + `error-classification.ts`) maps HTTP statuses to GraphQL codes (400 `BAD_REQUEST`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN`, 404 `NOT_FOUND`, 409 `CONFLICT`; ValidationPipe failures `BAD_USER_INPUT`) and Prisma P2002/P2003 → `CONFLICT`, P2025 → `NOT_FOUND` with safe messages; stack traces are logged only in development
+- Global exception filter (`AllExceptionsFilter` + `error-classification.ts`) maps HTTP statuses to GraphQL codes (400 `BAD_REQUEST`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN`, 404 `NOT_FOUND`, 409 `CONFLICT`; ValidationPipe failures `BAD_USER_INPUT`) and Prisma P2002/P2003 → `CONFLICT`, P2025 → `NOT_FOUND` with safe messages; an HttpException whose response has `extensions` (e.g. `reason`) passes them on; stack traces are logged only in development
 - GraphQL query limits (`commons/graphql/query-limits.ts`): depth ≤ 8, aliases ≤ 15, estimated cost ≤ 3000 (`graphql-query-complexity`); introspection is exempt and off in production
 - `GqlThrottlerGuard` — global rate limiting (stricter limits on auth mutations such as `forgotPassword`/`resetPassword`)
 - `PaginationArgs` / `PageInfo` entities are shared across all list queries
@@ -150,9 +153,11 @@ Required:  NODE_ENV (development | test | production; no default),
            JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER,
            GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET,
            PAYSTACK_SECRET_KEY, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET,
-           REDIS_HOST (every environment)
+           REDIS_HOST (every environment),
+           MFA_ENCRYPTION_KEY (64 hex chars = 32 bytes; encrypts TOTP secrets, keys recovery-code hashes)
 Production: ALLOWED_ORIGINS is also required; placeholder secrets
-           (change-me, your-..., xxx, ...) and a JWT secret reused across the three are rejected
+           (change-me, your-..., xxx, ..., an MFA key made of a repeated pattern) and a JWT secret reused across
+           the three are rejected
 Optional:  PORT, ROLE (api | worker, default api), ALLOWED_ORIGINS, LOG_LEVEL, PAYSTACK_CALLBACK_URL,
            JWT_ACCESS_TOKEN_TTL, JWT_REFRESH_TOKEN_TTL, JWT_RESET_TOKEN_TTL,
            REDIS_PORT (6379), REDIS_PASSWORD, REDIS_DB (0-15, default 0), RESEND_API_KEY, RESEND_FROM_EMAIL,

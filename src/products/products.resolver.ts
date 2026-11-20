@@ -20,7 +20,12 @@ import { ReviewsLoader } from './loaders/reviews.loader';
 import { Variant } from '../variant/entities/variant.entity';
 import { Review } from '../review/entities/review.entity';
 import { MoneyObject } from '../commons/money/money.object';
-import { RequirePermission } from '../iam/authorization/policy.decorators';
+import { RequirePermission, RequireStepUp, StepUpCondition } from '../iam/authorization/policy.decorators';
+
+const CHANGES_BASE_PRICE: StepUpCondition = {
+  label: 'updateProductInput.basePrice is set',
+  applies: (args) => (args.updateProductInput as { basePrice?: unknown } | undefined)?.basePrice != null,
+};
 
 // Field resolvers and nested product lists must never be loaded through the Prisma select.
 const RESOLVED_FIELDS = ['discountedPrice', 'appliedDiscount', 'variants', 'reviews', 'products'];
@@ -58,6 +63,7 @@ export class ProductsResolver {
   }
 
   @RequirePermission('catalog.product.write')
+  @RequireStepUp(CHANGES_BASE_PRICE)
   @Mutation(() => Product)
   updateProduct(
     @ActiveUser('id') actorId: string,

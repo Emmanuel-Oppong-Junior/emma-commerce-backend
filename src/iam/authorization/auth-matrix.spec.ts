@@ -5,7 +5,7 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { AUTH_TYPE_KEY } from '../authentication/decorators/auth.decorator';
 import { AuthType } from '../authentication/enums/auth-type.enum';
-import { CUSTOMER_ONLY_KEY, PERMISSIONS_KEY } from './policy.decorators';
+import { CUSTOMER_ONLY_KEY, PERMISSIONS_KEY, STEP_UP_KEY, StepUpCondition } from './policy.decorators';
 
 // The authorization matrix (ADR-0013): every GraphQL operation and REST route with its policy, from Nest metadata.
 // A change to any policy changes the snapshot, so it is reviewed; run `npm test -- -u auth-matrix` to accept it.
@@ -38,12 +38,15 @@ function policyOf(method: object, cls: ClassRef): Omit<MatrixRow, 'operation'> {
   const authTypes = metadata<AuthType[]>(AUTH_TYPE_KEY, method, cls);
   const permissions = metadata<string[]>(PERMISSIONS_KEY, method, cls);
   const customerOnly = metadata<boolean>(CUSTOMER_ONLY_KEY, method, cls);
+  const stepUp = metadata<StepUpCondition | true>(STEP_UP_KEY, method, cls);
   const explicit = authTypes !== undefined || !!permissions?.length || !!customerOnly;
   const parts: string[] = [];
   if (authTypes?.includes(AuthType.None)) parts.push('public');
   else if (permissions?.length) parts.push(`permission: ${permissions.join(' + ')}`);
   else if (customerOnly) parts.push('customer only');
   else parts.push('authenticated');
+  if (stepUp === true) parts.push('step-up');
+  else if (stepUp) parts.push(`step-up when ${stepUp.label}`);
   return { policy: parts.join('; '), explicit };
 }
 

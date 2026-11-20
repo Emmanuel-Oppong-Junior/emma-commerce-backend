@@ -29,6 +29,7 @@ export class AccessTokenGuard implements CanActivate {
       const { storeMemberships, ...user } = found;
       request[REQUEST_USER_KEY] = user;
       request.access = staffAccessFor(storeMemberships[0]?.role);
+      request.sessionId = typeof authenticatedUser.sid === 'string' ? authenticatedUser.sid : undefined;
     } catch {
       throw new UnauthorizedException();
     }

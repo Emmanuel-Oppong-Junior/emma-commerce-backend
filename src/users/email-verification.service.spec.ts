@@ -26,6 +26,9 @@ const user: User = {
   pendingEmail: null,
   emailVerificationToken: null,
   emailVerificationTokenExp: null,
+  mfaSecret: null,
+  mfaEnabledAt: null,
+  mfaLastUsedStep: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

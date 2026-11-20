@@ -17,6 +17,7 @@ describe('AddressesResolver', () => {
     getAddress: jest.fn(),
     getUserAddresses: jest.fn(),
     getAllAddresses: jest.fn(),
+    exportAllAddresses: jest.fn(),
     createAddress: jest.fn(),
     updateAddress: jest.fn(),
     deleteAddress: jest.fn(),
@@ -97,15 +98,18 @@ describe('AddressesResolver', () => {
     it('should retrieve all addresses for super admin when userId is omitted', async () => {
       mockAddressesService.getAllAddresses.mockResolvedValue([mockAddress]);
 
-      const result = await resolver.getAllAddresses(OWNER_ACCESS);
+      mockAddressesService.exportAllAddresses.mockResolvedValue([mockAddress]);
 
-      expect(addressesService.getAllAddresses).toHaveBeenCalledWith(undefined);
+      const result = await resolver.getAllAddresses('owner1', OWNER_ACCESS);
+
+      expect(addressesService.exportAllAddresses).toHaveBeenCalledWith('owner1');
       expect(result).toEqual([mockAddress]);
     });
 
     it('should reject an admin who omits userId', async () => {
-      await expect(resolver.getAllAddresses(MANAGER_ACCESS)).rejects.toThrow(ForbiddenException);
+      await expect(resolver.getAllAddresses('admin1', MANAGER_ACCESS)).rejects.toThrow(ForbiddenException);
       expect(addressesService.getAllAddresses).not.toHaveBeenCalled();
+      expect(addressesService.exportAllAddresses).not.toHaveBeenCalled();
     });
   });
 
@@ -156,7 +160,7 @@ describe('AddressesResolver', () => {
     it('should allow ADMIN role to access getAllAddresses for a given user', async () => {
       mockAddressesService.getAllAddresses.mockResolvedValue([mockAddress]);
 
-      const result = await resolver.getAllAddresses(MANAGER_ACCESS, 'user1');
+      const result = await resolver.getAllAddresses('admin1', MANAGER_ACCESS, 'user1');
 
       expect(addressesService.getAllAddresses).toHaveBeenCalledWith('user1');
       expect(result).toEqual([mockAddress]);

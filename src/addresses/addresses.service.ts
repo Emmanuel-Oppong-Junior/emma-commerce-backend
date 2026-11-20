@@ -3,10 +3,14 @@ import { Address } from '../generated/prisma/client';
 import { CreateAddressInput, STORE_COUNTRY } from './dto/create-address.input';
 import { UpdateAddressInput } from './dto/update-address.input';
 import { AddressesRepository } from './addresses.repository';
+import { AuditService } from '../commons/audit.service';
 
 @Injectable()
 export class AddressesService {
-  constructor(private readonly addressesRepository: AddressesRepository) {}
+  constructor(
+    private readonly addressesRepository: AddressesRepository,
+    private readonly auditService: AuditService,
+  ) {}
 
   /**
    * Creates a new address for the user.
@@ -51,6 +55,19 @@ export class AddressesService {
       return this.addressesRepository.findByUser(userId);
     }
     return this.addressesRepository.findAll();
+  }
+
+  /** Every customer address at once: a data export, so it is audited with the actor and the row count. */
+  async exportAllAddresses(actorId: string): Promise<Address[]> {
+    const addresses = await this.addressesRepository.findAll();
+    await this.auditService.log({
+      entity: 'Address',
+      entityId: '*',
+      action: 'EXPORT',
+      userId: actorId,
+      details: { count: addresses.length },
+    });
+    return addresses;
   }
 
   /**

@@ -10,7 +10,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
   constructor(private readonly logger: LoggerService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const { status, code, message } = classifyError(exception);
+    const { status, code, message, extensions } = classifyError(exception);
     // [CRITICAL-4] Never expose stack traces outside development
     const isDev = process.env.NODE_ENV === 'development';
     const stack = isDev && exception instanceof Error ? exception.stack : undefined;
@@ -24,7 +24,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         'ExceptionFilter',
       );
       throw new GraphQLError(message, {
-        extensions: { code, status },
+        extensions: { ...extensions, code, status },
       });
     }
 
@@ -43,6 +43,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       path: request.url,
       message,
+      ...extensions,
     });
   }
 }

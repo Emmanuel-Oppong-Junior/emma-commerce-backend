@@ -8,19 +8,21 @@ import { ValidateCouponInput } from './dto/validate-coupon.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
-import { RequirePermission } from '../iam/authorization/policy.decorators';
+import { RequirePermission, RequireStepUp } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => Coupon)
 export class CouponsResolver {
   constructor(private readonly couponsService: CouponsService) {}
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Coupon, { description: 'Create a new coupon (admin only)' })
   createCoupon(@ActiveUser('id') actorId: string, @Args('input') input: CreateCouponInput) {
     return this.couponsService.createCoupon(input, actorId);
   }
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Coupon, { description: 'Update a coupon (admin only)' })
   updateCoupon(
     @ActiveUser('id') actorId: string,
@@ -31,6 +33,7 @@ export class CouponsResolver {
   }
 
   @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Coupon, { description: 'Delete a coupon (admin only)' })
   deleteCoupon(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
     return this.couponsService.deleteCoupon(id, actorId);

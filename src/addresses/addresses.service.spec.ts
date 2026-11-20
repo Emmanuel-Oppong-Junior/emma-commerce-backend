@@ -5,6 +5,8 @@ import { NotFoundException } from '@nestjs/common';
 import { Address } from '../generated/prisma/client';
 import { UpdateAddressInput } from './dto/update-address.input';
 import { GhanaRegion } from './enums/ghana-region.enum';
+import { AuditService } from '../commons/audit.service';
+import { createAuditServiceMock } from '../../test/helpers/audit.helper';
 
 const mockAddressesRepository = {
   create: jest.fn(),
@@ -49,9 +51,15 @@ describe('AddressesService', () => {
     country: 'GH',
   };
 
+  const mockAuditService = createAuditServiceMock();
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [AddressesService, { provide: AddressesRepository, useValue: mockAddressesRepository }],
+      providers: [
+        AddressesService,
+        { provide: AddressesRepository, useValue: mockAddressesRepository },
+        { provide: AuditService, useValue: mockAuditService },
+      ],
     }).compile();
 
     service = module.get<AddressesService>(AddressesService);
@@ -154,6 +162,24 @@ describe('AddressesService', () => {
       expect(addressesRepository.findByUser).toHaveBeenCalledWith(mockUserId);
       expect(addressesRepository.findAll).not.toHaveBeenCalled();
       expect(result).toEqual([mockAddress]);
+    });
+  });
+
+  describe('exportAllAddresses', () => {
+    it('returns every address and audits the export with the actor and count, without the data', async () => {
+      mockAddressesRepository.findAll.mockResolvedValue([mockAddress]);
+      mockAuditService.log.mockResolvedValue(undefined);
+
+      const result = await service.exportAllAddresses('owner1');
+
+      expect(result).toEqual([mockAddress]);
+      expect(mockAuditService.log).toHaveBeenCalledWith({
+        entity: 'Address',
+        entityId: '*',
+        action: 'EXPORT',
+        userId: 'owner1',
+        details: { count: 1 },
+      });
     });
   });
 

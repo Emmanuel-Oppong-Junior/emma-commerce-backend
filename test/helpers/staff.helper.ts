@@ -26,6 +26,9 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'report.view',
 ];
 
+/** Base32 TOTP seed of staff enrolled by prepareStaffAccounts; signInWithPassword computes codes from it. */
+export const TEST_TOTP_SEED = 'JBSWY3DPEHPK3PXP';
+
 export const OWNER_ROLE = { key: 'OWNER', permissions: [] as string[], mfaRequired: true };
 export const MANAGER_ROLE = { key: 'MANAGER', permissions: MANAGER_PERMISSIONS, mfaRequired: true };
 

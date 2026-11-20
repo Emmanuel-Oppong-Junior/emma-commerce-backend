@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ALL_PERMISSIONS } from '../../src/iam/authorization/permissions';
+import { base32Decode, totp } from '../../src/iam/mfa/totp';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, staffMembershipBackfillSql } from '../helpers/db.helper';
@@ -146,6 +147,10 @@ describe('Permission-based RBAC (e2e)', () => {
       expect(created.body.errors).toBeUndefined();
       const staffAdmin = await newCustomer('staff-admin@example.com');
       await assign(staffAdmin.id, 'STAFF_ADMIN', ownerToken);
+      // Role changes are step-up actions, so the staff manager enrols two-factor authentication (a fresh verification).
+      const started = await gql('mutation { startMfaEnrollment { secret } }', staffAdmin.token);
+      const code = totp(base32Decode(started.body.data.startMfaEnrollment.secret), Date.now());
+      await gql(`mutation { confirmMfaEnrollment(code: "${code}") { recoveryCodes } }`, staffAdmin.token);
       const target = await newCustomer('escalation-target@example.com');
 
       const toOwner = await assign(target.id, 'OWNER', staffAdmin.token);
