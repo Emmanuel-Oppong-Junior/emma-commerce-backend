@@ -238,12 +238,12 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-P.1** Upgrade to Prisma 7 + `prisma.config.ts` + driver adapter (`@prisma/adapter-pg`), Node 24; run concurrency integration tests (`848cf59`)
 - [x] **P1-P.2** Re-baseline migrations (no real data) + order numbers from 10001 + CI check rejecting edits to applied migrations (`c181408`, `c6e712a`)
 
-### P1-J — Worker, outbox, Redis (ADR-0009/0011)
+### P1-J — Worker, outbox, Redis (ADR-0009/0011)  🔄 in progress
 > Accept: Each job runs once across 2 instances; failed jobs visible · Run: J.1 → J.2 → (J.3 ∥ J.4) · L · 🟥
-- [ ] **P1-J.1** Redis required; Redis-backed throttler, cache, locks
-- [ ] **P1-J.2** `OutboxEvent` + relay + BullMQ + `ROLE=worker` process
-- [ ] **P1-J.3** Move crons (expiry, reconciliation, low-stock) to repeatable jobs
-- [ ] **P1-J.4** Move emails and webhook processing onto queues with retries + DLQ
+- [ ] 🔄 **P1-J.1** Redis required; Redis-backed throttler, cache, locks
+- [ ] 🔄 **P1-J.2** `OutboxEvent` + relay + BullMQ + `ROLE=worker` process
+- [ ] 🔄 **P1-J.3** Move crons (expiry, reconciliation, low-stock) to repeatable jobs
+- [ ] 🔄 **P1-J.4** Move emails and webhook processing onto queues with retries + DLQ
 
 ### P1-R — RBAC (ADR-0013)
 > Accept: Matrix test in CI · Run: R.1 → R.2; R.3 ∥ · L · 🟥

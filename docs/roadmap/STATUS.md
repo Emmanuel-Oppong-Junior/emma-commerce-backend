@@ -5,7 +5,16 @@
 **Last checkpoint:** 2026-11-20 · **Current phase:** Phase 1 — Foundations (11/33: P1-P, P1-U, P1-K.1, P1-S, P1-G done); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- none. Next: pick from **Up next**.
+- **Task:** P1-J — Worker, outbox, Redis (J.1 Redis required + Redis throttler/cache · J.2 `OutboxEvent` + relay + BullMQ + `ROLE=worker` · J.3 crons → repeatable jobs · J.4 emails and webhooks on queues with retries + failed-job visibility) (ADR-0009, ADR-0011)
+- **Branch:** `feat/p1-j-worker-outbox` (agent, worktree, DB `emma_wt_jobs_test`, Redis container `emma-e2e-redis`) · **State:** in progress
+- **Decisions (Emmanuel 2026-11-20):** `@nestjs/bullmq` + `bullmq` approved; `ioredis` approved as an explicit dependency with our own Redis `ThrottlerStorage` (`@nest-lab/throttler-storage-redis` peers stop at Nest 11); `REDIS_HOST` required in every environment, no in-memory fallback; e2e and CI get Redis (ci.yml edit approved)
+- **Steps:**
+  - [ ] J.1 Redis required; Redis cache + throttler storage ← **Next step** (agent)
+  - [ ] J.2 `OutboxEvent` + relay + BullMQ + `ROLE=worker`
+  - [ ] J.3 Crons → repeatable jobs
+  - [ ] J.4 Emails and webhook processing on queues, retries, failed jobs visible
+  - [ ] Review, combined gates, merge, push, CI
+- **Uncommitted work:** none
 
 **Last completed: P1-G Ghana addresses (2026-11-20)** (M9, M13): G.1 `850b31b` `[breaking-api]`, G.2 `a3a60fd`.
   - G.1: migration `20261120000000_ghana_addresses`: `GhanaRegion` enum (16), Address gains `recipientName`, `phone`, `region`, `area`, `landmark`, `ghanaPostGps`, `latitude`/`longitude` `DECIMAL(9,6)`; `zipCode` nullable; `region` backfilled from `state` (case/space/hyphen/"Region"-insensitive, ambiguous values like "Brong Ahafo"/"Accra" → NULL), then `state` dropped; country "ghana"/"gh" → "GH". New addresses need region, recipient and phone; country GH only; GhanaPostGPS canonical `XX-NNN(N)-NNNN`; lat/lng together. Delivery `createOrder` and `getShippingFee` refuse a legacy address missing region/recipient/phone (BAD_REQUEST); pickup unaffected. New snapshots carry the new fields. Tested on a baseline DB with assorted `state`/country spellings.
@@ -123,6 +132,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-20 | P1-J (Emmanuel): add `@nestjs/bullmq`, `bullmq`, `ioredis`; own Redis throttler storage instead of `@nest-lab/throttler-storage-redis` (no Nest 12 support); Redis required in all environments (supersedes ADR-0011's in-memory allowance for dev/test); CI gets Redis services | STATUS |
 | 2026-11-20 | P1-G (Emmanuel): Address API replaced in place under `[breaking-api]` (`region` enum replaces `state`, `zipCode` optional); Ghana-only phone parser → E.164 `+233`; recipient name, phone and region required on new addresses | STATUS |
 | 2026-11-19 | P1-S defaults taken by the agent, kept: store currency not editable via API; TIN accepts hyphens (Ghana Card PIN `GHA-123456789-0`); order number taken in the order transaction (serialises order creation); one Store row enforced in the DB | STATUS |
 | 2026-11-18 | ADRs 0001–0006, 0008–0016 **Accepted** as recommended (Emmanuel): silo deployment per client, pool-ready, no marketplace without legal sign-off; product types + validated JSONB attributes + capability columns; SKU is the only sellable unit; `Decimal(14,2)` + `Money` type, GraphQL `Money` replaces `Float` (one breaking frontend change in Phase 1); full pricing engine; component tax engine (build waits for tax adviser); inventory ledger with reservations, locations, lots, serials; BullMQ + outbox + separate worker, Redis required in prod; Postgres search behind a port; GraphQL + integration-only REST; permission RBAC with MFA for staff; full order/payment/fulfilment state machines; notification service (email, SMS, WhatsApp, in-app); hosting region per client, EU default, pharmacy in Ghana | ADRs, STATUS |
