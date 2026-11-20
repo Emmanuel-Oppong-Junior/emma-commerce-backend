@@ -25,7 +25,10 @@ export class VariantFieldsInput {
   @IsMoneyAmount()
   basePrice: Decimal;
 
-  @Field(() => Int, { description: 'Initial stock, logged as a RESTOCK; later changes go through restock/adjust' })
+  @Field(() => Int, {
+    description:
+      'Opening stock at the default location, recorded as a RECEIPT; later changes go through restock/adjust',
+  })
   @IsInt({ message: 'quantity must be an integer' })
   @Min(0)
   @Max(MAX_STOCK_QUANTITY)

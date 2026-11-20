@@ -7,7 +7,7 @@ import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { AuditService } from '../commons/audit.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { TaxService } from '../tax/tax.service';
-import { InventoryService } from '../inventory/inventory.service';
+import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { Decimal } from '@prisma/client/runtime/client';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
@@ -20,7 +20,7 @@ import { StoreService } from '../store/store.service';
 const mockAuditService = { log: jest.fn() };
 const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
 const mockTaxService = { getRateForCountry: jest.fn().mockResolvedValue(new Decimal('0.1')) };
-const mockInventoryService = { logInventoryChange: jest.fn().mockResolvedValue(undefined) };
+const mockStockLedger = { reserve: jest.fn(), consumeOrder: jest.fn(), releaseOrder: jest.fn() };
 const mockOutbox = { record: jest.fn() };
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
@@ -40,8 +40,7 @@ const mockOrdersRepository = {
   hasCompletedPayment: jest.fn(),
   findAddressForUser: jest.fn(),
   findUserById: jest.fn(),
-  restoreVariantStock: jest.fn(),
-  decrementVariantStock: jest.fn(),
+  lockSellableVariant: jest.fn(),
   findVariant: jest.fn(),
   clearCartItems: jest.fn(),
   runTransaction: jest.fn(),
@@ -72,7 +71,7 @@ const mockVariant = {
   sku: 'TSHIRT-M',
   optionValues: { size: 'M' },
   price: new Decimal('19.99'),
-  quantity: 100,
+  stockLevels: [{ onHand: 100, reserved: 0 }],
   isActive: true,
   discountId: null,
   product: mockProduct,
@@ -175,7 +174,7 @@ describe('OrdersService', () => {
         { provide: AuditService, useValue: mockAuditService },
         { provide: CouponsService, useValue: mockCouponsService },
         { provide: TaxService, useValue: mockTaxService },
-        { provide: InventoryService, useValue: mockInventoryService },
+        { provide: StockLedgerService, useValue: mockStockLedger },
         { provide: OutboxService, useValue: mockOutbox },
         { provide: ShippingZonesService, useValue: mockShippingZonesService },
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
@@ -197,9 +196,12 @@ describe('OrdersService', () => {
       return callback(stubTx as any);
     });
     mockOrdersRepository.runWithAdvisoryLock.mockImplementation((_key, _maxMs, fn: () => Promise<unknown>) => fn());
-    // Default variant stock operations return the variant after the write
-    mockOrdersRepository.decrementVariantStock.mockResolvedValue({ ...mockVariant, quantity: 98 });
-    mockOrdersRepository.restoreVariantStock.mockResolvedValue(mockVariant);
+    // Default stock operations succeed: the variant is on sale and the reservation is made
+    mockOrdersRepository.lockSellableVariant.mockResolvedValue(true);
+    mockStockLedger.reserve.mockResolvedValue(true);
+    mockStockLedger.releaseOrder.mockResolvedValue(1);
+    mockStockLedger.consumeOrder.mockResolvedValue(0);
+    mockOrdersRepository.create.mockResolvedValue(mockOrder);
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
     mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
     mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(new Map());
@@ -235,6 +237,27 @@ describe('OrdersService', () => {
       expect(result).toEqual(mockOrder);
     });
 
+    it.each([
+      ['an online order until it expires unpaid', 'ONLINE', 60 * 60 * 1000],
+      ['a cash-on-delivery order until dispatch, with no expiry', 'CASH_ON_DELIVERY', null],
+    ] as const)('reserves the stock of %s', async (_case, paymentMethod, expiresInMs) => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
+      const before = Date.now();
+
+      await ordersService.createOrderFromCart(mockUserId, { ...deliveryParams, paymentMethod });
+
+      const [, line] = mockStockLedger.reserve.mock.calls[0] as [unknown, { expiresAt: Date | null }];
+      if (expiresInMs === null) {
+        expect(line.expiresAt).toBeNull();
+      } else {
+        expect(line.expiresAt!.getTime()).toBeGreaterThanOrEqual(before + expiresInMs);
+        expect(line.expiresAt!.getTime()).toBeLessThanOrEqual(Date.now() + expiresInMs);
+      }
+    });
+
     it('records order.placed.v1 in the order transaction, after the order row is written', async () => {
       const stubTx = { id: 'tx' };
       mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
@@ -262,7 +285,7 @@ describe('OrdersService', () => {
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
-      mockOrdersRepository.decrementVariantStock.mockResolvedValue(null);
+      mockStockLedger.reserve.mockResolvedValue(false);
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(BadRequestException);
       expect(mockOutbox.record).not.toHaveBeenCalled();
@@ -358,7 +381,7 @@ describe('OrdersService', () => {
         sku: 'TSHIRT-L',
         optionValues: { size: 'L' },
         price: new Decimal('120'),
-        quantity: 10,
+        stockLevels: [{ onHand: 10, reserved: 0 }],
         discountId: 'large20',
       };
       const productTenPercent = { id: 'product10', type: 'PERCENTAGE', value: new Decimal(10), minimumPurchase: null };
@@ -377,10 +400,13 @@ describe('OrdersService', () => {
         mockOrdersRepository.findVariant.mockImplementation(async (id: string) =>
           id === 'var1' ? { ...mockVariant, price: new Decimal('100') } : large,
         );
-        mockOrdersRepository.decrementVariantStock.mockImplementation(async (_tx, id: string, quantity: number) =>
-          id === 'var1' ? { ...mockVariant, quantity: 100 - quantity } : { ...large, quantity: 10 - quantity },
-        );
-        mockOrdersRepository.create.mockResolvedValue(mockOrder);
+        mockOrdersRepository.create.mockResolvedValue({
+          ...mockOrder,
+          items: [
+            { ...mockOrderItem, id: 'orderItem1', variantId: 'var1', sku: 'TSHIRT-M', quantity: 2 },
+            { ...mockOrderItem, id: 'orderItem2', variantId: 'var2', sku: 'TSHIRT-L', quantity: 1 },
+          ],
+        });
         mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(
           new Map([
             ['var1', [productTenPercent]],
@@ -442,53 +468,56 @@ describe('OrdersService', () => {
         ]);
       });
 
-      it('takes stock from and logs the deduction against each variant', async () => {
+      it('re-checks each variant is on sale and reserves its stock against its order line', async () => {
         await ordersService.createOrderFromCart(mockUserId, deliveryParams);
 
-        expect(mockOrdersRepository.decrementVariantStock).toHaveBeenCalledWith({}, 'var1', 2);
-        expect(mockOrdersRepository.decrementVariantStock).toHaveBeenCalledWith({}, 'var2', 1);
-        expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
+        expect(mockOrdersRepository.lockSellableVariant).toHaveBeenCalledWith({}, 'var1');
+        expect(mockOrdersRepository.lockSellableVariant).toHaveBeenCalledWith({}, 'var2');
+        const expiresAt = expect.any(Date);
+        expect(mockStockLedger.reserve).toHaveBeenCalledWith(
           {},
-          expect.objectContaining({
-            productId: 'prod1',
-            variantId: 'var1',
-            action: 'ORDER_DEDUCTION',
-            quantityChange: -2,
-            quantityAfter: 98,
-          }),
+          { variantId: 'var1', quantity: 2, orderId: 'order1', orderItemId: 'orderItem1', expiresAt },
+          mockUserId,
         );
-        expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
+        expect(mockStockLedger.reserve).toHaveBeenCalledWith(
           {},
-          expect.objectContaining({
-            productId: 'prod1',
-            variantId: 'var2',
-            action: 'ORDER_DEDUCTION',
-            quantityChange: -1,
-            quantityAfter: 9,
-          }),
+          { variantId: 'var2', quantity: 1, orderId: 'order1', orderItemId: 'orderItem2', expiresAt },
+          mockUserId,
         );
       });
 
       it('checks stock per variant, so one short variant fails the order before any stock is taken', async () => {
         mockOrdersRepository.findVariant.mockImplementation(async (id: string) =>
-          id === 'var1' ? mockVariant : { ...large, quantity: 0 },
+          id === 'var1' ? mockVariant : { ...large, stockLevels: [{ onHand: 3, reserved: 3 }] },
         );
 
         await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
           new BadRequestException('Insufficient stock for "T-Shirt" (TSHIRT-L): 0 available, 1 requested'),
         );
-        expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+        expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       });
 
       it('rolls back with the SKU named when a variant runs out inside the transaction', async () => {
-        mockOrdersRepository.decrementVariantStock.mockImplementation(async (_tx, id: string) =>
-          id === 'var1' ? { ...mockVariant, quantity: 98 } : null,
+        mockStockLedger.reserve.mockImplementation(
+          async (_tx, line: { variantId: string }) => line.variantId === 'var1',
         );
 
         await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
           new BadRequestException('Variant "TSHIRT-L" is out of stock or no longer on sale — please review your cart'),
         );
-        expect(mockOrdersRepository.create).not.toHaveBeenCalled();
+        // The order row was written in the same transaction, which this error rolls back.
+        expect(mockOutbox.record).not.toHaveBeenCalled();
+        expect(mockOrdersRepository.clearCartItems).not.toHaveBeenCalled();
+      });
+
+      it('rolls back with the SKU named when a variant was taken off sale inside the transaction', async () => {
+        mockOrdersRepository.lockSellableVariant.mockImplementation(async (_tx, id: string) => id === 'var1');
+
+        await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+          new BadRequestException('Variant "TSHIRT-L" is out of stock or no longer on sale — please review your cart'),
+        );
+        expect(mockStockLedger.reserve).toHaveBeenCalledTimes(1);
+        expect(mockOutbox.record).not.toHaveBeenCalled();
       });
     });
 
@@ -501,7 +530,7 @@ describe('OrdersService', () => {
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
         new BadRequestException('"T-Shirt" (TSHIRT-M) has no price and cannot be sold; remove it from the cart'),
       );
-      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.reserve).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -517,7 +546,7 @@ describe('OrdersService', () => {
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
         new BadRequestException(`"T-Shirt" (TSHIRT-M) ${reason}; remove it from the cart`),
       );
-      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
@@ -530,7 +559,7 @@ describe('OrdersService', () => {
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
         new NotFoundException('Variant "var1" not found'),
       );
-      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.reserve).not.toHaveBeenCalled();
     });
 
     it('rejects delivery to a city no shipping zone covers, without reserving stock', async () => {
@@ -543,7 +572,7 @@ describe('OrdersService', () => {
       );
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(BadRequestException);
-      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
@@ -561,7 +590,7 @@ describe('OrdersService', () => {
         new BadRequestException('Complete the delivery address (region, recipient name and phone) before checkout'),
       );
       expect(mockShippingZonesService.getFeeForCity).not.toHaveBeenCalled();
-      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
@@ -659,7 +688,7 @@ describe('OrdersService', () => {
       );
 
       await expect(ordersService.createOrderFromCart(mockUserId, pickupParams)).rejects.toThrow(BadRequestException);
-      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
@@ -674,7 +703,7 @@ describe('OrdersService', () => {
           `"T-Shirt" is priced in ${currency ?? 'no currency'}; only GHS products can be checked out`,
         ),
       );
-      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.reserve).not.toHaveBeenCalled();
     });
 
     it('checks products against the store currency, not a fixed GHS', async () => {
@@ -788,7 +817,7 @@ describe('OrdersService', () => {
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
-      mockOrdersRepository.decrementVariantStock.mockResolvedValue(null);
+      mockStockLedger.reserve.mockResolvedValue(false);
 
       await expect(
         ordersService.createOrderFromCart(mockUserId, {
@@ -930,6 +959,31 @@ describe('OrdersService', () => {
       await ordersService.updateOrderStatus('order1', OrderStatus.PROCESSING, 'admin1');
 
       expect(ordersRepository.transitionStatus).toHaveBeenCalled();
+      expect(mockStockLedger.consumeOrder).not.toHaveBeenCalled();
+    });
+
+    it('consumes the order reservations when it is dispatched, after the SHIPPED claim and in its transaction', async () => {
+      const stubTx = { id: 'tx' };
+      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
+      mockOrdersRepository.findById.mockResolvedValue({ ...processingOrder, paymentMethod: 'CASH_ON_DELIVERY' });
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.SHIPPED });
+
+      await ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1');
+
+      expect(mockStockLedger.consumeOrder).toHaveBeenCalledWith(stubTx, 'order1', 'admin1');
+      expect(mockOrdersRepository.transitionStatus.mock.invocationCallOrder[0]).toBeLessThan(
+        mockStockLedger.consumeOrder.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('consumes nothing when the SHIPPED claim is lost to another request', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(processingOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockStockLedger.consumeOrder).not.toHaveBeenCalled();
     });
 
     it('cancels through the real cancel path so stock comes back', async () => {
@@ -939,7 +993,10 @@ describe('OrdersService', () => {
 
       await ordersService.updateOrderStatus('order1', OrderStatus.CANCELLED, 'admin1');
 
-      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledWith(expect.anything(), 'var1', 2);
+      expect(mockStockLedger.releaseOrder).toHaveBeenCalledWith(expect.anything(), 'order1', {
+        actorId: 'admin1',
+        note: 'Order cancelled',
+      });
     });
 
     it('reports a conflict when another request changed the order first', async () => {
@@ -968,7 +1025,10 @@ describe('OrdersService', () => {
         [OrderStatus.PENDING, OrderStatus.PROCESSING],
         undefined,
       );
-      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledWith(expect.anything(), 'var1', 2);
+      expect(mockStockLedger.releaseOrder).toHaveBeenCalledWith(expect.anything(), 'order1', {
+        actorId: mockUserId,
+        note: 'Order cancelled',
+      });
       expect(result.status).toBe('CANCELLED');
     });
 
@@ -976,14 +1036,14 @@ describe('OrdersService', () => {
       mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: 'SHIPPED' as OrderStatus });
 
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
-      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.releaseOrder).not.toHaveBeenCalled();
     });
 
     it('rejects cancelling an already cancelled order without restoring stock', async () => {
       mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
 
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
-      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.releaseOrder).not.toHaveBeenCalled();
     });
 
     it('restores no stock when a concurrent request cancelled the order first', async () => {
@@ -991,7 +1051,7 @@ describe('OrdersService', () => {
       mockOrdersRepository.transitionStatus.mockResolvedValue(null);
 
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(/changed by another request/);
-      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.releaseOrder).not.toHaveBeenCalled();
     });
 
     it("should not allow cancelling another user's order", async () => {
@@ -1016,7 +1076,7 @@ describe('OrdersService', () => {
         OrderStatus.DELIVERED,
         OrderStatus.CANCELLED,
       ]);
-      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
+      expect(mockStockLedger.releaseOrder).not.toHaveBeenCalled();
       const [tx] = ordersRepository.softDelete.mock.calls[0];
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Order', action: 'DELETE', userId: 'admin1' }),
@@ -1077,31 +1137,18 @@ describe('OrdersService', () => {
       expect(mockCouponsService.releaseUsage).not.toHaveBeenCalled();
     });
 
-    it('writes one inventory log per item when cancelling, the only automatic restore', async () => {
+    it('releases the order reservations once when cancelling, in the cancel transaction', async () => {
+      const stubTx = { id: 'tx' };
+      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
       mockOrdersRepository.findById.mockResolvedValue(mockOrder);
       mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
 
       await ordersService.cancelOrder(mockUserId, 'order1');
 
-      expect(mockInventoryService.logInventoryChange).toHaveBeenCalledTimes(1);
-      expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ productId: 'prod1', variantId: 'var1', action: 'RETURN_RESTORE', quantityChange: 2 }),
-      );
-    });
-
-    it('puts the stock back on the variant that was ordered and logs its new quantity', async () => {
-      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
-      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
-      mockOrdersRepository.restoreVariantStock.mockResolvedValue({ ...mockVariant, quantity: 102 });
-
-      await ordersService.cancelOrder(mockUserId, 'order1');
-
-      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledTimes(1);
-      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledWith(expect.anything(), 'var1', 2);
-      expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ variantId: 'var1', quantityAfter: 102 }),
+      expect(mockStockLedger.releaseOrder).toHaveBeenCalledTimes(1);
+      expect(mockStockLedger.releaseOrder).toHaveBeenCalledWith(stubTx, 'order1', expect.anything());
+      expect(mockOrdersRepository.transitionStatus.mock.invocationCallOrder[0]).toBeLessThan(
+        mockStockLedger.releaseOrder.mock.invocationCallOrder[0],
       );
     });
   });
@@ -1117,8 +1164,6 @@ describe('OrdersService', () => {
     it('audits an admin cancellation with from/to inside the cancel-and-restock transaction', async () => {
       mockOrdersRepository.findById.mockResolvedValue(mockOrder);
       mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
-      mockOrdersRepository.restoreVariantStock.mockResolvedValue({ quantity: 10 });
-
       await ordersService.adminCancelOrder('order1', 'admin1');
 
       expect(mockAuditService.log).toHaveBeenCalledWith(
@@ -1198,7 +1243,11 @@ describe('OrdersService', () => {
       const expired = await ordersService.expireAbandonedOrders(24);
 
       expect(expired).toBe(1);
-      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledTimes(1);
+      expect(mockStockLedger.releaseOrder).toHaveBeenCalledTimes(1);
+      expect(mockStockLedger.releaseOrder).toHaveBeenCalledWith(expect.anything(), 'order2', {
+        actorId: undefined,
+        note: 'Unpaid order expired',
+      });
     });
 
     it('claims each order only while it still matches the expiry rule, so a restarted payment is not cancelled', async () => {

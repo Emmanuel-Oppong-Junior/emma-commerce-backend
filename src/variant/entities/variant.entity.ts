@@ -20,10 +20,11 @@ export class Variant {
   })
   optionValues: Record<string, unknown>;
 
-  @Field(() => Int, { description: 'Units in stock' })
-  quantity: number;
-  @Field(() => Int, { nullable: true, description: 'Stock level that counts as low (default 5)' }) lowStockThreshold?:
-    number | null;
+  @Field(() => Int, {
+    nullable: true,
+    description: 'Available stock at or below which an inventory.low_stock event is raised (default 5)',
+  })
+  lowStockThreshold?: number | null;
 
   @Field(() => MoneyObject, {
     nullable: true,

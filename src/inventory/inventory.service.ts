@@ -1,124 +1,106 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { InventoryLog, Prisma } from '../generated/prisma/client';
-import { InventoryRepository, CreateLogData } from './inventory.repository';
+import { Prisma, StockMovement, StockMovementReason } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RestockVariantInput } from './dto/restock.input';
 import { AdjustVariantStockInput } from './dto/adjust-stock.input';
 import { AuditService } from '../commons/audit.service';
+import { StockLedgerService } from './stock-ledger.service';
+import { MovementFilter, StockLedgerRepository } from './stock-ledger.repository';
 
-/** Stock lives on the variant (the SKU); every change goes through here or the order transactions, and is logged. */
+export interface StockMovementPage {
+  nodes: StockMovement[];
+  totalCount: number;
+  hasNextPage: boolean;
+}
+
+const MAX_PAGE_SIZE = 100;
+
+/** Admin stock operations. Every change goes through the ledger (StockLedgerService) and is audited. */
 @Injectable()
 export class InventoryService {
   constructor(
-    private readonly inventoryRepository: InventoryRepository,
+    private readonly ledger: StockLedgerService,
+    private readonly repository: StockLedgerRepository,
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
 
   /**
-   * Increments a variant's stock and records a RESTOCK log entry and an audit entry in the same transaction.
-   * @throws NotFoundException if the variant does not exist.
+   * Adds stock to a variant as a RECEIPT, or as a RETURN_RESTOCK when it is goods from a return request, with an
+   * audit entry in the same transaction.
+   * @throws NotFoundException if the variant or the return request does not exist.
    */
-  async restockVariant(input: RestockVariantInput, actorId: string): Promise<InventoryLog> {
-    const variant = await this.prisma.variant.findUnique({
-      where: { id: input.variantId },
-      select: { id: true, productId: true },
-    });
-    if (!variant) throw new NotFoundException(`Variant "${input.variantId}" not found`);
-
+  async restockVariant(input: RestockVariantInput, actorId: string): Promise<StockMovement> {
     return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.variant.update({
-        where: { id: input.variantId },
-        data: { quantity: { increment: input.quantity } },
-        select: { quantity: true },
-      });
-      const log = await this.inventoryRepository.createLog(tx, {
-        productId: variant.productId,
-        variantId: input.variantId,
-        action: 'RESTOCK',
-        quantityChange: input.quantity,
-        quantityAfter: updated.quantity,
-        reason: input.reason ?? 'Manual restock',
-        actorId,
-      });
-      await this.auditStockChange(tx, log);
-      return log;
+      await this.ensureVariant(tx, input.variantId);
+      if (input.returnRequestId && !(await this.repository.returnRequestExists(tx, input.returnRequestId))) {
+        throw new NotFoundException(`Return request "${input.returnRequestId}" not found`);
+      }
+      const movement = await this.ledger.receive(
+        tx,
+        input.variantId,
+        input.quantity,
+        input.returnRequestId ? StockMovementReason.RETURN_RESTOCK : StockMovementReason.RECEIPT,
+        {
+          actorId,
+          note: input.reason ?? (input.returnRequestId ? 'Returned goods restocked' : 'Manual restock'),
+          ...(input.returnRequestId && { refType: 'ReturnRequest', refId: input.returnRequestId }),
+        },
+      );
+      await this.auditStockChange(tx, movement);
+      return movement;
     });
   }
 
   /**
-   * Moves a variant's stock by a signed delta with a reason, never below zero, and logs an ADJUSTMENT.
-   * @throws NotFoundException if the variant does not exist; BadRequestException if stock would go negative.
+   * Moves a variant's on-hand stock by a signed delta with a reason, as an ADJUSTMENT. Units reserved for open orders
+   * cannot be adjusted away.
+   * @throws NotFoundException if the variant does not exist; BadRequestException if too few units are available.
    */
-  async adjustVariantStock(input: AdjustVariantStockInput, actorId: string): Promise<InventoryLog> {
+  async adjustVariantStock(input: AdjustVariantStockInput, actorId: string): Promise<StockMovement> {
     return this.prisma.$transaction(async (tx) => {
-      const { count } = await tx.variant.updateMany({
-        where: { id: input.variantId, quantity: { gte: Math.max(0, -input.delta) } },
-        data: { quantity: { increment: input.delta } },
-      });
-      const variant = await tx.variant.findUnique({
-        where: { id: input.variantId },
-        select: { quantity: true, productId: true },
-      });
-      if (!variant) throw new NotFoundException(`Variant "${input.variantId}" not found`);
-      if (count === 0) {
+      await this.ensureVariant(tx, input.variantId);
+      const movement = await this.ledger.adjust(tx, input.variantId, input.delta, { actorId, note: input.reason });
+      if (!movement) {
+        const available = await this.ledger.available(tx, input.variantId);
         throw new BadRequestException(
-          `Cannot remove ${-input.delta} units from variant "${input.variantId}": only ${variant.quantity} in stock`,
+          `Cannot remove ${-input.delta} units from variant "${input.variantId}": only ${available} available`,
         );
       }
-      const log = await this.inventoryRepository.createLog(tx, {
-        productId: variant.productId,
-        variantId: input.variantId,
-        action: 'ADJUSTMENT',
-        quantityChange: input.delta,
-        quantityAfter: variant.quantity,
-        reason: input.reason,
-        actorId,
-      });
-      await this.auditStockChange(tx, log);
-      return log;
+      await this.auditStockChange(tx, movement);
+      return movement;
     });
   }
 
-  private async auditStockChange(tx: Prisma.TransactionClient, log: InventoryLog): Promise<void> {
+  /** Ledger entries, newest first, paginated by movement id (at most 100 per page). */
+  async getMovements(filter: MovementFilter, first: number, after?: string): Promise<StockMovementPage> {
+    const take = Math.min(first, MAX_PAGE_SIZE);
+    const [rows, totalCount] = await this.repository.findMovements(filter, { take: take + 1, after });
+    return { nodes: rows.slice(0, take), totalCount, hasNextPage: rows.length > take };
+  }
+
+  private async ensureVariant(tx: Prisma.TransactionClient, variantId: string): Promise<void> {
+    const exists = await tx.variant.count({ where: { id: variantId } });
+    if (!exists) throw new NotFoundException(`Variant "${variantId}" not found`);
+  }
+
+  private async auditStockChange(tx: Prisma.TransactionClient, movement: StockMovement): Promise<void> {
     await this.auditService.log(
       {
         entity: 'Variant',
-        entityId: log.variantId,
+        entityId: movement.variantId,
         action: 'STOCK_ADJUSTMENT',
-        userId: log.actorId ?? undefined,
+        userId: movement.actorId ?? undefined,
         details: {
-          inventoryLogId: log.id,
-          kind: log.action,
-          productId: log.productId,
-          quantityChange: log.quantityChange,
-          quantityAfter: log.quantityAfter,
-          reason: log.reason,
+          stockMovementId: movement.id,
+          kind: movement.reason,
+          locationId: movement.locationId,
+          onHandDelta: movement.onHandDelta,
+          reason: movement.note,
+          ...(movement.refType && { refType: movement.refType, refId: movement.refId }),
         },
       },
       tx,
     );
-  }
-
-  /**
-   * Writes a single inventory change log entry within an existing database transaction.
-   * Intended for use by order and return workflows that run inside their own transactions.
-   */
-  async logInventoryChange(tx: Prisma.TransactionClient, data: CreateLogData): Promise<void> {
-    await this.inventoryRepository.createLog(tx, data);
-  }
-
-  async getAllLogs(): Promise<InventoryLog[]> {
-    return this.inventoryRepository.findAll();
-  }
-
-  /** Inventory log entries of every variant of a product, most recent first. */
-  async getProductLogs(productId: string): Promise<InventoryLog[]> {
-    return this.inventoryRepository.findByProduct(productId);
-  }
-
-  /** Inventory log entries of one variant, most recent first. */
-  async getVariantLogs(variantId: string): Promise<InventoryLog[]> {
-    return this.inventoryRepository.findByVariant(variantId);
   }
 }

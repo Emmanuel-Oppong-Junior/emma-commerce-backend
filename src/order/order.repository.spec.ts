@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Address, FulfillmentType, Order, OrderItem, Prisma, User, Variant } from '../generated/prisma/client';
+import { Address, FulfillmentType, Order, OrderItem, Prisma, User } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -301,59 +301,38 @@ describe('OrdersRepository', () => {
     });
   });
 
-  describe('restoreVariantStock', () => {
-    it('should increment variant quantity via transaction', async () => {
-      const updatedVariant = { id: 'var1', quantity: 15 } as unknown as Variant;
-      const mockTx = { variant: { update: jest.fn().mockResolvedValue(updatedVariant) } };
+  describe('lockSellableVariant', () => {
+    it('share-locks the variant and its product only while both are on sale', async () => {
+      const mockTx = { $queryRaw: jest.fn().mockResolvedValue([{ id: 'var1' }]) };
 
-      const result = await repository.restoreVariantStock(mockTx as any, 'var1', 5);
+      await expect(repository.lockSellableVariant(mockTx as any, 'var1')).resolves.toBe(true);
 
-      expect(result).toEqual(updatedVariant);
-      expect(mockTx.variant.update).toHaveBeenCalledWith({
-        where: { id: 'var1' },
-        data: { quantity: { increment: 5 } },
-      });
-    });
-  });
-
-  describe('decrementVariantStock', () => {
-    it('decrements only when enough stock is left and returns the variant after the write', async () => {
-      const updatedVariant = { id: 'var1', quantity: 8 } as unknown as Variant;
-      const mockTx = {
-        variant: {
-          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-          findUniqueOrThrow: jest.fn().mockResolvedValue(updatedVariant),
-        },
-      };
-
-      const result = await repository.decrementVariantStock(mockTx as any, 'var1', 2);
-
-      expect(result).toEqual(updatedVariant);
-      expect(mockTx.variant.updateMany).toHaveBeenCalledWith({
-        where: { id: 'var1', quantity: { gte: 2 }, isActive: true, product: { isActive: true, status: 'PUBLISHED' } },
-        data: { quantity: { decrement: 2 } },
-      });
+      const [sql, variantId] = mockTx.$queryRaw.mock.calls[0] as [TemplateStringsArray, string];
+      const query = sql.join('?');
+      expect(variantId).toBe('var1');
+      expect(query).toContain(`v."isActive" AND p."isActive" AND p.status = 'PUBLISHED'`);
+      expect(query).toContain('FOR SHARE OF v, p');
     });
 
-    it('returns null and reads nothing when stock is short', async () => {
-      const mockTx = {
-        variant: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), findUniqueOrThrow: jest.fn() },
-      };
+    it('reports a variant taken off sale', async () => {
+      const mockTx = { $queryRaw: jest.fn().mockResolvedValue([]) };
 
-      await expect(repository.decrementVariantStock(mockTx as any, 'var1', 5)).resolves.toBeNull();
-      expect(mockTx.variant.findUniqueOrThrow).not.toHaveBeenCalled();
+      await expect(repository.lockSellableVariant(mockTx as any, 'var1')).resolves.toBe(false);
     });
   });
 
   describe('findVariant', () => {
-    it('should find a variant with its product by ID', async () => {
+    it('should find a variant with its product and stock levels by ID', async () => {
       const mockVariant = { id: 'var1', sku: 'TSHIRT-M', product: { id: 'prod1', name: 'T-Shirt' } };
       mockPrismaVariant.findUnique.mockResolvedValue(mockVariant);
 
       const result = await repository.findVariant('var1');
 
       expect(result).toEqual(mockVariant);
-      expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({ where: { id: 'var1' }, include: { product: true } });
+      expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({
+        where: { id: 'var1' },
+        include: { product: true, stockLevels: { select: { onHand: true, reserved: true } } },
+      });
     });
   });
 

@@ -3,7 +3,7 @@ import { FulfillmentType } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { OrdersService } from '../../src/order/order.service';
 import { createTestApp } from '../helpers/app.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
 
 const PRODUCT_ID = 'seed_prod2';
 const VARIANT_ID = 'seed_var2';
@@ -87,7 +87,7 @@ describe('Coupon usage limits and release (e2e)', () => {
       });
       await addressFor(shopperId(n));
     }
-    const stockBefore = (await prisma.variant.findUniqueOrThrow({ where: { id: VARIANT_ID } })).quantity;
+    const stockBefore = (await stockOf(prisma, VARIANT_ID)).available;
 
     const results = await Promise.allSettled(
       Array.from({ length: SHOPPERS }, async (_, n) =>
@@ -107,7 +107,7 @@ describe('Coupon usage limits and release (e2e)', () => {
     for (const r of refused) expect(r.reason).toBeInstanceOf(BadRequestException);
     expect(await prisma.order.count({ where: { coupon: { code: 'FIRST10' } } })).toBe(USAGE_LIMIT);
     expect(await couponState('FIRST10')).toEqual({ usedCount: USAGE_LIMIT, usages: USAGE_LIMIT });
-    const stockAfter = (await prisma.variant.findUniqueOrThrow({ where: { id: VARIANT_ID } })).quantity;
+    const stockAfter = (await stockOf(prisma, VARIANT_ID)).available;
     expect(stockAfter).toBe(stockBefore - USAGE_LIMIT);
   });
 

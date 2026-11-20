@@ -8,7 +8,7 @@ import { ConfigModule } from '@nestjs/config';
 import { genSalt, hash } from 'bcrypt';
 import { Role, User } from '../src/generated/prisma/client';
 import { ThrottlerStorage } from '@nestjs/throttler';
-import { prepareStaffAccounts, resetDb } from './helpers/db.helper';
+import { prepareStaffAccounts, resetDb, setStock } from './helpers/db.helper';
 import { signInWithPassword } from './helpers/auth.helper';
 
 const noopThrottlerStorage = {
@@ -172,8 +172,10 @@ export async function createProducts(prisma: PrismaService, categoryId: string) 
   });
   await prisma.variant.createMany({
     data: [
-      { id: 'var1', productId: 'prod1', sku: 'LAP123', price: 999.99, basePrice: 999.99, quantity: 50 },
-      { id: 'var2', productId: 'prod2', sku: 'PHN123', price: 499.99, basePrice: 499.99, quantity: 100 },
+      { id: 'var1', productId: 'prod1', sku: 'LAP123', price: 999.99, basePrice: 999.99 },
+      { id: 'var2', productId: 'prod2', sku: 'PHN123', price: 499.99, basePrice: 499.99 },
     ],
   });
+  await setStock(prisma, 'var1', 50);
+  await setStock(prisma, 'var2', 100);
 }

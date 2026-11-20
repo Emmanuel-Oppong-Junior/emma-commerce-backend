@@ -3,7 +3,7 @@ export const PERMISSION_CATALOGUE = {
   'catalog.product.write': 'Create, edit, archive and delete products and variants, and tag products',
   'catalog.taxonomy.write': 'Create, edit and delete brands, categories, sub-categories, tags and product types',
   'catalog.media.upload': 'Upload catalogue images',
-  'inventory.view': 'Read inventory logs',
+  'inventory.view': 'Read stock levels and the stock ledger',
   'inventory.adjust': 'Restock and adjust product and variant stock',
   'order.view': 'Read every order',
   'order.manage': 'Change order status and shipping, cancel and delete orders',

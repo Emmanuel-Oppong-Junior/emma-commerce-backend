@@ -4,9 +4,10 @@ import { VariantResolver } from './variant.resolver';
 import { VariantRepository } from './variant.repository';
 import { CommonsModule } from '../commons/commons.module';
 import { TaxModule } from '../tax/tax.module';
+import { InventoryModule } from '../inventory/inventory.module';
 
 @Module({
-  imports: [CommonsModule, TaxModule],
+  imports: [CommonsModule, TaxModule, InventoryModule],
   providers: [VariantResolver, VariantService, VariantRepository],
   exports: [VariantService, VariantRepository],
 })

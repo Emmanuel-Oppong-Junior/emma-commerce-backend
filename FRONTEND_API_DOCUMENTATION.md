@@ -87,7 +87,7 @@ feature/
 | Email | Resend |
 | Logging | Winston (via custom `LoggerService`) |
 | Tracing | OpenTelemetry (OTLP/HTTP exporter, opt-in via `OTEL_ENABLED=true`) |
-| Background jobs | BullMQ on Redis, run by a separate `ROLE=worker` process. Repeatable jobs, each run once per cluster: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), low-stock log check (every 6 hours) |
+| Background jobs | BullMQ on Redis, run by a separate `ROLE=worker` process. Repeatable jobs, each run once per cluster: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC). Low-stock alerts are events raised by stock changes (`inventory.low_stock.v1`), not a scan |
 | Rate Limiting | `@nestjs/throttler` with per-named-throttler rules |
 
 ### GraphQL Approach
@@ -689,7 +689,7 @@ query {
   priceMin?: Decimal;         // Inclusive, compared with an active variant's price
   priceMax?: Decimal;         // Inclusive, compared with an active variant's price
   brand?: string;             // Brand name, exact, case-insensitive
-  inStock?: boolean;          // true = an active variant has quantity > 0; false or omitted = no filter
+  inStock?: boolean;          // true = an active variant has available stock (on hand, not reserved); false or omitted = no filter
   tagId?: string;
   tagName?: string;           // Exact, case-insensitive
 }
@@ -767,7 +767,7 @@ query {
       node {
         id name currency images inStock totalStock
         priceRange { min { amount currency } max { amount currency } }
-        variants { id sku optionValues price { amount currency } discountedPrice { amount currency } quantity }
+        variants { id sku optionValues price { amount currency } discountedPrice { amount currency } available }
       }
     }
     pageInfo { hasNextPage totalCount }
@@ -836,7 +836,7 @@ query {
 // VariantFieldsInput: the CreateVariantInput fields (see 2.8) without productId and discountId
 {
   basePrice: Decimal;            // Required, >= 0, at most 2 decimals. The variant's price adds tax when the product is taxable.
-  quantity: number;              // Required, integer 0–1,000,000: initial stock, logged as RESTOCK "Initial stock".
+  quantity: number;              // Required, integer 0–1,000,000: opening stock at the default location, a RECEIPT "Initial stock".
   optionValues?: JSONObject;     // Values for the product type's variant axes; omit for none.
   sku?: string;                  // 1–50 letters, digits, hyphens; unique; generated when omitted.
   barcode?: string;              // 1–100 chars; unique.
@@ -848,7 +848,7 @@ query {
 
 To attach a discount to a variant, use `createVariant`/`updateVariant` (`discountId`) or `addToDiscount`; a discount on the product applies to all its variants.
 
-**Side effects**: the product and its variants are created in one transaction; each variant's initial stock is logged as `RESTOCK` ("Initial stock"); audit entry (entity `Product`, `CREATE`).
+**Side effects**: the product and its variants are created in one transaction; each variant's opening stock is recorded as a `RECEIPT` stock movement ("Initial stock"); audit entry (entity `Product`, `CREATE`).
 
 **Possible Errors**:
 - `BAD_USER_INPUT` — Validation failure (including no variants or more than 100).
@@ -875,7 +875,7 @@ To attach a discount to a variant, use `createVariant`/`updateVariant` (`discoun
 - **Type**: Mutation
 - **Args**: `productId: String!`
 - **Response**: `Product!`
-- **Description**: Deletes the product together with its variants and their stock movements (inventory logs). Refused while any cart or order line references the product; archive it instead.
+- **Description**: Deletes the product together with its variants and their stock levels and stock movements. Refused while any cart or order line references the product; archive it instead.
 - **Possible Errors**: `NOT_FOUND`; `CONFLICT` ("Cannot delete product referenced in active carts or orders").
 
 ---
@@ -1189,8 +1189,10 @@ All variant operations need a staff permission. Customers see the active variant
   sku?: string;               // unique; generated ("SKU-" + 12 hex) when not given
   barcode?: string;           // unique
   optionValues: JSONObject;   // e.g. { size: "M", colour: "Red" }; {} when the type has no axes
-  quantity: Int;              // stock
-  lowStockThreshold?: Int;    // stock level that counts as low (default 5)
+  available: Int;             // units that can be bought now: on hand minus reserved for open orders (P1-N.2; was quantity)
+  onHand?: Int;               // staff with inventory.view only (admin variant/variants queries), else FORBIDDEN
+  reserved?: Int;             // staff with inventory.view only
+  lowStockThreshold?: Int;    // available stock at or below which inventory.low_stock is raised (default 5)
   price?: Money;              // selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
   basePrice?: Money;          // price before tax, as entered
   discountedPrice?: Money;    // price of one unit after the best active discount (the variant's own, its product's or its category's); null without one
@@ -1226,7 +1228,7 @@ All variant operations need a staff permission. Customers see the active variant
   productId: ID;              // Required
   optionValues?: JSONObject;  // validated against the product type's variant axes
   basePrice: Decimal;         // Required, >= 0, at most 2 decimals
-  quantity: Int;              // Required, 0-1,000,000: the initial stock, logged as a RESTOCK ("Initial stock")
+  quantity: Int;              // Required, 0-1,000,000: the opening stock, recorded as a RECEIPT ("Initial stock")
   sku?: string;               // 1-50 letters, digits, hyphens; unique (case-insensitive)
   barcode?: string;           // 1-100 chars; unique
   weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
@@ -1236,7 +1238,7 @@ All variant operations need a staff permission. Customers see the active variant
 }
 ```
 
-- **Side effects**: audit entry (entity `Variant`, `CREATE`); inventory log for the initial stock.
+- **Side effects**: audit entry (entity `Variant`, `CREATE`); a `RECEIPT` stock movement for the opening stock.
 - **Possible Errors**: `NOT_FOUND` (product, discount), `BAD_REQUEST` (option values invalid for the type: the message lists each problem, e.g. `Invalid option values for product type "apparel": flavour is not an attribute of this product type`), `CONFLICT` (an active variant already has these options; SKU or barcode taken), `BAD_USER_INPUT`.
 
 #### `updateVariant`
@@ -1430,7 +1432,7 @@ All wishlist operations require `Bearer` JWT (any role).
 
 > **Status rules:** an order can only move `PENDING → PROCESSING | CANCELLED`, `PROCESSING → SHIPPED | CANCELLED`, `SHIPPED → DELIVERED`. `DELIVERED` and `CANCELLED` are final. Any other change, including cancelling an order twice, fails with `CONFLICT`. If two requests change the same order at once, one succeeds and the other gets `CONFLICT` ("was changed by another request; reload it and try again"). An unpaid `ONLINE` order leaves `PENDING` only through a confirmed payment. Cash-on-delivery orders start in `PROCESSING`.
 
-> **Unpaid orders expire:** every hour, `PENDING` `ONLINE` orders older than 1 hour are cancelled (each line's variant stock and the coupon use given back) if they have no payment attempt, or only pending/failed/abandoned attempts untouched for 1 hour.
+> **Unpaid orders expire:** every hour, `PENDING` `ONLINE` orders older than 1 hour are cancelled (each line's reserved stock and the coupon use given back) if they have no payment attempt, or only pending/failed/abandoned attempts untouched for 1 hour.
 
 All order operations require `Bearer` JWT.
 
@@ -1538,7 +1540,7 @@ CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `input: CreateOrderInput!`
 - **Response**: `Order!`
-- **Description**: Create an order from the caller's cart, for delivery to a saved address or for pickup. Stock is taken immediately; the cart is emptied.
+- **Description**: Create an order from the caller's cart, for delivery to a saved address or for pickup. Each line's stock is reserved immediately (see [9](#9-inventory-rules)); the cart is emptied.
 
 **Input: `CreateOrderInput`**
 
@@ -1560,7 +1562,7 @@ CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 3. Each line is priced from its **variant** exactly as `cartWithDiscount` shows it: the variant's current `price` (tax-inclusive) minus the best active discount for that variant (its own, its product's or its category's). `subtotal` equals the cart's `finalTotal` and `discountTotal` the cart's `discountTotal`. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
 4. A coupon, if given, is validated against `subtotal` (after discounts, before shipping) and its use is recorded.
 5. `totalAmount = max(0, subtotal + shippingFee - couponDiscount)`. This is the amount Paystack is asked for.
-6. In one transaction: each variant's stock is taken with a conditional update that also re-checks the variant is active and its product active and `PUBLISHED` (if not, the whole order fails and nothing is taken), each line logs `ORDER_DEDUCTION` with its `variantId`, the order is saved with each line's `sku` and `optionValues`, and the cart is emptied.
+6. In one transaction: the order is saved with each line's `sku` and `optionValues`; each line re-checks its variant is active and its product active and `PUBLISHED`, and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); the cart is emptied.
 7. Status: `PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`.
 8. A confirmation email goes to the account's email (not `contactEmail`) after the response.
 
@@ -1592,7 +1594,7 @@ mutation {
 - **Type**: Mutation
 - **Roles**: `USER` only (admins use `adminCancelOrder`; an ADMIN token gets `FORBIDDEN`)
 - **Args**: `orderId: String!`
-- **Description**: Cancel one of the caller's own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`. Stock (each line's variant, logged as `RETURN_RESTORE` with its `variantId`) and the coupon use are given back exactly once. If the order was paid online, a refund request (return request) is opened automatically for staff to process.
+- **Description**: Cancel one of the caller's own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`. Each line's stock (its reservation: `RELEASE`, or `RETURN_RESTOCK` if it was already paid) and the coupon use are given back exactly once. If the order was paid online, a refund request (return request) is opened automatically for staff to process.
 - **Response**: `Order!`
 - **Possible Errors**: `NOT_FOUND` (not the caller's order), `CONFLICT`.
 
@@ -1621,7 +1623,7 @@ mutation {
 }
 ```
 
-**Rules**: the change must follow the status rules above, otherwise `CONFLICT`. Admins cannot move an unpaid `ONLINE` order to `PROCESSING` (only a confirmed payment can); cash-on-delivery orders are not affected. Setting `CANCELLED` performs a full cancel (stock restored, refund request for paid online orders), the same as `adminCancelOrder`. For cash-on-delivery orders use `recordCodPayment` to reach `DELIVERED`.
+**Rules**: the change must follow the status rules above, otherwise `CONFLICT`. Admins cannot move an unpaid `ONLINE` order to `PROCESSING` (only a confirmed payment can); cash-on-delivery orders are not affected. Setting `CANCELLED` performs a full cancel (stock restored, refund request for paid online orders), the same as `adminCancelOrder`. Setting `SHIPPED` consumes the order's stock reservations (the sale, for cash on delivery; an online order's were consumed at payment). For cash-on-delivery orders use `recordCodPayment` to reach `DELIVERED`.
 
 **Side effects**: When status transitions to `SHIPPED` or `DELIVERED`, a status update email is sent to the customer.
 
@@ -1965,53 +1967,58 @@ Discounts are admin-configured price reductions attached to products, variants o
 
 ### 2.15 Inventory
 
-Inventory writes need `inventory.adjust` and the log queries `inventory.view`; see [2.24](#224-staff-roles-and-permissions). **Stock lives on the variant** (the SKU): `Variant.quantity`. `Product.totalStock` and `Product.inStock` summarise its active variants. Every stock change writes an `InventoryLogEntity` with the `variantId`, and manual changes also write an audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`). Stock can never go below zero.
+Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; see [2.24](#224-staff-roles-and-permissions). **Stock is held per variant (the SKU) and location** (ADR-0008): each store has one default location, where all stock lives for now. A variant shows `available` (on hand minus reserved for open orders; public), `onHand` and `reserved` (staff with `inventory.view`, through the admin `variant` / `variants` queries; `FORBIDDEN` otherwise). `Product.totalStock` and `Product.inStock` summarise the **available** stock of its active variants. Every stock change writes one entry to the append-only stock ledger (`StockMovement`); manual changes also write an audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`). On-hand stock can never go below zero, and reserved stock never above on-hand stock.
 
-**Breaking change (P1-V.3):** `restockProduct` / `RestockProductInput` → `restockVariant` / `RestockVariantInput`; `adjustProductStock` / `AdjustProductStockInput` → `adjustVariantStock` / `AdjustVariantStockInput`. `InventoryLogEntity.variantId` is now non-null. `productInventoryLogs` returns the logs of every variant of the product.
+**Breaking changes (P1-N.2):** `InventoryLogEntity` and `InventoryActionEnum` → removed, replaced by `StockMovement` and `StockMovementReason`. `restockVariant` and `adjustVariantStock` return `StockMovement!` (was `InventoryLogEntity!`). `inventoryLogs`, `productInventoryLogs` and `variantInventoryLogs` → removed; use the paginated `stockMovements` query (optionally by `variantId` or `productId`). `Variant.quantity` → removed; read `available` (and, as staff, `onHand` / `reserved`). Existing inventory log rows were copied into the ledger by migration.
 
-**`InventoryLogEntity`**
+**`StockMovement`**
 
 ```typescript
 {
   id: string;
-  productId: string;
-  variantId: string;           // The variant whose stock changed
-  action: InventoryActionEnum; // RESTOCK | ORDER_DEDUCTION | RETURN_RESTORE | ADJUSTMENT
-  quantityChange: number;      // Signed
-  quantityAfter: number;       // Variant stock after the change
-  reason?: string;
-  actorId?: string;
+  variantId: string;
+  locationId: string;
+  onHandDelta: number;         // Signed change to on-hand stock
+  reservedDelta: number;       // Signed change to reserved stock
+  reason: StockMovementReason; // see below
+  refType?: string;            // What caused it: "Order", "ReturnRequest", "InventoryLog" (migrated), ...
+  refId?: string;
+  actorId?: string;            // Staff member or customer who caused it
+  note?: string;               // The reason text given by staff, or e.g. "Order cancelled"
   createdAt: DateTime;
 }
 ```
+
+**`StockMovementReason`**: `RECEIPT` (delivery or opening stock of a new variant), `RESERVE` (held for an order line), `SALE` (a hold consumed: online payment captured or cash-on-delivery order dispatched), `RELEASE` (hold given back on cancel or expiry), `RETURN_RESTOCK` (returned goods, or a paid order cancelled before dispatch), `ADJUSTMENT`, `OPENING_BALANCE` (stock the old inventory log did not explain, migration only), `TRANSFER` (not used yet).
 
 ---
 
 #### `restockVariant`
 - **Type**: Mutation
 - **Args**: `input: RestockVariantInput!`
-- **Response**: `InventoryLogEntity!` (action `RESTOCK`)
-- **Description**: Add stock to a variant, e.g. a delivery or goods returned by a customer.
+- **Response**: `StockMovement!` (reason `RECEIPT`, or `RETURN_RESTOCK` with `returnRequestId`)
+- **Description**: Add stock to a variant at the default location: a delivery, or goods returned by a customer once received and inspected.
 
 **Input: `RestockVariantInput`**
 
 ```typescript
 {
-  variantId: string;  // Required.
-  quantity: number;   // Required. Integer >= 1.
-  reason?: string;    // Default "Manual restock".
+  variantId: string;        // Required.
+  quantity: number;         // Required. Integer >= 1.
+  reason?: string;          // Max 500 chars. Default "Manual restock" ("Returned goods restocked" with returnRequestId).
+  returnRequestId?: string; // The return request the goods came back under; recorded as RETURN_RESTOCK referencing it.
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`).
+**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Return request "<id>" not found`).
 
 ---
 
 #### `adjustVariantStock`
 - **Type**: Mutation
 - **Args**: `input: AdjustVariantStockInput!`
-- **Response**: `InventoryLogEntity!` (action `ADJUSTMENT`)
-- **Description**: Change a variant's stock by a signed amount, e.g. damage, loss or a stock count correction.
+- **Response**: `StockMovement!` (reason `ADJUSTMENT`)
+- **Description**: Change a variant's on-hand stock by a signed amount, e.g. damage, loss or a stock count correction. Units reserved for open orders cannot be adjusted away.
 
 **Input: `AdjustVariantStockInput`**
 
@@ -2019,31 +2026,18 @@ Inventory writes need `inventory.adjust` and the log queries `inventory.view`; s
 {
   variantId: string;  // Required.
   delta: number;      // Required. Non-zero integer; negative removes stock.
-  reason: string;     // Required. 1–500 chars.
+  reason: string;     // Required. 1–500 chars. Stored as the movement's note.
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (variant); `BAD_REQUEST` (`Cannot remove N units from variant "<id>": only M in stock`).
+**Possible Errors**: `NOT_FOUND` (variant); `BAD_REQUEST` (`Cannot remove N units from variant "<id>": only M available`).
 
 ---
 
-#### `inventoryLogs`
-- **Type**: Query
-- **Response**: `[InventoryLogEntity!]!`, all logs, newest first
-
----
-
-#### `productInventoryLogs`
-- **Type**: Query
-- **Args**: `productId: ID!`
-- **Response**: `[InventoryLogEntity!]!`, the logs of every variant of the product, newest first
-
----
-
-#### `variantInventoryLogs`
-- **Type**: Query
-- **Args**: `variantId: ID!`
-- **Response**: `[InventoryLogEntity!]!`, newest first
+#### `stockMovements`
+- **Type**: Query (`inventory.view`)
+- **Args**: `variantId?: ID`, `productId?: ID` (every variant of the product), `reason?: StockMovementReason`, `first: Int = 50` (1–100), `after?: ID` (the id of the last movement of the previous page)
+- **Response**: `StockMovementPage! { nodes: [StockMovement!]!, totalCount: Int!, hasNextPage: Boolean! }`, newest first
 
 ---
 
@@ -2421,7 +2415,7 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 }
 ```
 
-A variant's low-stock level is its `lowStockThreshold` (default 5; set on `createVariant`/`updateVariant`/`createProduct`, read on `Variant.lowStockThreshold`).
+A variant is low on stock when its available stock (on hand minus reserved) is at or below its `lowStockThreshold` (default 5; set on `createVariant`/`updateVariant`/`createProduct`, read on `Variant.lowStockThreshold`).
 
 ---
 
@@ -2797,7 +2791,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
-| `inventory.view` | `inventoryLogs`, `productInventoryLogs`, `variantInventoryLogs` |
+| `inventory.view` | `stockMovements`; the `Variant.onHand` and `Variant.reserved` fields |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
 | `order.view` | `getOrders`, `viewOrder` |
 | `order.manage` | `updateOrderStatus`, `updateShipping`, `adminCancelOrder`, `deleteOrder` |
@@ -3160,7 +3154,7 @@ The GraphQL schema (`schema.gql`) is the contract; the database models behind it
 | `DateTime` | ISO 8601 string in UTC, e.g. `2026-11-18T09:54:33.000Z` |
 | `JSON` | Any JSON value (used for address/pickup snapshots and `Payment.paymentDetails`) |
 | `Decimal` | Exact decimal as a string, e.g. `"12.50"`, `"0.15"` (no exponent). Used for money inputs, tax rates and discount/coupon `value`. See [Money](#money) |
-| `Float` | Only stock quantities (`Variant.quantity`, `OrderItem.quantity`) and address coordinates (`Address.latitude`/`longitude`); never money |
+| `Float` | Only stock quantities (`OrderItem.quantity`) and address coordinates (`Address.latitude`/`longitude`); never money |
 
 ### Money
 
@@ -3218,7 +3212,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `PaymentStatus` | `PENDING`, `COMPLETED`, `FAILED`, `ABANDONED` | `Payment.status` |
 | `ReturnStatusEnum` | `PENDING`, `APPROVED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED` | `ReturnRequestEntity.status` |
 | `RefundStatusEnum` | `PENDING` (recorded, not sent), `SENDING` (sent, outcome unknown if it stays), `PROCESSED` (accepted by Paystack), `FAILED` (refused, can be resent) | `RefundEntity.status`, `refunds(status)` |
-| `InventoryActionEnum` | `RESTOCK`, `ORDER_DEDUCTION`, `RETURN_RESTORE`, `ADJUSTMENT` | `InventoryLogEntity.action` |
+| `StockMovementReason` | `OPENING_BALANCE`, `RECEIPT`, `SALE`, `RETURN_RESTOCK`, `ADJUSTMENT`, `TRANSFER`, `RESERVE`, `RELEASE` | `StockMovement.reason`, `stockMovements(reason)` |
 | `DiscountType` | `PERCENTAGE`, `FLAT` | `Discount.type`, discount inputs |
 | `DiscountTypeEnum` | `PERCENTAGE`, `FLAT` | `Coupon.discountType`, coupon inputs (a separate enum with the same values) |
 | `ProductStatus` | `DRAFT`, `PUBLISHED`, `ARCHIVED` | `Product.status`, product inputs, `ProductFilterArgs.status` |
@@ -3240,7 +3234,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `Order`, `OrderItem` | [2.11](#211-orders) |
 | `Payment` | [2.12](#212-payment) |
 | `Coupon`, `CouponValidation`, `Discount` | [2.13](#213-coupons), [2.14](#214-discounts) |
-| `InventoryLogEntity` | [2.15](#215-inventory) |
+| `StockMovement`, `StockMovementPage` | [2.15](#215-inventory) |
 | `ReturnRequestEntity`, `RefundEntity` | [2.16](#216-returns) |
 | `Review` | [2.17](#217-reviews) |
 | `TaxEntity` | [2.18](#218-tax) |
@@ -3359,13 +3353,13 @@ Authorization: Bearer <accessToken>
 2. Response includes cursor-paginated `ProductConnection` with `pageInfo.hasNextPage` and `pageInfo.totalCount`.
 3. To load next page: call again with `after: lastCursor` from previous response.
 4. Resolved fields (`priceRange`, `totalStock`, `inStock`, `variants` and their `discountedPrice`/`appliedDiscount`, `reviews`) are fetched via DataLoader only when requested.
-5. To view a single product: call `query product(productId)` (returns `null` for anything not published). Show its `variants` (each with `optionValues`, `price`, `discountedPrice`, `quantity`) and let the customer pick one; a product without options has a single variant with `optionValues: {}`.
+5. To view a single product: call `query product(productId)` (returns `null` for anything not published). Show its `variants` (each with `optionValues`, `price`, `discountedPrice`, `available`) and let the customer pick one; a product without options has a single variant with `optionValues: {}`.
 
 ### Add to Cart Flow
 
 1. User must be authenticated.
 2. Frontend calls `mutation addToCart(input: { variantId, quantity })` with the chosen variant's `id`.
-3. Backend checks the variant exists, is active and priced, its product is active and `PUBLISHED`, and the variant has enough stock for the new line quantity.
+3. Backend checks the variant exists, is active and priced, its product is active and `PUBLISHED`, and the variant has enough available stock for the new line quantity (nothing is reserved until checkout).
 4. If cart does not exist for user, it is created automatically.
 5. If that variant is already in the cart, its line's quantity is incremented.
 6. Returns updated `Cart` with all items. Stock is not reserved until `createOrder`.
@@ -3413,9 +3407,10 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 
 ### Inventory Deduction Flow
 
-- On `createOrder`: each line's quantity is decremented from its **variant**'s stock with a conditional update inside the order transaction (never below zero, and only while the variant is active and its product active and `PUBLISHED`). An `InventoryLog` record is created per line with `action = ORDER_DEDUCTION` and the `variantId`.
-- On `cancelOrder`, `adminCancelOrder`, `updateOrderStatus(CANCELLED)` or expiry: each line's variant stock is restored once, logged as `RETURN_RESTORE` with the `variantId`. `deleteOrder` never moves stock.
-- Low-stock check: a repeatable background job every 6 hours logs warnings (server log only) for active variants of active products at or below their `lowStockThreshold` (default 5).
+- On `createOrder`: each line's quantity is **reserved** on its variant's stock with a conditional update inside the order transaction (only while enough is available, the variant is active and its product active and `PUBLISHED`), recorded as a `RESERVE` stock movement.
+- On online payment success, or `updateOrderStatus(SHIPPED)` for cash on delivery: the reservations are consumed (`SALE`).
+- On `cancelOrder`, `adminCancelOrder`, `updateOrderStatus(CANCELLED)` or expiry: each reservation is released once (`RELEASE`, or `RETURN_RESTOCK` for a paid order not yet dispatched). `deleteOrder` never moves stock.
+- Low stock: when a change takes a variant's available stock down to its `lowStockThreshold` (default 5), an `inventory.low_stock.v1` event is raised once; the worker logs it as a warning.
 
 ### Return Request Flow
 
@@ -3545,36 +3540,34 @@ A background sweep every 5 minutes also re-checks open attempts with Paystack an
 
 ## 9. Inventory Rules
 
-Stock is held per **variant** (`Variant.quantity`); a product has no stock of its own. `Product.totalStock` (sum over active variants) and `Product.inStock` (an active variant has stock) are computed summaries.
+Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the store) and `reserved` (units held for open orders); `available = onHand - reserved` is what can be sold. All stock is at the store's default location for now. A product has no stock of its own: `Product.totalStock` (available units over active variants) and `Product.inStock` (an active variant has available stock) are computed summaries. Every change is one `StockMovement` in the ledger (see [2.15](#215-inventory)).
 
-### When Stock Reduces
+### Reservations
 
-- `createOrder`: each `OrderItem.quantity` is deducted from its variant's `quantity`. This happens **at order creation time**, not at payment time. Logged as `ORDER_DEDUCTION` with the `variantId`.
-- `adjustVariantStock` with a negative `delta`. Logged as `ADJUSTMENT`.
+- `createOrder` **reserves** each line (`RESERVE`): the units stay on hand but stop being available. The order fails (`BAD_REQUEST`, nothing written) if any line cannot be reserved, so the last unit is sold once.
+- An `ONLINE` order's reservation is **consumed** (`SALE`: on-hand and reserved both go down) when its payment succeeds (verify, webhook or the reconciliation sweep).
+- A `CASH_ON_DELIVERY` order's reservation is consumed when the order is dispatched (`updateOrderStatus` to `SHIPPED`). It does not expire.
+- Cancelling an order (customer, admin, or the hourly expiry of unpaid `ONLINE` orders) **releases** each reservation exactly once: an unconsumed hold is given back (`RELEASE`); a paid order cancelled before dispatch puts its units back on hand (`RETURN_RESTOCK`), since they never left the store. Cancel is not possible after dispatch.
+- A payment that arrives after its order expired does not take stock: the order stays `CANCELLED` and the payment is flagged for review (`ORDER_NOT_PAYABLE`) and refunded.
 
-### When Stock Restores
+### Other stock changes
 
-- Cancelling an order (customer, admin, or expiry): each line's quantity back to its variant, once. Logged as `RETURN_RESTORE` with the `variantId`.
-- `restockVariant`: manual top-up. Logged as `RESTOCK`. A new variant's initial stock (from `createProduct` or `createVariant`) is also logged as `RESTOCK` ("Initial stock").
-- `adjustVariantStock` with a positive `delta`. Logged as `ADJUSTMENT`.
-- Not on `approveReturn`, `processRefund` or `deleteOrder`: returned goods are restocked manually with `restockVariant`.
+- `restockVariant`: a delivery (`RECEIPT`), or returned goods with `returnRequestId` (`RETURN_RESTOCK`). A new variant's opening stock (from `createProduct` or `createVariant`) is a `RECEIPT` ("Initial stock").
+- `adjustVariantStock`: `ADJUSTMENT` by a signed delta, never below the reserved units.
+- Not on `approveReturn`, `processRefund` or `deleteOrder`: returned goods are restocked with `restockVariant`.
 
 ### Out-of-Stock Handling
 
-- Stock can never go negative (conditional updates plus a database check).
-- Adding to cart and creating an order check the variant's stock (`BAD_REQUEST` if insufficient).
-- Show availability per variant from `Variant.quantity`, and on product cards from `Product.inStock` / `totalStock`. There is no stock status field.
-- `ProductFilterArgs.inStock: true` returns only products with an active variant in stock.
+- On-hand stock never goes negative and reserved never exceeds on hand (conditional updates plus database checks).
+- Adding to cart and creating an order check the variant's available stock (`BAD_REQUEST` if insufficient). Adding to cart does not reserve.
+- Show availability per variant from `Variant.available`, and on product cards from `Product.inStock` / `totalStock`.
+- `ProductFilterArgs.inStock: true` returns only products with an active variant that has available stock.
 
 ### Low Stock Logic
 
-- Each variant has a `lowStockThreshold` (default 5), set on `createProduct` (`variants`), `createVariant` or `updateVariant`, and read on `Variant.lowStockThreshold`.
-- A repeatable background job every 6 hours logs warnings for active variants of active products at or below their threshold. No emails or notifications.
-- `dashboardSummary.lowStockVariantCount` counts those variants; `lowStockProductCount` counts active products with at least one of them.
-
-### Reserved Stock
-
-There is no separate reservation: stock is decremented on order creation. An unpaid `ONLINE` order gives its stock back when it expires after 1 hour or is cancelled.
+- Each variant has a `lowStockThreshold` (default 5), set on `createProduct` (`variants`), `createVariant` or `updateVariant`.
+- When a stock change takes a variant's available stock from above its threshold to at or below it, the backend raises an `inventory.low_stock.v1` event once (not again until stock rises above the threshold and falls again). The worker logs it as a warning for alerting; no email is sent yet. The former 6-hourly scan is gone.
+- `dashboardSummary.lowStockVariantCount` counts active variants of active products whose available stock is at or below their threshold; `lowStockProductCount` counts active products with at least one of them.
 
 ---
 
@@ -3817,7 +3810,7 @@ query {
 
 **Users** (`UserPaginateArgs`): `email` (partial), `phoneNumber` (exact), `role`, `isActive`, `name` (partial), `createdAfter`.
 
-**Other resources** (orders, payments, reviews, returns, refunds, inventory logs, coupons, discounts, zones, locations) return full lists without pagination. `refunds` accepts an optional `status` filter.
+**Other resources** (orders, payments, reviews, returns, refunds, coupons, discounts, zones, locations) return full lists (`stockMovements` is paginated, see [2.15](#215-inventory)) without pagination. `refunds` accepts an optional `status` filter.
 
 ---
 
@@ -4265,13 +4258,13 @@ fragment ProductSummary on Product {
 }
 
 fragment VariantOption on Variant {
-  id sku optionValues quantity image
+  id sku optionValues available image
   price { amount currency } discountedPrice { amount currency }
 }
 
 fragment CartItemFull on CartItem {
   id variantId productId quantity originalPrice { amount currency } discountedPrice { amount currency }
-  variant { id sku optionValues quantity price { amount currency } }
+  variant { id sku optionValues available price { amount currency } }
   product { id name images currency }
 }
 
@@ -4300,7 +4293,8 @@ export type PaymentStatus = 'PENDING' | 'COMPLETED' | 'FAILED' | 'ABANDONED';
 export type DiscountType = 'PERCENTAGE' | 'FLAT';      // also DiscountTypeEnum (coupons)
 export type ReturnStatusEnum = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REFUND_PENDING' | 'REFUNDED';
 export type RefundStatusEnum = 'PENDING' | 'SENDING' | 'PROCESSED' | 'FAILED';
-export type InventoryActionEnum = 'RESTOCK' | 'ORDER_DEDUCTION' | 'RETURN_RESTORE' | 'ADJUSTMENT';
+export type StockMovementReason =
+  | 'OPENING_BALANCE' | 'RECEIPT' | 'SALE' | 'RETURN_RESTOCK' | 'ADJUSTMENT' | 'TRANSFER' | 'RESERVE' | 'RELEASE';
 export type Currency = 'GHS' | 'USD' | 'EUR' | 'GBP' | 'NGN';
 export type ProductStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 export type DeliveryOptions = 'LOCAL_DELIVERY' | 'INTERNATIONAL_DELIVERY' | 'SELECTED_REGIONS';
@@ -4423,7 +4417,7 @@ query {
     id name description images inStock totalStock
     priceRange { min { amount currency } max { amount currency } }
     variants {
-      id sku optionValues quantity
+      id sku optionValues available
       price { amount currency } discountedPrice { amount currency }
       appliedDiscount { name type value }
     }

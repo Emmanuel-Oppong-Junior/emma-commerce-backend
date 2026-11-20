@@ -121,6 +121,9 @@ async function createProducts() {
 
   const products: Prisma.ProductCreateManyInput[] = [];
   const variants: Prisma.VariantCreateManyInput[] = [];
+  const stockLevels: Prisma.StockLevelCreateManyInput[] = [];
+  const movements: Prisma.StockMovementCreateManyInput[] = [];
+  const { id: locationId } = await prisma.stockLocation.findFirstOrThrow({ where: { isDefault: true } });
   for (let i = 0; i < 500; i++) {
     const categoryId = categoryIds[Math.floor(Math.random() * categoryIds.length)];
     const validSubCategoryIds = subCategories.filter((sub) => sub.categoryId === categoryId).map((sub) => sub.id);
@@ -141,18 +144,25 @@ async function createProducts() {
       brandId: brandIds[Math.floor(Math.random() * brandIds.length)],
       images: Array.from({ length: 3 }, () => faker.image.url()),
     });
-    // Every product sells through a variant; these have one default variant each (seed data, so its stock is not logged).
+    // Every product sells through a variant; these have one default variant each, stocked at the default location.
+    const variantId = `${id}_default`;
+    const onHand = faker.number.int({ max: 1000 });
     variants.push({
+      id: variantId,
       productId: id,
       sku: `SEED-${id.slice(0, 8).toUpperCase()}`,
       price,
       basePrice: price,
-      quantity: faker.number.int({ max: 1000 }),
     });
+    stockLevels.push({ variantId, locationId, onHand });
+    movements.push({ variantId, locationId, onHandDelta: onHand, reason: 'RECEIPT', note: 'Seed stock' });
   }
 
   await prisma.product.createMany({ data: products, skipDuplicates: true });
-  return prisma.variant.createMany({ data: variants, skipDuplicates: true });
+  const created = await prisma.variant.createMany({ data: variants, skipDuplicates: true });
+  await prisma.stockLevel.createMany({ data: stockLevels, skipDuplicates: true });
+  await prisma.stockMovement.createMany({ data: movements });
+  return created;
 }
 
 async function createSuperAdmin() {

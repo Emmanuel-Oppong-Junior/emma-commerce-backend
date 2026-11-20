@@ -43,8 +43,7 @@ export async function prepareStaffAccounts(prisma: PrismaService): Promise<void>
  * @param prisma - The PrismaService instance from the test module.
  */
 export async function resetDb(prisma: PrismaService): Promise<void> {
-  // Leaf-level audit / usage tables
-  await prisma.inventoryLog.deleteMany();
+  // Leaf-level usage tables (stock levels, reservations and movements go with their variants and orders)
   await prisma.couponUsage.deleteMany();
 
   // Payment and order hierarchy (refunds reference return requests)
@@ -269,37 +268,26 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
     ],
   });
 
-  // Every product sells through a variant: each seeded product has one default variant (no options), holding the
-  // price and stock the product used to have. Inserted directly, so the initial stock is not logged.
+  // Every product sells through a variant: each seeded product has one default variant (no options) holding its price,
+  // stocked at the default location with a RECEIPT movement each.
   await prisma.variant.createMany({
     data: [
-      { id: 'seed_var1', productId: 'seed_prod1', sku: 'SEED-LAP-001', price: 999.99, basePrice: 999.99, quantity: 50 },
-      {
-        id: 'seed_var2',
-        productId: 'seed_prod2',
-        sku: 'SEED-PHN-001',
-        price: 499.99,
-        basePrice: 499.99,
-        quantity: 100,
-      },
-      {
-        id: 'seed_var_draft',
-        productId: 'seed_prod_draft',
-        sku: 'SEED-TAB-DRAFT',
-        price: 299.99,
-        basePrice: 299.99,
-        quantity: 10,
-      },
+      { id: 'seed_var1', productId: 'seed_prod1', sku: 'SEED-LAP-001', price: 999.99, basePrice: 999.99 },
+      { id: 'seed_var2', productId: 'seed_prod2', sku: 'SEED-PHN-001', price: 499.99, basePrice: 499.99 },
+      { id: 'seed_var_draft', productId: 'seed_prod_draft', sku: 'SEED-TAB-DRAFT', price: 299.99, basePrice: 299.99 },
       {
         id: 'seed_var_inactive',
         productId: 'seed_prod_inactive',
         sku: 'SEED-WAT-OFF',
         price: 199.99,
         basePrice: 199.99,
-        quantity: 5,
       },
     ],
   });
+  await setStock(prisma, 'seed_var1', 50);
+  await setStock(prisma, 'seed_var2', 100);
+  await setStock(prisma, 'seed_var_draft', 10);
+  await setStock(prisma, 'seed_var_inactive', 5);
 
   // Shipping zones covering the cities the e2e suites deliver to
   await prisma.shippingZone.createMany({
@@ -320,4 +308,52 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
     productIds: { prod1: 'seed_prod1', prod2: 'seed_prod2', draft: 'seed_prod_draft', inactive: 'seed_prod_inactive' },
     variantIds: { prod1: 'seed_var1', prod2: 'seed_var2', draft: 'seed_var_draft', inactive: 'seed_var_inactive' },
   };
+}
+
+/** A variant's stock at every location, summed: what the ledger (ADR-0008) holds for it. */
+export async function stockOf(
+  prisma: PrismaService,
+  variantId: string,
+): Promise<{ onHand: number; reserved: number; available: number }> {
+  const { _sum } = await prisma.stockLevel.aggregate({ where: { variantId }, _sum: { onHand: true, reserved: true } });
+  const onHand = _sum.onHand ?? 0;
+  const reserved = _sum.reserved ?? 0;
+  return { onHand, reserved, available: onHand - reserved };
+}
+
+/**
+ * Sets a variant's stock at the default location to `onHand` with nothing reserved, for fixtures (call it after the
+ * orders holding reservations are gone). The level moves by the difference and a matching movement (RECEIPT up,
+ * ADJUSTMENT otherwise) keeps the ledger reconciled.
+ */
+export async function setStock(prisma: PrismaService, variantId: string, onHand: number): Promise<void> {
+  const { id: locationId } = await prisma.stockLocation.findFirstOrThrow({ where: { isDefault: true } });
+  await prisma.$transaction(async (tx) => {
+    const level = await tx.stockLevel.upsert({
+      where: { variantId_locationId: { variantId, locationId } },
+      create: { variantId, locationId },
+      update: {},
+    });
+    const onHandDelta = onHand - level.onHand;
+    const reservedDelta = -level.reserved;
+    if (onHandDelta === 0 && reservedDelta === 0) return;
+    await tx.stockLevel.update({ where: { id: level.id }, data: { onHand, reserved: 0, version: { increment: 1 } } });
+    await tx.stockMovement.create({
+      data: {
+        variantId,
+        locationId,
+        onHandDelta,
+        reservedDelta,
+        reason: onHandDelta > 0 && reservedDelta === 0 ? 'RECEIPT' : 'ADJUSTMENT',
+        note: 'Test fixture',
+      },
+    });
+  });
+}
+
+/** Movements that gave an order's stock back (cancel or expiry): RELEASE of a hold, RETURN_RESTOCK of a sale. */
+export function stockReturnsFor(prisma: PrismaService, orderId: string): Promise<number> {
+  return prisma.stockMovement.count({
+    where: { refType: 'Order', refId: orderId, reason: { in: ['RELEASE', 'RETURN_RESTOCK'] } },
+  });
 }

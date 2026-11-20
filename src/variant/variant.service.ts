@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Variant } from '../generated/prisma/client';
+import { Prisma, StockMovementReason, Variant } from '../generated/prisma/client';
 import { CreateVariantInput, VariantFieldsInput } from './dto/create-variant.input';
 import { UpdateVariantInput } from './dto/update-variant.input';
 import { NewVariant, ProductForVariants, VariantRepository, VariantWithProduct } from './variant.repository';
@@ -8,6 +8,7 @@ import { TaxService } from '../tax/tax.service';
 import { sellingPrice } from '../tax/tax-inclusive-price';
 import { checkOptionValues, CheckedOptions, describeProblems } from '../product-types/domain/attribute-validation';
 import { PaginationArgs } from '../commons/dto/paginate.args';
+import { StockLedgerService } from '../inventory/stock-ledger.service';
 
 const AUDITED_VARIANT_FIELDS = [
   'productId',
@@ -38,9 +39,10 @@ export class VariantService {
     private readonly variantRepository: VariantRepository,
     private readonly auditService: AuditService,
     private readonly taxService: TaxService,
+    private readonly stockLedger: StockLedgerService,
   ) {}
 
-  /** Creates a variant; its initial stock is logged as a RESTOCK in the same transaction (VAR-05). */
+  /** Creates a variant; its opening stock is received as a RECEIPT in the same transaction (VAR-05). */
   async createVariant(input: CreateVariantInput, actorId: string): Promise<VariantWithProduct> {
     const product = await this.findProduct(input.productId);
     if (input.discountId) await this.ensureDiscountExists(input.discountId);
@@ -89,7 +91,6 @@ export class VariantService {
           optionsKey: options.optionsKey,
           basePrice: input.basePrice.toFixed(2),
           price: sellingPrice(input.basePrice, product.isTaxable, rate).toFixed(2),
-          quantity: input.quantity,
           sku: input.sku,
           barcode: input.barcode,
           weightGrams: input.weightGrams,
@@ -110,7 +111,7 @@ export class VariantService {
     return prepared;
   }
 
-  /** Inserts prepared variants and logs each one's initial stock, on the caller's transaction. */
+  /** Inserts prepared variants and receives each one's opening stock, on the caller's transaction. */
   async insertPrepared(
     tx: Prisma.TransactionClient,
     productId: string,
@@ -121,14 +122,9 @@ export class VariantService {
     for (const { data, quantity } of prepared) {
       const variant = await this.variantRepository.create({ ...data, productId }, tx);
       if (quantity > 0) {
-        await this.variantRepository.logStock(tx, {
-          productId,
-          variantId: variant.id,
-          action: 'RESTOCK',
-          quantityChange: quantity,
-          quantityAfter: quantity,
-          reason: 'Initial stock',
+        await this.stockLedger.receive(tx, variant.id, quantity, StockMovementReason.RECEIPT, {
           actorId,
+          note: 'Initial stock',
         });
       }
       created.push(variant);
@@ -209,7 +205,7 @@ export class VariantService {
     const references = [
       history.orderItems && `${history.orderItems} order line(s)`,
       history.cartItems && `${history.cartItems} cart line(s)`,
-      history.inventoryLogs && `${history.inventoryLogs} stock movement(s)`,
+      history.stockMovements && `${history.stockMovements} stock movement(s)`,
     ].filter(Boolean);
     if (references.length) {
       throw new ConflictException(

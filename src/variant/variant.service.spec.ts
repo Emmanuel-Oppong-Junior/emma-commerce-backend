@@ -51,7 +51,6 @@ const existingVariant = {
   barcode: null,
   optionValues: { size: 'M', colour: 'Red' },
   optionsKey: 'colour=red|size=m',
-  quantity: 4,
   price: new Decimal('100.00'),
   basePrice: new Decimal('100.00'),
   isActive: true,
@@ -73,6 +72,7 @@ describe('VariantService', () => {
   let repository: Record<string, jest.Mock>;
   let audit: ReturnType<typeof createAuditServiceMock>;
   let tax: { getTotalActiveRate: jest.Mock };
+  let stockLedger: { receive: jest.Mock };
   let service: VariantService;
 
   beforeEach(() => {
@@ -82,17 +82,17 @@ describe('VariantService', () => {
       findBySkuOrBarcode: jest.fn().mockResolvedValue(null),
       discountExists: jest.fn().mockResolvedValue(true),
       create: jest.fn().mockImplementation(async (data) => ({ id: 'var-new', product: shirt, ...data })),
-      logStock: jest.fn(),
       findById: jest.fn().mockResolvedValue(existingVariant),
       findPage: jest.fn(),
       update: jest.fn().mockImplementation(async (id, data) => ({ ...existingVariant, id, ...withoutUndefined(data) })),
-      countHistory: jest.fn().mockResolvedValue({ cartItems: 0, orderItems: 0, inventoryLogs: 0 }),
+      countHistory: jest.fn().mockResolvedValue({ cartItems: 0, orderItems: 0, stockMovements: 0 }),
       countVariants: jest.fn().mockResolvedValue(2),
       delete: jest.fn().mockResolvedValue(existingVariant),
     };
     audit = createAuditServiceMock();
     tax = { getTotalActiveRate: jest.fn().mockResolvedValue(new Prisma.Decimal('0.2')) };
-    service = new VariantService(repository as never, audit as never, tax as never);
+    stockLedger = { receive: jest.fn() };
+    service = new VariantService(repository as never, audit as never, tax as never, stockLedger as never);
   });
 
   describe('createVariant', () => {
@@ -106,7 +106,6 @@ describe('VariantService', () => {
           optionsKey: 'colour=red|size=l',
           basePrice: '120.00',
           price: '120.00',
-          quantity: 7,
         }),
         AUDIT_TX,
       );
@@ -124,17 +123,12 @@ describe('VariantService', () => {
       );
     });
 
-    it('logs the initial stock as a RESTOCK in the same transaction (VAR-05)', async () => {
+    it('receives the opening stock as a RECEIPT in the same transaction (VAR-05)', async () => {
       await service.createVariant(input(), 'admin-1');
 
-      expect(repository.logStock).toHaveBeenCalledWith(AUDIT_TX, {
-        productId: 'prod-shirt',
-        variantId: 'var-new',
-        action: 'RESTOCK',
-        quantityChange: 7,
-        quantityAfter: 7,
-        reason: 'Initial stock',
+      expect(stockLedger.receive).toHaveBeenCalledWith(AUDIT_TX, 'var-new', 7, 'RECEIPT', {
         actorId: 'admin-1',
+        note: 'Initial stock',
       });
       expect(audit.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Variant', entityId: 'var-new', action: 'CREATE' }),
@@ -145,7 +139,7 @@ describe('VariantService', () => {
     it('writes no stock movement for a variant created with no stock', async () => {
       await service.createVariant(input({ quantity: 0 }), 'admin-1');
 
-      expect(repository.logStock).not.toHaveBeenCalled();
+      expect(stockLedger.receive).not.toHaveBeenCalled();
     });
 
     it("rejects option values the product type doesn't define", async () => {
@@ -249,8 +243,8 @@ describe('VariantService', () => {
 
   describe('deleteVariant', () => {
     it.each([
-      [{ cartItems: 0, orderItems: 2, inventoryLogs: 0 }, '2 order line(s)'],
-      [{ cartItems: 1, orderItems: 0, inventoryLogs: 3 }, '1 cart line(s), 3 stock movement(s)'],
+      [{ cartItems: 0, orderItems: 2, stockMovements: 0 }, '2 order line(s)'],
+      [{ cartItems: 1, orderItems: 0, stockMovements: 3 }, '1 cart line(s), 3 stock movement(s)'],
     ])('refuses with CONFLICT when history references it (VAR-07): %o', async (history, references) => {
       repository.countHistory.mockResolvedValue(history);
 

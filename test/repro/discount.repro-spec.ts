@@ -61,7 +61,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       sku: 'KETTLE',
       optionValues: {},
       price: 500,
-      quantity: 5,
+      stockLevels: [{ onHand: 5, reserved: 0 }],
       isActive: true,
       discountId: null,
       product: {
@@ -83,7 +83,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       }),
       findVariant: jest.fn().mockResolvedValue(variant),
       runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
-      decrementVariantStock: jest.fn().mockResolvedValue({ ...variant, quantity: 4 }),
+      lockSellableVariant: jest.fn().mockResolvedValue(true),
       create: jest.fn().mockImplementation((_tx, _userId, details) => ({ id: 'order-1', ...details, items: [] })),
       clearCartItems: jest.fn(),
     };
@@ -98,7 +98,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       { getCartOrThrow: jest.fn().mockResolvedValue(cart) } as never,
       {} as never,
       {} as never,
-      { logInventoryChange: jest.fn() } as never,
+      { reserve: jest.fn().mockResolvedValue(true) } as never,
       { record: jest.fn() } as never,
       { getFeeForCity: jest.fn().mockResolvedValue(new Prisma.Decimal(30)) } as never,
       {} as never,

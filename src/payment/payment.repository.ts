@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
 import { StoreRepository } from '../store/store.repository';
 import { OutboxService } from '../outbox/outbox.service';
+import { StockLedgerService } from '../inventory/stock-ledger.service';
 import {
   AttemptState,
   autoRefundKey,
@@ -106,6 +107,7 @@ export class PaymentRepository {
     private readonly ordersRepository: OrdersRepository,
     private readonly storeRepository: StoreRepository,
     private readonly outbox: OutboxService,
+    private readonly stockLedger: StockLedgerService,
   ) {}
 
   /**
@@ -379,6 +381,9 @@ export class PaymentRepository {
           OrderStatus.PENDING,
         ]);
         if (!moved) throw new ConflictException(`Order "${intent.orderId}" left PENDING while its payment settled`);
+        // The captured payment is the sale. A payment for an order that already expired (its stock released) never
+        // gets here: decideVerification flags it ORDER_NOT_PAYABLE for review and refund, so nothing is oversold.
+        await this.stockLedger.consumeOrder(tx, intent.orderId);
         // Recorded only on this PENDING -> PROCESSING transition, so repeat webhooks and re-verifies email nobody.
         await this.outbox.record(tx, {
           type: 'payment.succeeded.v1',

@@ -3,7 +3,15 @@ import { FulfillmentType, PaymentStatus } from '../../src/generated/prisma/clien
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ORDER_EXPIRY_LOCK_KEY, OrdersService } from '../../src/order/order.service';
 import { createTestApp } from '../helpers/app.helper';
-import { clearPaymentLedger, resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
+import {
+  clearPaymentLedger,
+  resetDb,
+  seedMinimal,
+  seedPaymentAttempt,
+  setStock,
+  stockOf,
+  stockReturnsFor,
+} from '../helpers/db.helper';
 
 const PRODUCT_ID = 'seed_prod2';
 const VARIANT_ID = 'seed_var2';
@@ -16,12 +24,10 @@ describe('Abandoned order expiry (e2e)', () => {
   let orders: OrdersService;
   let addressId: string;
 
-  const stock = async () =>
-    (await prisma.variant.findUniqueOrThrow({ where: { id: VARIANT_ID }, select: { quantity: true } })).quantity;
+  const stock = async () => (await stockOf(prisma, VARIANT_ID)).available;
   const statusOf = async (orderId: string) =>
     (await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { status: true } })).status;
-  const restoreLogsFor = (orderId: string) =>
-    prisma.inventoryLog.count({ where: { action: 'RETURN_RESTORE', reason: { contains: orderId } } });
+  const restoreLogsFor = (orderId: string) => stockReturnsFor(prisma, orderId);
 
   const placeOrder = async (quantity: number): Promise<string> => {
     const cart = await prisma.cart.upsert({ where: { userId: USER_ID }, create: { userId: USER_ID }, update: {} });
@@ -67,11 +73,10 @@ describe('Abandoned order expiry (e2e)', () => {
   });
 
   beforeEach(async () => {
-    await prisma.inventoryLog.deleteMany();
     await clearPaymentLedger(prisma);
     await prisma.orderItem.deleteMany();
     await prisma.order.deleteMany();
-    await prisma.variant.update({ where: { id: VARIANT_ID }, data: { quantity: 100 } });
+    await setStock(prisma, VARIANT_ID, 100);
   });
 
   afterAll(async () => {

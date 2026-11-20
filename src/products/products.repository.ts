@@ -12,6 +12,11 @@ export interface VariantOptions {
 export class ProductsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Variant filter: some location has stock that is not reserved (onHand > reserved), compared in SQL. */
+  hasAvailableStock(): Prisma.VariantWhereInput {
+    return { stockLevels: { some: { onHand: { gt: this.prisma.stockLevel.fields.reserved } } } };
+  }
+
   async create(
     data: Prisma.ProductCreateInput,
     include?: Prisma.ProductInclude,

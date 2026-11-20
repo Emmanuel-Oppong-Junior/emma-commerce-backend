@@ -4,6 +4,7 @@ import { Cart, CartItem } from '../generated/prisma/client';
 import { UpdateCartItemInput } from './dto/update-cart.input';
 import { CartRepository, VariantForSale } from './cart.repository';
 import { notSellableReason } from '../variant/sellable';
+import { availableOf } from '../inventory/stock';
 
 /**
  * Service for managing user carts. A cart line is one variant (SKU) and is priced and stocked from it.
@@ -80,9 +81,10 @@ export class CartService {
   }
 
   private ensureInStock(variant: VariantForSale, quantity: number): void {
-    if (quantity > variant.quantity) {
+    const available = availableOf(variant.stockLevels);
+    if (quantity > available) {
       throw new BadRequestException(
-        `Cannot add ${quantity} of "${variant.product.name}" (${variant.sku}) to cart; only ${variant.quantity} in stock`,
+        `Cannot add ${quantity} of "${variant.product.name}" (${variant.sku}) to cart; only ${available} in stock`,
       );
     }
   }

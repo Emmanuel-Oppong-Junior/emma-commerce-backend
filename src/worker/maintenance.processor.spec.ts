@@ -4,7 +4,6 @@ import { MaintenanceJob } from './maintenance-jobs';
 
 function buildProcessor() {
   const expiredOrders = { cancelAbandonedOrders: jest.fn().mockResolvedValue(undefined) };
-  const lowStock = { checkLowStock: jest.fn().mockResolvedValue(undefined) };
   const payments = {
     sweep: jest.fn().mockResolvedValue(undefined),
     diffPreviousDay: jest.fn().mockResolvedValue(undefined),
@@ -12,12 +11,11 @@ function buildProcessor() {
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const processor = new MaintenanceProcessor(
     expiredOrders as never,
-    lowStock as never,
     payments as never,
     logger as never,
     { observeJob: (_job: unknown, work: () => Promise<unknown>) => work() } as never,
   );
-  return { processor, expiredOrders, lowStock, payments, logger };
+  return { processor, expiredOrders, payments, logger };
 }
 
 const job = (name: string) => ({ name, id: '1', queueName: 'maintenance', attemptsMade: 1, opts: {} }) as Job;
@@ -27,7 +25,6 @@ describe('MaintenanceProcessor', () => {
     [MaintenanceJob.ExpireAbandonedOrders, 'expiredOrders', 'cancelAbandonedOrders'],
     [MaintenanceJob.SweepPayments, 'payments', 'sweep'],
     [MaintenanceJob.DiffPreviousDayPayments, 'payments', 'diffPreviousDay'],
-    [MaintenanceJob.CheckLowStock, 'lowStock', 'checkLowStock'],
   ] as const)('runs %s through %s.%s exactly once', async (name, target, method) => {
     const built = buildProcessor();
 
@@ -37,7 +34,6 @@ describe('MaintenanceProcessor', () => {
     expect(task[method]).toHaveBeenCalledTimes(1);
     const allCalls = [
       built.expiredOrders.cancelAbandonedOrders,
-      built.lowStock.checkLowStock,
       built.payments.sweep,
       built.payments.diffPreviousDay,
     ].reduce((total, mock) => total + mock.mock.calls.length, 0);

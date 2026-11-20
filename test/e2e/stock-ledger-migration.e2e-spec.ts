@@ -5,6 +5,7 @@ import { migrationSql, migrationSqlFrom, ScratchSchema } from '../helpers/migrat
 
 const BEFORE = '20261121020000_variant_contract';
 const LEDGER = '20261122000000_stock_ledger';
+const CONTRACT = '20261122010000_stock_ledger_contract';
 const backfill = () => migrationSqlFrom(LEDGER, '-- Backfill');
 
 // Stock as the variant (SKU) model left it: Variant.quantity plus an InventoryLog history that does not always add up,
@@ -42,7 +43,7 @@ interface LevelRow {
   reserved: number;
 }
 
-describe('Stock ledger migration on legacy data (P1-N.1, e2e)', () => {
+describe('Stock ledger migration on legacy data (P1-N.1/N.2, e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let legacy: ScratchSchema;
@@ -205,5 +206,25 @@ describe('Stock ledger migration on legacy data (P1-N.1, e2e)', () => {
     await legacy.exec(`DELETE FROM "Product" WHERE id = 'p_gone'`);
 
     expect((await movements()).filter((m) => m.variantId === 'v_gone')).toEqual([]);
+  });
+  it('refuses to contract while the old stock columns are ahead of the ledger, then drops them once caught up', async () => {
+    await legacy.exec(`UPDATE "Variant" SET quantity = quantity + 1 WHERE id = 'v_logged'`);
+
+    await expect(legacy.exec(migrationSql(CONTRACT))).rejects.toThrow(
+      /rerun the backfill of 20261122000000_stock_ledger/,
+    );
+
+    await legacy.exec(backfill());
+    await legacy.exec(migrationSql(CONTRACT));
+
+    const tables = await legacy.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'legacy_stock_ledger' AND table_name = 'InventoryLog'`,
+    );
+    const columns = await legacy.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = 'legacy_stock_ledger' AND table_name = 'Variant' AND column_name = 'quantity'`,
+    );
+    expect([tables, columns]).toEqual([[], []]);
+    expect((await levels()).v_logged.onHand).toBe(10);
+    expect(await ledgerGaps()).toEqual([]);
   });
 });

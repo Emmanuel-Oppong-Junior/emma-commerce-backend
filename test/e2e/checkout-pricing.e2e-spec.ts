@@ -5,7 +5,7 @@ import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, setStock, stockOf as ledgerStockOf } from '../helpers/db.helper';
 
 const M = '{ amount currency }';
 
@@ -145,7 +145,7 @@ describe('Checkout pricing (e2e)', () => {
         id: 'pricing_kettle',
         name: 'Kettle',
         variants: {
-          create: { id: 'pricing_kettle_var', sku: 'PRICING-KETTLE', price: 200, basePrice: 200, quantity: 10 },
+          create: { id: 'pricing_kettle_var', sku: 'PRICING-KETTLE', price: 200, basePrice: 200 },
         },
         images: [],
         isActive: true,
@@ -153,6 +153,7 @@ describe('Checkout pricing (e2e)', () => {
         categoryId: 'pricing_cat',
       },
     });
+    await setStock(prisma, 'pricing_kettle_var', 10);
     await prisma.discount.create({
       data: {
         id: 'pricing_flat30',
@@ -208,7 +209,6 @@ describe('Checkout pricing (e2e)', () => {
                 optionsKey: 'size=s',
                 price: 150,
                 basePrice: 150,
-                quantity: 20,
                 sku: 'CHECKOUT-S',
               },
               {
@@ -217,17 +217,17 @@ describe('Checkout pricing (e2e)', () => {
                 optionsKey: 'size=m',
                 price: 180,
                 basePrice: 180,
-                quantity: 5,
                 sku: 'CHECKOUT-M',
               },
             ],
           },
         },
       });
+      await setStock(prisma, 'pricing_shirt_s', 20);
+      await setStock(prisma, 'pricing_shirt_m', 5);
     });
 
-    const stockOf = async (variantId: string) =>
-      (await prisma.variant.findUniqueOrThrow({ where: { id: variantId } })).quantity;
+    const stockOf = async (variantId: string) => (await ledgerStockOf(prisma, variantId)).available;
 
     it('adds the chosen variant of a product with several variants to the cart at that variant’s price', async () => {
       const res = await addToCart('pricing_shirt_m', 1);
