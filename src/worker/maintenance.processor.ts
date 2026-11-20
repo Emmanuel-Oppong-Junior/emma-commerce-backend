@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
+import { runJobInContext } from '../jobs/job-context';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { LowStockTask } from '../inventory/tasks/low-stock.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
@@ -25,7 +26,11 @@ export class MaintenanceProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job): Promise<void> {
+  process(job: Job): Promise<void> {
+    return runJobInContext(job, () => this.run(job));
+  }
+
+  private async run(job: Job): Promise<void> {
     switch (job.name as MaintenanceJob) {
       case MaintenanceJob.ExpireAbandonedOrders:
         return this.expiredOrders.cancelAbandonedOrders();

@@ -103,8 +103,10 @@ describe('Paystack webhook (e2e)', () => {
       reference,
     });
     expect(JSON.stringify(events[0].payload)).not.toContain('buyer@example.com');
+    // meta carries the delivery's request id so the worker's logs for this job correlate with it (P1-L.1).
     expect((await getQueue(app, JobQueue.WEBHOOKS).getJob(events[0].id))?.data).toEqual({
       webhookEventId: events[0].id,
+      meta: { requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) },
     });
 
     const processed = await eventuallyStored((event) => event.processedAt !== null);

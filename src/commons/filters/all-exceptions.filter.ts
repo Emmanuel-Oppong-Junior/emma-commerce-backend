@@ -3,7 +3,7 @@ import { GqlArgumentsHost } from '@nestjs/graphql';
 import { Request, Response } from 'express';
 import { GraphQLError } from 'graphql';
 import { LoggerService } from '../logger.service';
-import { classifyError, describeErrorForLog } from './error-classification';
+import { classifyError, describeErrorForLog, stackForLog } from './error-classification';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -11,9 +11,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost) {
     const { status, code, message } = classifyError(exception);
-    // [CRITICAL-4] Never expose stack traces outside development
-    const isDev = process.env.NODE_ENV === 'development';
-    const stack = isDev && exception instanceof Error ? exception.stack : undefined;
+    const stack = stackForLog(exception);
 
     if (host.getType<'graphql' | 'http'>() === 'graphql') {
       const gqlHost = GqlArgumentsHost.create(host);

@@ -1,5 +1,6 @@
 import { NotificationsService } from './notifications.service';
 import { TOKEN_EMAIL_JOB_OPTIONS } from './email-jobs';
+import { runWithCorrelation } from '../commons/correlation';
 
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -48,6 +49,18 @@ describe('NotificationsService', () => {
 
     expect(queue.add).toHaveBeenCalledTimes(1);
     expect(queue.add).toHaveBeenCalledWith(jobName, data, opts);
+  });
+
+  it('tags the job with the request that queued it', () => {
+    const { service, queue } = buildNotificationsService();
+
+    runWithCorrelation({ requestId: 'req-1' }, () => service.sendWelcomeEmail('kwame@gmail.com', 'Kwame'));
+
+    expect(queue.add).toHaveBeenCalledWith(
+      'email.welcome.v1',
+      { to: 'kwame@gmail.com', name: 'Kwame', meta: { requestId: 'req-1' } },
+      undefined,
+    );
   });
 
   it('removes token-bearing jobs from Redis once sent', () => {

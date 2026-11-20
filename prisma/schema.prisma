@@ -505,6 +505,8 @@ model OutboxEvent {
   publishedAt DateTime?
   attempts    Int       @default(0)
   lastError   String?
+  /// The request that recorded the event; the relay passes it to the job so worker logs correlate.
+  requestId   String?
 
   @@index([publishedAt, createdAt])
 }

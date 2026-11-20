@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import { PAYSTACK_WEBHOOK_JOB, PaymentWebhookService } from './payment-webhook.service';
+import { runWithCorrelation } from '../commons/correlation';
 
 const SECRET = 'sk_test_webhook_secret';
 
@@ -38,6 +39,18 @@ describe('PaymentWebhookService', () => {
     webhookEvents.record.mockResolvedValue({ created: true, event: storedEvent() });
     paymentService.verifyPayment.mockResolvedValue({ id: 'pay1' });
     queue.add.mockResolvedValue({ id: 'evt1' });
+  });
+
+  it('tags the processing job with the delivery request id', async () => {
+    const raw = body('charge.success', { id: 42, reference: 'ref1' });
+
+    await runWithCorrelation({ requestId: 'req-1' }, () => service.handlePaystackWebhook(raw, sign(raw)));
+
+    expect(queue.add).toHaveBeenCalledWith(
+      PAYSTACK_WEBHOOK_JOB,
+      { webhookEventId: 'evt1', meta: { requestId: 'req-1' } },
+      { jobId: 'evt1' },
+    );
   });
 
   it('stores a signed charge event, then queues its processing under the stored id without settling inline', async () => {

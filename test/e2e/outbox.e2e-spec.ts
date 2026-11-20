@@ -5,6 +5,7 @@ import { OutboxService } from '../../src/outbox/outbox.service';
 import { OutboxRelay } from '../../src/outbox/outbox.relay';
 import { JobQueue } from '../../src/jobs/job-queues';
 import { clearQueues, createTestWorker, getQueue } from '../helpers/worker.helper';
+import { runWithCorrelation } from '../../src/commons/correlation';
 
 const placed = (orderId: string) => ({ type: 'order.placed.v1' as const, aggregateId: orderId, payload: { orderId } });
 
@@ -65,6 +66,27 @@ describe('Transactional outbox and relay (e2e)', () => {
     await expect(prisma.outboxEvent.findUniqueOrThrow({ where: { id: eventId } })).resolves.toMatchObject({
       attempts: 1,
       lastError: null,
+    });
+  });
+
+  it('carries the recording request id from the outbox row into the published job', async () => {
+    const eventId = await runWithCorrelation({ requestId: 'req-outbox-1' }, () =>
+      prisma.$transaction((tx) => outbox.record(tx, placed('order_correlated'))),
+    );
+
+    await waitUntil(
+      async () => (await prisma.outboxEvent.findUniqueOrThrow({ where: { id: eventId } })).publishedAt !== null,
+    );
+
+    await expect(prisma.outboxEvent.findUniqueOrThrow({ where: { id: eventId } })).resolves.toMatchObject({
+      requestId: 'req-outbox-1',
+    });
+    const job = await getQueue(worker, JobQueue.NOTIFICATIONS).getJob(eventId);
+    expect(job?.data).toEqual({
+      eventId,
+      aggregateId: 'order_correlated',
+      payload: { orderId: 'order_correlated' },
+      meta: { requestId: 'req-outbox-1' },
     });
   });
 

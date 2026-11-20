@@ -1,5 +1,6 @@
 import { OrderStatus } from '../generated/prisma/client';
 import { JobQueue } from '../jobs/job-queues';
+import { JobMeta } from '../jobs/job-context';
 
 /**
  * Event names are versioned: they are a contract with consumers (ADR-0009). Change a payload by adding a `.v2` type
@@ -37,4 +38,6 @@ export interface DomainEventJobData<T extends DomainEventType = DomainEventType>
   eventId: string;
   aggregateId: string;
   payload: DomainEventPayloads[T];
+  /** The request that recorded the event, for log correlation; absent for events recorded outside a request. */
+  meta?: JobMeta;
 }

@@ -6,6 +6,7 @@ interface Row {
   aggregateId: string;
   payload: unknown;
   attempts: number;
+  requestId?: string | null;
 }
 
 function buildRelay(rows: Row[], add = jest.fn().mockResolvedValue({})) {
@@ -55,6 +56,23 @@ describe('OutboxRelay.publishBatch', () => {
       where: { id: { in: ['e1', 'e2'] } },
       data: { publishedAt: expect.any(Date), attempts: { increment: 1 }, lastError: null },
     });
+  });
+
+  it('passes the recording request id to the job as meta, so worker logs correlate', async () => {
+    const { relay, add } = buildRelay([
+      { ...placed('e1'), requestId: 'req-1' },
+      { ...placed('e2'), requestId: null },
+    ]);
+
+    await relay.publishBatch();
+
+    expect(add).toHaveBeenNthCalledWith(
+      1,
+      'order.placed.v1',
+      { eventId: 'e1', aggregateId: 'order_e1', payload: { orderId: 'order_e1' }, meta: { requestId: 'req-1' } },
+      { jobId: 'e1' },
+    );
+    expect(add.mock.calls[1][1]).not.toHaveProperty('meta');
   });
 
   it('locks only unpublished rows under the attempt cap, skipping rows other relays hold', async () => {

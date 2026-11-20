@@ -95,6 +95,11 @@ export function describeErrorForLog(exception: unknown): string {
   return exception instanceof Error ? exception.message : String(exception);
 }
 
+/** The one stack-trace policy for logs: stacks only in development (Sentry keeps them elsewhere). */
+export function stackForLog(exception: unknown): string | undefined {
+  return process.env.NODE_ENV === 'development' && exception instanceof Error ? exception.stack : undefined;
+}
+
 // Prisma's own messages include query and table details, so they are never returned to clients.
 export function classifyError(exception: unknown): ClassifiedError {
   if (exception instanceof Prisma.PrismaClientKnownRequestError) return classifyPrisma(exception);

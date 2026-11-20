@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
+import { runJobInContext } from '../jobs/job-context';
 import { PAYSTACK_WEBHOOK_JOB, PaymentWebhookService, PaystackWebhookJobData } from './payment-webhook.service';
 
 const CONTEXT = 'PaymentWebhookProcessor';
@@ -17,9 +18,11 @@ export class PaymentWebhookProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<PaystackWebhookJobData>): Promise<void> {
-    if (job.name !== PAYSTACK_WEBHOOK_JOB) throw new Error(`Unknown webhook job "${job.name}"`);
-    await this.webhooks.processStoredEvent(job.data.webhookEventId);
+  process(job: Job<PaystackWebhookJobData>): Promise<void> {
+    return runJobInContext(job, async () => {
+      if (job.name !== PAYSTACK_WEBHOOK_JOB) throw new Error(`Unknown webhook job "${job.name}"`);
+      await this.webhooks.processStoredEvent(job.data.webhookEventId);
+    });
   }
 
   @OnWorkerEvent('failed')

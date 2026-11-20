@@ -121,7 +121,7 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 
 ### Commons (`src/commons/`)
 
-- `LoggerService` — Winston-based logger, used app-wide
+- `LoggerService` — Winston-based logger, used app-wide: single-line JSON on stdout (ISO UTC `timestamp`, `level`, `message`, `context`, `requestId`, `userId`, `jobId`/`queue` in jobs, plus structured fields passed as the third argument); coloured text and rotated files under `logs/` in development only. Level via `LOG_LEVEL`. Stack traces only in development (`stackForLog`)
 - `CloudinaryService` — image upload/storage (`upload.controller.ts` exposes the REST upload)
 - `AuditService` — writes to the `AuditLog` model
 - Global exception filter (`AllExceptionsFilter` + `error-classification.ts`) maps HTTP statuses to GraphQL codes (400 `BAD_REQUEST`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN`, 404 `NOT_FOUND`, 409 `CONFLICT`; ValidationPipe failures `BAD_USER_INPUT`) and Prisma P2002/P2003 → `CONFLICT`, P2025 → `NOT_FOUND` with safe messages; stack traces are logged only in development
@@ -137,6 +137,7 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 - **Queues:** `notifications` (outbox email events and direct email jobs; 6 attempts, exponential backoff from 5 s; sent-once marker per job id in Redis plus Resend idempotency key), `webhooks` (stored Paystack events, job id = `WebhookEvent` id; 8 attempts; the endpoint answers 200 once the event is stored), `maintenance` (repeatable jobs). Jobs that spend their attempts stay in the failed set (30 days) and are listed/retried by the SUPER_ADMIN `failedJobs` / `retryFailedJob` operations (audited).
 - **Outbox (ADR-0009):** write a domain event with `OutboxService.record(tx, event)` inside the business transaction; event types are versioned (`src/outbox/domain-events.ts`). The worker's `OutboxRelay` publishes unpublished rows (`FOR UPDATE SKIP LOCKED`) to BullMQ with `jobId = event id`; consumers must be idempotent on that id.
 - **Production safeguards:** GraphQL introspection is off when `NODE_ENV=production`; `ALLOWED_ORIGINS` is required at startup in production; helmet sets CSP and HSTS.
+- **Correlation:** `LoggerMiddleware` keeps a client `X-Request-ID` matching `^[A-Za-z0-9-]{1,64}$` (else generates a UUID), echoes it in the response and runs the request inside an `AsyncLocalStorage` context (`src/commons/correlation.ts`), so every log record carries `requestId` (and `userId` once authenticated) without passing it around. Jobs carry it as `meta.requestId` in their data (`withJobMeta`; outbox rows store it in `OutboxEvent.requestId` and the relay copies it); processors run each job inside `runJobInContext` (requestId + jobId + queue; scheduled jobs get a fresh id).
 - **Prisma enums/models** also cover fulfillment (`FulfillmentType`, pickup locations, shipping zones), taxes, coupons/usage, return requests and inventory logs.
 
 ### Environment variables

@@ -6,6 +6,7 @@ import { PaymentProvider, WebhookEvent } from '../generated/prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { describeErrorForLog } from '../commons/filters/error-classification';
 import { JobQueue } from '../jobs/job-queues';
+import { withJobMeta, WithJobMeta } from '../jobs/job-context';
 import { PaymentService } from './payment.service';
 import { isSettlingEvent, isValidPaystackSignature, parsePaystackWebhook } from './paystack-webhook';
 import { WebhookEventRepository } from './webhook-event.repository';
@@ -106,7 +107,7 @@ export class PaymentWebhookService {
   }
 
   private async queueProcessing(event: WebhookEvent, summary: string): Promise<void> {
-    const data: PaystackWebhookJobData = { webhookEventId: event.id };
+    const data: WithJobMeta<PaystackWebhookJobData> = withJobMeta({ webhookEventId: event.id });
     try {
       await this.webhookQueue.add(PAYSTACK_WEBHOOK_JOB, data, { jobId: event.id });
       this.logger.log(`Webhook queued for processing | ${summary}`, CONTEXT);

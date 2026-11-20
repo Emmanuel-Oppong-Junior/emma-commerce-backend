@@ -9,6 +9,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { INestApplicationContext } from '@nestjs/common';
 import { WorkerModule } from './worker/worker.module';
 import { selectProcessRole } from './process-role';
+import { REQUEST_ID_HEADER } from './commons/middlewares/logger.middleware';
 
 async function bootstrapApi() {
   // The Paystack webhook signature covers the exact request bytes, so the raw body is kept next to the parsed one.
@@ -59,7 +60,8 @@ async function bootstrapApi() {
     origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', REQUEST_ID_HEADER],
+    exposedHeaders: [REQUEST_ID_HEADER],
   });
 
   // Custom logger

@@ -1,5 +1,6 @@
 import { Job } from 'bullmq';
 import { LoggerService } from '../commons/logger.service';
+import { runJobInContext } from './job-context';
 
 /**
  * Logs a job failure with ids and counts only: job data can hold email addresses or tokens, so it is never logged.
@@ -12,9 +13,11 @@ export function logFailedJob(logger: LoggerService, context: string, job: Job | 
   }
   const maxAttempts = job.opts.attempts ?? 1;
   const summary = `Job failed | queue: ${job.queueName} | name: ${job.name} | id: ${job.id} | attempt: ${job.attemptsMade}/${maxAttempts} | ${error.message}`;
-  if (job.attemptsMade >= maxAttempts) {
-    logger.error(`${summary} | no attempts left; kept in the failed set`, undefined, context);
-  } else {
-    logger.warn(`${summary} | will retry`, context);
-  }
+  runJobInContext(job, () => {
+    if (job.attemptsMade >= maxAttempts) {
+      logger.error(`${summary} | no attempts left; kept in the failed set`, undefined, context);
+    } else {
+      logger.warn(`${summary} | will retry`, context);
+    }
+  });
 }

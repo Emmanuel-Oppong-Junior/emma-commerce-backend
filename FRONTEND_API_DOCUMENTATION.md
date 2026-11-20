@@ -119,7 +119,8 @@ Images are uploaded via REST endpoints for ADMIN/SUPER_ADMIN only (`POST /upload
 
 ### Observability
 
-- Winston logger logs all HTTP requests (middleware), GraphQL operations (interceptor), and errors.
+- Winston logger logs all HTTP requests (middleware), GraphQL operations (interceptor), and errors, as JSON lines in production.
+- **Request id:** every response (REST and GraphQL) carries an `X-Request-ID` header. Send your own `X-Request-ID` (letters, digits and `-`, at most 64 characters) to correlate a client action with server logs; any other value is ignored and replaced with a generated UUID. The header is allowed and exposed by CORS. Quote it when reporting a problem.
 - OpenTelemetry: activate with `OTEL_ENABLED=true`; exports traces to `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318/v1/traces`).
 
 ### Database

@@ -6,6 +6,7 @@ import { REDIS_CLIENT } from '../redis/redis.module';
 import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
+import { runJobInContext } from '../jobs/job-context';
 import { NotificationSender } from './notification-sender';
 
 export const SENT_MARKER_PREFIX = 'notifications:sent';
@@ -28,7 +29,11 @@ export class NotificationsProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job): Promise<void> {
+  process(job: Job): Promise<void> {
+    return runJobInContext(job, () => this.send(job));
+  }
+
+  private async send(job: Job): Promise<void> {
     const jobId = job.id;
     if (!jobId) throw new Error(`Notification job "${job.name}" has no id`);
     const marker = `${SENT_MARKER_PREFIX}:${jobId}`;

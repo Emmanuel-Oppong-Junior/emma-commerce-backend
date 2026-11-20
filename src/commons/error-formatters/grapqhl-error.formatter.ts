@@ -1,5 +1,6 @@
 import { LoggerService } from '../logger.service';
 import { GraphQLError, GraphQLFormattedError } from 'graphql';
+import { stackForLog } from '../filters/error-classification';
 
 const INTERNAL_ERROR_CODE = 'INTERNAL_SERVER_ERROR';
 
@@ -23,7 +24,7 @@ export const formatError =
   (logger: LoggerService) =>
   (formattedError: GraphQLFormattedError, error: unknown): GraphQLFormattedError => {
     const { message, locations, path, extensions } = formattedError;
-    const stack = error instanceof GraphQLError ? error.stack : undefined;
+    const stack = error instanceof GraphQLError ? stackForLog(error) : undefined;
     logger.error(
       `GraphQL Error: ${message} | Path: ${path?.join(' > ')} | Locations: ${JSON.stringify(locations)} | Extensions: ${JSON.stringify(extensions)}`,
       stack,

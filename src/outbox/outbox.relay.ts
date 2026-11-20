@@ -6,6 +6,7 @@ import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../commons/logger.service';
 import { describeErrorForLog } from '../commons/filters/error-classification';
+import { runWithCorrelation } from '../commons/correlation';
 import { JobQueue } from '../jobs/job-queues';
 import { DOMAIN_EVENT_QUEUES, DomainEventJobData, isDomainEventType } from './domain-events';
 
@@ -23,6 +24,7 @@ interface UnpublishedEvent {
   aggregateId: string;
   payload: Prisma.JsonValue;
   attempts: number;
+  requestId: string | null;
 }
 
 /**
@@ -64,7 +66,7 @@ export class OutboxRelay implements OnApplicationBootstrap, OnModuleDestroy {
     return this.prisma.$transaction(
       async (tx) => {
         const events = await tx.$queryRaw<UnpublishedEvent[]>`
-          SELECT "id", "type", "aggregateId", "payload", "attempts" FROM "OutboxEvent"
+          SELECT "id", "type", "aggregateId", "payload", "attempts", "requestId" FROM "OutboxEvent"
           WHERE "publishedAt" IS NULL AND "attempts" < ${RELAY_MAX_ATTEMPTS}
           ORDER BY "createdAt"
           LIMIT ${RELAY_BATCH_SIZE}
@@ -97,6 +99,7 @@ export class OutboxRelay implements OnApplicationBootstrap, OnModuleDestroy {
       eventId: event.id,
       aggregateId: event.aggregateId,
       payload: event.payload as unknown as DomainEventJobData['payload'],
+      ...(event.requestId ? { meta: { requestId: event.requestId } } : {}),
     };
     await this.queues[DOMAIN_EVENT_QUEUES[event.type]].add(event.type, data, { jobId: event.id });
   }
@@ -108,11 +111,15 @@ export class OutboxRelay implements OnApplicationBootstrap, OnModuleDestroy {
     });
     const attempts = event.attempts + 1;
     const message = `Outbox event not published | id: ${event.id} | type: ${event.type} | attempts: ${attempts} | ${reason}`;
-    if (attempts >= RELAY_MAX_ATTEMPTS) {
-      this.logger.error(`${message} | giving up; the row stays unpublished`, undefined, CONTEXT);
-    } else {
-      this.logger.warn(message, CONTEXT);
-    }
+    const log = () => {
+      if (attempts >= RELAY_MAX_ATTEMPTS) {
+        this.logger.error(`${message} | giving up; the row stays unpublished`, undefined, CONTEXT);
+      } else {
+        this.logger.warn(message, CONTEXT);
+      }
+    };
+    if (event.requestId) runWithCorrelation({ requestId: event.requestId }, log);
+    else log();
   }
 
   private async pollUntilStopped(): Promise<void> {

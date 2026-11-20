@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { JobsOptions, Queue } from 'bullmq';
 import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
+import { withJobMeta } from '../jobs/job-context';
 import { EmailJobData, EmailJobName, TOKEN_EMAIL_JOB_OPTIONS } from './email-jobs';
 
 /**
@@ -34,7 +35,7 @@ export class NotificationsService {
   }
 
   private enqueue<N extends EmailJobName>(name: N, data: EmailJobData[N], opts?: JobsOptions): void {
-    this.queue.add(name, data, opts).catch((error: unknown) => {
+    this.queue.add(name, withJobMeta(data), opts).catch((error: unknown) => {
       this.logger.error(
         `Email could not be queued: ${name}`,
         error instanceof Error ? error.message : String(error),

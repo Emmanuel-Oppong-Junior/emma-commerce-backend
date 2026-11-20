@@ -49,6 +49,22 @@ describe('GraphqlLoggingInterceptor', () => {
     expect(line).not.toContain('accessToken }');
   });
 
+  it('logs root fields only, not nested field resolvers', async () => {
+    const context = graphqlCall(body);
+    const info = context.getArgByIndex(3) as Record<string, unknown>;
+    info.path = { key: 'items', prev: { key: 'order', prev: undefined } };
+
+    await lastValueFrom(interceptor.intercept(context, { handle: () => of('ok') }));
+
+    expect(logger.log).not.toHaveBeenCalled();
+  });
+
+  it('does not throw on a batched (array) body and logs no variables for it', async () => {
+    await lastValueFrom(interceptor.intercept(graphqlCall([body, body]), { handle: () => of('ok') }));
+
+    expect(logger.log.mock.calls[0][0]).toContain('Variables: {}');
+  });
+
   it('logs a failing Prisma call by code only, never its raw message', async () => {
     const prismaError = new Prisma.PrismaClientKnownRequestError(
       'Unique constraint failed: data: { email: "kwame@test.local" }',
