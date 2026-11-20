@@ -19,6 +19,6 @@ describe('Background jobs in API apps', () => {
   });
 
   it('registers no repeatable job schedules', async () => {
-    await expect(getQueue(app, JobQueue.Maintenance).getJobSchedulersCount()).resolves.toBe(0);
+    await expect(getQueue(app, JobQueue.MAINTENANCE).getJobSchedulersCount()).resolves.toBe(0);
   });
 });

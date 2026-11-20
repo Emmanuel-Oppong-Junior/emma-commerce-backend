@@ -12,7 +12,7 @@ import { MAINTENANCE_SCHEDULES, MaintenanceJob } from './maintenance-jobs';
 @Injectable()
 export class MaintenanceScheduler implements OnApplicationBootstrap {
   constructor(
-    @InjectQueue(JobQueue.Maintenance) private readonly queue: Queue,
+    @InjectQueue(JobQueue.MAINTENANCE) private readonly queue: Queue,
     private readonly logger: LoggerService,
   ) {}
 

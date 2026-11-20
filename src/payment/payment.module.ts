@@ -8,13 +8,13 @@ import { PaymentRepository } from './payment.repository';
 import { PaymentWebhookService } from './payment-webhook.service';
 import { PaystackClient } from './paystack.client';
 import { WebhookEventRepository } from './webhook-event.repository';
-import { NotificationsModule } from '../notifications/notifications.module';
+import { OutboxModule } from '../outbox/outbox.module';
 import { OrderModule } from '../order/order.module';
 import { StoreModule } from '../store/store.module';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 
 @Module({
-  imports: [CommonsModule, NotificationsModule, OrderModule, StoreModule],
+  imports: [CommonsModule, OutboxModule, OrderModule, StoreModule],
   providers: [
     PaymentResolver,
     PaymentService,
@@ -26,6 +26,6 @@ import { PaymentReconciliationService } from './payment-reconciliation.service';
     ConfigService,
   ],
   controllers: [PaymentController],
-  exports: [PaymentReconciliationService],
+  exports: [PaymentReconciliationService, PaymentWebhookService],
 })
 export class PaymentModule {}

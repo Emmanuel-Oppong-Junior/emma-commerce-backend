@@ -1,74 +1,72 @@
 import { NotificationsService } from './notifications.service';
+import { TOKEN_EMAIL_JOB_OPTIONS } from './email-jobs';
 
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
 function buildNotificationsService() {
-  const emailService = {
-    sendWelcomeEmail: jest.fn(),
-    sendOrderConfirmationEmail: jest.fn(),
-    sendOrderStatusEmail: jest.fn(),
-    sendPaymentConfirmationEmail: jest.fn(),
-    sendPasswordResetEmail: jest.fn(),
-    sendEmailVerificationEmail: jest.fn(),
-    sendEmailChangeRequestedEmail: jest.fn(),
-  };
+  const queue = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
-  return { service: new NotificationsService(emailService as never, logger as never), emailService, logger };
+  return { service: new NotificationsService(queue as never, logger as never), queue, logger };
 }
 
 describe('NotificationsService', () => {
-  const sends: [string, (service: NotificationsService) => void, string][] = [
-    ['sendWelcomeEmail', (s) => s.sendWelcomeEmail('kwame@gmail.com', 'Kwame'), 'sendWelcomeEmail'],
+  const sends: [string, (service: NotificationsService) => void, string, object, object | undefined][] = [
     [
-      'sendOrderConfirmation',
-      (s) => s.sendOrderConfirmation('kwame@gmail.com', 'o1', '10.00'),
-      'sendOrderConfirmationEmail',
+      'sendWelcomeEmail',
+      (s) => s.sendWelcomeEmail('kwame@gmail.com', 'Kwame'),
+      'email.welcome.v1',
+      { to: 'kwame@gmail.com', name: 'Kwame' },
+      undefined,
     ],
     [
-      'sendOrderStatusUpdate',
-      (s) => s.sendOrderStatusUpdate('kwame@gmail.com', 'o1', 'SHIPPED'),
-      'sendOrderStatusEmail',
+      'sendPasswordReset',
+      (s) => s.sendPasswordReset('kwame@gmail.com', 'token-123'),
+      'email.password_reset.v1',
+      { to: 'kwame@gmail.com', resetToken: 'token-123' },
+      TOKEN_EMAIL_JOB_OPTIONS,
     ],
-    [
-      'sendPaymentConfirmation',
-      (s) => s.sendPaymentConfirmation('kwame@gmail.com', 'o1', '10.00'),
-      'sendPaymentConfirmationEmail',
-    ],
-    ['sendPasswordReset', (s) => s.sendPasswordReset('kwame@gmail.com', 'token-123'), 'sendPasswordResetEmail'],
     [
       'sendEmailVerification',
       (s) => s.sendEmailVerification('kwame@gmail.com', 'token-123', 24),
-      'sendEmailVerificationEmail',
+      'email.verification.v1',
+      { to: 'kwame@gmail.com', verificationToken: 'token-123', expiresInHours: 24 },
+      TOKEN_EMAIL_JOB_OPTIONS,
     ],
     [
       'sendEmailChangeRequested',
       (s) => s.sendEmailChangeRequested('kwame@gmail.com', 'new@gmail.com'),
-      'sendEmailChangeRequestedEmail',
+      'email.change_requested.v1',
+      { to: 'kwame@gmail.com', newEmail: 'new@gmail.com' },
+      undefined,
     ],
   ];
 
-  it.each(sends)('%s logs a rejected send instead of leaving it unhandled', async (_name, send, emailMethod) => {
-    const { service, emailService, logger } = buildNotificationsService();
-    emailService[emailMethod as keyof typeof emailService].mockRejectedValue(new Error('template exploded'));
+  it.each(sends)('%s queues one email job for the worker', (_name, send, jobName, data, opts) => {
+    const { service, queue } = buildNotificationsService();
 
     send(service);
+
+    expect(queue.add).toHaveBeenCalledTimes(1);
+    expect(queue.add).toHaveBeenCalledWith(jobName, data, opts);
+  });
+
+  it('removes token-bearing jobs from Redis once sent', () => {
+    expect(TOKEN_EMAIL_JOB_OPTIONS.removeOnComplete).toBe(true);
+  });
+
+  it.each(sends)('%s logs a queueing failure without the address or token, and never throws', async (_name, send) => {
+    const { service, queue, logger } = buildNotificationsService();
+    queue.add.mockRejectedValue(new Error('Redis connection lost'));
+
+    expect(() => send(service)).not.toThrow();
     await flushPromises();
 
     expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('Email notification failed'),
-      expect.any(String),
+      expect.stringContaining('Email could not be queued'),
+      'Redis connection lost',
       'NotificationsService',
     );
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain('kwame@gmail.com');
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain('token-123');
-  });
-
-  it('passes the payment details through to the email service', () => {
-    const { service, emailService } = buildNotificationsService();
-    emailService.sendPaymentConfirmationEmail.mockResolvedValue(undefined);
-
-    service.sendPaymentConfirmation('kwame@gmail.com', 'order-1', '250.00');
-
-    expect(emailService.sendPaymentConfirmationEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order-1', '250.00');
   });
 });

@@ -51,7 +51,7 @@ describe('Transactional outbox and relay (e2e)', () => {
 
   it('publishes a committed event as a job whose id is the event id and marks the row published', async () => {
     const eventId = await prisma.$transaction((tx) => outbox.record(tx, placed('order_committed')));
-    const queue = getQueue(worker, JobQueue.Notifications);
+    const queue = getQueue(worker, JobQueue.NOTIFICATIONS);
 
     await waitUntil(
       async () => (await prisma.outboxEvent.findUniqueOrThrow({ where: { id: eventId } })).publishedAt !== null,
@@ -70,7 +70,7 @@ describe('Transactional outbox and relay (e2e)', () => {
 
   it('adds no second job when the same event is published again (relay crashed before marking it)', async () => {
     const eventId = await prisma.$transaction((tx) => outbox.record(tx, placed('order_replayed')));
-    const queue = getQueue(worker, JobQueue.Notifications);
+    const queue = getQueue(worker, JobQueue.NOTIFICATIONS);
     await waitUntil(
       async () => (await prisma.outboxEvent.findUniqueOrThrow({ where: { id: eventId } })).publishedAt !== null,
     );
@@ -102,7 +102,7 @@ describe('Transactional outbox and relay (e2e)', () => {
       const rows = await prisma.outboxEvent.findMany({ select: { id: true, attempts: true } });
       expect(rows).toHaveLength(backlog);
       expect(rows.every((row) => row.attempts === 1)).toBe(true);
-      const jobs = await getQueue(worker, JobQueue.Notifications).getJobs(['waiting', 'active', 'completed', 'failed']);
+      const jobs = await getQueue(worker, JobQueue.NOTIFICATIONS).getJobs(['waiting', 'active', 'completed', 'failed']);
       expect(new Set(jobs.map((job) => job.id))).toEqual(new Set(rows.map((row) => row.id)));
     } finally {
       await second.close();

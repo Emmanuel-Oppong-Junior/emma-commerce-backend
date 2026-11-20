@@ -88,7 +88,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       {} as never,
       {} as never,
       { logInventoryChange: jest.fn() } as never,
-      {} as never,
+      { record: jest.fn() } as never,
       { getFeeForCity: jest.fn().mockResolvedValue(new Prisma.Decimal(30)) } as never,
       {} as never,
       {} as never,

@@ -12,6 +12,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
 import { StoreRepository } from '../store/store.repository';
+import { OutboxService } from '../outbox/outbox.service';
 import {
   AttemptState,
   autoRefundKey,
@@ -104,6 +105,7 @@ export class PaymentRepository {
     private readonly prisma: PrismaService,
     private readonly ordersRepository: OrdersRepository,
     private readonly storeRepository: StoreRepository,
+    private readonly outbox: OutboxService,
   ) {}
 
   /**
@@ -377,6 +379,12 @@ export class PaymentRepository {
           OrderStatus.PENDING,
         ]);
         if (!moved) throw new ConflictException(`Order "${intent.orderId}" left PENDING while its payment settled`);
+        // Recorded only on this PENDING -> PROCESSING transition, so repeat webhooks and re-verifies email nobody.
+        await this.outbox.record(tx, {
+          type: 'payment.succeeded.v1',
+          aggregateId: intent.orderId,
+          payload: { orderId: intent.orderId, paymentId: attemptId, amount: attempt.amount.toFixed(2) },
+        });
       } else if (outcome.kind === 'review') {
         const refund = await tx.refund.create({
           data: {

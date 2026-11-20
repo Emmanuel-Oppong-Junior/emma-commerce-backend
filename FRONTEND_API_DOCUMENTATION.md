@@ -30,6 +30,7 @@
    - [Addresses](#220-addresses)
    - [Shipping Zones & Pickup Locations](#221-shipping-zones--pickup-locations)
    - [Store settings](#222-store-settings)
+   - [Background jobs](#223-background-jobs)
 3. [REST API Reference](#3-rest-api-reference)
 4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
@@ -2705,6 +2706,42 @@ The currency cannot be changed through the API.
 
 ---
 
+### 2.23 Background jobs
+
+Emails and Paystack webhook processing run in a separate worker process on BullMQ queues, with retries and exponential backoff. A job that fails its last attempt stays in its queue's failed set (kept 30 days) until a super admin retries it. Job data (addresses, tokens) is never returned.
+
+```typescript
+enum JobQueue { NOTIFICATIONS, WEBHOOKS, MAINTENANCE }
+
+{                       // FailedJob
+  queue: JobQueue;
+  id: string;           // For outbox events, the event id; for webhook jobs, the stored webhook event id
+  name: string;         // e.g. "order.placed.v1", "email.password_reset.v1", "paystack.webhook.v1", "payments.sweep"
+  attemptsMade: number;
+  maxAttempts: number;
+  failedReason: string; // Last error, email addresses masked, max 500 characters
+  createdAt: DateTime;
+  failedAt?: DateTime;
+}
+```
+
+#### `failedJobs` (SUPER_ADMIN)
+- **Type**: Query
+- **Args**: `queue: JobQueue!`, `first: Int = 20` (1 to 100)
+- **Response**: `[FailedJob!]!`, newest first
+- **Side effects**: writes an audit entry (entity `FailedJob`, action `VIEW`).
+- **Possible Errors**: `BAD_USER_INPUT` (`first` out of range), `FORBIDDEN` (`ADMIN` or `USER`), `UNAUTHENTICATED`.
+
+#### `retryFailedJob` (SUPER_ADMIN)
+- **Type**: Mutation
+- **Args**: `queue: JobQueue!`, `jobId: ID!`
+- **Response**: `FailedJob!`, as it was before the retry
+- **Behaviour**: moves the job back to the queue with its attempt count reset, so it gets its full retries again. Sending is idempotent per job, so an email that already went out is not sent twice.
+- **Side effects**: writes an audit entry (entity `FailedJob`, action `RETRY`).
+- **Possible Errors**: `NOT_FOUND` (no such job), `CONFLICT` (the job is not in the failed set), `FORBIDDEN`, `UNAUTHENTICATED`.
+
+---
+
 ## 3. REST API Reference
 
 These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ "statusCode": 400, "timestamp": "…", "path": "/payment/initialize", "message": "…" }`.
@@ -2773,10 +2810,11 @@ The amount is always the order total at the first initialization; any other fiel
 **Body**: Paystack's event JSON, `{ event: string; data: { id?, reference?, amount?, currency?, status?, ... } }`. The signature is checked over the exact bytes received, so any proxy or gateway in front of the API must forward the body unmodified (no re-encoding, re-formatting or compression changes).
 
 **Responses**:
-- `200 OK`: the event is stored and either processed or needs no processing (unhandled type, or a duplicate of an event already processed).
+- `200 OK`: the event is stored. A settling event is then processed by the background worker (queue `WEBHOOKS`, retried with exponential backoff); an unhandled type or a duplicate of an event already processed needs no processing.
 - `400`: empty body, or a signed body that is not `{ event, data }` JSON.
 - `401`: missing or invalid signature. Nothing is stored.
-- `503`: the event is stored but processing failed after three in-process attempts. Paystack retries the delivery, and the retry processes the stored event.
+
+The endpoint no longer answers `503` when processing fails: the stored event is retried by the queue, and the 5-minute payment sweep reprocesses any stored event still unprocessed.
 
 **Handled Events** (each delivery is stored once per event type and Paystack `data.id`, or `data.reference` when there is no id; repeats are no-ops):
 - `charge.success` → re-verifies the reference with Paystack; marks payment `COMPLETED`, order status → `PROCESSING` (same rule as `verifyPayment`).
@@ -3113,10 +3151,11 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 1. Paystack POSTs to `POST /payment/webhook`.
 2. Backend verifies the HMAC-SHA512 signature over the raw body using `PAYSTACK_SECRET_KEY` (constant-time compare). A bad signature gets `401` and nothing is stored.
 3. The event is stored in the webhook inbox (`WebhookEvent`). A repeat of an event already processed gets `200` and changes nothing.
-4. On `charge.success`: the same verification as `verifyPayment` runs (amount and currency must match; a payment for a cancelled or already-paid order never moves the order and is queued for refund). On a valid payment: payment `status → COMPLETED`, order `status → PROCESSING`, confirmation email sent once.
-5. On `charge.failed`: payment `status → FAILED`.
-6. Unhandled events are stored and answered `200 OK`.
-7. If processing fails (for example Paystack's verify API is down), it is retried in-process up to three attempts; if it still fails the backend answers `503`, the event stays stored as unprocessed, and Paystack's redelivery processes it.
+4. A settling event is queued for the background worker and the backend answers `200 OK` at once. The order may therefore still be `PENDING` for a moment after Paystack's call.
+5. On `charge.success` the worker runs the same verification as `verifyPayment` (amount and currency must match; a payment for a cancelled or already-paid order never moves the order and is queued for refund). On a valid payment: payment `status → COMPLETED`, order `status → PROCESSING`, confirmation email queued once.
+6. On `charge.failed`: payment `status → FAILED`.
+7. Unhandled events are stored and answered `200 OK`.
+8. If processing fails (for example Paystack's verify API is down), the worker retries the stored event with exponential backoff; the 5-minute payment sweep is the safety net for anything still unprocessed.
 
 ### Inventory Deduction Flow
 
@@ -3600,9 +3639,9 @@ All notifications are **email-only** via Resend. There are no in-app notificatio
 
 Not emailed: cash-on-delivery collection (`recordCodPayment`), cancellations, refunds.
 
-### Asynchronous
+### Asynchronous, queued and retried
 
-All emails are sent after the response — they do **not** block or fail the request. Email failures, including sends the email provider rejects, are logged as errors and not propagated. Without `RESEND_API_KEY` no email is sent.
+Emails are sent by the background worker, never on the request path, so they do not block or fail the request and may arrive a few seconds later. Emails that follow an order or payment change are written to the outbox in the same database transaction as the change, so an email is queued exactly when the change commits. A failed send (including one the email provider rejects) is retried with exponential backoff, up to 6 attempts; after that the job is listed by `failedJobs` and can be retried with `retryFailedJob`. A job's email is sent at most once, even when it is retried. Without `RESEND_API_KEY` no email is sent (the worker logs a warning).
 
 ### No GraphQL Mutations for Notifications
 
@@ -3716,6 +3755,7 @@ Backend configuration, validated at startup (`src/config/env.validation.ts`); li
 |---|---|---|---|
 | `PORT` | ❌ | `3000` | HTTP port |
 | `NODE_ENV` | ✅ | — | `development`, `production` or `test`; the app refuses to start without it |
+| `ROLE` | ❌ | `api` | `api` serves GraphQL/REST; `worker` runs the background jobs (emails, webhook processing, repeatable jobs) from the same image and serves only `/health/live` and `/health/ready` on `PORT`. Run at least one of each. |
 | `ALLOWED_ORIGINS` | Production only | — | Comma-separated allowed CORS origins (your frontend URLs). |
 
 ### JWT

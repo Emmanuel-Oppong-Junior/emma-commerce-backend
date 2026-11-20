@@ -1,14 +1,6 @@
-import {
-  BadRequestException,
-  NotFoundException,
-  ServiceUnavailableException,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { PaymentWebhookService, WEBHOOK_RETRY_DELAYS_MS } from './payment-webhook.service';
-
-jest.mock('node:timers/promises', () => ({ setTimeout: jest.fn().mockResolvedValue(undefined) }));
+import { PAYSTACK_WEBHOOK_JOB, PaymentWebhookService } from './payment-webhook.service';
 
 const SECRET = 'sk_test_webhook_secret';
 
@@ -23,24 +15,32 @@ describe('PaymentWebhookService', () => {
     processedAt: null,
     ...overrides,
   });
-  const webhookEvents = { record: jest.fn(), markProcessed: jest.fn(), recordFailure: jest.fn() };
+  const webhookEvents = {
+    record: jest.fn(),
+    findById: jest.fn(),
+    markProcessed: jest.fn(),
+    recordFailure: jest.fn(),
+  };
   const paymentService = { verifyPayment: jest.fn() };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const config = { getOrThrow: jest.fn(() => SECRET) };
+  const queue = { add: jest.fn() };
   const service = new PaymentWebhookService(
     webhookEvents as never,
     paymentService as never,
     config as never,
     logger as never,
+    queue as never,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
     webhookEvents.record.mockResolvedValue({ created: true, event: storedEvent() });
     paymentService.verifyPayment.mockResolvedValue({ id: 'pay1' });
+    queue.add.mockResolvedValue({ id: 'evt1' });
   });
 
-  it('stores a signed charge event and settles its reference once', async () => {
+  it('stores a signed charge event, then queues its processing under the stored id without settling inline', async () => {
     const raw = body('charge.success', { id: 42, reference: 'ref1', customer: { email: 'buyer@example.com' } });
 
     await service.handlePaystackWebhook(raw, sign(raw));
@@ -52,11 +52,10 @@ describe('PaymentWebhookService', () => {
       reference: 'ref1',
       payload: { event: 'charge.success', data: { id: 42, reference: 'ref1' } },
     });
-    expect(paymentService.verifyPayment).toHaveBeenCalledWith('ref1');
-    expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 1);
-    expect(webhookEvents.record.mock.invocationCallOrder[0]).toBeLessThan(
-      paymentService.verifyPayment.mock.invocationCallOrder[0],
-    );
+    expect(queue.add).toHaveBeenCalledWith(PAYSTACK_WEBHOOK_JOB, { webhookEventId: 'evt1' }, { jobId: 'evt1' });
+    expect(webhookEvents.record.mock.invocationCallOrder[0]).toBeLessThan(queue.add.mock.invocationCallOrder[0]);
+    expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+    expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -67,7 +66,7 @@ describe('PaymentWebhookService', () => {
 
     await expect(service.handlePaystackWebhook(raw, signature)).rejects.toThrow(UnauthorizedException);
     expect(webhookEvents.record).not.toHaveBeenCalled();
-    expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
   });
 
   it('rejects a request without a raw body', async () => {
@@ -75,24 +74,23 @@ describe('PaymentWebhookService', () => {
     expect(webhookEvents.record).not.toHaveBeenCalled();
   });
 
-  it('acknowledges a duplicate of a processed event without processing it again', async () => {
+  it('acknowledges a duplicate of a processed event without queueing it again', async () => {
     webhookEvents.record.mockResolvedValue({ created: false, event: storedEvent({ processedAt: new Date() }) });
     const raw = body('charge.success', { reference: 'ref1' });
 
     await service.handlePaystackWebhook(raw, sign(raw));
 
-    expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
     expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
   });
 
-  it('processes a redelivered event that was stored but never processed', async () => {
+  it('queues a redelivered event that was stored but never processed under the same job id', async () => {
     webhookEvents.record.mockResolvedValue({ created: false, event: storedEvent() });
     const raw = body('charge.success', { reference: 'ref1' });
 
     await service.handlePaystackWebhook(raw, sign(raw));
 
-    expect(paymentService.verifyPayment).toHaveBeenCalledWith('ref1');
-    expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 1);
+    expect(queue.add).toHaveBeenCalledWith(PAYSTACK_WEBHOOK_JOB, { webhookEventId: 'evt1' }, { jobId: 'evt1' });
   });
 
   it('stores and acknowledges an event it does not handle, without contacting Paystack', async () => {
@@ -106,38 +104,64 @@ describe('PaymentWebhookService', () => {
 
     expect(webhookEvents.record).toHaveBeenCalledWith(expect.objectContaining({ event: 'refund.processed' }));
     expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+    expect(queue.add).not.toHaveBeenCalled();
     expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 0);
   });
 
-  it('retries a transient processing failure in-process and then succeeds', async () => {
-    paymentService.verifyPayment
-      .mockRejectedValueOnce(new Error('Paystack verify did not answer'))
-      .mockResolvedValue({});
+  it('answers once the event is stored even when queueing fails, leaving it for the payment sweep', async () => {
+    queue.add.mockRejectedValue(new Error('Redis connection lost'));
     const raw = body('charge.success', { reference: 'ref1' });
 
-    await service.handlePaystackWebhook(raw, sign(raw));
+    await expect(service.handlePaystackWebhook(raw, sign(raw))).resolves.toBeUndefined();
 
-    expect(paymentService.verifyPayment).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledWith(WEBHOOK_RETRY_DELAYS_MS[0]);
-    expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 2);
-    expect(webhookEvents.recordFailure).not.toHaveBeenCalled();
+    expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('the payment sweep will process it'),
+      'Redis connection lost',
+      'PaymentWebhook',
+    );
   });
 
-  it('answers 503 after the retries are spent and leaves the stored event unprocessed for redelivery', async () => {
-    paymentService.verifyPayment.mockRejectedValue(new NotFoundException('Payment with reference "ref1" not found'));
-    const raw = body('charge.success', { reference: 'ref1' });
+  describe('processStoredEvent (the worker job)', () => {
+    it('settles the stored reference once and marks the event processed', async () => {
+      webhookEvents.findById.mockResolvedValue({ ...storedEvent(), attempts: 0 });
 
-    await expect(service.handlePaystackWebhook(raw, sign(raw))).rejects.toThrow(ServiceUnavailableException);
+      await service.processStoredEvent('evt1');
 
-    const attempts = WEBHOOK_RETRY_DELAYS_MS.length + 1;
-    expect(paymentService.verifyPayment).toHaveBeenCalledTimes(attempts);
-    expect(jest.mocked(sleep).mock.calls).toEqual(WEBHOOK_RETRY_DELAYS_MS.map((delay) => [delay]));
-    expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
-    expect(webhookEvents.recordFailure).toHaveBeenCalledWith(
-      'evt1',
-      attempts,
-      'Payment with reference "ref1" not found',
-    );
+      expect(webhookEvents.findById).toHaveBeenCalledWith('evt1');
+      expect(paymentService.verifyPayment).toHaveBeenCalledTimes(1);
+      expect(paymentService.verifyPayment).toHaveBeenCalledWith('ref1');
+      expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 1);
+    });
+
+    it('records the failed attempt and throws so the queue retries with backoff', async () => {
+      webhookEvents.findById.mockResolvedValue({ ...storedEvent(), attempts: 0 });
+      paymentService.verifyPayment.mockRejectedValue(new NotFoundException('Payment with reference "ref1" not found'));
+
+      await expect(service.processStoredEvent('evt1')).rejects.toThrow(
+        'Webhook processing failed | event: charge.success | reference: ref1 | id: evt1 | Payment with reference "ref1" not found',
+      );
+      expect(webhookEvents.recordFailure).toHaveBeenCalledWith('evt1', 1, 'Payment with reference "ref1" not found');
+      expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
+    });
+
+    it('does nothing for an event already processed (by the sweep or a redelivery)', async () => {
+      webhookEvents.findById.mockResolvedValue({ ...storedEvent({ processedAt: new Date() }), attempts: 1 });
+
+      await service.processStoredEvent('evt1');
+
+      expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+      expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
+    });
+
+    it('skips, with a warning, an event that no longer exists', async () => {
+      webhookEvents.findById.mockResolvedValue(null);
+
+      await expect(service.processStoredEvent('gone')).resolves.toBeUndefined();
+
+      expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('id: gone'), 'PaymentWebhook');
+    });
   });
 
   describe('reprocessStoredEvent', () => {
@@ -158,7 +182,6 @@ describe('PaymentWebhookService', () => {
       await expect(service.reprocessStoredEvent(stored())).resolves.toBe('failed');
 
       expect(paymentService.verifyPayment).toHaveBeenCalledTimes(1);
-      expect(sleep).not.toHaveBeenCalled();
       expect(webhookEvents.recordFailure).toHaveBeenCalledWith('evt1', 1, 'Payment with reference "ref1" not found');
       expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
     });

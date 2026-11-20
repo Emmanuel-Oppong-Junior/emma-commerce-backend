@@ -4,6 +4,7 @@ import { CommonsModule } from '../commons/commons.module';
 import { OrderModule } from '../order/order.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { PaymentModule } from '../payment/payment.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { OutboxRelay } from '../outbox/outbox.relay';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { LowStockTask } from '../inventory/tasks/low-stock.task';
@@ -11,6 +12,8 @@ import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliati
 import { WorkerHealthServer } from './worker-health.server';
 import { MaintenanceScheduler } from './maintenance.scheduler';
 import { MaintenanceProcessor } from './maintenance.processor';
+import { NotificationsProcessor } from '../notifications/notifications.processor';
+import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
 
 /**
  * Root module of the `ROLE=worker` process: the outbox relay, the repeatable-job schedules and the queue processors.
@@ -18,7 +21,7 @@ import { MaintenanceProcessor } from './maintenance.processor';
  * API never consumes jobs.
  */
 @Module({
-  imports: [PlatformModule, CommonsModule, OrderModule, InventoryModule, PaymentModule],
+  imports: [PlatformModule, CommonsModule, OrderModule, InventoryModule, PaymentModule, NotificationsModule],
   providers: [
     OutboxRelay,
     WorkerHealthServer,
@@ -27,6 +30,8 @@ import { MaintenanceProcessor } from './maintenance.processor';
     PaymentReconciliationTask,
     MaintenanceScheduler,
     MaintenanceProcessor,
+    NotificationsProcessor,
+    PaymentWebhookProcessor,
   ],
 })
 export class WorkerModule {}

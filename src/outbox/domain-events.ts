@@ -22,10 +22,10 @@ export interface DomainEvent<T extends DomainEventType = DomainEventType> {
 
 /** The queue the relay publishes each event type to; the job is named after the event type. */
 export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
-  'order.placed.v1': JobQueue.Notifications,
-  'order.status_changed.v1': JobQueue.Notifications,
-  'order.shipment_updated.v1': JobQueue.Notifications,
-  'payment.succeeded.v1': JobQueue.Notifications,
+  'order.placed.v1': JobQueue.NOTIFICATIONS,
+  'order.status_changed.v1': JobQueue.NOTIFICATIONS,
+  'order.shipment_updated.v1': JobQueue.NOTIFICATIONS,
+  'payment.succeeded.v1': JobQueue.NOTIFICATIONS,
 };
 
 export function isDomainEventType(type: string): type is DomainEventType {

@@ -54,6 +54,8 @@ const AUDITED: Record<string, string> = {
   updateShipping: 'order.service.spec',
   recordCodPayment: 'payment.service.spec (recordCodPayment)',
   updateStoreSettings: 'store.service.spec',
+  // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
+  retryFailedJob: 'failed-jobs.service.spec',
 };
 
 // Privileged mutations deliberately left unaudited, with the reason. Adding to this list is a reviewed decision.

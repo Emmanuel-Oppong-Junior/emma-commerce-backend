@@ -1,89 +1,42 @@
 import { Injectable } from '@nestjs/common';
-import { EmailService } from './email/email.service';
+import { InjectQueue } from '@nestjs/bullmq';
+import { JobsOptions, Queue } from 'bullmq';
 import { LoggerService } from '../commons/logger.service';
+import { JobQueue } from '../jobs/job-queues';
+import { EmailJobData, EmailJobName, TOKEN_EMAIL_JOB_OPTIONS } from './email-jobs';
 
+/**
+ * Queues the emails that are not tied to a business transaction; the worker sends them with retries. Each method
+ * returns at once and never fails the caller: a queueing failure is logged (without the address or token).
+ */
 @Injectable()
 export class NotificationsService {
   constructor(
-    private readonly emailService: EmailService,
+    @InjectQueue(JobQueue.NOTIFICATIONS) private readonly queue: Queue,
     private readonly logger: LoggerService,
   ) {}
 
-  /**
-   * Fires a welcome email to a newly registered user. Runs asynchronously — errors are not propagated to the caller.
-   * @param to - Recipient email address.
-   * @param name - The user's display name.
-   */
   sendWelcomeEmail(to: string, name: string): void {
-    this.fireAndForget('welcome', this.emailService.sendWelcomeEmail(to, name));
+    this.enqueue('email.welcome.v1', { to, name });
   }
 
-  /**
-   * Fires an order confirmation email after a successful order placement. Runs asynchronously.
-   * @param to - Recipient email address.
-   * @param orderId - The ID of the placed order.
-   * @param totalAmount - The total amount charged for the order.
-   */
-  sendOrderConfirmation(to: string, orderId: string, totalAmount: string): void {
-    this.fireAndForget('order confirmation', this.emailService.sendOrderConfirmationEmail(to, orderId, totalAmount));
-  }
-
-  /**
-   * Fires an order status update email when an order transitions to a new status. Runs asynchronously.
-   * @param to - Recipient email address.
-   * @param orderId - The ID of the order.
-   * @param status - The new order status.
-   * @param trackingNumber - Optional shipment tracking number to include in the email.
-   */
-  sendOrderStatusUpdate(to: string, orderId: string, status: string, trackingNumber?: string): void {
-    this.fireAndForget('order status', this.emailService.sendOrderStatusEmail(to, orderId, status, trackingNumber));
-  }
-
-  /**
-   * Fires a payment confirmation email after a successful payment. Runs asynchronously.
-   * @param to - Recipient email address.
-   * @param orderId - The ID of the order that was paid.
-   * @param amount - The amount that was charged.
-   */
-  sendPaymentConfirmation(to: string, orderId: string, amount: string): void {
-    this.fireAndForget('payment confirmation', this.emailService.sendPaymentConfirmationEmail(to, orderId, amount));
-  }
-
-  /**
-   * Fires a password reset email containing the reset token. Runs asynchronously.
-   * @param to - Recipient email address.
-   * @param resetToken - The one-time password reset token to include in the email.
-   */
   sendPasswordReset(to: string, resetToken: string): void {
-    this.fireAndForget('password reset', this.emailService.sendPasswordResetEmail(to, resetToken));
+    this.enqueue('email.password_reset.v1', { to, resetToken }, TOKEN_EMAIL_JOB_OPTIONS);
   }
 
-  /**
-   * Fires an email asking the recipient to confirm the address with the given token. Runs asynchronously.
-   * @param to - The address being verified (a new sign-up's email, or a pending new email).
-   * @param verificationToken - The one-time verification token to include in the email.
-   * @param expiresInHours - How long the token stays valid, shown to the recipient.
-   */
   sendEmailVerification(to: string, verificationToken: string, expiresInHours: number): void {
-    this.fireAndForget(
-      'email verification',
-      this.emailService.sendEmailVerificationEmail(to, verificationToken, expiresInHours),
-    );
+    this.enqueue('email.verification.v1', { to, verificationToken, expiresInHours }, TOKEN_EMAIL_JOB_OPTIONS);
   }
 
-  /**
-   * Fires a notice to an account's current address that a change to another address was requested. Runs asynchronously.
-   * @param to - The account's current email address.
-   * @param newEmail - The requested new address; only a masked form is shown.
-   */
+  /** Tells the account's current address that a change to `newEmail` was requested (shown masked). */
   sendEmailChangeRequested(to: string, newEmail: string): void {
-    this.fireAndForget('email change notice', this.emailService.sendEmailChangeRequestedEmail(to, newEmail));
+    this.enqueue('email.change_requested.v1', { to, newEmail });
   }
 
-  private fireAndForget(emailKind: string, send: Promise<void>): void {
-    send.catch((error: unknown) => {
+  private enqueue<N extends EmailJobName>(name: N, data: EmailJobData[N], opts?: JobsOptions): void {
+    this.queue.add(name, data, opts).catch((error: unknown) => {
       this.logger.error(
-        `Email notification failed: ${emailKind}`,
+        `Email could not be queued: ${name}`,
         error instanceof Error ? error.message : String(error),
         'NotificationsService',
       );

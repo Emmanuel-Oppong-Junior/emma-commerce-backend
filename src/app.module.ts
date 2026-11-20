@@ -46,6 +46,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { PickupLocationsModule } from './pickup-locations/pickup-locations.module';
 import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
 import { StoreModule } from './store/store.module';
+import { FailedJobsModule } from './jobs/failed-jobs.module';
 
 const THROTTLERS: ThrottlerOptions[] = [
   {
@@ -149,6 +150,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     PickupLocationsModule,
     ShippingZonesModule,
     StoreModule,
+    FailedJobsModule,
   ],
   controllers: [AppController],
   providers: [

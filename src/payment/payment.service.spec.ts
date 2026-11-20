@@ -14,7 +14,6 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentStatus, Prisma } from '../generated/prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { Role } from '../users/enums/role.enum';
-import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../commons/audit.service';
 import { PaystackClient } from './paystack.client';
 import { StoreService } from '../store/store.service';
@@ -53,10 +52,6 @@ const mockAuditService = {
   log: jest.fn(),
 };
 
-const mockNotificationsService = {
-  sendPaymentConfirmation: jest.fn(),
-};
-
 const mockStoreService = { getCurrency: jest.fn().mockResolvedValue('GHS') };
 
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
@@ -72,7 +67,6 @@ describe('PaymentService', () => {
         { provide: PaymentRepository, useValue: mockPaymentRepository },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
-        { provide: NotificationsService, useValue: mockNotificationsService },
         { provide: AuditService, useValue: mockAuditService },
         { provide: PaystackClient, useValue: mockPaystack },
         { provide: StoreService, useValue: mockStoreService },
@@ -350,7 +344,6 @@ describe('PaymentService', () => {
         expect.stringMatching(/ORDER_NOT_PAYABLE.*order1.*pay1.*refund1/),
         'PaymentService',
       );
-      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
     });
 
     it('does not count a success for a smaller amount as payment', async () => {
@@ -362,7 +355,6 @@ describe('PaymentService', () => {
 
       expect(result.status).toBe(PaymentStatus.FAILED);
       expect(mockLoggerService.warn).toHaveBeenCalledWith(expect.stringContaining('AMOUNT_MISMATCH'), 'PaymentService');
-      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
     });
 
     it('should handle failed payment', async () => {
@@ -386,61 +378,6 @@ describe('PaymentService', () => {
 
       await expect(service.verifyPayment(reference)).rejects.toThrow(BadGatewayException);
       expect(paymentRepository.settleAttempt).not.toHaveBeenCalled();
-    });
-
-    it('emails a payment confirmation once the order moves from PENDING to PROCESSING', async () => {
-      settleAgainst(lockedState, completed);
-
-      await service.verifyPayment(reference);
-      await flushPromises();
-
-      expect(mockNotificationsService.sendPaymentConfirmation).toHaveBeenCalledWith(
-        'buyer@example.com',
-        'order1',
-        '250.00',
-      );
-    });
-
-    it('does not email again when the attempt was already settled (repeat webhook or re-verify)', async () => {
-      mockPaymentRepository.findByReference.mockResolvedValue(completed);
-
-      await service.verifyPayment(reference);
-      await flushPromises();
-
-      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
-    });
-
-    it('does not email when a racing request settled the attempt first', async () => {
-      settleAgainst({ ...lockedState, status: PaymentStatus.COMPLETED }, completed);
-
-      await service.verifyPayment(reference);
-      await flushPromises();
-
-      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
-    });
-
-    it('does not email when the payment failed', async () => {
-      mockPaystack.verifyTransaction.mockResolvedValue({ status: 'failed', reference: 'ref1' });
-      settleAgainst(lockedState, { ...payment, status: PaymentStatus.FAILED });
-
-      await service.verifyPayment(reference);
-      await flushPromises();
-
-      expect(mockNotificationsService.sendPaymentConfirmation).not.toHaveBeenCalled();
-    });
-
-    it('logs a failed recipient lookup without failing the verification', async () => {
-      settleAgainst(lockedState, completed);
-      mockPaymentRepository.findOrderWithUser.mockRejectedValue(new Error('connection reset'));
-
-      await expect(service.verifyPayment(reference)).resolves.toEqual(completed);
-      await flushPromises();
-
-      expect(mockLoggerService.error).toHaveBeenCalledWith(
-        expect.stringContaining('order1'),
-        expect.any(String),
-        'PaymentService',
-      );
     });
 
     it('should throw NotFoundException if payment not found', async () => {

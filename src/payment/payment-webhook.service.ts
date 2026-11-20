@@ -1,15 +1,20 @@
-import { BadRequestException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PaymentProvider, WebhookEvent } from '../generated/prisma/client';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { LoggerService } from '../commons/logger.service';
 import { describeErrorForLog } from '../commons/filters/error-classification';
+import { JobQueue } from '../jobs/job-queues';
 import { PaymentService } from './payment.service';
 import { isSettlingEvent, isValidPaystackSignature, parsePaystackWebhook } from './paystack-webhook';
 import { WebhookEventRepository } from './webhook-event.repository';
 
-/** Delays before each in-process retry; Paystack redelivers after a non-2xx answer once these are spent. */
-export const WEBHOOK_RETRY_DELAYS_MS = [200, 400];
+export const PAYSTACK_WEBHOOK_JOB = 'paystack.webhook.v1';
+
+export interface PaystackWebhookJobData {
+  webhookEventId: string;
+}
 
 const CONTEXT = 'PaymentWebhook';
 
@@ -22,13 +27,13 @@ export class PaymentWebhookService {
     private readonly paymentService: PaymentService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    @InjectQueue(JobQueue.WEBHOOKS) private readonly webhookQueue: Queue,
   ) {}
 
   /**
-   * Verifies, stores and processes one Paystack delivery. Resolves (HTTP 200) once the event is stored and either
-   * processed or known to need no processing. Throws 401 for a bad signature (nothing stored) and 503 when
-   * processing still fails after the in-process retries: the event stays stored and unprocessed, and Paystack's
-   * redelivery of it is processed again instead of being dropped as a duplicate.
+   * Verifies and stores one Paystack delivery, then queues its processing (job id = stored event id) and resolves
+   * (HTTP 200) as soon as it is stored. Throws 401 for a bad signature (nothing stored). Processing runs in the
+   * worker with retries and backoff; if queueing fails, the stored event is still picked up by the payment sweep.
    */
   async handlePaystackWebhook(rawBody: Buffer | undefined, signature: string | undefined): Promise<void> {
     if (!rawBody?.length) throw new BadRequestException('Webhook body is empty');
@@ -52,19 +57,37 @@ export class PaymentWebhookService {
       await this.webhookEvents.markProcessed(event.id, 0);
       return;
     }
-    await this.processWithRetries(event, event.reference, summary);
+    await this.queueProcessing(event, summary);
   }
 
   /**
-   * One more processing attempt for an event that is stored but unprocessed, counted in its `attempts`. There are
-   * no in-process retries: the caller's next sweep is the retry. Settlement is idempotent, so an event that was
-   * processed meanwhile changes nothing.
+   * The worker's webhook job: one processing attempt for a stored event. Throws when settlement fails, so the queue
+   * retries with backoff. Settlement is idempotent, so an event processed meanwhile (sweep, redelivery) is skipped.
+   */
+  async processStoredEvent(webhookEventId: string): Promise<void> {
+    const event = await this.webhookEvents.findById(webhookEventId);
+    if (!event) {
+      this.logger.warn(`Webhook job skipped: stored event not found | id: ${webhookEventId}`, CONTEXT);
+      return;
+    }
+    if (event.processedAt) return;
+    const { outcome, error } = await this.processOnce(event);
+    if (outcome === 'failed') throw new Error(`Webhook processing failed | ${describeEvent(event)} | ${error}`);
+  }
+
+  /**
+   * One more processing attempt for an event that is stored but unprocessed, counted in its `attempts`, for the
+   * payment sweep. Settlement is idempotent, so an event that was processed meanwhile changes nothing.
    */
   async reprocessStoredEvent(event: WebhookEvent): Promise<ReprocessOutcome> {
+    return (await this.processOnce(event)).outcome;
+  }
+
+  private async processOnce(event: WebhookEvent): Promise<{ outcome: ReprocessOutcome; error?: string }> {
     const summary = describeEvent(event);
     if (!isSettlingEvent(event.event) || !event.reference) {
       await this.webhookEvents.markProcessed(event.id, 0);
-      return 'skipped';
+      return { outcome: 'skipped' };
     }
     try {
       await this.paymentService.verifyPayment(event.reference);
@@ -72,35 +95,28 @@ export class PaymentWebhookService {
       const lastError = describeErrorForLog(error);
       await this.webhookEvents.recordFailure(event.id, 1, lastError);
       this.logger.warn(
-        `Webhook reprocessing failed | ${summary} | attempts: ${event.attempts + 1} | ${lastError}`,
+        `Webhook processing failed | ${summary} | attempts: ${event.attempts + 1} | ${lastError}`,
         CONTEXT,
       );
-      return 'failed';
+      return { outcome: 'failed', error: lastError };
     }
     await this.webhookEvents.markProcessed(event.id, 1);
-    this.logger.log(`Webhook reprocessed | ${summary}`, CONTEXT);
-    return 'processed';
+    this.logger.log(`Webhook processed | ${summary}`, CONTEXT);
+    return { outcome: 'processed' };
   }
 
-  private async processWithRetries(event: WebhookEvent, reference: string, summary: string): Promise<void> {
-    let lastError = '';
-    const maxAttempts = WEBHOOK_RETRY_DELAYS_MS.length + 1;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        await this.paymentService.verifyPayment(reference);
-        await this.webhookEvents.markProcessed(event.id, attempt);
-        this.logger.log(`Webhook processed | ${summary} | attempts: ${attempt}`, CONTEXT);
-        return;
-      } catch (error) {
-        lastError = describeErrorForLog(error);
-        this.logger.warn(`Webhook processing failed | ${summary} | attempt: ${attempt} | ${lastError}`, CONTEXT);
-        if (attempt < maxAttempts) await sleep(WEBHOOK_RETRY_DELAYS_MS[attempt - 1]);
-      }
+  private async queueProcessing(event: WebhookEvent, summary: string): Promise<void> {
+    const data: PaystackWebhookJobData = { webhookEventId: event.id };
+    try {
+      await this.webhookQueue.add(PAYSTACK_WEBHOOK_JOB, data, { jobId: event.id });
+      this.logger.log(`Webhook queued for processing | ${summary}`, CONTEXT);
+    } catch (error) {
+      this.logger.error(
+        `Webhook stored but not queued; the payment sweep will process it | ${summary}`,
+        describeErrorForLog(error),
+        CONTEXT,
+      );
     }
-
-    await this.webhookEvents.recordFailure(event.id, maxAttempts, lastError);
-    this.logger.error(`Webhook left unprocessed for redelivery | ${summary}`, lastError, CONTEXT);
-    throw new ServiceUnavailableException('Webhook could not be processed; it will be retried');
   }
 }
 

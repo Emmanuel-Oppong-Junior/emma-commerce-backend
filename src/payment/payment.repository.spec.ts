@@ -4,6 +4,7 @@ import { PaymentRepository } from './payment.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
 import { StoreRepository } from '../store/store.repository';
+import { OutboxService } from '../outbox/outbox.service';
 import { Order, Prisma } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
@@ -77,6 +78,8 @@ const mockStoreRepository = {
   findCurrency: jest.fn(),
 };
 
+const mockOutbox = { record: jest.fn() };
+
 const mockPrismaCashCollection = {
   create: jest.fn(),
 };
@@ -111,6 +114,7 @@ describe('PaymentRepository', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: OrdersRepository, useValue: mockOrdersRepository },
         { provide: StoreRepository, useValue: mockStoreRepository },
+        { provide: OutboxService, useValue: mockOutbox },
       ],
     }).compile();
 
@@ -520,6 +524,42 @@ describe('PaymentRepository', () => {
       expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(mockTx, 'order1', 'PROCESSING', ['PENDING']);
       expect(mockPrismaRefund.create).not.toHaveBeenCalled();
       expect(result.attempt.status).toBe('COMPLETED');
+    });
+
+    it('records payment.succeeded.v1 in the settlement transaction, after the order moved to PROCESSING', async () => {
+      await repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }));
+
+      expect(mockOutbox.record).toHaveBeenCalledTimes(1);
+      expect(mockOutbox.record).toHaveBeenCalledWith(mockTx, {
+        type: 'payment.succeeded.v1',
+        aggregateId: 'order1',
+        payload: { orderId: 'order1', paymentId: 'pay1', amount: '100.00' },
+      });
+      expect(mockOrdersRepository.transitionStatus.mock.invocationCallOrder[0]).toBeLessThan(
+        mockOutbox.record.mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each([
+      ['already settled (repeat webhook, racing request)', { kind: 'settled' }],
+      ['undecided', { kind: 'unresolved' }],
+      ['failed', { kind: 'failed' }],
+      ['sent to review', { kind: 'review', reason: 'AMOUNT_MISMATCH', attemptStatus: 'FAILED' }],
+    ])('records no payment event when the attempt is %s', async (_label, outcome) => {
+      mockPrismaAttempt.update.mockResolvedValue({ ...mockAttempt, rawStatus: 'ongoing' });
+
+      await repository.settleAttempt('pay1', { ...success, status: 'ongoing' }, details, () => outcome as never);
+
+      expect(mockOutbox.record).not.toHaveBeenCalled();
+    });
+
+    it('records no payment event when the order left PENDING, so the rollback leaves nothing to send', async () => {
+      mockOrdersRepository.transitionStatus.mockResolvedValue(null);
+
+      await expect(repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }))).rejects.toThrow(
+        ConflictException,
+      );
+      expect(mockOutbox.record).not.toHaveBeenCalled();
     });
 
     it('rolls back if the order left PENDING under the lock', async () => {

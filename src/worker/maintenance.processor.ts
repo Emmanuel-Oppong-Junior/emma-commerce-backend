@@ -14,7 +14,7 @@ const CONTEXT = 'MaintenanceProcessor';
  * Runs the repeatable maintenance jobs. Each tick is one job, taken by one worker. The tasks keep their Postgres
  * advisory locks as a second guard, so an overlapping run (a slow tick, a retried job) still skips.
  */
-@Processor(JobQueue.Maintenance)
+@Processor(JobQueue.MAINTENANCE)
 export class MaintenanceProcessor extends WorkerHost {
   constructor(
     private readonly expiredOrders: ExpiredOrdersTask,

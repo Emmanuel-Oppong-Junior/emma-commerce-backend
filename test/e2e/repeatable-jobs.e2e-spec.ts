@@ -25,7 +25,7 @@ describe('Repeatable maintenance jobs across two workers (e2e)', () => {
   });
 
   it('runs the job body once per tick, not once per worker', async () => {
-    const queue = getQueue(first, JobQueue.Maintenance);
+    const queue = getQueue(first, JobQueue.MAINTENANCE);
     const connected = Date.now() + 10_000;
     while ((await queue.getWorkers()).length < 2 && Date.now() < connected) await sleep(100);
     expect((await queue.getWorkers()).length).toBe(2);

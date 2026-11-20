@@ -4,7 +4,7 @@ import { OrderStatus, PaymentIntentStatus, PaymentStatus, Prisma } from '../../s
 import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';
-import { NotificationsService } from '../../src/notifications/notifications.service';
+import { PaymentWebhookService } from '../../src/payment/payment-webhook.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
@@ -21,17 +21,11 @@ describe('Payment verification (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let userToken: string;
-  let sendPaymentConfirmation: jest.SpyInstance;
   let orderCount = 0;
 
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  // The confirmation email goes out on a detached promise after the response, so wait for it before counting.
-  async function confirmationEmailsSent(): Promise<number> {
-    const deadline = Date.now() + 2000;
-    while (sendPaymentConfirmation.mock.calls.length === 0 && Date.now() < deadline) await sleep(20);
-    await sleep(100);
-    return sendPaymentConfirmation.mock.calls.length;
-  }
+  // The confirmation email is the payment.succeeded.v1 outbox event written with the settlement; count those.
+  const confirmationEmailsQueued = (orderId: string) =>
+    prisma.outboxEvent.count({ where: { type: 'payment.succeeded.v1', aggregateId: orderId } });
 
   const charged: Partial<VerifyResult> = { status: 'success', amount: 10000, currency: 'GHS' };
   const paystack = {
@@ -68,10 +62,18 @@ describe('Payment verification (e2e)', () => {
       userToken,
     );
 
-  const webhook = (reference: string) => {
+  // The API stores the delivery and queues it; no worker runs here, so the stored event is processed the way the
+  // worker's job does it.
+  const webhook = async (reference: string) => {
     const body = { event: 'charge.success', data: { reference, amount: 10000, currency: 'GHS' } };
     const signature = createHmac('sha512', process.env.PAYSTACK_SECRET_KEY!).update(JSON.stringify(body)).digest('hex');
-    return request(app.getHttpServer()).post('/payment/webhook').set('x-paystack-signature', signature).send(body);
+    const res = await request(app.getHttpServer())
+      .post('/payment/webhook')
+      .set('x-paystack-signature', signature)
+      .send(body);
+    const stored = await prisma.webhookEvent.findFirst({ where: { reference }, orderBy: { receivedAt: 'desc' } });
+    if (stored) await app.get(PaymentWebhookService).processStoredEvent(stored.id);
+    return res;
   };
 
   const ledgerOf = async (orderId: string) => {
@@ -92,7 +94,6 @@ describe('Payment verification (e2e)', () => {
 
   beforeAll(async () => {
     ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
-    sendPaymentConfirmation = jest.spyOn(app.get(NotificationsService), 'sendPaymentConfirmation').mockReturnValue();
     await resetDb(prisma);
     await seedMinimal(prisma);
     userToken = await signInUser(app);
@@ -127,7 +128,7 @@ describe('Payment verification (e2e)', () => {
     });
     expect(ledger.refunds).toHaveLength(0);
     expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
-    expect(await confirmationEmailsSent()).toBe(1);
+    expect(await confirmationEmailsQueued(orderId)).toBe(1);
   });
 
   it('changes nothing when a paid reference is verified again after the order was DELIVERED', async () => {
@@ -135,7 +136,7 @@ describe('Payment verification (e2e)', () => {
     const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.COMPLETED });
 
     await verify(reference).expect(200);
-    await webhook(reference).expect(200);
+    expect((await webhook(reference)).status).toBe(200);
 
     const ledger = await ledgerOf(orderId);
     expect(ledger.orderStatus).toBe(OrderStatus.DELIVERED);
@@ -151,7 +152,7 @@ describe('Payment verification (e2e)', () => {
     );
 
     await verify(reference).expect(200);
-    await webhook(reference).expect(200);
+    expect((await webhook(reference)).status).toBe(200);
     await verify(reference).expect(200);
 
     const ledger = await ledgerOf(orderId);
@@ -165,7 +166,7 @@ describe('Payment verification (e2e)', () => {
       idempotencyKey: `auto-refund:${ledger.attempts[0].id}`,
     });
     expect(ledger.refunds[0].amount.toString()).toBe('100');
-    expect(await confirmationEmailsSent()).toBe(0);
+    expect(await confirmationEmailsQueued(orderId)).toBe(0);
   });
 
   it.each([
@@ -191,7 +192,7 @@ describe('Payment verification (e2e)', () => {
     expect(ledger.refunds).toHaveLength(1);
     expect(ledger.refunds[0].amount.toString()).toBe(refundAmount);
     expect(ledger.refunds[0].currency).toBe(refundCurrency);
-    expect(await confirmationEmailsSent()).toBe(0);
+    expect(await confirmationEmailsQueued(orderId)).toBe(0);
   });
 
   it('flags a second successful attempt for an order already paid and queues its refund', async () => {
@@ -215,7 +216,7 @@ describe('Payment verification (e2e)', () => {
     const late = ledger.attempts.find((attempt) => attempt.id === first.paymentId)!;
     expect(late).toMatchObject({ status: PaymentStatus.COMPLETED, reviewReason: 'ALREADY_PAID' });
     expect(ledger.refunds).toEqual([expect.objectContaining({ attemptId: first.paymentId, status: 'PENDING' })]);
-    expect(await confirmationEmailsSent()).toBe(1);
+    expect(await confirmationEmailsQueued(orderId)).toBe(1);
   });
 
   it('moves the order once when the customer verify and the webhook race', async () => {
@@ -230,6 +231,6 @@ describe('Payment verification (e2e)', () => {
     expect(ledger.orderStatus).toBe(OrderStatus.PROCESSING);
     expect(ledger.attempts[0]).toMatchObject({ status: PaymentStatus.COMPLETED, reviewReason: null });
     expect(ledger.refunds).toHaveLength(0);
-    expect(await confirmationEmailsSent()).toBe(1);
+    expect(await confirmationEmailsQueued(orderId)).toBe(1);
   });
 });

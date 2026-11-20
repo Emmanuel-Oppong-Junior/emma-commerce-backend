@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CartService } from '../cart/cart.service';
-import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '../generated/prisma/client';
 import { ORDER_EXPIRY_LOCK_KEY, OrdersService } from './order.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
@@ -8,7 +8,7 @@ import { AuditService } from '../commons/audit.service';
 import { CouponsService } from '../coupons/coupons.service';
 import { TaxService } from '../tax/tax.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { NotificationsService } from '../notifications/notifications.service';
+import { OutboxService } from '../outbox/outbox.service';
 import { Decimal } from '@prisma/client/runtime/client';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
@@ -21,7 +21,7 @@ const mockAuditService = { log: jest.fn() };
 const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
 const mockTaxService = { getRateForCountry: jest.fn().mockResolvedValue(new Decimal('0.1')) };
 const mockInventoryService = { logInventoryChange: jest.fn().mockResolvedValue(undefined) };
-const mockNotificationsService = { sendOrderConfirmation: jest.fn(), sendOrderStatusUpdate: jest.fn() };
+const mockOutbox = { record: jest.fn() };
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
@@ -165,7 +165,7 @@ describe('OrdersService', () => {
         { provide: CouponsService, useValue: mockCouponsService },
         { provide: TaxService, useValue: mockTaxService },
         { provide: InventoryService, useValue: mockInventoryService },
-        { provide: NotificationsService, useValue: mockNotificationsService },
+        { provide: OutboxService, useValue: mockOutbox },
         { provide: ShippingZonesService, useValue: mockShippingZonesService },
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
         { provide: ReturnsService, useValue: mockReturnsService },
@@ -223,6 +223,39 @@ describe('OrdersService', () => {
       expect(cartService.getCartOrThrow).toHaveBeenCalledWith(mockUserId);
       expect(ordersRepository.create).toHaveBeenCalled();
       expect(result).toEqual(mockOrder);
+    });
+
+    it('records order.placed.v1 in the order transaction, after the order row is written', async () => {
+      const stubTx = { id: 'tx' };
+      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.create.mockResolvedValue(mockOrder);
+
+      await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+      expect(mockOutbox.record).toHaveBeenCalledTimes(1);
+      expect(mockOutbox.record).toHaveBeenCalledWith(stubTx, {
+        type: 'order.placed.v1',
+        aggregateId: mockOrder.id,
+        payload: { orderId: mockOrder.id },
+      });
+      expect(mockOrdersRepository.create.mock.invocationCallOrder[0]).toBeLessThan(
+        mockOutbox.record.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('records no order event when the order transaction fails', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.decrementProductStock.mockResolvedValue(null);
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(BadRequestException);
+      expect(mockOutbox.record).not.toHaveBeenCalled();
     });
 
     it('stores the subtotal and the shipping fee of the covering zone on a delivery order', async () => {
@@ -672,19 +705,34 @@ describe('OrdersService', () => {
       expect(result.status).toBe('SHIPPED');
     });
 
-    it('logs a failed recipient lookup for the status email instead of leaving the rejection unhandled', async () => {
-      const loggerError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-      mockOrdersRepository.findById.mockResolvedValue(processingOrder);
-      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: 'SHIPPED' as OrderStatus });
-      mockOrdersRepository.findUserById.mockRejectedValue(new Error('connection reset'));
-      mockAuditService.log.mockResolvedValue(undefined);
+    it.each([OrderStatus.SHIPPED, OrderStatus.DELIVERED])(
+      'records order.status_changed.v1 for %s in the status-change transaction',
+      async (status) => {
+        const stubTx = { id: 'tx' };
+        mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
+        mockOrdersRepository.findById.mockResolvedValue(
+          status === OrderStatus.SHIPPED ? processingOrder : { ...processingOrder, status: OrderStatus.SHIPPED },
+        );
+        mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status, trackingNumber: 'TRK1' });
 
-      await ordersService.updateOrderStatus('order1', OrderStatus.SHIPPED, 'admin1');
-      await new Promise((resolve) => setImmediate(resolve));
+        await ordersService.updateOrderStatus('order1', status, 'admin1');
 
-      expect(loggerError).toHaveBeenCalledWith(expect.stringContaining('order1'), expect.any(String));
-      expect(mockNotificationsService.sendOrderStatusUpdate).not.toHaveBeenCalled();
-      loggerError.mockRestore();
+        expect(mockOutbox.record).toHaveBeenCalledTimes(1);
+        expect(mockOutbox.record).toHaveBeenCalledWith(stubTx, {
+          type: 'order.status_changed.v1',
+          aggregateId: 'order1',
+          payload: { orderId: 'order1', status, trackingNumber: 'TRK1' },
+        });
+      },
+    );
+
+    it('records no event for a status change that emails nobody', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, paymentMethod: 'CASH_ON_DELIVERY' });
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.PROCESSING });
+
+      await ordersService.updateOrderStatus('order1', OrderStatus.PROCESSING, 'admin1');
+
+      expect(mockOutbox.record).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if order does not exist', async () => {
@@ -934,7 +982,29 @@ describe('OrdersService', () => {
         'audit insert failed',
       );
       await expect(mockOrdersRepository.runTransaction.mock.results[0].value).rejects.toThrow('audit insert failed');
-      expect(mockOrdersRepository.findUserById).not.toHaveBeenCalled();
+      expect(mockOutbox.record).not.toHaveBeenCalled();
+    });
+
+    it('records order.shipment_updated.v1 with the tracking number in the shipping transaction', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+      mockOrdersRepository.updateShipping.mockResolvedValue({ ...mockOrder, trackingNumber: 'TRK1', carrier: 'DHL' });
+
+      await ordersService.updateShipping('order1', 'TRK1', 'DHL', 'admin1');
+
+      expect(mockOutbox.record).toHaveBeenCalledWith(stubTx, {
+        type: 'order.shipment_updated.v1',
+        aggregateId: 'order1',
+        payload: { orderId: 'order1', trackingNumber: 'TRK1' },
+      });
+    });
+
+    it('records no shipment event when only the carrier changes', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+      mockOrdersRepository.updateShipping.mockResolvedValue({ ...mockOrder, carrier: 'DHL' });
+
+      await ordersService.updateShipping('order1', undefined, 'DHL', 'admin1');
+
+      expect(mockOutbox.record).not.toHaveBeenCalled();
     });
   });
 

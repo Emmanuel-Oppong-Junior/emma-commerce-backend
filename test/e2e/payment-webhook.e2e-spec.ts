@@ -1,26 +1,29 @@
-import { BadGatewayException, INestApplication } from '@nestjs/common';
+import { BadGatewayException, INestApplication, INestApplicationContext } from '@nestjs/common';
 import { createHmac } from 'crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { OrderStatus, PaymentStatus } from '../../src/generated/prisma/client';
 import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';
-import { NotificationsService } from '../../src/notifications/notifications.service';
+import { JobQueue } from '../../src/jobs/job-queues';
 import { createTestApp } from '../helpers/app.helper';
+import { clearQueues, createTestWorker, getQueue } from '../helpers/worker.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
 
+// The API stores a verified delivery and answers 200; the worker's webhooks queue processes it with retries.
 describe('Paystack webhook (e2e)', () => {
   let app: INestApplication;
+  let worker: INestApplicationContext;
   let prisma: PrismaService;
   let orderCount = 0;
 
-  const paystack = {
-    verifyTransaction: jest.fn(async (reference: string) => ({
-      reference,
-      status: 'success',
-      amount: 10000,
-      currency: 'GHS',
-    })),
-  };
+  const paystackSuccess = async (reference: string) => ({
+    reference,
+    status: 'success',
+    amount: 10000,
+    currency: 'GHS',
+  });
+  const paystack = { verifyTransaction: jest.fn(paystackSuccess) };
 
   const sign = (raw: string) => createHmac('sha512', process.env.PAYSTACK_SECRET_KEY!).update(raw).digest('hex');
 
@@ -55,24 +58,38 @@ describe('Paystack webhook (e2e)', () => {
   const orderStatus = async (orderId: string) =>
     (await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status;
 
+  async function eventuallyStored(predicate: (event: { processedAt: Date | null; attempts: number }) => boolean) {
+    const deadline = Date.now() + 20_000;
+    for (;;) {
+      const event = await prisma.webhookEvent.findFirst();
+      if (event && predicate(event)) return event;
+      if (Date.now() > deadline) throw new Error(`Webhook event never reached the state: ${JSON.stringify(event)}`);
+      await sleep(100);
+    }
+  }
+
   beforeAll(async () => {
     ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
-    jest.spyOn(app.get(NotificationsService), 'sendPaymentConfirmation').mockReturnValue();
+    await clearQueues(app);
+    worker = await createTestWorker((builder) => builder.overrideProvider(PaystackClient).useValue(paystack));
     await resetDb(prisma);
     await seedMinimal(prisma);
   });
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    paystack.verifyTransaction.mockImplementation(paystackSuccess);
     await prisma.$executeRawUnsafe('TRUNCATE "WebhookEvent"');
   });
 
   afterAll(async () => {
+    await clearQueues(app);
+    await worker.close();
     await resetDb(prisma);
     await app.close();
   });
 
-  it('accepts a body signed over its raw bytes, stores the event without PII and settles the payment', async () => {
+  it('stores the event without PII before answering, then the worker settles the payment once', async () => {
     const { orderId, reference } = await pendingPayment();
 
     await deliver(chargeSuccess(1001, reference)).expect(200);
@@ -84,11 +101,15 @@ describe('Paystack webhook (e2e)', () => {
       event: 'charge.success',
       eventKey: 'charge.success:id:1001',
       reference,
-      attempts: 1,
-      lastError: null,
     });
-    expect(events[0].processedAt).not.toBeNull();
     expect(JSON.stringify(events[0].payload)).not.toContain('buyer@example.com');
+    expect((await getQueue(app, JobQueue.WEBHOOKS).getJob(events[0].id))?.data).toEqual({
+      webhookEventId: events[0].id,
+    });
+
+    const processed = await eventuallyStored((event) => event.processedAt !== null);
+    expect(processed).toMatchObject({ attempts: 1, lastError: null });
+    expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
     expect(paystack.verifyTransaction).toHaveBeenCalledWith(reference);
     expect(await orderStatus(orderId)).toBe(OrderStatus.PROCESSING);
   });
@@ -116,12 +137,14 @@ describe('Paystack webhook (e2e)', () => {
     expect(await orderStatus(orderId)).toBe(OrderStatus.PENDING);
   });
 
-  it('treats a second delivery of the same event as a no-op', async () => {
+  it('treats a second delivery of a processed event as a no-op', async () => {
     const { orderId, reference } = await pendingPayment();
     const raw = chargeSuccess(1004, reference);
 
     await deliver(raw).expect(200);
+    await eventuallyStored((event) => event.processedAt !== null);
     await deliver(raw).expect(200);
+    await sleep(300);
 
     expect(await prisma.webhookEvent.count()).toBe(1);
     expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
@@ -138,34 +161,30 @@ describe('Paystack webhook (e2e)', () => {
 
     expect([first.status, second.status]).toEqual([200, 200]);
     expect(await prisma.webhookEvent.count()).toBe(1);
+    await eventuallyStored((event) => event.processedAt !== null);
     expect(await prisma.refund.count({ where: { attempt: { reference } } })).toBe(0);
     expect(await orderStatus(orderId)).toBe(OrderStatus.PROCESSING);
   });
 
-  it('keeps a failed event stored and retryable, answers 503, and processes it when Paystack redelivers', async () => {
+  // Contract change (P1-J.4): a processing failure no longer answers 503. The event is stored, Paystack gets 200,
+  // and the queue retries the stored event with backoff until it succeeds.
+  it('answers 200 even when processing fails, and the queue retries the stored event until it succeeds', async () => {
     const { orderId, reference } = await pendingPayment();
-    const raw = chargeSuccess(1006, reference);
     paystack.verifyTransaction.mockRejectedValue(new BadGatewayException('Paystack verify failed with HTTP 503'));
 
-    await deliver(raw).expect(503);
+    await deliver(chargeSuccess(1006, reference)).expect(200);
 
-    const failed = await prisma.webhookEvent.findFirstOrThrow();
-    expect(failed).toMatchObject({ processedAt: null, attempts: 3, lastError: 'Paystack verify failed with HTTP 503' });
-    expect(paystack.verifyTransaction).toHaveBeenCalledTimes(3);
+    const failed = await eventuallyStored((event) => event.attempts >= 1);
+    expect(failed).toMatchObject({ processedAt: null, lastError: 'Paystack verify failed with HTTP 503' });
     expect(await orderStatus(orderId)).toBe(OrderStatus.PENDING);
+    const job = await getQueue(app, JobQueue.WEBHOOKS).getJob(failed.id);
+    expect(await job?.getState()).toBe('delayed');
 
-    paystack.verifyTransaction.mockImplementation(async (ref: string) => ({
-      reference: ref,
-      status: 'success',
-      amount: 10000,
-      currency: 'GHS',
-    }));
-    await deliver(raw).expect(200);
+    paystack.verifyTransaction.mockImplementation(paystackSuccess);
 
-    const processed = await prisma.webhookEvent.findFirstOrThrow();
+    const processed = await eventuallyStored((event) => event.processedAt !== null);
     expect(processed.id).toBe(failed.id);
-    expect(processed.processedAt).not.toBeNull();
-    expect(processed).toMatchObject({ attempts: 4, lastError: null });
+    expect(processed).toMatchObject({ attempts: 2, lastError: null });
     expect(await orderStatus(orderId)).toBe(OrderStatus.PROCESSING);
   });
 
@@ -181,5 +200,6 @@ describe('Paystack webhook (e2e)', () => {
     ]);
     expect(events[0].processedAt).not.toBeNull();
     expect(paystack.verifyTransaction).not.toHaveBeenCalled();
+    await expect(getQueue(app, JobQueue.WEBHOOKS).getJob(events[0].id)).resolves.toBeUndefined();
   });
 });

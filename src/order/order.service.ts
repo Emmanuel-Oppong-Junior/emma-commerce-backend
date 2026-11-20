@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { allowedFrom, assertTransition, FINAL_STATUSES, isFinal } from './order-status';
 import { CartService } from '../cart/cart.service';
 import {
@@ -17,7 +17,7 @@ import { AuditService } from '../commons/audit.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { CouponsService } from '../coupons/coupons.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { NotificationsService } from '../notifications/notifications.service';
+import { OutboxService } from '../outbox/outbox.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
@@ -49,7 +49,7 @@ export class OrdersService {
     private readonly auditService: AuditService,
     private readonly couponsService: CouponsService,
     private readonly inventoryService: InventoryService,
-    private readonly notificationsService: NotificationsService,
+    private readonly outbox: OutboxService,
     private readonly shippingZonesService: ShippingZonesService,
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly returnsService: ReturnsService,
@@ -94,8 +94,6 @@ export class OrdersService {
       shippingAddressId: params.shippingAddressId,
       shippingAddressSnapshot: toAddressSnapshot(address),
     });
-
-    this.sendOrderConfirmationEmail(userId, order);
     return order;
   }
 
@@ -125,8 +123,6 @@ export class OrdersService {
         country: location.country,
       },
     });
-
-    this.sendOrderConfirmationEmail(userId, order);
     return order;
   }
 
@@ -181,7 +177,8 @@ export class OrdersService {
   }
 
   /**
-   * Updates the status of an order and emits shipping notifications when appropriate.
+   * Updates the status of an order. SHIPPED and DELIVERED also record `order.status_changed.v1` in the same
+   * transaction, which the worker turns into the customer email.
    */
   async updateOrderStatus(
     orderId: string,
@@ -209,16 +206,15 @@ export class OrdersService {
         },
         tx,
       );
+      if (status === OrderStatus.SHIPPED || status === OrderStatus.DELIVERED) {
+        await this.outbox.record(tx, {
+          type: 'order.status_changed.v1',
+          aggregateId: orderId,
+          payload: { orderId, status, trackingNumber: transitioned.trackingNumber ?? null },
+        });
+      }
       return transitioned;
     });
-    if (status === 'SHIPPED' || status === 'DELIVERED') {
-      this.sendOrderStatusEmail(
-        order.userId,
-        orderId,
-        status,
-        (updated as Order & { trackingNumber?: string | null }).trackingNumber ?? undefined,
-      );
-    }
     return updated;
   }
 
@@ -280,7 +276,8 @@ export class OrdersService {
   }
 
   /**
-   * Updates the shipping carrier and tracking number for an order and notifies the customer.
+   * Updates the shipping carrier and tracking number for an order. A tracking number also records
+   * `order.shipment_updated.v1` in the same transaction, which the worker turns into the customer email.
    */
   async updateShipping(
     orderId: string,
@@ -288,7 +285,7 @@ export class OrdersService {
     carrier?: string,
     adminUserId?: string,
   ): Promise<Order & { items: OrderItem[] }> {
-    const order = await this.retrieveOrder(orderId);
+    await this.retrieveOrder(orderId);
     const updated = await this.ordersRepository.runTransaction(async (tx) => {
       const shipped = await this.ordersRepository.updateShipping(orderId, trackingNumber, carrier, tx);
       await this.auditService.log(
@@ -301,11 +298,15 @@ export class OrdersService {
         },
         tx,
       );
+      if (trackingNumber) {
+        await this.outbox.record(tx, {
+          type: 'order.shipment_updated.v1',
+          aggregateId: orderId,
+          payload: { orderId, trackingNumber },
+        });
+      }
       return shipped;
     });
-    if (trackingNumber) {
-      this.sendOrderStatusEmail(order.userId, orderId, 'SHIPPED', trackingNumber);
-    }
     return updated;
   }
 
@@ -458,6 +459,11 @@ export class OrdersService {
       if (orderDetails.couponId) {
         await this.couponsService.recordUsage(tx, orderDetails.couponId, userId, newOrder.id);
       }
+      await this.outbox.record(tx, {
+        type: 'order.placed.v1',
+        aggregateId: newOrder.id,
+        payload: { orderId: newOrder.id },
+      });
 
       await this.ordersRepository.clearCartItems(tx, cartId);
       return newOrder;
@@ -544,37 +550,6 @@ export class OrdersService {
       order.id,
       order.userId,
       'Automatic refund request for cancelled paid order',
-    );
-  }
-
-  private readonly emailLogger = new Logger(OrdersService.name);
-
-  private sendOrderConfirmationEmail(userId: string, order: Order): void {
-    this.ordersRepository
-      .findUserById(userId)
-      .then((user) => {
-        if (user?.email) {
-          this.notificationsService.sendOrderConfirmation(user.email, order.id, order.totalAmount.toFixed(2));
-        }
-      })
-      .catch((error: unknown) => this.logEmailFailure('order confirmation', order.id, error));
-  }
-
-  private sendOrderStatusEmail(userId: string, orderId: string, status: string, trackingNumber?: string): void {
-    this.ordersRepository
-      .findUserById(userId)
-      .then((user) => {
-        if (user?.email) {
-          this.notificationsService.sendOrderStatusUpdate(user.email, orderId, status, trackingNumber);
-        }
-      })
-      .catch((error: unknown) => this.logEmailFailure('order status', orderId, error));
-  }
-
-  private logEmailFailure(emailKind: string, orderId: string, error: unknown): void {
-    this.emailLogger.error(
-      `Could not send ${emailKind} email | orderId: ${orderId}`,
-      error instanceof Error ? error.message : String(error),
     );
   }
 }

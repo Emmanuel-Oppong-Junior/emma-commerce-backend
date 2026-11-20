@@ -39,14 +39,14 @@ export class OutboxRelay implements OnApplicationBootstrap, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logger: LoggerService,
-    @InjectQueue(JobQueue.Notifications) notifications: Queue,
-    @InjectQueue(JobQueue.Webhooks) webhooks: Queue,
-    @InjectQueue(JobQueue.Maintenance) maintenance: Queue,
+    @InjectQueue(JobQueue.NOTIFICATIONS) notifications: Queue,
+    @InjectQueue(JobQueue.WEBHOOKS) webhooks: Queue,
+    @InjectQueue(JobQueue.MAINTENANCE) maintenance: Queue,
   ) {
     this.queues = {
-      [JobQueue.Notifications]: notifications,
-      [JobQueue.Webhooks]: webhooks,
-      [JobQueue.Maintenance]: maintenance,
+      [JobQueue.NOTIFICATIONS]: notifications,
+      [JobQueue.WEBHOOKS]: webhooks,
+      [JobQueue.MAINTENANCE]: maintenance,
     };
   }
 

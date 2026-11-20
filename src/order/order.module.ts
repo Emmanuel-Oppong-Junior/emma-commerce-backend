@@ -7,7 +7,7 @@ import { CommonsModule } from '../commons/commons.module';
 import { OrdersRepository } from './order.repository';
 import { CouponsModule } from '../coupons/coupons.module';
 import { InventoryModule } from '../inventory/inventory.module';
-import { NotificationsModule } from '../notifications/notifications.module';
+import { OutboxModule } from '../outbox/outbox.module';
 import { ShippingZonesModule } from '../shipping-zones/shipping-zones.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
 import { ReturnsModule } from '../returns/returns.module';
@@ -22,7 +22,7 @@ import { StoreModule } from '../store/store.module';
     CommonsModule,
     CouponsModule,
     InventoryModule,
-    NotificationsModule,
+    OutboxModule,
     ShippingZonesModule,
     PickupLocationsModule,
     ReturnsModule,

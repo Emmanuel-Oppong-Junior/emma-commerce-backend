@@ -1,4 +1,4 @@
-import { EmailService } from './email.service';
+import { EmailDeliveryError, EmailService } from './email.service';
 
 const mockSend = jest.fn();
 
@@ -35,43 +35,48 @@ describe('EmailService', () => {
     expect(allLogLines(logger)).not.toContain(RECIPIENT);
   });
 
-  it('logs an error, not success, when Resend returns an error result', async () => {
+  it('passes the idempotency key to Resend so a retried job cannot send the email twice', async () => {
+    mockSend.mockResolvedValue({ data: { id: 'email-1' }, error: null });
+    const { service } = buildEmailService('re_test_key');
+
+    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00', 'evt_123');
+
+    expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ to: RECIPIENT }), { idempotencyKey: 'evt_123' });
+  });
+
+  it('throws, without logging success, when Resend returns an error result, so the queue retries', async () => {
     mockSend.mockResolvedValue({
       data: null,
-      error: { name: 'daily_quota_exceeded', message: 'You have reached your daily email sending quota.' },
+      error: { name: 'daily_quota_exceeded', message: `Quota reached while sending to ${RECIPIENT}.` },
     });
     const { service, logger } = buildEmailService('re_test_key');
 
-    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00');
+    const failure = service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00');
 
+    await expect(failure).rejects.toThrow(EmailDeliveryError);
+    await expect(failure).rejects.toThrow(/Order Confirmed – #order-1 \| daily_quota_exceeded/);
+    await expect(failure).rejects.not.toThrow(RECIPIENT);
     expect(logger.log).not.toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining(`Failed to send email`),
-      expect.stringContaining('daily_quota_exceeded'),
-      'EmailService',
-    );
     expect(allLogLines(logger)).not.toContain(RECIPIENT);
   });
 
-  it('logs an error when the Resend call throws', async () => {
+  it('throws when the Resend call throws', async () => {
     mockSend.mockRejectedValue(new Error('socket hang up'));
-    const { service, logger } = buildEmailService('re_test_key');
+    const { service } = buildEmailService('re_test_key');
 
-    await service.sendPaymentConfirmationEmail(RECIPIENT, 'order-1', '120.00');
-
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to send email'),
-      'socket hang up',
-      'EmailService',
+    await expect(service.sendPaymentConfirmationEmail(RECIPIENT, 'order-1', '120.00')).rejects.toThrow(
+      'Email not delivered: Payment received for order #order-1 | socket hang up',
     );
   });
 
-  it('never logs the password-reset token', async () => {
+  it('never puts the password-reset token in logs or in the error', async () => {
     mockSend.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'Invalid `to` field.' } });
     const { service, logger } = buildEmailService('re_test_key');
 
-    await service.sendPasswordResetEmail(RECIPIENT, 'reset-token-abc123');
+    const error = await service.sendPasswordResetEmail(RECIPIENT, 'reset-token-abc123').catch((e: Error) => e);
 
+    expect(error).toBeInstanceOf(EmailDeliveryError);
+    expect((error as Error).message).not.toContain('reset-token-abc123');
     expect(allLogLines(logger)).not.toContain('reset-token-abc123');
   });
 
@@ -79,11 +84,13 @@ describe('EmailService', () => {
     mockSend.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'Invalid `to` field.' } });
     const { service, logger } = buildEmailService('re_test_key');
 
-    await service.sendEmailVerificationEmail(RECIPIENT, 'verify-token-abc123', 24);
+    const error = await service.sendEmailVerificationEmail(RECIPIENT, 'verify-token-abc123', 24).catch((e: Error) => e);
 
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({ html: expect.stringContaining('verify-token-abc123') }),
+      { idempotencyKey: undefined },
     );
+    expect((error as Error).message).not.toContain('verify-token-abc123');
     expect(allLogLines(logger)).not.toContain('verify-token-abc123');
   });
 

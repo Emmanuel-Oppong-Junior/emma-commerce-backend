@@ -4,7 +4,6 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { ListedTransaction, PaystackClient } from '../../src/payment/paystack.client';
 import { PaymentReconciliationService } from '../../src/payment/payment-reconciliation.service';
-import { NotificationsService } from '../../src/notifications/notifications.service';
 import { LoggerService } from '../../src/commons/logger.service';
 import { createTestApp } from '../helpers/app.helper';
 import { clearPaymentLedger, resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
@@ -57,7 +56,6 @@ describe('Payment reconciliation (e2e)', () => {
   beforeAll(async () => {
     ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
     reconciliation = app.get(PaymentReconciliationService);
-    jest.spyOn(app.get(NotificationsService), 'sendPaymentConfirmation').mockReturnValue();
     loggedErrors = jest.spyOn(app.get(LoggerService), 'error');
     await resetDb(prisma);
     await seedMinimal(prisma);

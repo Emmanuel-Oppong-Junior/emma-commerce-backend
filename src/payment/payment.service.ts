@@ -12,7 +12,6 @@ import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
-import { NotificationsService } from '../notifications/notifications.service';
 import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
 import { decideVerification, isSettled, parseProviderVerification } from './payment-verification';
 import { assertCodCollectable } from './cash-on-delivery';
@@ -27,7 +26,6 @@ export class PaymentService {
     private readonly paymentRepository: PaymentRepository,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
-    private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
     private readonly paystack: PaystackClient,
     private readonly storeService: StoreService,
@@ -278,32 +276,12 @@ export class PaymentService {
     );
 
     const { outcome, attempt } = settled;
-    if (outcome.kind === 'paid') {
-      this.sendPaymentConfirmationEmail(attempt.orderId, attempt.amount.toFixed(2));
-    } else if (outcome.kind === 'review') {
+    if (outcome.kind === 'review') {
       this.logger.warn(
         `Payment needs review, order left unchanged and refund queued | reason: ${outcome.reason} | orderId: ${attempt.orderId} | paymentId: ${attempt.id} | refundId: ${settled.refundId} | provider amount: ${verified.amount} ${verified.currency}`,
         'PaymentService',
       );
     }
     return attempt;
-  }
-
-  // Sent only on the PENDING -> PROCESSING transition, so repeat webhooks and re-verifies do not email twice.
-  private sendPaymentConfirmationEmail(orderId: string, amount: string): void {
-    this.paymentRepository
-      .findOrderWithUser(orderId)
-      .then((order) => {
-        if (order?.user.email) {
-          this.notificationsService.sendPaymentConfirmation(order.user.email, orderId, amount);
-        }
-      })
-      .catch((error: unknown) => {
-        this.logger.error(
-          `Could not send payment confirmation email | orderId: ${orderId}`,
-          error instanceof Error ? error.message : String(error),
-          'PaymentService',
-        );
-      });
   }
 }

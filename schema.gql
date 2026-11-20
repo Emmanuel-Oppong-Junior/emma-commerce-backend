@@ -620,6 +620,26 @@ enum DiscountTypeEnum {
   PERCENTAGE
 }
 
+"""
+A background job that failed its last attempt. Job data is never exposed.
+"""
+type FailedJob {
+  attemptsMade: Int!
+  createdAt: DateTime!
+  failedAt: DateTime
+
+  """Last error, with email addresses masked"""
+  failedReason: String!
+  id: ID!
+  maxAttempts: Int!
+
+  """
+  Job name: an outbox event type (order.placed.v1), an email or a maintenance job
+  """
+  name: String!
+  queue: JobQueue!
+}
+
 input ForgotPasswordInput {
   email: String!
 }
@@ -672,6 +692,13 @@ type InventoryLogEntity {
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
 scalar JSON
+
+"""Background job queues run by the worker"""
+enum JobQueue {
+  MAINTENANCE
+  NOTIFICATIONS
+  WEBHOOKS
+}
 
 input ModifyDiscountItemsInput {
   """Category IDs to add or remove"""
@@ -884,6 +911,11 @@ type Mutation {
   restockVariant(input: RestockVariantInput!): InventoryLogEntity!
   restorePayment(id: String!): Payment!
   restoreProduct(productId: String!): Product!
+
+  """
+  Send a failed job back to the queue with its attempts reset (super admin only; audited)
+  """
+  retryFailedJob(jobId: ID!, queue: JobQueue!): FailedJob!
 
   """Sign in an existing user with email and password"""
   signIn(input: SignInInput!): AuthEntity!
@@ -1379,6 +1411,15 @@ type Query {
   dashboardSummary: DashboardSummary!
   discount(id: ID!): Discount!
   discounts: [Discount!]!
+
+  """
+  Background jobs of one queue that failed their last attempt, newest first (super admin only; audited)
+  """
+  failedJobs(
+    """How many to return, 1 to 100"""
+    first: Int! = 20
+    queue: JobQueue!
+  ): [FailedJob!]!
   getMyPayments: [Payment!]!
 
   """Get the shipping fee for a saved address"""
