@@ -106,7 +106,7 @@ Mutation updateSubCategory               permission: catalog.taxonomy.write
 Mutation updateTag                       permission: catalog.taxonomy.write
 Mutation updateTax                       permission: tax.manage; step-up
 Mutation updateUser                      permission: user.manage
-Mutation updateVariant                   permission: catalog.product.write; step-up when input.price is set
+Mutation updateVariant                   permission: catalog.product.write; step-up when input.basePrice is set
 Mutation validateCoupon                  authenticated
 Mutation verifyEmail                     public
 Mutation verifyPayment                   customer only
@@ -144,7 +144,6 @@ Query productReviews                     authenticated
 Query products                           public
 Query productType                        public
 Query productTypes                       public
-Query productVariants                    authenticated
 Query refunds                            permission: payment.view
 Query returnRequests                     permission: return.manage
 Query revenueByCategory                  permission: report.view
@@ -171,9 +170,9 @@ Query userOrders                         authenticated
 Query userProfile                        authenticated
 Query userReviews                        authenticated
 Query users                              permission: user.view
-Query variant                            authenticated
+Query variant                            permission: catalog.product.read
 Query variantInventoryLogs               permission: inventory.view
-Query variants                           authenticated
+Query variants                           permission: catalog.product.read
 Query viewOrder                          permission: order.view
 Query wishlist                           authenticated
 REST GET /                               authenticated

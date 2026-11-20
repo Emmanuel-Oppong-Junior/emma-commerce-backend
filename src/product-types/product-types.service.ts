@@ -4,6 +4,7 @@ import { AuditService, fieldChanges, fieldValues } from '../commons/audit.servic
 import { ProductTypesRepository, ProductTypeWithAttributes } from './product-types.repository';
 import { CreateProductTypeInput, UpdateProductTypeInput } from './dto/product-type.input';
 import { AttributeDefinitionInput, UpdateAttributeDefinitionInput } from './dto/attribute-definition.input';
+import { AttributeRule, checkAttributeRule } from './domain/attribute-validation';
 
 const AUDITED_TYPE_FIELDS = [
   'key',
@@ -23,18 +24,28 @@ const AUDITED_ATTRIBUTE_FIELDS = [
   'position',
 ] as const satisfies readonly (keyof AttributeDefinition)[];
 
+function ensureCoherent(rule: AttributeRule): void {
+  const problems = checkAttributeRule(rule);
+  if (problems.length) {
+    const messages = problems.map((problem) => problem.message).join('; ');
+    throw new BadRequestException(`Invalid attribute definition "${rule.key}": ${messages}`);
+  }
+}
+
 function attributeData(input: AttributeDefinitionInput) {
-  return {
+  const data = {
     key: input.key,
     label: input.label,
     dataType: input.dataType,
     unit: input.unit ?? null,
     isRequired: input.isRequired,
-    allowedValues: input.allowedValues ?? [],
+    allowedValues: (input.allowedValues ?? []).map((value) => value.trim()),
     isVariantAxis: input.isVariantAxis,
     isFilterable: input.isFilterable,
     position: input.position,
   };
+  ensureCoherent(data);
+  return data;
 }
 
 @Injectable()
@@ -61,6 +72,7 @@ export class ProductTypesService {
     if (duplicates.length) {
       throw new BadRequestException(`Attribute keys must be unique; repeated: ${[...new Set(duplicates)].join(', ')}`);
     }
+    const attributeRows = attributes.map(attributeData);
     return this.auditService.record(
       (tx) =>
         this.repository.create(
@@ -68,7 +80,7 @@ export class ProductTypesService {
             key: input.key,
             name: input.name,
             description: input.description ?? null,
-            attributes: { create: attributes.map(attributeData) },
+            attributes: { create: attributeRows },
           },
           tx,
         ),
@@ -121,11 +133,12 @@ export class ProductTypesService {
     actorId: string,
   ): Promise<ProductTypeWithAttributes> {
     await this.findEditable(productTypeId);
+    const data = attributeData(input);
     if (input.isRequired) await this.ensureUnused(productTypeId, 'given a required attribute');
     return this.auditService
       .record(
         async (tx) => {
-          const created = await this.repository.createAttribute({ ...attributeData(input), productTypeId }, tx);
+          const created = await this.repository.createAttribute({ ...data, productTypeId }, tx);
           return { created, productType: (await this.repository.findById(productTypeId, tx))! };
         },
         ({ created }) => ({
@@ -150,7 +163,13 @@ export class ProductTypesService {
   ): Promise<ProductTypeWithAttributes> {
     const existing = await this.findAttribute(attributeId);
     await this.findEditable(existing.productTypeId);
-    const narrowing = this.narrowingChanges(existing, input);
+    const allowedValues = input.allowedValues?.map((value) => value.trim());
+    ensureCoherent({
+      ...existing,
+      unit: input.unit ?? existing.unit,
+      allowedValues: allowedValues ?? existing.allowedValues,
+    });
+    const narrowing = this.narrowingChanges(existing, { ...input, allowedValues });
     if (narrowing.length) await this.ensureUnused(existing.productTypeId, `changed this way (${narrowing.join(', ')})`);
     return this.auditService
       .record(
@@ -161,7 +180,7 @@ export class ProductTypesService {
               label: input.label,
               unit: input.unit,
               isRequired: input.isRequired,
-              allowedValues: input.allowedValues,
+              allowedValues,
               isFilterable: input.isFilterable,
               position: input.position,
             },

@@ -9,12 +9,6 @@ export class Variant {
   @Field(() => ID)
   id: string;
 
-  @Field({ nullable: true })
-  size?: string;
-
-  @Field({ nullable: true })
-  color?: string;
-
   @Field(() => String, { nullable: true, description: 'Stock keeping unit code' })
   sku?: string | null;
 

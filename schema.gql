@@ -448,6 +448,11 @@ input CreateProductInput {
   """URLs to downloadable attachments or spec sheets"""
   attachments: [String!]
 
+  """
+  Values for the product type's non-axis attributes, e.g. { "material": "Cotton" }
+  """
+  attributes: JSONObject
+
   """Barcode (EAN, UPC, GTIN, etc.)"""
   barcode: String
 
@@ -492,6 +497,9 @@ input CreateProductInput {
 
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String!
+
+  """ID of the product type (defaults to General)"""
+  productTypeId: String
 
   """Initial stock quantity (0 or more)"""
   quantity: Int!
@@ -632,23 +640,42 @@ input CreateUserInput {
 }
 
 input CreateVariantInput {
-  """Color of the variant"""
-  color: String
+  """Unique barcode (EAN, UPC, GTIN, ...)"""
+  barcode: String
 
-  """ID of the associated discount"""
+  """
+  Price before tax, e.g. "29.99"; the selling price adds tax when the product is taxable
+  """
+  basePrice: Decimal!
+
+  """ID of a discount on this variant"""
   discountId: ID
+  heightMm: Int
 
-  """Price of the variant"""
-  price: Decimal!
+  """HTTPS image shown for this variant"""
+  image: String
+  lengthMm: Int
 
-  """ID of the associated product"""
+  """Stock level that counts as low (defaults to 5)"""
+  lowStockThreshold: Int
+
+  """
+  Values for the product type's variant axes, e.g. { "size": "M", "colour": "Red" }; omit for none
+  """
+  optionValues: JSONObject
+
+  """ID of the product"""
   productId: ID!
 
-  """Quantity in stock"""
-  quantity: Float!
+  """
+  Initial stock, logged as a RESTOCK; later changes go through restock/adjust
+  """
+  quantity: Int!
 
-  """Size of the variant"""
-  size: String
+  """Unique SKU code; generated when omitted"""
+  sku: String
+  weightGrams: Int
+  widthMm: Int
 }
 
 enum Currency {
@@ -999,7 +1026,7 @@ type Mutation {
   """Create a new user with email and password"""
   createUser(createUserInput: CreateUserInput!): User!
 
-  """Creates a new variant for a product"""
+  """Creates a variant (SKU) for a product"""
   createVariant(input: CreateVariantInput!): Variant!
 
   """Restore an archived user"""
@@ -1033,7 +1060,9 @@ type Mutation {
   """Delete a tax (admin only)"""
   deleteTax(id: ID!): TaxEntity!
 
-  """Deletes a variant"""
+  """
+  Deletes a variant no cart, order or stock movement refers to (CONFLICT otherwise: archive it)
+  """
   deleteVariant(variantId: String!): Variant!
 
   """Request a password reset email"""
@@ -1220,7 +1249,7 @@ type Mutation {
   """
   updateUser(id: String!, updateUserInput: UpdateUserInput!): User!
 
-  """Updates an existing variant"""
+  """Updates a variant; isActive: false archives it"""
   updateVariant(input: UpdateVariantInput!): Variant!
 
   """Validate a coupon code before applying to order"""
@@ -1732,9 +1761,6 @@ type Query {
   """Product types and their attribute definitions, by name"""
   productTypes: [ProductType!]!
 
-  """Retrieves all variants for a product"""
-  productVariants(productId: String!): [Variant!]!
-
   """
   Public catalogue: only active, PUBLISHED products, whatever filter is sent
   """
@@ -1827,14 +1853,16 @@ type Query {
   """Fetch a paginated list of users"""
   users(filter: UserPaginateArgs!): UserConnection!
 
-  """Retrieves a specific variant by ID"""
+  """Admin: a variant by ID, archived or not"""
   variant(variantId: String!): Variant!
 
   """Get inventory logs for a variant (admin only)"""
   variantInventoryLogs(variantId: ID!): [InventoryLogEntity!]!
 
-  """Retrieves all variants (admin only)"""
-  variants: [Variant!]!
+  """
+  Admin: variants of every product, or of one, archived included, by ID (max 100 per page)
+  """
+  variants(paginationArgs: PaginationArgs, productId: ID): VariantConnection!
 
   """Retrieves a specific order by ID (admin only)"""
   viewOrder(id: String!): Order!
@@ -2344,6 +2372,11 @@ input UpdateProductInput {
   """URLs to downloadable attachments or spec sheets"""
   attachments: [String!]
 
+  """
+  Values for the product type's non-axis attributes, e.g. { "material": "Cotton" }
+  """
+  attributes: JSONObject
+
   """Barcode (EAN, UPC, GTIN, etc.)"""
   barcode: String
 
@@ -2388,6 +2421,9 @@ input UpdateProductInput {
 
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String
+
+  """ID of the product type (defaults to General)"""
+  productTypeId: String
 
   """Sold only against a prescription (defaults to false)"""
   requiresPrescription: Boolean
@@ -2516,21 +2552,38 @@ input UpdateUserInput {
 }
 
 input UpdateVariantInput {
-  """Color of the variant"""
-  color: String
+  """Unique barcode (EAN, UPC, GTIN, ...)"""
+  barcode: String
 
-  """ID of the associated discount"""
+  """
+  Price before tax, e.g. "29.99"; the selling price adds tax when the product is taxable
+  """
+  basePrice: Decimal
+
+  """ID of a discount on this variant"""
   discountId: ID
+  heightMm: Int
   id: String!
 
-  """Price of the variant"""
-  price: Decimal
+  """HTTPS image shown for this variant"""
+  image: String
 
-  """ID of the associated product"""
-  productId: ID
+  """false archives the variant: kept for history, never sold"""
+  isActive: Boolean
+  lengthMm: Int
 
-  """Size of the variant"""
-  size: String
+  """Stock level that counts as low (defaults to 5)"""
+  lowStockThreshold: Int
+
+  """
+  Values for the product type's variant axes, e.g. { "size": "M", "colour": "Red" }; omit for none
+  """
+  optionValues: JSONObject
+
+  """Unique SKU code; generated when omitted"""
+  sku: String
+  weightGrams: Int
+  widthMm: Int
 }
 
 type User {
@@ -2658,7 +2711,6 @@ type Variant {
 
   """Price before tax, as entered by an admin"""
   basePrice: Money
-  color: String
   discountId: ID
   heightMm: Int
   id: ID!
@@ -2678,12 +2730,22 @@ type Variant {
   product: Product!
   productId: ID!
   quantity: Float!
-  size: String
 
   """Stock keeping unit code"""
   sku: String
   weightGrams: Int
   widthMm: Int
+}
+
+type VariantConnection {
+  edges: [VariantEdge!]!
+  pageInfo: PageInfo!
+}
+
+type VariantEdge {
+  """Pass as paginationArgs.after to get the next page"""
+  cursor: String!
+  node: Variant!
 }
 
 input VerifyEmailInput {

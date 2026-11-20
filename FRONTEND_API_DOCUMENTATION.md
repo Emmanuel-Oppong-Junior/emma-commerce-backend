@@ -1140,96 +1140,79 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user.
 
 ### 2.8 Variants
 
-Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user. Variants cannot be put in the cart or bought yet: cart and order items reference the product only, and stock is taken from the product. Until variant checkout exists, a product with at least one variant cannot be sold at all: `addToCart` and `createOrder` reject it with `BAD_REQUEST` naming the product. Products without variants sell normally. Adding the first variant to a product takes it off sale; deleting its last variant puts it back.
+A **variant is the SKU** (ADR-0003): the unit that is priced, stocked and sold. Its option values are validated against the product type's variant axes (see [2.26](#226-product-types-and-attributes)); each active variant of a product has a different option combination (compared ignoring letter case and key order). An inactive variant is **archived**: it keeps its history and is never sold.
 
----
+**Breaking changes (P1-V.4):** `size` and `color` are gone (use `optionValues`, e.g. `{ "size": "M", "colour": "Red" }` on an Apparel product); `price` is no longer an input (send `basePrice`; `price` is computed from it, with tax added when the product is taxable); `quantity` is an `Int`; `productVariants` is removed (use `variants(productId:)`); `variant` and `variants` are admin reads (`catalog.product.read`) and `variants` is paginated; `updateVariant` no longer takes `productId` (a variant never moves to another product); `deleteVariant` refuses a variant with history.
 
-#### `variant`
-- **Type**: Query
-- **Auth Required**: Yes (any signed-in user)
-- **Args**: `variantId: String!`
-- **Response**: `Variant!` (`NOT_FOUND` if unknown)
+All variant operations need a staff permission. Customers see the active variants of published products through `Product.variants`.
 
 **`Variant` Object Type**:
 
 ```typescript
 {
   id: string;
-  size?: string;
-  color?: string;
-  quantity: Float;
-  price: Money;
   productId: string;
   product: Product;
+  sku?: string;               // unique; generated ("SKU-" + 12 hex) when not given
+  barcode?: string;           // unique
+  optionValues: JSONObject;   // e.g. { size: "M", colour: "Red" }; {} when the type has no axes
+  quantity: Int;              // stock
+  price: Money;               // selling price: basePrice, plus tax when the product is taxable
+  basePrice?: Money;          // price before tax, as entered
+  isActive: boolean;          // false = archived
+  weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
+  image?: string;             // overrides the product images for this variant
   discountId?: string;
 }
 ```
 
 ---
 
-#### `productVariants`
-- **Type**: Query
-- **Auth Required**: Yes (any signed-in user)
-- **Args**: `productId: String!`
-- **Response**: `[Variant!]!`
-
----
+#### `variant`
+- **Type**: Query · **Auth**: `catalog.product.read`
+- **Args**: `variantId: String!`
+- **Response**: `Variant!` (archived ones too) · **Errors**: `NOT_FOUND`, `FORBIDDEN`
 
 #### `variants`
-- **Type**: Query
-- **Auth Required**: Yes (any signed-in user; the schema description says "admin only", but `USER` is allowed)
-- **Response**: `[Variant!]!`, all variants
+- **Type**: Query · **Auth**: `catalog.product.read`
+- **Args**: `paginationArgs?: PaginationArgs` (`first` 1-100, default 12; `after` = a cursor), `productId?: ID`
+- **Response**: `VariantConnection!` = `{ edges: { cursor: string; node: Variant }[]; pageInfo: PageInfo }`, ordered by id, archived included
 
 ---
 
-#### `createVariant` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
+#### `createVariant`
+- **Type**: Mutation · **Auth**: `catalog.product.write`
 - **Args**: `input: CreateVariantInput!`
 - **Response**: `Variant!`
 
-**Input: `CreateVariantInput`**
-
 ```typescript
 {
-  productId: string;   // Required.
-  price: Decimal;        // Required. Min 0.
-  quantity: Float;     // Required. Min 0 (initial stock).
-  size?: string;
-  color?: string;
-  discountId?: string;
+  productId: ID;              // Required
+  optionValues?: JSONObject;  // validated against the product type's variant axes
+  basePrice: Decimal;         // Required, >= 0, at most 2 decimals
+  quantity: Int;              // Required, 0-1,000,000: the initial stock, logged as a RESTOCK ("Initial stock")
+  sku?: string;               // 1-50 letters, digits, hyphens; unique (case-insensitive)
+  barcode?: string;           // 1-100 chars; unique
+  weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
+  image?: string;             // HTTPS URL
+  lowStockThreshold?: Int;    // default 5
+  discountId?: ID;
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (product).
+- **Side effects**: audit entry (entity `Variant`, `CREATE`); inventory log for the initial stock.
+- **Possible Errors**: `NOT_FOUND` (product, discount), `BAD_REQUEST` (option values invalid for the type: the message lists each problem, e.g. `Invalid option values for product type "apparel": flavour is not an attribute of this product type`), `CONFLICT` (an active variant already has these options; SKU or barcode taken), `BAD_USER_INPUT`.
 
----
+#### `updateVariant`
+- **Type**: Mutation · **Auth**: `catalog.product.write`; step-up when `basePrice` is sent
+- **Args**: `input: UpdateVariantInput!` = every `CreateVariantInput` field except `productId` and `quantity`, all optional, plus `id: string` (required) and `isActive?: boolean` (`false` archives; `true` restores if no active variant has the same options)
+- Sending `quantity` or `productId` is a schema error. Change stock with `restockVariant` / `adjustVariantStock`.
+- **Possible Errors**: as `createVariant`.
 
-#### `updateVariant` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `input: UpdateVariantInput!`
-- **Response**: `Variant!`
-
-**Input: `UpdateVariantInput`**
-
-```typescript
-{
-  id: string;          // Required. Variant to update.
-  price?: Decimal;
-  size?: string;
-  color?: string;
-  productId?: string;
-  discountId?: string;
-}
-```
-
-There is no `quantity` (sending it is a schema error, HTTP 400). Change stock with `restockVariant` or `adjustVariantStock`.
-
----
-
-#### `deleteVariant` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `variantId: String!`
-- **Response**: `Variant!`
+#### `deleteVariant`
+- **Type**: Mutation · **Auth**: `catalog.product.write`
+- **Args**: `variantId: String!` · **Response**: `Variant!`
+- Refused with `CONFLICT` when any order line, cart line or stock movement references the variant ("... archive it (isActive: false) instead of deleting it"), and when it is the product's only variant.
 
 ---
 
@@ -2955,6 +2938,8 @@ Two **system types** exist and are read-only: **General** (`id: "product_type_ge
 - **Possible Errors**: `NOT_FOUND` (unknown id).
 
 `Product.productType` and `Product.productTypeId` return the same type for a product.
+
+**Setting a product's type and attributes:** `createProduct` and `updateProduct` take `productTypeId?: string` (default General) and `attributes?: JSONObject`. Attributes are checked against the type's non-axis definitions and stored normalised: TEXT is trimmed and matched case-insensitively to an allowed value; NUMBER takes a number, a decimal string or `{ value, unit }` in the definition's unit and is stored as a number; BOOLEAN takes `true`/`false` (or those strings). Unknown keys, variant axes, missing required attributes and wrong types are refused with `BAD_REQUEST` listing every problem, e.g. `Invalid attributes for product type "phone": warranty_months must be a number of months`. `updateProduct` replaces the whole map when `attributes` is sent; changing `productTypeId` re-checks the attributes and every variant's option values against the new type (`BAD_REQUEST` naming the variant that does not fit).
 
 #### `createProductType`
 - **Type**: Mutation · **Auth**: `catalog.taxonomy.write`

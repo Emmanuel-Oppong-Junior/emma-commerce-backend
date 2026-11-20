@@ -14,6 +14,7 @@ import { ProductStatusEnum } from './enums/product.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 import { Decimal } from '@prisma/client/runtime/client';
+import { ProductTypesRepository } from '../product-types/product-types.repository';
 
 const mockProductsRepository = {
   create: jest.fn(),
@@ -36,6 +37,8 @@ const mockTaxService = {
 };
 
 const mockAuditService = createAuditServiceMock();
+const generalType = { id: 'product_type_general', key: 'general', attributes: [] };
+const mockProductTypesRepository = { findById: jest.fn() };
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -48,12 +51,14 @@ describe('ProductsService', () => {
         { provide: ProductsRepository, useValue: mockProductsRepository },
         { provide: TaxService, useValue: mockTaxService },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: ProductTypesRepository, useValue: mockProductTypesRepository },
       ],
     }).compile();
 
     service = module.get<ProductsService>(ProductsService);
     productsRepository = module.get<ProductsRepository>(ProductsRepository) as jest.Mocked<ProductsRepository>;
     jest.clearAllMocks();
+    mockProductTypesRepository.findById.mockResolvedValue(generalType);
   });
 
   describe('create', () => {
@@ -81,7 +86,13 @@ describe('ProductsService', () => {
       expect(productsRepository.findCategoryById).toHaveBeenCalledWith('cat1');
       expect(productsRepository.findSubCategoryById).toHaveBeenCalledWith('sub1');
       expect(productsRepository.create).toHaveBeenCalledWith(
-        { ...input, basePrice: '19.99', price: '19.99' },
+        {
+          ...input,
+          basePrice: '19.99',
+          price: '19.99',
+          productType: { connect: { id: 'product_type_general' } },
+          attributes: {},
+        },
         { category: true, subcategory: true },
         AUDIT_TX,
       );
@@ -604,6 +615,116 @@ describe('ProductsService', () => {
       mockProductsRepository.findById.mockResolvedValue(null);
 
       await expect(service.update('prod999', { name: 'x' }, 'admin1')).rejects.toThrow(NotFoundException);
+      expect(mockAuditService.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('product type and attributes', () => {
+    const at = new Date('2026-11-20T00:00:00.000Z');
+    const def = (key: string, extra: Record<string, unknown> = {}) => ({
+      id: key,
+      productTypeId: 'type-phone',
+      key,
+      label: key,
+      dataType: 'TEXT',
+      unit: null,
+      isRequired: false,
+      allowedValues: [],
+      isVariantAxis: false,
+      isFilterable: false,
+      position: 0,
+      createdAt: at,
+      updatedAt: at,
+      ...extra,
+    });
+    const phoneType = {
+      id: 'type-phone',
+      key: 'phone',
+      attributes: [
+        def('warranty', { dataType: 'NUMBER', unit: 'months', isRequired: true }),
+        def('colour', { isVariantAxis: true }),
+      ],
+    };
+    const existing = {
+      id: 'prod1',
+      name: 'Phone',
+      productTypeId: 'product_type_general',
+      attributes: {},
+      isTaxable: false,
+    };
+
+    beforeEach(() => {
+      mockProductsRepository.findFirst.mockResolvedValue(null);
+      mockProductsRepository.findById.mockResolvedValue(existing);
+      mockProductsRepository.update.mockImplementation(async (id, data) => ({ ...existing, ...data }));
+      mockProductTypesRepository.findById.mockImplementation(async (id: string) =>
+        id === 'type-phone' ? phoneType : id === 'product_type_general' ? generalType : null,
+      );
+      Object.assign(mockProductsRepository, { findVariantOptions: jest.fn(), updateVariantOptions: jest.fn() });
+    });
+
+    const base: CreateProductInput = {
+      name: 'Phone',
+      basePrice: new Decimal('10'),
+      isTaxable: false,
+      quantity: 1,
+      isActive: true,
+    };
+
+    it('validates attributes against the chosen type and stores them normalised', async () => {
+      mockProductsRepository.create.mockResolvedValue({ id: 'p' });
+
+      await service.create({ ...base, productTypeId: 'type-phone', attributes: { warranty: '12' } }, 'admin1');
+
+      expect(productsRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ productType: { connect: { id: 'type-phone' } }, attributes: { warranty: 12 } }),
+        expect.anything(),
+        AUDIT_TX,
+      );
+    });
+
+    it('rejects invalid attributes before writing', async () => {
+      await expect(
+        service.create({ ...base, productTypeId: 'type-phone', attributes: { colour: 'Red' } }, 'admin1'),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Invalid attributes for product type "phone": colour is a variant option; set it on each variant; warranty is required',
+        ),
+      );
+      expect(productsRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown product type with NOT_FOUND', async () => {
+      await expect(service.create({ ...base, productTypeId: 'nope' }, 'admin1')).rejects.toThrow(
+        new NotFoundException('Product type "nope" not found'),
+      );
+    });
+
+    it('changes type only when every variant fits it, re-normalising their options in the same transaction', async () => {
+      const findVariantOptions = (mockProductsRepository as unknown as Record<string, jest.Mock>).findVariantOptions;
+      findVariantOptions.mockResolvedValue([{ id: 'v1', optionValues: {} }]);
+
+      await service.update('prod1', { productTypeId: 'type-phone', attributes: { warranty: 24 } }, 'admin1');
+
+      expect(
+        (mockProductsRepository as unknown as Record<string, jest.Mock>).updateVariantOptions,
+      ).toHaveBeenCalledWith({ id: 'v1', optionValues: {}, optionsKey: '' }, AUDIT_TX);
+      expect(productsRepository.update).toHaveBeenCalledWith(
+        'prod1',
+        expect.objectContaining({ productType: { connect: { id: 'type-phone' } }, attributes: { warranty: 24 } }),
+        expect.anything(),
+        AUDIT_TX,
+      );
+    });
+
+    it('refuses a type change a variant does not fit', async () => {
+      (mockProductsRepository as unknown as Record<string, jest.Mock>).findVariantOptions.mockResolvedValue([
+        { id: 'v1', optionValues: { size: 'M' } },
+      ]);
+
+      await expect(
+        service.update('prod1', { productTypeId: 'type-phone', attributes: { warranty: 24 } }, 'admin1'),
+      ).rejects.toThrow(BadRequestException);
       expect(mockAuditService.record).not.toHaveBeenCalled();
     });
   });

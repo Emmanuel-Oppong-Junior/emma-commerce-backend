@@ -25,6 +25,7 @@ import {
   UnitOfMeasureEnum,
 } from '../enums/product.enum';
 import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
+import { GraphQLJSONObject } from 'graphql-type-json';
 import { Decimal } from '@prisma/client/runtime/client';
 
 @InputType()
@@ -137,6 +138,18 @@ export class CreateProductInput {
   @Type(() => Date)
   @IsDate({ message: 'expiryDate must be a valid date' })
   expiryDate?: Date;
+
+  @Field(() => String, { nullable: true, description: 'ID of the product type (defaults to General)' })
+  @IsOptional()
+  @IsString()
+  productTypeId?: string;
+
+  @Field(() => GraphQLJSONObject, {
+    nullable: true,
+    description: 'Values for the product type\'s non-axis attributes, e.g. { "material": "Cotton" }',
+  })
+  @IsOptional()
+  attributes?: Record<string, unknown>;
 
   @Field(() => Boolean, { nullable: true, description: 'Sold only against a prescription (defaults to false)' })
   @IsOptional()

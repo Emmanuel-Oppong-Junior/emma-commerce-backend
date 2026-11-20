@@ -2,6 +2,12 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Category, Prisma, Product, SubCategory, Tag } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+export interface VariantOptions {
+  id: string;
+  optionValues: Prisma.InputJsonObject;
+  optionsKey: string;
+}
+
 @Injectable()
 export class ProductsRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -104,6 +110,17 @@ export class ProductsRepository {
 
   async findTagById(id: string): Promise<Tag | null> {
     return this.prisma.tag.findUnique({ where: { id } });
+  }
+
+  async findVariantOptions(productId: string): Promise<{ id: string; optionValues: Prisma.JsonValue }[]> {
+    return this.prisma.variant.findMany({ where: { productId }, select: { id: true, optionValues: true } });
+  }
+
+  async updateVariantOptions(variant: VariantOptions, db: Prisma.TransactionClient = this.prisma): Promise<void> {
+    await db.variant.update({
+      where: { id: variant.id },
+      data: { optionValues: variant.optionValues, optionsKey: variant.optionsKey },
+    });
   }
 
   async countCartItems(productId: string): Promise<number> {

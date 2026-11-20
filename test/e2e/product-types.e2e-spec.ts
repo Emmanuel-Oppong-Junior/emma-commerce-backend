@@ -175,4 +175,40 @@ describe('Product types and attribute definitions (e2e)', () => {
 
     expect(res.body.errors[0].extensions.code).toBe('BAD_USER_INPUT');
   });
+
+  it('rejects an incoherent definition (a unit on a TEXT attribute) as BAD_REQUEST', async () => {
+    const res = await gql(
+      'mutation { createProductType(input: { key: "phone", name: "Phone", attributes: [{ key: "colour", label: "Colour", dataType: TEXT, unit: "cm" }] }) { id } }',
+      managerToken,
+    );
+
+    expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+    expect(res.body.errors[0].message).toBe(
+      'Invalid attribute definition "colour": only NUMBER attributes have a unit',
+    );
+  });
+
+  it('validates product attributes against the type on updateProduct, normalising them', async () => {
+    const type = (await createPhoneType()).body.data.createProductType;
+    const update = (attributes: Record<string, unknown>) =>
+      gql(
+        'mutation($attributes: JSONObject) { updateProduct(productId: "seed_prod2", updateProductInput: { productTypeId: "' +
+          type.id +
+          '", attributes: $attributes }) { productType { key } attributes } }',
+        managerToken,
+        { attributes },
+      );
+
+    const invalid = await update({ warranty_months: 'twelve', storage: 64 });
+    const valid = await update({ warranty_months: { value: '12', unit: 'months' } });
+
+    expect(invalid.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+    expect(invalid.body.errors[0].message).toBe(
+      'Invalid attributes for product type "phone": warranty_months must be a number of months; storage is a variant option; set it on each variant',
+    );
+    expect(valid.body.data.updateProduct).toEqual({
+      productType: { key: 'phone' },
+      attributes: { warranty_months: 12 },
+    });
+  });
 });

@@ -1,777 +1,198 @@
 import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
-import {
-  clearDatabase,
-  createAdmin,
-  createCategory,
-  createProducts,
-  createSuperAdmin,
-  createTestApp,
-  createUser,
-  getAdminToken,
-  getSuperAdminToken,
-  getUserToken,
-  graphqlRequest,
-} from '../e2e.utils';
-import { ghs } from '../helpers/graphql.helper';
+import { createTestApp } from '../helpers/app.helper';
+import { ghs, gqlRequest } from '../helpers/graphql.helper';
+import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { signInAdmin, signInUser } from '../helpers/auth.helper';
 
-// GraphQL queries and mutations
-const GET_VARIANT = `
-  query GetVariant($variantId: String!) {
-    variant(variantId: $variantId) {
-      id
-      size
-      color
-      quantity
-      price { amount currency }
-      productId
-    }
-  }
-`;
+const VARIANT_FIELDS =
+  'id productId sku barcode optionValues quantity isActive price { amount currency } basePrice { amount }';
+const CREATE_VARIANT = `mutation($input: CreateVariantInput!) { createVariant(input: $input) { ${VARIANT_FIELDS} } }`;
+const UPDATE_VARIANT = `mutation($input: UpdateVariantInput!) { updateVariant(input: $input) { ${VARIANT_FIELDS} } }`;
+const SHIRT = 'seed_prod2';
 
-const GET_PRODUCT_VARIANTS = `
-  query GetProductVariants($productId: String!) {
-    productVariants(productId: $productId) {
-      id
-      size
-      color
-      quantity
-      price { amount currency }
-      productId
-    }
-  }
-`;
-
-const GET_ALL_VARIANTS = `
-  query GetAllVariants {
-    variants {
-      id
-      size
-      color
-      quantity
-      price { amount currency }
-      productId
-    }
-  }
-`;
-
-const CREATE_VARIANT = `
-  mutation CreateVariant($input: CreateVariantInput!) {
-    createVariant(input: $input) {
-      id
-      size
-      color
-      quantity
-      price { amount currency }
-      productId
-    }
-  }
-`;
-
-const UPDATE_VARIANT = `
-  mutation UpdateVariant($input: UpdateVariantInput!) {
-    updateVariant(input: $input) {
-      id
-      size
-      color
-      quantity
-      price { amount currency }
-      productId
-    }
-  }
-`;
-
-const DELETE_VARIANT = `
-  mutation DeleteVariant($variantId: String!) {
-    deleteVariant(variantId: $variantId) {
-      id
-      size
-      color
-      quantity
-      price { amount currency }
-      productId
-    }
-  }
-`;
-
-describe('Variant E2E Test', () => {
+describe('Variants as SKUs: admin API (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let userToken: string;
   let adminToken: string;
-  let superAdminToken: string;
-  let product1Id: string;
-  let product2Id: string;
+  let customerToken: string;
+
+  const gql = (query: string, token?: string, variables?: Record<string, unknown>) =>
+    gqlRequest(app, query, variables, token).expect(200);
+  // Variables of the wrong type fail schema validation with HTTP 400, so these helpers do not assert the status.
+  const send = (query: string, token: string, variables: Record<string, unknown>) =>
+    gqlRequest(app, query, variables, token);
+  const createVariant = (input: Record<string, unknown>, token = adminToken) =>
+    send(CREATE_VARIANT, token, { input: { productId: SHIRT, basePrice: '120.00', quantity: 5, ...input } });
 
   beforeAll(async () => {
-    const testApp = await createTestApp();
-    app = testApp.app;
-    prisma = testApp.prisma;
-
-    await app.init();
-    await clearDatabase(prisma);
-
-    await createUser(prisma);
-    userToken = await getUserToken(app);
-
-    await createAdmin(prisma);
-    adminToken = await getAdminToken(app);
-
-    await createSuperAdmin(prisma);
-    superAdminToken = await getSuperAdminToken(app);
-
-    const category = await createCategory(prisma);
-    await createProducts(prisma, category.id); // Assuming this creates products with IDs 'prod1' and 'prod2'
-    const product1 = await prisma.product.findUnique({ where: { id: 'prod1' } });
-    product1Id = product1!.id;
-    const product2 = await prisma.product.findUnique({ where: { id: 'prod2' } });
-    product2Id = product2!.id;
+    ({ app, prisma } = await createTestApp());
+    await resetDb(prisma);
+    await seedMinimal(prisma);
+    await prisma.product.update({ where: { id: SHIRT }, data: { productTypeId: 'product_type_apparel' } });
+    adminToken = await signInAdmin(app);
+    customerToken = await signInUser(app);
   });
 
-  afterAll(async () => {
-    await app.close();
+  afterEach(async () => {
+    await prisma.inventoryLog.deleteMany({ where: { productId: SHIRT } });
+    await prisma.variant.deleteMany({ where: { productId: SHIRT } });
   });
 
-  describe('User Variant Actions', () => {
-    it('should retrieve all variants', async () => {
-      await prisma.variant.create({
-        data: {
-          productId: product1Id,
-          size: 'Medium',
-          color: 'Blue',
-          quantity: 10,
-          price: 29.99,
-        },
-      });
+  afterAll(() => app.close());
 
-      const response = await graphqlRequest(app, GET_ALL_VARIANTS)
-        .set('Authorization', `Bearer ${userToken}`)
-        .expect(200);
+  it('creates a variant with validated options, a generated SKU, its price and a logged initial stock', async () => {
+    const res = await createVariant({ optionValues: { size: ' m ', colour: 'Red' }, barcode: '600123' });
 
-      expect(response.body.data.variants).toBeInstanceOf(Array);
-      expect(response.body.data.variants.length).toBeGreaterThan(0);
-      expect(response.body.data.variants).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            productId: product1Id,
-            size: 'Medium',
-            color: 'Blue',
-            quantity: 10,
-            price: ghs('29.99'),
-          }),
-        ]),
-      );
+    expect(res.body.errors).toBeUndefined();
+    const variant = res.body.data.createVariant;
+    expect(variant).toMatchObject({
+      productId: SHIRT,
+      optionValues: { size: 'm', colour: 'Red' },
+      quantity: 5,
+      isActive: true,
+      barcode: '600123',
+      price: ghs('120.00'),
+      basePrice: { amount: '120.00' },
     });
-
-    it('should retrieve variants for a specific product', async () => {
-      await prisma.variant.create({
-        data: {
-          productId: product1Id,
-          size: 'Large',
-          color: 'Red',
-          quantity: 5,
-          price: 34.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, GET_PRODUCT_VARIANTS, { productId: product1Id })
-        .set('Authorization', `Bearer ${userToken}`)
-        .expect(200);
-
-      expect(response.body.data.productVariants).toBeInstanceOf(Array);
-      expect(response.body.data.productVariants.length).toBeGreaterThan(0);
-      expect(response.body.data.productVariants).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            productId: product1Id,
-            size: 'Large',
-            color: 'Red',
-            quantity: 5,
-            price: ghs('34.99'),
-          }),
-        ]),
-      );
-    });
-
-    it('should retrieve a specific variant by ID', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product1Id,
-          size: 'Small',
-          color: 'Green',
-          quantity: 8,
-          price: 24.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, GET_VARIANT, { variantId: variant.id })
-        .set('Authorization', `Bearer ${userToken}`)
-        .expect(200);
-
-      expect(response.body.data.variant).toMatchObject({
-        id: variant.id,
-        productId: product1Id,
-        size: 'Small',
-        color: 'Green',
-        quantity: 8,
-        price: ghs('24.99'),
-      });
-    });
-
-    it('should not allow creating a variant', async () => {
-      const createVariantInput = {
-        productId: product1Id,
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-        price: '39.99',
-      };
-
-      const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
-        .set('Authorization', `Bearer ${userToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Forbidden');
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findFirst({
-        where: { productId: product1Id, size: 'Medium', color: 'Black' },
-      });
-      expect(variantInDb).toBeNull();
-    });
-
-    it('should not allow updating a variant', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product1Id,
-          size: 'Large',
-          color: 'White',
-          quantity: 20,
-          price: 49.99,
-        },
-      });
-
-      const updateVariantInput = {
-        id: variant.id,
-        size: 'Large',
-        color: 'White',
-        price: '59.99',
-      };
-
-      const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
-        .set('Authorization', `Bearer ${userToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Forbidden');
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findUnique({
-        where: { id: variant.id },
-      });
-      expect(variantInDb!.quantity).toBe(20);
-    });
-
-    it('should not allow deleting a variant', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product1Id,
-          size: 'Small',
-          color: 'Yellow',
-          quantity: 12,
-          price: 19.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, DELETE_VARIANT, { variantId: variant.id })
-        .set('Authorization', `Bearer ${userToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Forbidden');
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findUnique({
-        where: { id: variant.id },
-      });
-      expect(variantInDb).not.toBeNull();
-    });
+    expect(variant.sku).toMatch(/^SKU-[0-9A-F]{12}$/);
+    expect(await prisma.inventoryLog.findMany({ where: { variantId: variant.id } })).toEqual([
+      expect.objectContaining({ action: 'RESTOCK', quantityChange: 5, quantityAfter: 5, reason: 'Initial stock' }),
+    ]);
   });
 
-  describe('Admin Variant Actions', () => {
-    it('should retrieve all variants', async () => {
-      await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Medium',
-          color: 'Blue',
-          quantity: 15,
-          price: 29.99,
-        },
-      });
+  it('adds tax to a taxable product variant price (VAR-08)', async () => {
+    await prisma.tax.create({ data: { name: 'VAT test', rate: '0.15' } });
+    await prisma.product.update({ where: { id: SHIRT }, data: { isTaxable: true } });
+    try {
+      const res = await createVariant({ optionValues: { size: 'S' }, basePrice: '100.00' });
 
-      const response = await graphqlRequest(app, GET_ALL_VARIANTS)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.data.variants).toBeInstanceOf(Array);
-      expect(response.body.data.variants.length).toBeGreaterThan(0);
-      expect(response.body.data.variants).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            productId: product2Id,
-            size: 'Medium',
-            color: 'Blue',
-            quantity: 15,
-            price: ghs('29.99'),
-          }),
-        ]),
-      );
-    });
-
-    it('should retrieve variants for a specific product', async () => {
-      await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Large',
-          color: 'Red',
-          quantity: 10,
-          price: 34.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, GET_PRODUCT_VARIANTS, { productId: product2Id })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.data.productVariants).toBeInstanceOf(Array);
-      expect(response.body.data.productVariants.length).toBeGreaterThan(0);
-      expect(response.body.data.productVariants).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            productId: product2Id,
-            size: 'Large',
-            color: 'Red',
-            quantity: 10,
-            price: ghs('34.99'),
-          }),
-        ]),
-      );
-    });
-
-    it('should retrieve a specific variant by ID', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Small',
-          color: 'Green',
-          quantity: 8,
-          price: 24.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, GET_VARIANT, { variantId: variant.id })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.data.variant).toMatchObject({
-        id: variant.id,
-        productId: product2Id,
-        size: 'Small',
-        color: 'Green',
-        quantity: 8,
-        price: ghs('24.99'),
-      });
-    });
-
-    it('should create a new variant', async () => {
-      const createVariantInput = {
-        productId: product1Id,
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-        price: '39.99',
-      };
-
-      const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.data.createVariant).toBeDefined();
-      expect(response.body.data.createVariant).toMatchObject({
-        productId: product1Id,
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-        price: ghs(createVariantInput.price),
-      });
-      expect(response.body.data.createVariant.id).toBeDefined();
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findFirst({
-        where: { productId: product1Id, size: 'Medium', color: 'Black' },
-      });
-      expect(variantInDb).toBeDefined();
-    });
-
-    it('should update an existing variant', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product1Id,
-          size: 'Large',
-          color: 'White',
-          quantity: 20,
-          price: 49.99,
-        },
-      });
-
-      const updateVariantInput = {
-        id: variant.id,
-        size: 'Large',
-        color: 'White',
-        price: '59.99',
-      };
-
-      const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.data.updateVariant).toMatchObject({
-        id: variant.id,
-        productId: product1Id,
-        size: 'Large',
-        color: 'White',
-        quantity: 20,
-        price: ghs('59.99'),
-      });
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findUnique({
-        where: { id: variant.id },
-      });
-      expect(variantInDb).toMatchObject({
-        quantity: 20,
-      });
-    });
-
-    it('should delete a variant', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product1Id,
-          size: 'Small',
-          color: 'Yellow',
-          quantity: 12,
-          price: 19.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, DELETE_VARIANT, { variantId: variant.id })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.data.deleteVariant).toMatchObject({
-        id: variant.id,
-        productId: product1Id,
-        size: 'Small',
-        color: 'Yellow',
-        quantity: 12,
-        price: ghs('19.99'),
-      });
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findUnique({
-        where: { id: variant.id },
-      });
-      expect(variantInDb).toBeNull();
-    });
-
-    it('should not allow creating a variant with an invalid product ID', async () => {
-      const createVariantInput = {
-        productId: 'invalid-product-id',
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-        price: '39.99',
-      };
-
-      const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Product \"invalid-product-id\" not found');
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findFirst({
-        where: { productId: 'invalid-product-id' },
-      });
-      expect(variantInDb).toBeNull();
-    });
-
-    it('should not allow updating a non-existent variant', async () => {
-      const updateVariantInput = {
-        id: 'non-existent-variant-id',
-        size: 'Large',
-        color: 'White',
-        price: '59.99',
-      };
-
-      const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Variant \"non-existent-variant-id\" not found');
-    });
-
-    it('should not allow deleting a non-existent variant', async () => {
-      const response = await graphqlRequest(app, DELETE_VARIANT, { variantId: 'non-existent-variant-id' })
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Variant \"non-existent-variant-id\" not found');
-    });
+      expect(res.body.data.createVariant.price).toEqual(ghs('115.00'));
+    } finally {
+      await prisma.product.update({ where: { id: SHIRT }, data: { isTaxable: false } });
+      await prisma.tax.deleteMany();
+    }
   });
 
-  describe('Super Admin Variant Actions', () => {
-    it('should retrieve all variants', async () => {
-      await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Medium',
-          color: 'Green',
-          quantity: 15,
-          price: 29.99,
-        },
-      });
+  it('rejects option values the product type does not define', async () => {
+    const res = await createVariant({ optionValues: { flavour: 'Mint' } });
 
-      const response = await graphqlRequest(app, GET_ALL_VARIANTS)
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
+    expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+    expect(res.body.errors[0].message).toBe(
+      'Invalid option values for product type "apparel": flavour is not an attribute of this product type',
+    );
+  });
 
-      expect(response.body.data.variants).toBeInstanceOf(Array);
-      expect(response.body.data.variants.length).toBeGreaterThan(0);
-      expect(response.body.data.variants).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            productId: product2Id,
-            size: 'Medium',
-            color: 'Green',
-            quantity: 15,
-            price: ghs('29.99'),
-          }),
-        ]),
-      );
+  it('keeps option combinations unique per product, ignoring letter case and key order', async () => {
+    await createVariant({ optionValues: { size: 'XL', colour: 'Blue' } });
+
+    const duplicate = await createVariant({ optionValues: { colour: 'blue', size: 'xl' } });
+    const other = await createVariant({ optionValues: { size: 'XL', colour: 'Green' } });
+
+    expect(duplicate.body.errors[0].extensions.code).toBe('CONFLICT');
+    expect(other.body.errors).toBeUndefined();
+  });
+
+  it('refuses a fractional or oversized quantity and a malformed price as bad input (VAR-06)', async () => {
+    const fractional = await send(
+      `mutation { createVariant(input: { productId: "${SHIRT}", basePrice: "1.00", quantity: 1.5 }) { id } }`,
+      adminToken,
+      {},
+    );
+    const huge = await createVariant({ optionValues: { size: 'S' }, quantity: 10_000_000 });
+    const price = await createVariant({ optionValues: { size: 'S' }, basePrice: '19.999' });
+
+    expect(fractional.status).toBe(400);
+    expect(fractional.body.errors[0].message).toBe('Int cannot represent non-integer value: 1.5');
+    expect(huge.body.errors[0].extensions.code).toBe('BAD_USER_INPUT');
+    expect(price.body.errors[0].extensions.code).toBe('BAD_USER_INPUT');
+    expect(await prisma.variant.count({ where: { productId: SHIRT } })).toBe(0);
+  });
+
+  it('refuses a variant for an unknown product with NOT_FOUND', async () => {
+    const res = await gql(CREATE_VARIANT, adminToken, { input: { productId: 'nope', basePrice: '1.00', quantity: 0 } });
+
+    expect(res.body.errors[0].extensions.code).toBe('NOT_FOUND');
+  });
+
+  it('updates options and base price but never stock or the product', async () => {
+    const { id } = (await createVariant({ optionValues: { size: 'M' } })).body.data.createVariant;
+
+    const res = await gql(UPDATE_VARIANT, adminToken, {
+      input: { id, optionValues: { size: 'L' }, basePrice: '99.50' },
     });
+    const moved = await send(
+      `mutation { updateVariant(input: { id: "${id}", productId: "seed_prod1" }) { id } }`,
+      adminToken,
+      {},
+    );
+    const restocked = await send(
+      `mutation { updateVariant(input: { id: "${id}", quantity: 999 }) { id } }`,
+      adminToken,
+      {},
+    );
 
-    it('should retrieve variants for a specific product', async () => {
-      await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Large',
-          color: 'Blue',
-          quantity: 10,
-          price: 34.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, GET_PRODUCT_VARIANTS, { productId: product2Id })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
-
-      expect(response.body.data.productVariants).toBeInstanceOf(Array);
-      expect(response.body.data.productVariants.length).toBeGreaterThan(0);
-      expect(response.body.data.productVariants).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            productId: product2Id,
-            size: 'Large',
-            color: 'Blue',
-            quantity: 10,
-            price: ghs('34.99'),
-          }),
-        ]),
-      );
+    expect(res.body.data.updateVariant).toMatchObject({
+      optionValues: { size: 'L' },
+      price: ghs('99.50'),
+      quantity: 5,
     });
+    expect(moved.status).toBe(400);
+    expect(moved.body.errors[0].message).toMatch(/productId/);
+    expect(restocked.status).toBe(400);
+    expect(restocked.body.errors[0].message).toMatch(/quantity/);
+    expect(await prisma.variant.findUniqueOrThrow({ where: { id } })).toMatchObject({ productId: SHIRT, quantity: 5 });
+  });
 
-    it('should retrieve a specific variant by ID', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Small',
-          color: 'Red',
-          quantity: 8,
-          price: 24.99,
-        },
-      });
+  it('refuses to delete a variant with history (CONFLICT) and lets it be archived instead (VAR-07)', async () => {
+    const { id } = (await createVariant({ optionValues: { size: 'M' } })).body.data.createVariant;
+    await createVariant({ optionValues: { size: 'L' }, quantity: 0 });
 
-      const response = await graphqlRequest(app, GET_VARIANT, { variantId: variant.id })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
+    const deleted = await gql(`mutation { deleteVariant(variantId: "${id}") { id } }`, adminToken);
+    const archived = await gql(UPDATE_VARIANT, adminToken, { input: { id, isActive: false } });
+    const recreated = await createVariant({ optionValues: { size: 'M' } });
 
-      expect(response.body.data.variant).toMatchObject({
-        id: variant.id,
-        productId: product2Id,
-        size: 'Small',
-        color: 'Red',
-        quantity: 8,
-        price: ghs('24.99'),
-      });
-    });
+    expect(deleted.body.errors[0].extensions.code).toBe('CONFLICT');
+    expect(deleted.body.errors[0].message).toContain('archive it (isActive: false) instead of deleting it');
+    expect(archived.body.data.updateVariant.isActive).toBe(false);
+    expect(recreated.body.errors).toBeUndefined();
+  });
 
-    it('should create a new variant', async () => {
-      const createVariantInput = {
-        productId: product2Id,
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-        price: '39.99',
-      };
+  it('deletes a variant nothing refers to', async () => {
+    await createVariant({ optionValues: { size: 'M' } });
+    const { id } = (await createVariant({ optionValues: { size: 'L' }, quantity: 0 })).body.data.createVariant;
 
-      const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
+    const res = await gql(`mutation { deleteVariant(variantId: "${id}") { id } }`, adminToken);
 
-      expect(response.body.data.createVariant).toBeDefined();
-      expect(response.body.data.createVariant).toMatchObject({
-        productId: product2Id,
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-        price: ghs('39.99'),
-      });
-      expect(response.body.data.createVariant.id).toBeDefined();
+    expect(res.body.data.deleteVariant).toEqual({ id });
+    const audit = await prisma.auditLog.findFirst({ where: { entity: 'Variant', entityId: id, action: 'DELETE' } });
+    expect(audit).not.toBeNull();
+  });
 
-      // Verify in database
-      const variantInDb = await prisma.variant.findFirst({
-        where: { productId: product2Id, size: 'Medium', color: 'Black' },
-      });
-      expect(variantInDb).toMatchObject({
-        productId: product2Id,
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-      });
-    });
+  it('lists variants to admins only, paginated and filterable by product (VAR-03, VAR-09)', async () => {
+    for (const size of ['S', 'M', 'L']) await createVariant({ optionValues: { size } });
 
-    it('should update an existing variant', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Large',
-          color: 'White',
-          quantity: 20,
-          price: 49.99,
-        },
-      });
+    const first = await gql(
+      `{ variants(productId: "${SHIRT}", paginationArgs: { first: 2 }) { edges { cursor node { id } } pageInfo { hasNextPage totalCount } } }`,
+      adminToken,
+    );
+    const after = first.body.data.variants.edges[1].cursor;
+    const second = await gql(
+      `{ variants(productId: "${SHIRT}", paginationArgs: { first: 2, after: "${after}" }) { edges { node { id } } pageInfo { hasNextPage } } }`,
+      adminToken,
+    );
+    const customerList = await gql('{ variants { edges { node { id } } } }', customerToken);
+    const customerOne = await gql(`{ variant(variantId: "${after}") { id } }`, customerToken);
 
-      const updateVariantInput = {
-        id: variant.id,
-        size: 'Large',
-        color: 'White',
-        price: '59.99',
-      };
+    expect(first.body.data.variants.pageInfo).toEqual({ hasNextPage: true, totalCount: 3 });
+    expect(second.body.data.variants).toMatchObject({ edges: [expect.anything()], pageInfo: { hasNextPage: false } });
+    expect(customerList.body.errors[0].extensions.code).toBe('FORBIDDEN');
+    expect(customerOne.body.errors[0].extensions.code).toBe('FORBIDDEN');
+  });
 
-      const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
+  it('refuses variant writes to customers', async () => {
+    const res = await createVariant({ optionValues: { size: 'M' } }, customerToken);
 
-      expect(response.body.data.updateVariant).toMatchObject({
-        id: variant.id,
-        productId: product2Id,
-        size: 'Large',
-        color: 'White',
-        quantity: 20,
-      });
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findUnique({
-        where: { id: variant.id },
-      });
-      expect(variantInDb).toMatchObject({
-        quantity: 20,
-      });
-    });
-
-    it('should delete a variant', async () => {
-      const variant = await prisma.variant.create({
-        data: {
-          productId: product2Id,
-          size: 'Small',
-          color: 'Yellow',
-          quantity: 12,
-          price: 19.99,
-        },
-      });
-
-      const response = await graphqlRequest(app, DELETE_VARIANT, { variantId: variant.id })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
-
-      expect(response.body.data.deleteVariant).toMatchObject({
-        id: variant.id,
-        productId: product2Id,
-        size: 'Small',
-        color: 'Yellow',
-        quantity: 12,
-        price: ghs('19.99'),
-      });
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findUnique({
-        where: { id: variant.id },
-      });
-      expect(variantInDb).toBeNull();
-    });
-
-    it('should not allow creating a variant with an invalid product ID', async () => {
-      const createVariantInput = {
-        productId: 'invalid-product-id',
-        size: 'Medium',
-        color: 'Black',
-        quantity: 15,
-        price: '39.99',
-      };
-
-      const response = await graphqlRequest(app, CREATE_VARIANT, { input: createVariantInput })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Product \"invalid-product-id\" not found');
-
-      // Verify in database
-      const variantInDb = await prisma.variant.findFirst({
-        where: { productId: 'invalid-product-id' },
-      });
-      expect(variantInDb).toBeNull();
-    });
-
-    it('should not allow updating a non-existent variant', async () => {
-      const updateVariantInput = {
-        id: 'non-existent-variant-id',
-        size: 'Large',
-        color: 'White',
-        price: '59.99',
-      };
-
-      const response = await graphqlRequest(app, UPDATE_VARIANT, { input: updateVariantInput })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Variant \"non-existent-variant-id\" not found');
-    });
-
-    it('should not allow deleting a non-existent variant', async () => {
-      const response = await graphqlRequest(app, DELETE_VARIANT, { variantId: 'non-existent-variant-id' })
-        .set('Authorization', `Bearer ${superAdminToken}`)
-        .expect(200);
-
-      expect(response.body.errors).toBeDefined();
-      expect(response.body.errors[0].message).toContain('Variant \"non-existent-variant-id\" not found');
-    });
+    expect(res.body.errors[0].extensions.code).toBe('FORBIDDEN');
   });
 });

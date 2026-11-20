@@ -9,3 +9,8 @@ import { roundHalfUp } from '../commons/money/money';
 export function taxInclusivePrice(basePrice: Decimal.Value, totalRate: Prisma.Decimal): Prisma.Decimal {
   return roundHalfUp(new Prisma.Decimal(basePrice).mul(totalRate.plus(1)));
 }
+
+/** A variant's selling price: its basePrice with tax added when its product is taxable (VAR-08). */
+export function sellingPrice(basePrice: Decimal.Value, isTaxable: boolean, totalRate: Prisma.Decimal): Prisma.Decimal {
+  return isTaxable ? taxInclusivePrice(basePrice, totalRate) : roundHalfUp(basePrice);
+}

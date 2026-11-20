@@ -100,6 +100,35 @@ describe('ProductTypesService', () => {
     });
   });
 
+  it('rejects an incoherent definition before writing (attribute-validation checkAttributeRule)', async () => {
+    await expect(
+      service.create(
+        {
+          key: 'shoe',
+          name: 'Shoe',
+          attributes: [{ ...phoneStorage, key: 'colour', dataType: AttributeDataTypeEnum.TEXT }],
+        },
+        'admin-1',
+      ),
+    ).rejects.toThrow(
+      new BadRequestException('Invalid attribute definition "colour": only NUMBER attributes have a unit'),
+    );
+    await expect(service.updateAttribute('attr-storage', { allowedValues: ['64', 'lots'] }, 'admin-1')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(repository.create).not.toHaveBeenCalled();
+    expect(repository.updateAttribute).not.toHaveBeenCalled();
+  });
+
+  it('trims allowed values before storing them', async () => {
+    await service.addAttribute('type-phone', { ...phoneStorage, key: 'ram', allowedValues: [' 4 ', '8'] }, 'admin-1');
+
+    expect(repository.createAttribute).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedValues: ['4', '8'] }),
+      AUDIT_TX,
+    );
+  });
+
   describe('system types', () => {
     beforeEach(() => repository.findById.mockResolvedValue(productType({ key: 'apparel', isSystem: true })));
 

@@ -13,6 +13,15 @@ import { ProductsRepository } from './products.repository';
 import { TaxService } from '../tax/tax.service';
 import { taxInclusivePrice } from '../tax/tax-inclusive-price';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
+import { ProductTypesRepository, ProductTypeWithAttributes } from '../product-types/product-types.repository';
+import {
+  checkOptionValues,
+  checkProductAttributes,
+  describeProblems,
+} from '../product-types/domain/attribute-validation';
+import { VariantOptions } from './products.repository';
+
+export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
 
 export const PUBLIC_PRODUCT_WHERE = { isActive: true, status: 'PUBLISHED' } satisfies Prisma.ProductWhereInput;
 export const MAX_NESTED_PRODUCTS = 100;
@@ -36,6 +45,7 @@ export class ProductsService {
     private readonly productsRepository: ProductsRepository,
     private readonly taxService: TaxService,
     private readonly auditService: AuditService,
+    private readonly productTypesRepository: ProductTypesRepository,
   ) {}
 
   /**
@@ -45,12 +55,21 @@ export class ProductsService {
    */
   async create(createProductInput: CreateProductInput, actorId: string): Promise<Product> {
     await this.validateProductInput(createProductInput);
-    const { basePrice, isTaxable, ...rest } = createProductInput;
+    const { basePrice, isTaxable, productTypeId, attributes: rawAttributes, ...rest } = createProductInput;
+    const productType = await this.findProductType(productTypeId ?? GENERAL_PRODUCT_TYPE_ID);
+    const attributes = this.checkAttributes(productType, rawAttributes);
     const price = await this.computePrice(basePrice, isTaxable);
     return this.auditService.record(
       (tx) =>
         this.productsRepository.create(
-          { ...rest, basePrice: basePrice.toFixed(2), price: price.toFixed(2), isTaxable: isTaxable ?? false },
+          {
+            ...rest,
+            productType: { connect: { id: productType.id } },
+            attributes,
+            basePrice: basePrice.toFixed(2),
+            price: price.toFixed(2),
+            isTaxable: isTaxable ?? false,
+          },
           { category: true, subcategory: true },
           tx,
         ),
@@ -73,8 +92,12 @@ export class ProductsService {
     if (!existing) throw new NotFoundException('Product not found');
     await this.validateProductInput({ ...updateProductInput, id });
     const updateData = await this.buildUpdateData(existing, updateProductInput);
+    const retyped = await this.retype(existing, updateProductInput, updateData);
     return this.auditService.record(
-      (tx) => this.productsRepository.update(id, updateData, { category: true, subcategory: true }, tx),
+      async (tx) => {
+        for (const variant of retyped) await this.productsRepository.updateVariantOptions(variant, tx);
+        return this.productsRepository.update(id, updateData, { category: true, subcategory: true }, tx);
+      },
       (updated) => ({
         entity: 'Product',
         entityId: id,
@@ -201,7 +224,8 @@ export class ProductsService {
   }
 
   private async buildUpdateData(existing: Product, input: UpdateProductInput): Promise<Prisma.ProductUpdateInput> {
-    const { basePrice, isTaxable, ...rest } = input;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type and attributes are validated by retype
+    const { basePrice, isTaxable, productTypeId, attributes, ...rest } = input;
     const updateData: Prisma.ProductUpdateInput = { ...rest };
 
     if (basePrice !== undefined || isTaxable !== undefined) {
@@ -219,6 +243,49 @@ export class ProductsService {
     }
 
     return updateData;
+  }
+
+  /**
+   * Validates a new type and/or attribute map and adds them to `updateData`. A product changes type only if each of
+   * its variants' option values is valid for the new type; returns the variants with their re-normalised options.
+   */
+  private async retype(
+    existing: Product,
+    input: UpdateProductInput,
+    updateData: Prisma.ProductUpdateInput,
+  ): Promise<VariantOptions[]> {
+    if (input.productTypeId === undefined && input.attributes === undefined) return [];
+    const changesType = input.productTypeId !== undefined && input.productTypeId !== existing.productTypeId;
+    const productType = await this.findProductType(input.productTypeId ?? existing.productTypeId);
+    updateData.attributes = this.checkAttributes(productType, input.attributes ?? existing.attributes);
+    if (!changesType) return [];
+    updateData.productType = { connect: { id: productType.id } };
+    const variants = await this.productsRepository.findVariantOptions(existing.id);
+    return variants.map((variant) => {
+      const checked = checkOptionValues(productType.attributes, variant.optionValues);
+      if (!checked.ok) {
+        throw new BadRequestException(
+          `Variant "${variant.id}" does not fit product type "${productType.key}": ${describeProblems(checked.problems)}`,
+        );
+      }
+      return { id: variant.id, optionValues: checked.value.values, optionsKey: checked.value.optionsKey };
+    });
+  }
+
+  private async findProductType(id: string): Promise<ProductTypeWithAttributes> {
+    const productType = await this.productTypesRepository.findById(id);
+    if (!productType) throw new NotFoundException(`Product type "${id}" not found`);
+    return productType;
+  }
+
+  private checkAttributes(productType: ProductTypeWithAttributes, attributes: unknown): Prisma.InputJsonObject {
+    const checked = checkProductAttributes(productType.attributes, attributes);
+    if (!checked.ok) {
+      throw new BadRequestException(
+        `Invalid attributes for product type "${productType.key}": ${describeProblems(checked.problems)}`,
+      );
+    }
+    return checked.value;
   }
 
   private buildPaginationOptions({ first, after }: PaginationArgs) {
