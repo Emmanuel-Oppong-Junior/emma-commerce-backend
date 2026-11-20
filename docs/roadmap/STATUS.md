@@ -2,18 +2,16 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-19 · **Current phase:** Phase 1 — Foundations (9/33: P1-P, P1-U, P1-K.1, P1-S done); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-20 · **Current phase:** Phase 1 — Foundations (11/33: P1-P, P1-U, P1-K.1, P1-S, P1-G done); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-- **Task:** P1-G — Ghana addresses (G.1 Address model, G.2 phone E.164 + uniqueness) (M9, M13; audit ADR-01, ADR-04, USR-05)
-- **Branch:** `feat/p1-g-ghana-addresses` (agent, worktree, DB `emma_wt_addr_test`) · **State:** in progress
-- **Decisions (Emmanuel 2026-11-20):** replace in place in one `[breaking-api]` release (`state` → required `region` enum of the 16 regions, `zipCode` optional); phones Ghana-only with our own parser, stored `+233XXXXXXXXX`, no new dependency; recipient name + phone + region required on new addresses (old rows keep nulls; checkout asks to complete them)
-- **Steps:**
-  - [x] Agree the plan (decisions above)
-  - [ ] G.1 Address model + migration + validation + API ← **Next step** (agent)
-  - [ ] G.2 Phone normalisation + uniqueness
-  - [ ] Review, combined gates, merge, push, CI
-- **Uncommitted work:** none
+- none. Next: pick from **Up next**.
+
+**Last completed: P1-G Ghana addresses (2026-11-20)** (M9, M13): G.1 `850b31b` `[breaking-api]`, G.2 `a3a60fd`.
+  - G.1: migration `20261120000000_ghana_addresses`: `GhanaRegion` enum (16), Address gains `recipientName`, `phone`, `region`, `area`, `landmark`, `ghanaPostGps`, `latitude`/`longitude` `DECIMAL(9,6)`; `zipCode` nullable; `region` backfilled from `state` (case/space/hyphen/"Region"-insensitive, ambiguous values like "Brong Ahafo"/"Accra" → NULL), then `state` dropped; country "ghana"/"gh" → "GH". New addresses need region, recipient and phone; country GH only; GhanaPostGPS canonical `XX-NNN(N)-NNNN`; lat/lng together. Delivery `createOrder` and `getShippingFee` refuse a legacy address missing region/recipient/phone (BAD_REQUEST); pickup unaffected. New snapshots carry the new fields. Tested on a baseline DB with assorted `state`/country spellings.
+  - G.2: `src/commons/phone` Ghana parser → `+233` + 9 digits on every `User.phoneNumber` write path and `Address.phone`; duplicate → CONFLICT "Phone number is already in use". Migration `20261120010000_normalise_user_phone_numbers` normalises existing values and fails with counts only (no numbers) if any are unparseable or would collide; nothing changes in that case.
+  - Gates on dev: typecheck/lint/format/build clean, unit **1626/1626**, repro 21/21, audit 0 critical, `schema.gql` fresh, e2e **392/392** on node:24 fresh DB, drift 0 (a first run had one 60 s timeout in `payment-ledger` "stores a webhook event once…", untouched by P1-G; clean on rerun: watch for a repeat). Audit: ADR-01, ADR-07, ADR-09, USR-05 fixed; ADR-04 partly.
+  - Follow-ups: a missing required input sent as a variable returns INTERNAL_SERVER_ERROR (platform `status400ForVariableCoercionErrors: false`, same root as the `queryCostPlugin` follow-up); `ensureValidShippingAddress` still puts the user id in its message; `CreateOrderInput.contactPhone` not normalised to E.164; admin `users(phoneNumber)` filter is exact-match (search in `+233…` form); `test/e2e/address.e2e.spec.ts` uses the old harness without `AllExceptionsFilter`; zones still match on city text (ADR-04, `DeliveryZoneArea` later); no address label/default flag; ADR-02/03/05 open.
 
 **Last completed: P1-S Store & Money (2026-11-19)** (ADR-0001, ADR-0004): S.1 `1750f17`, S.2 `87e6746`, S.3 `3fdf84d`, S.4 `687829a` `[breaking-api]`.
   - S.1: `Store` table (single row enforced by unique + CHECK on `singleton`), migration `20261119000000_store` inserts the row and continues numbering after the highest order; the `Order_orderNumber_seq` sequence is dropped and `createOrder` takes the number with a conditional `UPDATE "Store" … RETURNING` in its transaction (order creation serialises on that row until commit; rollbacks leave gaps). Public `storeSettings`, SUPER_ADMIN-only audited `updateStoreSettings`; store currency replaces `CHARGE_CURRENCY`.
@@ -77,7 +75,7 @@
 | # | Task | Run | Blocked by |
 |---|---|---|---|
 | 1 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
-| 2 | P1-J (worker, outbox, BullMQ), P1-R (RBAC + MFA), P1-G (Ghana addresses), P1-L (observability) | ∥ lanes | J needs `@nestjs/bullmq`/`bullmq` approval; L.2 needs an error-tracking choice (Sentry or equivalent) |
+| 2 | P1-J (worker, outbox, BullMQ), P1-R (RBAC + MFA), P1-L (observability) | ∥ lanes | J needs `@nestjs/bullmq`/`bullmq` approval; L.2 needs an error-tracking choice (Sentry or equivalent) |
 | 3 | P1-V → P1-N → P1-O (SKU model, inventory ledger, order snapshots) | → sequential, riskiest | after V.1 (S.2 Money done) |
 
 ## Phase 0 progress
@@ -120,6 +118,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 - [x] ADRs: all 15 Proposed ADRs **Accepted** as recommended (Emmanuel, 2026-11-18). Still open from them: a Ghanaian tax adviser before building P2-T (ADR-0006); legal sign-off before any pharmacy deployment (ADR-0016) or marketplace (ADR-0001).
 - [ ] **Frontend, Money (P1-S, breaking):** every money field is now `Money { amount currency }` (`amount` a 2-dp string, e.g. `"480.00"`) instead of `Float`: Order `subtotal/shippingFee/totalAmount/discountTotal/finalTotal/couponDiscount`; OrderItem `originalPrice/discountAmount/priceAtOrder`; Cart `total/discountTotal/finalTotal`; CartItem `originalPrice/discountedPrice`; Product `price/basePrice/currentPrice/discountedPrice`; Variant `price`; Payment `amount`; RefundEntity `amount`; ReturnRequestEntity `refundAmount`; Coupon `minimumOrderAmount`; CouponValidation `discountAmount`; Discount `minimumPurchase`; ShippingZoneEntity `fee`; `getShippingFee`; SalesReport `grossRevenue/refunds/netRevenue/totalRevenue/itemSales/averageOrderValue`; DashboardSummary `revenueToday/grossRevenueToday/refundsToday`; TopProduct and RevenueByCategoryEntity `totalRevenue`. `Coupon.value`, `Discount.value`, `TaxEntity.rate` return a `Decimal` string. Money and rate **inputs** take `Decimal` strings (`"19.99"`, rates `"0.15"`): product `basePrice`, variant `price`, coupon `value/minimumOrderAmount`, `validateCoupon.orderTotal`, discount `value/minimumPurchase`, zone `fee`, tax `rate`, `approveReturn.refundAmount`, product filter `priceMin/priceMax`; more than 2 dp (rates 6), negative or non-numeric → BAD_USER_INPUT. Coupon amounts round half-up (15% of 4.10 = 0.62); emails show "1015.00". New `storeSettings` (public) and `updateStoreSettings` (SUPER_ADMIN). See `FRONTEND_API_DOCUMENTATION.md` → Money.
 - [ ] **Store setup (P1-S):** the migration creates the Store row with placeholder names "My Store": set legal name, trading name, TIN, VAT status and support contacts with `updateStoreSettings` after deploy. Currency is fixed at GHS through the API for now (decide later whether it should be editable once orders store their own currency).
+- [ ] **Frontend, addresses and phones (P1-G, breaking):** `Address.state` removed → `region: GhanaRegion` (AHAFO, ASHANTI, BONO, BONO_EAST, CENTRAL, EASTERN, GREATER_ACCRA, NORTH_EAST, NORTHERN, OTI, SAVANNAH, UPPER_EAST, UPPER_WEST, VOLTA, WESTERN, WESTERN_NORTH); `zipCode` now optional/nullable; `createAddress` requires `region`, `recipientName`, `phone`; new optional `area`, `landmark`, `ghanaPostGps`, `latitude`+`longitude` (together); `country` defaults to and must be GH. Phones (address and `User.phoneNumber` on `createUser`/`updateMyProfile`/`updateUser`) accept `0…`, `233…`, `+233…`, `00233…` + 9 digits and come back as `+233XXXXXXXXX`; empty → BAD_USER_INPUT; taken → CONFLICT. GhanaPostGPS returns as `XX-NNN(N)-NNNN`. Old addresses missing region/recipient/phone get BAD_REQUEST at delivery checkout and `getShippingFee`: prompt the customer to edit the address. Admin user search by phone needs the `+233…` form.
 
 ## Decisions log
 | Date | Decision | Where recorded |

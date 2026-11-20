@@ -23,7 +23,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | Phase | Done | Status |
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
-| 1 — Foundations | 9 / 33 | 🔄 in progress |
+| 1 — Foundations | 11 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **55 / 154** | |
+| **All** | **57 / 154** | |
 
 ---
 
@@ -276,10 +276,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P1-O.1** Order totals/currency/pricingVersion + line snapshots + `OrderAdjustment` + `OrderLineTax` (M8; legacy = pricingVersion 0, no invented tax)
 - [ ] **P1-O.2** Order/payment/fulfilment state machines complete (statuses `PLACED…COMPLETED`, `PAYMENT_REVIEW`, history table M4)
 
-### P1-G — Ghana addresses  🔄 in progress
+### P1-G — Ghana addresses  ✅ complete
 > Accept: Checkout works without zip code · Run: ∥ · M · 🟥
-- [ ] 🔄 **P1-G.1** Address model (region enum, city/town, area, landmark, optional GhanaPostGPS with lenient validation, recipient, phone, lat/lng; zipCode optional) (M9, ADR-01)
-- [ ] 🔄 **P1-G.2** Phone E.164 normalisation + uniqueness (M13)
+- [x] **P1-G.1** Address model (region enum, city/town, area, landmark, optional GhanaPostGPS with lenient validation, recipient, phone, lat/lng; zipCode optional) (M9, ADR-01) (`850b31b`)
+- [x] **P1-G.2** Phone E.164 normalisation + uniqueness (M13) (`a3a60fd`)
 
 ### P1-L — Observability
 > Accept: Alerts fire in staging drills · Run: ∥ · M · 🟥
