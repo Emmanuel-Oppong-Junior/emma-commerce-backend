@@ -372,9 +372,11 @@ describe('Reviews & Coupons (e2e)', () => {
           userId: 'seed_user',
           street: 'Coupon Test St',
           city: 'Accra',
-          state: 'Greater Accra',
+          recipientName: 'Test Customer',
+          phone: '+233244000000',
+          region: 'GREATER_ACCRA',
           zipCode: '00233',
-          country: 'Ghana',
+          country: 'GH',
         },
       });
       const fakeOrder = await prisma.order.create({

@@ -4,6 +4,7 @@ import { AddressesRepository } from './addresses.repository';
 import { NotFoundException } from '@nestjs/common';
 import { Address } from '../generated/prisma/client';
 import { UpdateAddressInput } from './dto/update-address.input';
+import { GhanaRegion } from './enums/ghana-region.enum';
 
 const mockAddressesRepository = {
   create: jest.fn(),
@@ -23,21 +24,29 @@ describe('AddressesService', () => {
   const fixedDate = new Date('2025-03-18T00:00:00.000Z');
   const mockAddress: Address = {
     id: 'addr1',
+    recipientName: 'Ama Mensah',
+    phone: '+233244123456',
+    region: GhanaRegion.GREATER_ACCRA,
     street: '123 Main St',
-    city: 'New York',
-    state: 'NY',
-    zipCode: '10001',
-    country: 'USA',
+    city: 'Accra',
+    area: 'Osu',
+    landmark: null,
+    ghanaPostGps: 'GA-123-4567',
+    latitude: null,
+    longitude: null,
+    zipCode: null,
+    country: 'GH',
     userId: mockUserId,
     createdAt: fixedDate,
     updatedAt: fixedDate,
   };
   const mockAddressInput = {
+    recipientName: 'Ama Mensah',
+    phone: '+233244123456',
+    region: GhanaRegion.GREATER_ACCRA,
     street: '123 Main St',
-    city: 'New York',
-    state: 'NY',
-    zipCode: '10001',
-    country: 'USA',
+    city: 'Accra',
+    country: 'GH',
   };
 
   beforeEach(async () => {
@@ -60,6 +69,16 @@ describe('AddressesService', () => {
       expect(addressesRepository.countByUser).toHaveBeenCalledWith(mockUserId);
       expect(addressesRepository.create).toHaveBeenCalledWith({ ...mockAddressInput, userId: mockUserId });
       expect(result).toEqual(mockAddress);
+    });
+
+    it('stores country GH when the input leaves it out', async () => {
+      mockAddressesRepository.countByUser.mockResolvedValue(0);
+      mockAddressesRepository.create.mockResolvedValue(mockAddress);
+      const withoutCountry = { ...mockAddressInput, country: undefined };
+
+      await service.createAddress(mockUserId, withoutCountry);
+
+      expect(addressesRepository.create).toHaveBeenCalledWith({ ...withoutCountry, country: 'GH', userId: mockUserId });
     });
 
     it('should throw BadRequestException when address limit is reached', async () => {
@@ -85,7 +104,7 @@ describe('AddressesService', () => {
       mockAddressesRepository.findById.mockResolvedValue(null);
 
       await expect(service.getAddress(mockUserId, 'addr1')).rejects.toThrow(
-        new NotFoundException(`Address "addr1" not found for user "${mockUserId}"`),
+        new NotFoundException(`Address "addr1" not found`),
       );
     });
 
@@ -93,7 +112,7 @@ describe('AddressesService', () => {
       mockAddressesRepository.findById.mockResolvedValue({ ...mockAddress, userId: 'user2' });
 
       await expect(service.getAddress(mockUserId, 'addr1')).rejects.toThrow(
-        new NotFoundException(`Address "addr1" not found for user "${mockUserId}"`),
+        new NotFoundException(`Address "addr1" not found`),
       );
     });
   });
@@ -158,7 +177,7 @@ describe('AddressesService', () => {
 
       await expect(
         service.updateAddress(mockUserId, 'addr1', { street: '456 Elm St' } as UpdateAddressInput),
-      ).rejects.toThrow(new NotFoundException(`Address "addr1" not found for user "${mockUserId}"`));
+      ).rejects.toThrow(new NotFoundException(`Address "addr1" not found`));
     });
   });
 
@@ -178,7 +197,7 @@ describe('AddressesService', () => {
       mockAddressesRepository.findById.mockResolvedValue(null);
 
       await expect(service.deleteAddress(mockUserId, 'addr1')).rejects.toThrow(
-        new NotFoundException(`Address "addr1" not found for user "${mockUserId}"`),
+        new NotFoundException(`Address "addr1" not found`),
       );
     });
   });

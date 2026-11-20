@@ -25,6 +25,8 @@ import { DiscountService } from '../discount/discount.service';
 import { priceCart } from '../discount/pricing';
 import { StoreService } from '../store/store.service';
 import { roundHalfUp } from '../commons/money/money';
+import { assertDeliverableAddress } from '../addresses/deliverable-address';
+import { toAddressSnapshot } from '../addresses/address-snapshot';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
@@ -79,6 +81,7 @@ export class OrdersService {
       throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
     }
     const address = await this.ensureValidShippingAddress(userId, params.shippingAddressId);
+    assertDeliverableAddress(address);
     const shippingFee = await this.shippingZonesService.getFeeForCity(address.city);
     const orderDetails = await this.buildOrderDetails(cart.items, userId, shippingFee, params.couponCode);
 
@@ -89,13 +92,7 @@ export class OrdersService {
       contactPhone: params.contactPhone,
       fulfillmentType: FulfillmentType.DELIVERY,
       shippingAddressId: params.shippingAddressId,
-      shippingAddressSnapshot: {
-        street: address.street,
-        city: address.city,
-        state: address.state,
-        zipCode: address.zipCode,
-        country: address.country,
-      },
+      shippingAddressSnapshot: toAddressSnapshot(address),
     });
 
     this.sendOrderConfirmationEmail(userId, order);

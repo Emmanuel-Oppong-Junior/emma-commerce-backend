@@ -63,7 +63,12 @@ export class Order {
   @Field(() => ID, { nullable: true, description: 'Set when fulfillmentType is PICKUP' })
   pickupLocationId?: string;
 
-  @Field(() => GraphQLJSON, { nullable: true, description: 'Address snapshot at time of order' })
+  @Field(() => GraphQLJSON, {
+    nullable: true,
+    description:
+      'Address at time of order: recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, ' +
+      'longitude, zipCode, country. Orders placed before Ghana addresses have state instead of the new fields.',
+  })
   shippingAddressSnapshot?: Record<string, unknown>;
 
   @Field(() => GraphQLJSON, {

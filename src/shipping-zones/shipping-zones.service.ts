@@ -5,6 +5,7 @@ import { CreateShippingZoneInput } from './dto/create-shipping-zone.input';
 import { UpdateShippingZoneInput } from './dto/update-shipping-zone.input';
 import { Decimal } from '@prisma/client/runtime/client';
 import { AddressesService } from '../addresses/addresses.service';
+import { assertDeliverableAddress } from '../addresses/deliverable-address';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 
 const AUDITED_ZONE_FIELDS = ['name', 'cities', 'fee', 'isActive'] as const satisfies readonly (keyof ShippingZone)[];
@@ -99,10 +100,11 @@ export class ShippingZonesService {
 
   /**
    * Returns the shipping fee for a user's saved address.
-   * Verifies the address belongs to the requesting user before looking up the fee.
+   * Verifies the address belongs to the requesting user and is complete enough to deliver to before looking up the fee.
    */
   async getFeeForAddress(addressId: string, userId: string): Promise<Decimal> {
     const address = await this.addressesService.getAddress(userId, addressId);
+    assertDeliverableAddress(address);
     return this.getFeeForCity(address.city);
   }
 

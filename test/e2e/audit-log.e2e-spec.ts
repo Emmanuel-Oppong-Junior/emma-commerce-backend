@@ -65,8 +65,8 @@ describe('Audit log for privileged mutations (e2e)', () => {
 
   it('records the approval and the refund of a return with the admin, amounts and provider reference', async () => {
     const address = await run(
-      `mutation { createAddress(input: { street: "1 Audit St", city: "Accra", state: "Greater Accra",
-        zipCode: "00233", country: "Ghana" }) { id } }`,
+      `mutation { createAddress(input: { street: "1 Audit St", city: "Accra", recipientName: "Test Customer", phone: "0244000000", region: GREATER_ACCRA,
+        zipCode: "00233", country: "GH" }) { id } }`,
       userToken,
     );
     await run('mutation { addToCart(input: { productId: "seed_prod1", quantity: 1 }) { id } }', userToken);

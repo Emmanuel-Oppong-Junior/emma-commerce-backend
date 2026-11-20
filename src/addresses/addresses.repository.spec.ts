@@ -7,10 +7,17 @@ import { Address, Prisma } from '../generated/prisma/client';
 const mockAddress: Address = {
   id: 'addr1',
   userId: 'user1',
+  recipientName: 'Ama Mensah',
+  phone: '+233244123456',
+  region: 'GREATER_ACCRA',
   street: '1 Main St',
   city: 'Accra',
-  state: 'GA',
-  zipCode: '00233',
+  area: null,
+  landmark: null,
+  ghanaPostGps: null,
+  latitude: null,
+  longitude: null,
+  zipCode: null,
   country: 'GH',
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -45,12 +52,13 @@ describe('AddressesRepository', () => {
 
       const result = await repository.create({
         userId: 'user1',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         street: '1 Main St',
         city: 'Accra',
-        state: 'GA',
-        zipCode: '00233',
         country: 'GH',
-      } as any);
+      });
 
       expect(result).toEqual(mockAddress);
     });

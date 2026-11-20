@@ -38,7 +38,15 @@ describe('Coupon usage limits and release (e2e)', () => {
     const existing = await prisma.address.findFirst({ where: { userId } });
     if (existing) return existing.id;
     const created = await prisma.address.create({
-      data: { userId, street: '1 Promo St', city: 'Accra', state: 'Greater Accra', zipCode: '00233', country: 'Ghana' },
+      data: {
+        userId,
+        street: '1 Promo St',
+        city: 'Accra',
+        recipientName: 'Test Customer',
+        phone: '+233244000000',
+        region: 'GREATER_ACCRA',
+        country: 'GH',
+      },
     });
     return created.id;
   };

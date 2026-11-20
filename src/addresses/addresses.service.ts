@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Address } from '../generated/prisma/client';
-import { CreateAddressInput } from './dto/create-address.input';
+import { CreateAddressInput, STORE_COUNTRY } from './dto/create-address.input';
 import { UpdateAddressInput } from './dto/update-address.input';
 import { AddressesRepository } from './addresses.repository';
 
@@ -16,7 +16,7 @@ export class AddressesService {
    */
   async createAddress(userId: string, data: CreateAddressInput): Promise<Address> {
     await this.enforceAddressLimit(userId);
-    return this.addressesRepository.create({ ...data, userId });
+    return this.addressesRepository.create({ ...data, country: data.country ?? STORE_COUNTRY, userId });
   }
 
   /**
@@ -86,7 +86,7 @@ export class AddressesService {
   private async retrieveUserAddress(userId: string, addressId: string): Promise<Address> {
     const address = await this.addressesRepository.findById(addressId);
     if (!address || address.userId !== userId) {
-      throw new NotFoundException(`Address "${addressId}" not found for user "${userId}"`);
+      throw new NotFoundException(`Address "${addressId}" not found`);
     }
     return address;
   }

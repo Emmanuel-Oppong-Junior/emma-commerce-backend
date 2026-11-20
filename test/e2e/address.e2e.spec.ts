@@ -19,7 +19,9 @@ const GET_ADDRESS = `
       id
       street
       city
-      state
+      recipientName
+      phone
+      region
       zipCode
       country
       userId
@@ -35,7 +37,9 @@ const GET_USER_ADDRESSES = `
       id
       street
       city
-      state
+      recipientName
+      phone
+      region
       zipCode
       country
       userId
@@ -51,7 +55,9 @@ const GET_ALL_ADDRESSES = `
       id
       street
       city
-      state
+      recipientName
+      phone
+      region
       zipCode
       country
       userId
@@ -67,7 +73,9 @@ const CREATE_ADDRESS = `
       id
       street
       city
-      state
+      recipientName
+      phone
+      region
       zipCode
       country
       userId
@@ -83,7 +91,9 @@ const UPDATE_ADDRESS = `
       id
       street
       city
-      state
+      recipientName
+      phone
+      region
       zipCode
       country
       userId
@@ -99,7 +109,9 @@ const DELETE_ADDRESS = `
       id
       street
       city
-      state
+      recipientName
+      phone
+      region
       zipCode
       country
       userId
@@ -145,9 +157,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '123 Main St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62701',
-          country: 'USA',
+          country: 'GH',
           userId: user.id,
         },
       });
@@ -163,9 +177,11 @@ describe('Address E2E Test', () => {
           expect.objectContaining({
             street: '123 Main St',
             city: 'Springfield',
-            state: 'IL',
+            recipientName: 'Ama Mensah',
+            phone: '+233244123456',
+            region: 'GREATER_ACCRA',
             zipCode: '62701',
-            country: 'USA',
+            country: 'GH',
             userId: user.id,
           }),
         ]),
@@ -176,9 +192,11 @@ describe('Address E2E Test', () => {
       const addressInput = {
         street: '456 Oak St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62702',
-        country: 'USA',
+        country: 'GH',
       };
 
       const response = await graphqlRequest(app, CREATE_ADDRESS, { input: addressInput })
@@ -208,9 +226,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '789 Pine St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62703',
-          country: 'USA',
+          country: 'GH',
           userId: user.id,
         },
       });
@@ -218,9 +238,11 @@ describe('Address E2E Test', () => {
       const updateInput = {
         street: 'Updated Pine St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62704',
-        country: 'USA',
+        country: 'GH',
       };
 
       const response = await graphqlRequest(app, UPDATE_ADDRESS, { addressId: address.id, input: updateInput })
@@ -249,9 +271,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '101 Elm St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62705',
-          country: 'USA',
+          country: 'GH',
           userId: user.id,
         },
       });
@@ -291,9 +315,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '202 Maple St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62706',
-          country: 'USA',
+          country: 'GH',
           userId: user.id,
         },
       });
@@ -309,9 +335,11 @@ describe('Address E2E Test', () => {
           expect.objectContaining({
             street: '202 Maple St',
             city: 'Springfield',
-            state: 'IL',
+            recipientName: 'Ama Mensah',
+            phone: '+233244123456',
+            region: 'GREATER_ACCRA',
             zipCode: '62706',
-            country: 'USA',
+            country: 'GH',
             userId: user.id,
           }),
         ]),
@@ -322,9 +350,11 @@ describe('Address E2E Test', () => {
       const addressInput = {
         street: '303 Cedar St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62707',
-        country: 'USA',
+        country: 'GH',
       };
 
       const response = await graphqlRequest(app, CREATE_ADDRESS, { input: addressInput })
@@ -354,9 +384,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '404 Birch St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62708',
-          country: 'USA',
+          country: 'GH',
           userId: user.id,
         },
       });
@@ -364,9 +396,11 @@ describe('Address E2E Test', () => {
       const updateInput = {
         street: 'Updated Birch St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62709',
-        country: 'USA',
+        country: 'GH',
       };
 
       const response = await graphqlRequest(app, UPDATE_ADDRESS, { addressId: address.id, input: updateInput })
@@ -395,9 +429,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '505 Walnut St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62710',
-          country: 'USA',
+          country: 'GH',
           userId: user.id,
         },
       });
@@ -430,9 +466,11 @@ describe('Address E2E Test', () => {
       const addressInput = {
         street: '606 Spruce St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62711',
-        country: 'USA',
+        country: 'GH',
       };
 
       const response = await graphqlRequest(app, CREATE_ADDRESS, { input: addressInput })
@@ -443,7 +481,7 @@ describe('Address E2E Test', () => {
       expect(response.body.data.createAddress).toMatchObject({
         street: addressInput.street,
         city: addressInput.city,
-        state: addressInput.state,
+        region: addressInput.region,
         zipCode: addressInput.zipCode,
         country: addressInput.country,
         userId,
@@ -464,9 +502,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '707 Oak St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62712',
-          country: 'USA',
+          country: 'GH',
           userId,
         },
       });
@@ -482,9 +522,11 @@ describe('Address E2E Test', () => {
           expect.objectContaining({
             street: '707 Oak St',
             city: 'Springfield',
-            state: 'IL',
+            recipientName: 'Ama Mensah',
+            phone: '+233244123456',
+            region: 'GREATER_ACCRA',
             zipCode: '62712',
-            country: 'USA',
+            country: 'GH',
             userId,
           }),
         ]),
@@ -496,9 +538,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '808 Pine St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62713',
-          country: 'USA',
+          country: 'GH',
           userId,
         },
       });
@@ -511,9 +555,11 @@ describe('Address E2E Test', () => {
         id: address.id,
         street: '808 Pine St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62713',
-        country: 'USA',
+        country: 'GH',
         userId,
       });
     });
@@ -523,9 +569,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '909 Elm St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62714',
-          country: 'USA',
+          country: 'GH',
           userId,
         },
       });
@@ -533,9 +581,11 @@ describe('Address E2E Test', () => {
       const updateInput = {
         street: 'Updated Elm St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62715',
-        country: 'USA',
+        country: 'GH',
       };
 
       const response = await graphqlRequest(app, UPDATE_ADDRESS, { addressId: address.id, input: updateInput })
@@ -546,7 +596,7 @@ describe('Address E2E Test', () => {
         id: address.id,
         street: updateInput.street,
         city: updateInput.city,
-        state: updateInput.state,
+        region: updateInput.region,
         zipCode: updateInput.zipCode,
         country: updateInput.country,
         userId,
@@ -564,9 +614,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '1010 Maple St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62716',
-          country: 'USA',
+          country: 'GH',
           userId,
         },
       });
@@ -579,9 +631,11 @@ describe('Address E2E Test', () => {
         id: address.id,
         street: '1010 Maple St',
         city: 'Springfield',
-        state: 'IL',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '62716',
-        country: 'USA',
+        country: 'GH',
         userId,
       });
 
@@ -614,9 +668,11 @@ describe('Address E2E Test', () => {
         data: {
           street: '1111 Cedar St',
           city: 'Springfield',
-          state: 'IL',
+          recipientName: 'Ama Mensah',
+          phone: '+233244123456',
+          region: 'GREATER_ACCRA',
           zipCode: '62717',
-          country: 'USA',
+          country: 'GH',
           userId: otherUser.id,
         },
       });

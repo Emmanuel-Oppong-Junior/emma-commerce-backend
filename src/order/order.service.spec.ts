@@ -112,7 +112,9 @@ const mockAddress = {
   country: 'GH',
   street: '1 Main St',
   city: 'Accra',
-  state: 'GA',
+  recipientName: 'Ama Mensah',
+  phone: '+233244123456',
+  region: 'GREATER_ACCRA',
   zipCode: '00233',
 };
 const deliveryParams = {
@@ -202,7 +204,9 @@ describe('OrdersService', () => {
         country: 'GH',
         street: '1 Main St',
         city: 'Accra',
-        state: 'GA',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '00233',
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
@@ -346,6 +350,62 @@ describe('OrdersService', () => {
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['region', { region: null }],
+      ['recipient name', { recipientName: null }],
+      ['phone', { phone: null }],
+    ])('asks for the address to be completed when its %s is missing, without reserving stock', async (_, gap) => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue({ ...mockAddress, ...gap });
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+        new BadRequestException('Complete the delivery address (region, recipient name and phone) before checkout'),
+      );
+      expect(mockShippingZonesService.getFeeForCity).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('snapshots the recipient, phone, region and location details of the delivery address', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue({
+        ...mockAddress,
+        area: 'Osu',
+        landmark: 'Opposite the Total filling station',
+        ghanaPostGps: 'GA-123-4567',
+        latitude: new Decimal('5.556'),
+        longitude: new Decimal('-0.1969'),
+      });
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.create.mockResolvedValue(mockOrder);
+
+      await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+      expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+        expect.anything(),
+        mockUserId,
+        expect.objectContaining({
+          shippingAddressSnapshot: {
+            recipientName: 'Ama Mensah',
+            phone: '+233244123456',
+            region: 'GREATER_ACCRA',
+            street: '1 Main St',
+            city: 'Accra',
+            area: 'Osu',
+            landmark: 'Opposite the Total filling station',
+            ghanaPostGps: 'GA-123-4567',
+            latitude: 5.556,
+            longitude: -0.1969,
+            zipCode: '00233',
+            country: 'GH',
+          },
+        }),
+      );
+    });
+
     it('stores a zero shipping fee on a pickup order', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockPickupLocationsService.findActiveById.mockResolvedValue(mockPickupLocation);
@@ -470,7 +530,9 @@ describe('OrdersService', () => {
         country: 'GH',
         street: '1 Main St',
         city: 'Accra',
-        state: 'GA',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '00233',
       });
       mockOrdersRepository.findUserById.mockResolvedValue({ ...mockUser, isActive: false });
@@ -496,7 +558,9 @@ describe('OrdersService', () => {
         country: 'GH',
         street: '1 Main St',
         city: 'Accra',
-        state: 'GA',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '00233',
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
@@ -520,7 +584,9 @@ describe('OrdersService', () => {
         country: 'GH',
         street: '1 Main St',
         city: 'Accra',
-        state: 'GA',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+        region: 'GREATER_ACCRA',
         zipCode: '00233',
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);

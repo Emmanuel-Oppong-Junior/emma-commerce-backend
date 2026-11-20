@@ -130,14 +130,16 @@ describe('User Account (e2e)', () => {
           createAddress(input: {
             street: "123 Main St"
             city: "Accra"
-            state: "Greater Accra"
+            recipientName: "Test Customer"
+            phone: "0244000000"
+            region: GREATER_ACCRA
             zipCode: "00233"
-            country: "Ghana"
+            country: "GH"
           }) {
             id
             street
             city
-            state
+            region
             zipCode
             country
           }
@@ -152,7 +154,7 @@ describe('User Account (e2e)', () => {
       expect(res.body.data.createAddress).toMatchObject({
         street: '123 Main St',
         city: 'Accra',
-        country: 'Ghana',
+        country: 'GH',
       });
     });
   });
@@ -167,9 +169,11 @@ describe('User Account (e2e)', () => {
           createAddress(input: {
             street: "Admin Street"
             city: "Kumasi"
-            state: "Ashanti"
+            recipientName: "Test Customer"
+            phone: "0244000000"
+            region: ASHANTI
             zipCode: "00100"
-            country: "Ghana"
+            country: "GH"
           }) {
             id
           }
@@ -279,9 +283,11 @@ describe('User Account (e2e)', () => {
           createAddress(input: {
             street: "Delete Me"
             city: "Accra"
-            state: "Greater Accra"
+            recipientName: "Test Customer"
+            phone: "0244000000"
+            region: GREATER_ACCRA
             zipCode: "00233"
-            country: "Ghana"
+            country: "GH"
           }) {
             id
           }

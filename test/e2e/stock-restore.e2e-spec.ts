@@ -47,8 +47,8 @@ describe('Stock is restored exactly once (e2e)', () => {
     adminToken = await signInAdmin(app);
     const addr = await gqlRequest(
       app,
-      `mutation { createAddress(input: { street: "1 Order St", city: "Accra", state: "Greater Accra",
-        zipCode: "00233", country: "Ghana" }) { id } }`,
+      `mutation { createAddress(input: { street: "1 Order St", city: "Accra", recipientName: "Test Customer", phone: "0244000000", region: GREATER_ACCRA,
+        zipCode: "00233", country: "GH" }) { id } }`,
       undefined,
       userToken,
     ).expect(200);

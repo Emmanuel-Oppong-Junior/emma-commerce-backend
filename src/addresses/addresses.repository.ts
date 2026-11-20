@@ -6,7 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AddressesRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: Omit<Address, 'id' | 'createdAt' | 'updatedAt'>): Promise<Address> {
+  async create(data: Prisma.AddressUncheckedCreateInput): Promise<Address> {
     try {
       return await this.prisma.address.create({ data });
     } catch (e) {
@@ -32,10 +32,7 @@ export class AddressesRepository {
     return this.prisma.address.findMany({ orderBy: { createdAt: 'desc' } });
   }
 
-  async update(
-    id: string,
-    data: Partial<Omit<Address, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>,
-  ): Promise<Address> {
+  async update(id: string, data: Prisma.AddressUpdateInput): Promise<Address> {
     try {
       return await this.prisma.address.update({ where: { id }, data });
     } catch (e) {

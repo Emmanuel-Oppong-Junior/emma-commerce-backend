@@ -63,12 +63,42 @@ describe('ShippingZonesService', () => {
   });
 
   describe('getFeeForAddress', () => {
+    const completeAddress = {
+      id: 'addr1',
+      city: 'Tamale',
+      region: 'NORTHERN',
+      recipientName: 'Ama Mensah',
+      phone: '+233244123456',
+    };
+
     it('rejects a saved address whose city no zone covers', async () => {
-      addressesService.getAddress.mockResolvedValue({ id: 'addr1', city: 'Tamale' } as never);
+      addressesService.getAddress.mockResolvedValue(completeAddress as never);
       repository.findByCity.mockResolvedValue(null);
 
-      await expect(service.getFeeForAddress('addr1', 'user1')).rejects.toThrow(BadRequestException);
+      await expect(service.getFeeForAddress('addr1', 'user1')).rejects.toThrow(
+        'Delivery is not available to city "Tamale"',
+      );
     });
+
+    it('returns the fee of the zone covering a complete saved address', async () => {
+      addressesService.getAddress.mockResolvedValue({ ...completeAddress, city: ' ACCRA ' } as never);
+      repository.findByCity.mockResolvedValue(greaterAccra);
+
+      await expect(service.getFeeForAddress('addr1', 'user1')).resolves.toEqual(new Decimal('15'));
+      expect(repository.findByCity).toHaveBeenCalledWith('accra');
+    });
+
+    it.each(['region', 'recipientName', 'phone'])(
+      'asks for a saved address without %s to be completed before quoting a fee',
+      async (field) => {
+        addressesService.getAddress.mockResolvedValue({ ...completeAddress, [field]: null } as never);
+
+        await expect(service.getFeeForAddress('addr1', 'user1')).rejects.toThrow(
+          new BadRequestException('Complete the delivery address (region, recipient name and phone) before checkout'),
+        );
+        expect(repository.findByCity).not.toHaveBeenCalled();
+      },
+    );
   });
 
   describe('create', () => {

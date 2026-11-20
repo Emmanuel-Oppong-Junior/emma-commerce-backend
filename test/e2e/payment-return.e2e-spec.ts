@@ -67,9 +67,11 @@ describe('Payments & Returns (e2e)', () => {
         createAddress(input: {
           street: "Pay St"
           city: "Accra"
-          state: "Greater Accra"
+          recipientName: "Test Customer"
+          phone: "0244000000"
+          region: GREATER_ACCRA
           zipCode: "00233"
-          country: "Ghana"
+          country: "GH"
         }) { id }
       }`,
       undefined,
@@ -235,9 +237,11 @@ describe('Payments & Returns (e2e)', () => {
           createAddress(input: {
             street: "Other Pay St"
             city: "Accra"
-            state: "Greater Accra"
+            recipientName: "Test Customer"
+            phone: "0244000000"
+            region: GREATER_ACCRA
             zipCode: "00233"
-            country: "Ghana"
+            country: "GH"
           }) { id }
         }`,
         undefined,

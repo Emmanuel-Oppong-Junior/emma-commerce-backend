@@ -55,9 +55,11 @@ describe('Abandoned order expiry (e2e)', () => {
         userId: USER_ID,
         street: '1 Expiry St',
         city: 'Accra',
-        state: 'Greater Accra',
+        recipientName: 'Test Customer',
+        phone: '+233244000000',
+        region: 'GREATER_ACCRA',
         zipCode: '00233',
-        country: 'Ghana',
+        country: 'GH',
       },
     });
     addressId = address.id;

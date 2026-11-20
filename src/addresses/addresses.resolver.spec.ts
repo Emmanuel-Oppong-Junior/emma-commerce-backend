@@ -5,6 +5,7 @@ import { Address } from './entities/address.entity';
 import { CreateAddressInput } from './dto/create-address.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { UpdateAddressInput } from './dto/update-address.input';
+import { GhanaRegion } from './enums/ghana-region.enum';
 import { ForbiddenException } from '@nestjs/common';
 import { Role } from '../users/enums/role.enum';
 
@@ -25,22 +26,30 @@ describe('AddressesResolver', () => {
   const fixedDate = new Date('2025-03-18T00:00:00.000Z');
   const mockAddress: Address = {
     id: 'addr1',
+    recipientName: 'Ama Mensah',
+    phone: '+233244123456',
+    region: GhanaRegion.GREATER_ACCRA,
     street: '123 Main St',
-    city: 'New York',
-    state: 'NY',
-    zipCode: '10001',
-    country: 'USA',
+    city: 'Accra',
+    area: 'Osu',
+    landmark: null,
+    ghanaPostGps: 'GA-123-4567',
+    latitude: null,
+    longitude: null,
+    zipCode: null,
+    country: 'GH',
     userId: mockUserId,
     createdAt: fixedDate,
     updatedAt: fixedDate,
   };
 
   const mockCreateAddressInput: CreateAddressInput = {
+    recipientName: 'Ama Mensah',
+    phone: '+233244123456',
+    region: GhanaRegion.GREATER_ACCRA,
     street: '123 Main St',
-    city: 'New York',
-    state: 'NY',
-    zipCode: '10001',
-    country: 'USA',
+    city: 'Accra',
+    country: 'GH',
   };
 
   const mockUpdateAddressInput = {

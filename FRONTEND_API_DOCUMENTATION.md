@@ -1419,7 +1419,7 @@ All order operations require `Bearer` JWT.
   discountTotal?: Money;                       // Product discounts taken off at checkout (null on older orders)
   finalTotal?: Money;                          // Never populated (always null)
   shippingAddressId?: string;                  // Set for DELIVERY orders
-  shippingAddressSnapshot?: JSON;              // DELIVERY: { street, city, state, zipCode, country } at order time
+  shippingAddressSnapshot?: JSON;              // DELIVERY: { recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country } at order time; orders placed before Ghana addresses (P1-G) hold { street, city, state, zipCode, country } instead
   pickupLocationId?: string;                   // Set for PICKUP orders
   pickupLocationSnapshot?: JSON;               // PICKUP: { name, address, city, state, country } at order time
   trackingNumber?: string;
@@ -1507,7 +1507,7 @@ CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 
 **What happens**:
 1. The cart must exist and hold 1–50 items; the account must be active.
-2. `DELIVERY`: the address must belong to the caller. The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
+2. `DELIVERY`: the address must belong to the caller and have a region, recipient name and phone (addresses saved before those fields existed may lack them). The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
 3. Each item is priced exactly as `cartWithDiscount` shows it: the product's current `price` (tax-inclusive) minus the best active product or category discount. `subtotal` equals the cart's `finalTotal` and `discountTotal` the cart's `discountTotal`. Every product must have a price in GHS and enough stock.
 4. A coupon, if given, is validated against `subtotal` (after product discounts, before shipping) and its use is recorded.
 5. `totalAmount = max(0, subtotal + shippingFee - couponDiscount)`. This is the amount Paystack is asked for.
@@ -1519,7 +1519,7 @@ No tax is added at checkout; tax is already inside each product's `price`.
 
 **Possible Errors**:
 - `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, product no longer exists, unknown coupon code.
-- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; more than 50 items; account inactive; insufficient stock; product not priced in GHS or without a price; a product in the cart has variants (the message names it; remove it from the cart); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; insufficient stock; product not priced in GHS or without a price; a product in the cart has variants (the message names it; remove it from the cart); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
 - `BAD_USER_INPUT` — Invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:
@@ -2397,6 +2397,16 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 
 ### 2.20 Addresses
 
+**Breaking change (P1-G):** addresses are Ghana addresses. `state` is gone, replaced by the required `region` enum (`GhanaRegion`); `zipCode` is optional; `recipientName`, `phone`, `area`, `landmark`, `ghanaPostGps`, `latitude` and `longitude` are new; `country` must be `GH`. New addresses need `recipientName`, `phone` and `region`. Addresses saved before this change can have `region`, `recipientName` and `phone` set to `null`: checkout and `getShippingFee` refuse them with `BAD_REQUEST` "Complete the delivery address (region, recipient name and phone) before checkout" until the customer fills them in with `updateAddress`.
+
+**Formats**:
+- `phone`: a Ghana number written as `0XXXXXXXXX`, `233XXXXXXXXX`, `+233XXXXXXXXX` or `00233XXXXXXXXX`, where the nine-digit national number does not start with 0. Spaces, dashes, dots and parentheses are ignored (`024 412 3456`, `(024) 412-3456`). It is stored and returned in E.164 form, `+233XXXXXXXXX`. Anything else (another country, too short or long, letters) is `BAD_USER_INPUT`.
+- `ghanaPostGps`: a GhanaPostGPS digital address, two letters, 3–4 digits, then 4 digits; case, spaces and hyphens are free (`GA1234567`, `ga-123-4567`, `AK 484 9321`). Stored and returned as `XX-NNN-NNNN` or `XX-NNNN-NNNN` (`GA-123-4567`). Anything else is `BAD_USER_INPUT`.
+- `region`: one of the 16 regions: `AHAFO`, `ASHANTI`, `BONO`, `BONO_EAST`, `CENTRAL`, `EASTERN`, `GREATER_ACCRA`, `NORTH_EAST`, `NORTHERN`, `OTI`, `SAVANNAH`, `UPPER_EAST`, `UPPER_WEST`, `VOLTA`, `WESTERN`, `WESTERN_NORTH`.
+- `country`: optional, defaults to `GH`; if sent it must be `GH` (any case, surrounding spaces ignored), otherwise `BAD_USER_INPUT`. The store delivers in Ghana only.
+- `latitude` / `longitude`: optional `Float`s, sent together (or both `null` to clear them); latitude −90..90, longitude −180..180. Stored with 6 decimal places.
+- `city` is the city or town; it is what shipping zones match (case-insensitive, extra spaces ignored).
+
 ---
 
 #### `address`
@@ -2404,18 +2414,25 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `addressId: String!`
 - **Response**: `Address!`
-- **Description**: One of the caller's own addresses; anyone else's gives `NOT_FOUND`.
+- **Description**: One of the caller's own addresses. Anyone else's, or an unknown id, gives `NOT_FOUND` with the same message (`Address "<id>" not found`).
 
 **`Address` Object Type**:
 
 ```typescript
 {
   id: string;
+  recipientName: string | null;  // null only on addresses saved before P1-G
+  phone: string | null;          // E.164, e.g. "+233244123456"; null only on addresses saved before P1-G
+  region: GhanaRegion | null;    // null only on addresses saved before P1-G whose old state could not be mapped
   street: string;
-  city: string;      // Used to find the shipping zone at checkout
-  state: string;
-  zipCode: string;
-  country: string;
+  city: string;                  // City or town; used to find the shipping zone at checkout
+  area: string | null;           // Area, neighbourhood or suburb
+  landmark: string | null;       // Nearby landmark and delivery directions
+  ghanaPostGps: string | null;   // e.g. "GA-123-4567"
+  latitude: number | null;
+  longitude: number | null;
+  zipCode: string | null;
+  country: string;               // "GH"
   userId: string;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -2444,17 +2461,24 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `input: CreateAddressInput!`
 - **Response**: `Address!`
-- **Possible Errors**: `BAD_REQUEST` ("You have reached the maximum of 10 saved addresses"), `BAD_USER_INPUT`.
+- **Possible Errors**: `BAD_REQUEST` ("You have reached the maximum of 10 saved addresses"), `BAD_USER_INPUT` (a required field missing, or a value outside the formats above).
 
 **Input: `CreateAddressInput`**
 
 ```typescript
 {
-  street: string;   // Required. Max 255 chars.
-  city: string;     // Required. Max 100 chars.
-  state: string;    // Required. Max 100 chars.
-  zipCode: string;  // Required. Max 20 chars.
-  country: string;  // Required. Max 100 chars. Full name or ISO 3166-1 alpha-2 code.
+  recipientName: string;   // Required. Trimmed, 1-100 chars.
+  phone: string;           // Required. Ghana number (see Formats); stored as +233XXXXXXXXX.
+  region: GhanaRegion;     // Required.
+  street: string;          // Required. Max 255 chars.
+  city: string;            // Required. City or town. Max 100 chars.
+  area?: string;           // Optional. Max 100 chars.
+  landmark?: string;       // Optional. Landmark and delivery directions. Max 200 chars.
+  ghanaPostGps?: string;   // Optional. GhanaPostGPS address (see Formats).
+  latitude?: number;       // Optional. With longitude.
+  longitude?: number;      // Optional. With latitude.
+  zipCode?: string;        // Optional. Max 20 chars.
+  country?: string;        // Optional. Default "GH"; only "GH" accepted.
 }
 ```
 
@@ -2463,9 +2487,10 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
 #### `updateAddress`
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Args**: `addressId: String!`, `input: UpdateAddressInput!` (all `CreateAddressInput` fields optional)
+- **Args**: `addressId: String!`, `input: UpdateAddressInput!` (every `CreateAddressInput` field, all optional)
 - **Response**: `Address!`
-- **Possible Errors**: `NOT_FOUND` (not the caller's address).
+- **Description**: Changes only the fields sent. `null` on an optional field (`area`, `landmark`, `ghanaPostGps`, `zipCode`, or `latitude` and `longitude` together) clears it. `null` on a required field (`recipientName`, `phone`, `region`, `street`, `city`, `country`) is `BAD_USER_INPUT`.
+- **Possible Errors**: `NOT_FOUND` (not the caller's address), `BAD_USER_INPUT`.
 
 ---
 
@@ -2510,7 +2535,7 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `addressId: ID!`
 - **Response**: `Money!`, the fee `createOrder` would charge for delivery to that address
-- **Possible Errors**: `NOT_FOUND` (not the caller's address); `BAD_REQUEST` ("Delivery is not available to city …") when no active zone covers the city.
+- **Possible Errors**: `NOT_FOUND` (not the caller's address); `BAD_REQUEST` "Complete the delivery address (region, recipient name and phone) before checkout" for an address saved before those fields existed; `BAD_REQUEST` ("Delivery is not available to city …") when no active zone covers the city.
 
 ---
 
@@ -2840,7 +2865,7 @@ The GraphQL schema (`schema.gql`) is the contract; the database models behind it
 | `DateTime` | ISO 8601 string in UTC, e.g. `2026-11-18T09:54:33.000Z` |
 | `JSON` | Any JSON value (used for address/pickup snapshots and `Payment.paymentDetails`) |
 | `Decimal` | Exact decimal as a string, e.g. `"12.50"`, `"0.15"` (no exponent). Used for money inputs, tax rates and discount/coupon `value`. See [Money](#money) |
-| `Float` | Only stock quantities (`Variant.quantity`, `OrderItem.quantity`, `CreateVariantInput.quantity`); never money |
+| `Float` | Only stock quantities (`Variant.quantity`, `OrderItem.quantity`, `CreateVariantInput.quantity`) and address coordinates (`Address.latitude`/`longitude`); never money |
 
 ### Money
 
@@ -2892,6 +2917,7 @@ type Money {
 | `Role` | `USER`, `ADMIN`, `SUPER_ADMIN` | `CreateUserInput.role`, `UserPaginateArgs.role` (`User.role` is a plain `String`) |
 | `OrderStatus` | `PENDING`, `PROCESSING`, `SHIPPED`, `DELIVERED`, `CANCELLED` | `Order.status`, `UpdateOrderStatusInput.status` |
 | `FulfillmentType` | `DELIVERY`, `PICKUP` | `Order`, `CreateOrderInput` |
+| `GhanaRegion` | `AHAFO`, `ASHANTI`, `BONO`, `BONO_EAST`, `CENTRAL`, `EASTERN`, `GREATER_ACCRA`, `NORTH_EAST`, `NORTHERN`, `OTI`, `SAVANNAH`, `UPPER_EAST`, `UPPER_WEST`, `VOLTA`, `WESTERN`, `WESTERN_NORTH` | `Address.region`, address inputs |
 | `OrderPaymentMethod` | `ONLINE`, `CASH_ON_DELIVERY` | `Order`, `CreateOrderInput` |
 | `PaymentStatus` | `PENDING`, `COMPLETED`, `FAILED`, `ABANDONED` | `Payment.status` |
 | `ReturnStatusEnum` | `PENDING`, `APPROVED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED` | `ReturnRequestEntity.status` |
@@ -3058,7 +3084,7 @@ Authorization: Bearer <accessToken>
 ### Checkout Flow
 
 1. Choose fulfilment:
-   - `DELIVERY`: the user needs a saved address (`query userAddresses` or `mutation createAddress`). Show the fee with `query getShippingFee(addressId)`; a `BAD_REQUEST` means the city is not served (offer pickup or another address).
+   - `DELIVERY`: the user needs a saved address (`query userAddresses` or `mutation createAddress`). Show the fee with `query getShippingFee(addressId)`; a `BAD_REQUEST` means either the address is incomplete (an address saved before P1-G without region, recipient or phone: ask the customer to complete it with `updateAddress`) or the city is not served (offer pickup or another address).
    - `PICKUP`: list locations with `query activePickupLocations` (public).
 2. Optionally validate a coupon: `mutation validateCoupon(input: { code, orderTotal: <cartWithDiscount.finalTotal> })`.
 3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, contactEmail, contactPhone, couponCode?, paymentMethod? })`.
@@ -4099,13 +4125,16 @@ Authorization: Bearer <accessToken>
 ```graphql
 mutation {
   createAddress(input: {
+    recipientName: "Ama Mensah"
+    phone: "024 412 3456"
+    region: GREATER_ACCRA
     street: "123 Main Street"
     city: "Accra"
-    state: "Greater Accra"
-    zipCode: "GA-123-4567"
-    country: "Ghana"
+    area: "Osu"
+    landmark: "Opposite the Total filling station"
+    ghanaPostGps: "GA-123-4567"
   }) {
-    id street city state zipCode country
+    id recipientName phone region street city area landmark ghanaPostGps country
   }
 }
 ```
@@ -4116,7 +4145,7 @@ query {
 }
 ```
 
-A `BAD_REQUEST` here means no shipping zone covers the city: offer pickup (`activePickupLocations`) instead.
+A `BAD_REQUEST` here means the address is incomplete (complete it with `updateAddress`) or no shipping zone covers the city: offer pickup (`activePickupLocations`) instead.
 
 ---
 

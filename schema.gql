@@ -16,15 +16,35 @@ input AddToCartInput {
 }
 
 type Address {
+  """Area, neighbourhood or suburb"""
+  area: String
+
+  """City or town"""
   city: String!
+
+  """ISO 3166-1 alpha-2 country code (GH)"""
   country: String!
   createdAt: DateTime!
+
+  """GhanaPostGPS digital address (XX-NNN(N)-NNNN)"""
+  ghanaPostGps: String
   id: ID!
-  state: String!
+
+  """Nearby landmark and delivery directions"""
+  landmark: String
+  latitude: Float
+  longitude: Float
+
+  """Recipient phone in E.164 form (+233XXXXXXXXX)"""
+  phone: String
+
+  """Name of the person receiving the delivery"""
+  recipientName: String
+  region: GhanaRegion
   street: String!
   updatedAt: DateTime!
   userId: ID!
-  zipCode: String!
+  zipCode: String
 }
 
 input AdjustProductStockInput {
@@ -196,20 +216,47 @@ type CouponValidation {
 }
 
 input CreateAddressInput {
-  """City"""
+  """Area, neighbourhood or suburb (up to 100 characters)"""
+  area: String
+
+  """City or town; shipping zones are matched on it"""
   city: String!
 
-  """Country (full name or ISO 3166-1 alpha-2 code)"""
-  country: String!
+  """
+  Country as an ISO 3166-1 alpha-2 code. The store delivers in Ghana only, so it must be GH.
+  """
+  country: String = "GH"
 
-  """State or province"""
-  state: String!
+  """
+  GhanaPostGPS digital address: two letters, 3-4 digits, then 4 digits, hyphens optional (GA1234567, ga-123-4567, AK-484-9321); stored as XX-NNN(N)-NNNN
+  """
+  ghanaPostGps: String
+
+  """Nearby landmark and delivery directions (up to 200 characters)"""
+  landmark: String
+
+  """Latitude, -90 to 90; give it together with longitude"""
+  latitude: Float
+
+  """Longitude, -180 to 180; give it together with latitude"""
+  longitude: Float
+
+  """
+  Phone number of the recipient: Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX
+  """
+  phone: String!
+
+  """Name of the person receiving the delivery (1-100 characters)"""
+  recipientName: String!
+
+  """Region"""
+  region: GhanaRegion!
 
   """Street address"""
   street: String!
 
-  """ZIP or postal code"""
-  zipCode: String!
+  """Postal code, if any (Ghana has none in common use)"""
+  zipCode: String
 }
 
 input CreateBrandInput {
@@ -578,6 +625,26 @@ input ForgotPasswordInput {
 enum FulfillmentType {
   DELIVERY
   PICKUP
+}
+
+"""One of Ghana's 16 administrative regions"""
+enum GhanaRegion {
+  AHAFO
+  ASHANTI
+  BONO
+  BONO_EAST
+  CENTRAL
+  EASTERN
+  GREATER_ACCRA
+  NORTHERN
+  NORTH_EAST
+  OTI
+  SAVANNAH
+  UPPER_EAST
+  UPPER_WEST
+  VOLTA
+  WESTERN
+  WESTERN_NORTH
 }
 
 enum InventoryActionEnum {
@@ -951,7 +1018,9 @@ type Order {
   """Set when fulfillmentType is DELIVERY"""
   shippingAddressId: ID
 
-  """Address snapshot at time of order"""
+  """
+  Address at time of order: recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country. Orders placed before Ghana addresses have state instead of the new fields.
+  """
   shippingAddressSnapshot: JSON
 
   """
@@ -1739,19 +1808,46 @@ type TopProduct {
 }
 
 input UpdateAddressInput {
-  """City"""
+  """Area, neighbourhood or suburb (up to 100 characters)"""
+  area: String
+
+  """City or town; shipping zones are matched on it"""
   city: String
 
-  """Country (full name or ISO 3166-1 alpha-2 code)"""
+  """
+  Country as an ISO 3166-1 alpha-2 code. The store delivers in Ghana only, so it must be GH.
+  """
   country: String
 
-  """State or province"""
-  state: String
+  """
+  GhanaPostGPS digital address: two letters, 3-4 digits, then 4 digits, hyphens optional (GA1234567, ga-123-4567, AK-484-9321); stored as XX-NNN(N)-NNNN
+  """
+  ghanaPostGps: String
+
+  """Nearby landmark and delivery directions (up to 200 characters)"""
+  landmark: String
+
+  """Latitude, -90 to 90; give it together with longitude"""
+  latitude: Float
+
+  """Longitude, -180 to 180; give it together with latitude"""
+  longitude: Float
+
+  """
+  Phone number of the recipient: Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX
+  """
+  phone: String
+
+  """Name of the person receiving the delivery (1-100 characters)"""
+  recipientName: String
+
+  """Region"""
+  region: GhanaRegion
 
   """Street address"""
   street: String
 
-  """ZIP or postal code"""
+  """Postal code, if any (Ghana has none in common use)"""
   zipCode: String
 }
 

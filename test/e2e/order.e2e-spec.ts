@@ -40,9 +40,11 @@ describe('Orders (e2e)', () => {
         createAddress(input: {
           street: "1 Order St"
           city: "Accra"
-          state: "Greater Accra"
+          recipientName: "Test Customer"
+          phone: "0244000000"
+          region: GREATER_ACCRA
           zipCode: "00233"
-          country: "Ghana"
+          country: "GH"
         }) { id }
       }`,
       undefined,
@@ -69,6 +71,7 @@ describe('Orders (e2e)', () => {
             subtotal { amount currency }
             shippingFee { amount currency }
             totalAmount { amount currency }
+            shippingAddressSnapshot
             items {
               id
               productId
@@ -84,6 +87,20 @@ describe('Orders (e2e)', () => {
       // Assert
       expect(res.body.errors).toBeUndefined();
       expect(res.body.data.createOrder.status).toBe('PENDING');
+      expect(res.body.data.createOrder.shippingAddressSnapshot).toEqual({
+        recipientName: 'Test Customer',
+        phone: '+233244000000',
+        region: 'GREATER_ACCRA',
+        street: '1 Order St',
+        city: 'Accra',
+        area: null,
+        landmark: null,
+        ghanaPostGps: null,
+        latitude: null,
+        longitude: null,
+        zipCode: '00233',
+        country: 'GH',
+      });
       expect(res.body.data.createOrder.items.length).toBeGreaterThanOrEqual(1);
       // seed_prod1 (999.99) delivered to Accra, covered by the seeded Greater Accra zone (fee 15)
       expect(res.body.data.createOrder.subtotal).toEqual(ghs('999.99'));
@@ -149,7 +166,7 @@ describe('Orders (e2e)', () => {
       const addrRes = await gqlRequest(
         app,
         `mutation {
-          createAddress(input: { street: "9 Far St", city: "Tamale", state: "Northern", zipCode: "00300", country: "Ghana" }) { id }
+          createAddress(input: { street: "9 Far St", city: "Tamale", recipientName: "Test Customer", phone: "0244000000", region: NORTHERN, zipCode: "00300", country: "GH" }) { id }
         }`,
         undefined,
         userToken,
@@ -173,6 +190,39 @@ describe('Orders (e2e)', () => {
       expect(cart.body.data.cart.items).toHaveLength(1);
 
       await clearUserCart(userToken);
+    });
+
+    it('asks for a legacy address without region, recipient or phone to be completed, for checkout and the fee quote', async () => {
+      const me = await prisma.user.findUniqueOrThrow({ where: { email: 'user@example.com' } });
+      const legacy = await prisma.address.create({
+        data: { userId: me.id, street: '3 Old St', city: 'Accra', zipCode: '00233', country: 'GH' },
+      });
+      await addItemToCart(userToken);
+      const stockBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+
+      const order = await gqlRequest(
+        app,
+        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${legacy.id}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+      const fee = await gqlRequest(
+        app,
+        `query { getShippingFee(addressId: "${legacy.id}") { amount currency } }`,
+        undefined,
+        userToken,
+      ).expect(200);
+
+      const incomplete = 'Complete the delivery address (region, recipient name and phone) before checkout';
+      expect(order.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+      expect(order.body.errors[0].message).toBe(incomplete);
+      expect(fee.body.errors[0].extensions.code).toBe('BAD_REQUEST');
+      expect(fee.body.errors[0].message).toBe(incomplete);
+      const stockAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      expect(stockAfter.quantity).toBe(stockBefore.quantity);
+
+      await clearUserCart(userToken);
+      await prisma.address.delete({ where: { id: legacy.id } });
     });
 
     describe('pickup', () => {
@@ -404,9 +454,11 @@ describe('Orders (e2e)', () => {
           createAddress(input: {
             street: "2 Other St"
             city: "Kumasi"
-            state: "Ashanti"
+            recipientName: "Test Customer"
+            phone: "0244000000"
+            region: ASHANTI
             zipCode: "00100"
-            country: "Ghana"
+            country: "GH"
           }) { id }
         }`,
         undefined,
