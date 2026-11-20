@@ -12,6 +12,7 @@ fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:gener
 fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:9
 fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:generic-api-key:91
 fd0543c12dbe7141a703847e6b31a5f737eee20d:src/config/env.validation.spec.ts:stripe-access-token:18
+c18506388296adefcb5aff3148fe7321333b862a:src/product-types/domain/attribute-validation.spec.ts:generic-api-key:190
 
 # Documentation placeholders (example tokens, NestJS README badge URL).
 3d221d5691155ac456e0743b82525a57b11ba187:FRONTEND_API_DOCUMENTATION.md:generic-api-key:3648
