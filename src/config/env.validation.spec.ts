@@ -150,4 +150,34 @@ describe('envValidationSchema', () => {
       ).toContain('"OTEL_EXPORTER_OTLP_ENDPOINT"');
     });
   });
+
+  describe('Sentry', () => {
+    it('is optional in every environment and defaults the traces sample rate to 0', () => {
+      const { error, value } = validate(productionEnv);
+      expect(error).toBeUndefined();
+      expect(value.SENTRY_TRACES_SAMPLE_RATE).toBe(0);
+    });
+
+    it('accepts a DSN, environment, release and sample rate', () => {
+      const env = {
+        ...baseEnv,
+        NODE_ENV: 'development',
+        SENTRY_DSN: 'https://public@o0.ingest.sentry.io/1',
+        SENTRY_ENVIRONMENT: 'staging',
+        SENTRY_RELEASE: 'emma-commerce@1.2.3',
+        SENTRY_TRACES_SAMPLE_RATE: '0.1',
+      };
+      expect(validate(env).error).toBeUndefined();
+    });
+
+    it('rejects a DSN that is not an http(s) URI', () => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'development', SENTRY_DSN: 'not a dsn' })).toContain('"SENTRY_DSN"');
+    });
+
+    it.each(['-0.1', '1.5', 'often'])('rejects SENTRY_TRACES_SAMPLE_RATE=%s', (rate) => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'development', SENTRY_TRACES_SAMPLE_RATE: rate })).toContain(
+        '"SENTRY_TRACES_SAMPLE_RATE"',
+      );
+    });
+  });
 });

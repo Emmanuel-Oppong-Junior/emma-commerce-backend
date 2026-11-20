@@ -4,6 +4,7 @@ import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
 import { runJobInContext } from '../jobs/job-context';
+import { reportFailedJob } from '../observability/error-reporting';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { LowStockTask } from '../inventory/tasks/low-stock.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
@@ -48,5 +49,6 @@ export class MaintenanceProcessor extends WorkerHost {
   @OnWorkerEvent('failed')
   onFailed(job: Job | undefined, error: Error): void {
     logFailedJob(this.logger, CONTEXT, job, error);
+    reportFailedJob(job, error);
   }
 }

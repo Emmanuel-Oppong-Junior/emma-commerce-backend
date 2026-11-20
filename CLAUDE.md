@@ -110,7 +110,7 @@ feature/
 
 Feature modules: `users`, `products`, `categories`, `sub-categories`, `brand`, `tag`, `variant`, `cart`, `order`, `payment`, `addresses`, `discount`, `coupons`, `wishlist`, `review`, `returns`, `inventory`, `analytics`, `tax`, `shipping-zones`, `pickup-locations`.
 
-Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `env.validation.ts`, cache config), `currency`, `notifications` (Resend email + templates), `health` (health controller/indicators), `redis` (shared ioredis client), `jobs` (BullMQ queues), `outbox` (domain events + relay), `worker` (the `ROLE=worker` root module), plus `tracing.ts` (OpenTelemetry, enabled via `OTEL_ENABLED`).
+Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `env.validation.ts`, cache config), `currency`, `notifications` (Resend email + templates), `health` (health controller/indicators), `redis` (shared ioredis client), `jobs` (BullMQ queues), `outbox` (domain events + relay), `worker` (the `ROLE=worker` root module), plus `instrument.ts` (main.ts's first import: starts Sentry, then `tracing.ts` OpenTelemetry, enabled via `OTEL_ENABLED`) and `observability/` (Sentry options and PII scrubbing, `reportError`/`reportFailedJob`).
 
 ### Authentication & Authorization (`src/iam/`)
 
@@ -138,6 +138,7 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 - **Outbox (ADR-0009):** write a domain event with `OutboxService.record(tx, event)` inside the business transaction; event types are versioned (`src/outbox/domain-events.ts`). The worker's `OutboxRelay` publishes unpublished rows (`FOR UPDATE SKIP LOCKED`) to BullMQ with `jobId = event id`; consumers must be idempotent on that id.
 - **Production safeguards:** GraphQL introspection is off when `NODE_ENV=production`; `ALLOWED_ORIGINS` is required at startup in production; helmet sets CSP and HSTS.
 - **Correlation:** `LoggerMiddleware` keeps a client `X-Request-ID` matching `^[A-Za-z0-9-]{1,64}$` (else generates a UUID), echoes it in the response and runs the request inside an `AsyncLocalStorage` context (`src/commons/correlation.ts`), so every log record carries `requestId` (and `userId` once authenticated) without passing it around. Jobs carry it as `meta.requestId` in their data (`withJobMeta`; outbox rows store it in `OutboxEvent.requestId` and the relay copies it); processors run each job inside `runJobInContext` (requestId + jobId + queue; scheduled jobs get a fresh id).
+- **Error tracking (Sentry):** on only when `SENTRY_DSN` is set, in both roles, initialised before the app. Reported: 5xx/`INTERNAL_SERVER_ERROR` from REST and GraphQL (`AllExceptionsFilter`, and `formatError` for errors the filter never saw), and BullMQ jobs with no attempts left; expected client errors (4xx, `BAD_USER_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`) are not. Events carry `requestId`/`jobId`/`queue` tags and the user id only; `dataCollection` is all off and `scrubEvent` strips request bodies, headers, cookies, query strings and breadcrumbs. Use `reportError(exception)` for a caught server failure that must not vanish.
 - **Prisma enums/models** also cover fulfillment (`FulfillmentType`, pickup locations, shipping zones), taxes, coupons/usage, return requests and inventory logs.
 
 ### Environment variables
@@ -156,7 +157,9 @@ Production: ALLOWED_ORIGINS is also required; placeholder secrets
 Optional:  PORT, ROLE (api | worker, default api), ALLOWED_ORIGINS, LOG_LEVEL, PAYSTACK_CALLBACK_URL,
            JWT_ACCESS_TOKEN_TTL, JWT_REFRESH_TOKEN_TTL, JWT_RESET_TOKEN_TTL,
            REDIS_PORT (6379), REDIS_PASSWORD, REDIS_DB (0-15, default 0), RESEND_API_KEY, RESEND_FROM_EMAIL,
-           OTEL_ENABLED ('true' | 'false'), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT (http(s) URI)
+           OTEL_ENABLED ('true' | 'false'), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT (http(s) URI),
+           SENTRY_DSN (http(s) URI; Sentry is off when unset), SENTRY_ENVIRONMENT (default NODE_ENV),
+           SENTRY_RELEASE, SENTRY_TRACES_SAMPLE_RATE (0-1, default 0)
 Seeding:   SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD
 ```
 

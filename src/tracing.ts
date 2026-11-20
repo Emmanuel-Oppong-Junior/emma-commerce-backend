@@ -1,7 +1,6 @@
 /**
- * OpenTelemetry tracing bootstrap.
- * Must be imported BEFORE any other application module to correctly instrument
- * Node.js built-ins and third-party libraries.
+ * OpenTelemetry tracing bootstrap, started by src/instrument.ts before any other application module so that
+ * Node.js built-ins and third-party libraries are instrumented.
  *
  * Activate by setting OTEL_ENABLED=true in your environment.
  * Optional: set OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME.
@@ -36,5 +35,3 @@ export function startTracing(env: NodeJS.ProcessEnv): NodeSDK | undefined {
   sdk.start();
   return sdk;
 }
-
-export const tracingSdk = startTracing(process.env);

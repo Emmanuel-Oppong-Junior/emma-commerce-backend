@@ -1,9 +1,10 @@
-import { ArgumentsHost, Catch, ExceptionFilter } from '@nestjs/common';
+import { ArgumentsHost, Catch, ExceptionFilter, HttpStatus } from '@nestjs/common';
 import { GqlArgumentsHost } from '@nestjs/graphql';
 import { Request, Response } from 'express';
 import { GraphQLError } from 'graphql';
 import { LoggerService } from '../logger.service';
 import { classifyError, describeErrorForLog, stackForLog } from './error-classification';
+import { reportError } from '../../observability/error-reporting';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -12,6 +13,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const { status, code, message } = classifyError(exception);
     const stack = stackForLog(exception);
+    // Client errors (4xx: validation, auth, not found, conflict) are expected; only server failures are tracked.
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR) reportError(exception);
 
     if (host.getType<'graphql' | 'http'>() === 'graphql') {
       const gqlHost = GqlArgumentsHost.create(host);
@@ -31,7 +34,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const request = ctx.getRequest<Request>();
 
     this.logger.error(
-      `Error: ${describeErrorForLog(exception)} | Status: ${status} | URL: ${request?.url}`,
+      `Error: ${describeErrorForLog(exception)} | Status: ${status} | Path: ${request?.path}`,
       stack,
       'ExceptionFilter',
     );

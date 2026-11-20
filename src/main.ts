@@ -1,4 +1,5 @@
-import { tracingSdk } from './tracing';
+import { tracingSdk } from './instrument';
+import * as Sentry from '@sentry/nestjs';
 import { NestFactory } from '@nestjs/core';
 import { createValidationPipe } from './commons/validation-pipe';
 import { AppModule } from './app.module';
@@ -89,12 +90,15 @@ async function bootstrapWorker() {
   closeOnSignals(app, logger);
 }
 
+const SENTRY_FLUSH_TIMEOUT_MS = 2_000;
+
 // Graceful shutdown: app.close() lets jobs in flight finish, then closes queues, Redis and Prisma.
 function closeOnSignals(app: INestApplicationContext, logger: LoggerService) {
   const shutdown = async (signal: string) => {
     logger.log(`${signal} received — closing application gracefully`, 'Bootstrap');
     await app.close();
     await tracingSdk?.shutdown();
+    await Sentry.close(SENTRY_FLUSH_TIMEOUT_MS);
     process.exit(0);
   };
 

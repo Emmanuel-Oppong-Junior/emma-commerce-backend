@@ -108,4 +108,13 @@ export const envValidationSchema = Joi.object({
   OTEL_EXPORTER_OTLP_ENDPOINT: Joi.string()
     .uri({ scheme: ['http', 'https'] })
     .optional(),
+
+  // Error tracking: Sentry is on only when SENTRY_DSN is set (src/observability/sentry.ts reads these before this
+  // validation runs, so a bad value still stops startup here).
+  SENTRY_DSN: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .optional(),
+  SENTRY_ENVIRONMENT: Joi.string().optional(),
+  SENTRY_RELEASE: Joi.string().optional(),
+  SENTRY_TRACES_SAMPLE_RATE: Joi.number().min(0).max(1).default(0),
 }).custom(rejectUnsafeProductionSecrets);

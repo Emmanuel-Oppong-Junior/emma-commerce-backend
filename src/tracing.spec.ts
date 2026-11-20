@@ -25,10 +25,21 @@ describe('startTracing', () => {
 
 describe('main.ts', () => {
   // Auto-instrumentation only patches modules (http, express, pg) required after the SDK starts.
-  it('imports tracing before anything else', () => {
+  it('imports tracing (through src/instrument.ts) before anything else', () => {
     const source = readFileSync(join(__dirname, 'main.ts'), 'utf8');
     const firstImport = source.split('\n').find((line) => line.startsWith('import '));
 
-    expect(firstImport).toBe("import { tracingSdk } from './tracing';");
+    expect(firstImport).toBe("import { tracingSdk } from './instrument';");
+  });
+
+  it('starts Sentry, then tracing, from src/instrument.ts, which loads neither Nest, Express nor Prisma', () => {
+    const source = readFileSync(join(__dirname, 'instrument.ts'), 'utf8');
+    const imports = source.split('\n').filter((line) => line.startsWith('import '));
+
+    expect(imports).toEqual([
+      "import { initSentry } from './observability/sentry';",
+      "import { startTracing } from './tracing';",
+    ]);
+    expect(source.indexOf('initSentry(process.env)')).toBeLessThan(source.indexOf('startTracing(process.env)'));
   });
 });

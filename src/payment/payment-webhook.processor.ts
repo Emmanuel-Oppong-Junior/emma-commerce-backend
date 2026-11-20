@@ -4,6 +4,7 @@ import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
 import { logFailedJob } from '../jobs/failed-job-log';
 import { runJobInContext } from '../jobs/job-context';
+import { reportFailedJob } from '../observability/error-reporting';
 import { PAYSTACK_WEBHOOK_JOB, PaymentWebhookService, PaystackWebhookJobData } from './payment-webhook.service';
 
 const CONTEXT = 'PaymentWebhookProcessor';
@@ -28,5 +29,6 @@ export class PaymentWebhookProcessor extends WorkerHost {
   @OnWorkerEvent('failed')
   onFailed(job: Job | undefined, error: Error): void {
     logFailedJob(this.logger, CONTEXT, job, error);
+    reportFailedJob(job, error);
   }
 }

@@ -1,6 +1,7 @@
 import { LoggerService } from '../logger.service';
 import { GraphQLError, GraphQLFormattedError } from 'graphql';
 import { stackForLog } from '../filters/error-classification';
+import { reportError } from '../../observability/error-reporting';
 
 const INTERNAL_ERROR_CODE = 'INTERNAL_SERVER_ERROR';
 
@@ -30,6 +31,12 @@ export const formatError =
       stack,
       'GraphQL',
     );
+
+    // Errors from resolvers were classified (and reported) by AllExceptionsFilter, which sets `status`. Anything else
+    // that is not a client error (a field resolver failure, an Apollo internal error) is reported here.
+    if (!isSafeToExpose(extensions) && extensions?.status === undefined) {
+      reportError(error instanceof GraphQLError && error.originalError ? error.originalError : error);
+    }
 
     // In production, mask internal errors so DB details never reach the client
     if (process.env.NODE_ENV === 'production' && !isSafeToExpose(extensions)) {
