@@ -1,0 +1,176 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`Authorization matrix matches the reviewed matrix 1`] = `
+"
+Mutation addProductsToTag                permission: catalog.taxonomy.write
+Mutation addTagToProduct                 permission: catalog.product.write
+Mutation addToCart                       authenticated
+Mutation addToDiscount                   permission: promotion.manage
+Mutation addToWishlist                   authenticated
+Mutation adjustProductStock              permission: inventory.adjust
+Mutation adjustVariantStock              permission: inventory.adjust
+Mutation adminCancelOrder                permission: order.manage
+Mutation adminDeleteReview               permission: review.moderate
+Mutation approveReturn                   permission: return.manage + order.refund
+Mutation archiveProduct                  permission: catalog.product.write
+Mutation archiveUser                     permission: user.manage
+Mutation assignStaffRole                 permission: staff.manage
+Mutation cancelOrder                     customer only
+Mutation changeUserPassword              authenticated
+Mutation clearCart                       authenticated
+Mutation clearWishlist                   authenticated
+Mutation createAddress                   authenticated
+Mutation createBrand                     permission: catalog.taxonomy.write
+Mutation createCategory                  permission: catalog.taxonomy.write
+Mutation createCoupon                    permission: promotion.manage
+Mutation createDiscount                  permission: promotion.manage
+Mutation createOrder                     authenticated
+Mutation createPickupLocation            permission: shipping.manage
+Mutation createProduct                   permission: catalog.product.write
+Mutation createReturnRequest             authenticated
+Mutation createReview                    customer only
+Mutation createShippingZone              permission: shipping.manage
+Mutation createStaffRole                 permission: staff.manage
+Mutation createSubCategory               permission: catalog.taxonomy.write
+Mutation createTag                       permission: catalog.taxonomy.write
+Mutation createTax                       permission: tax.manage
+Mutation createUser                      permission: staff.manage
+Mutation createVariant                   permission: catalog.product.write
+Mutation deArchiveUser                   permission: user.manage
+Mutation deleteAddress                   authenticated
+Mutation deleteBrand                     permission: catalog.taxonomy.write
+Mutation deleteCoupon                    permission: promotion.manage
+Mutation deleteOrder                     permission: order.manage
+Mutation deletePickupLocation            permission: shipping.manage
+Mutation deleteReview                    customer only
+Mutation deleteShippingZone              permission: shipping.manage
+Mutation deleteTag                       permission: catalog.taxonomy.write
+Mutation deleteTax                       permission: tax.manage
+Mutation deleteVariant                   permission: catalog.product.write
+Mutation forgotPassword                  public
+Mutation permanentlyDeleteProduct        permission: catalog.product.write
+Mutation processPendingRefund            permission: order.refund
+Mutation processRefund                   permission: order.refund
+Mutation recordCodPayment                permission: payment.record
+Mutation refreshToken                    public
+Mutation rejectReturn                    permission: return.manage
+Mutation removeCategory                  permission: catalog.taxonomy.write
+Mutation removeDiscount                  permission: promotion.manage
+Mutation removeFromCart                  authenticated
+Mutation removeFromDiscount              permission: promotion.manage
+Mutation removeFromWishlist              authenticated
+Mutation removeProductsFromTag           permission: catalog.taxonomy.write
+Mutation removeStaffRole                 permission: staff.manage
+Mutation removeSubCategory               permission: catalog.taxonomy.write
+Mutation removeTagFromProduct            permission: catalog.product.write
+Mutation removeUser                      permission: user.manage
+Mutation resendVerificationEmail         authenticated
+Mutation resetPassword                   public
+Mutation restockProduct                  permission: inventory.adjust
+Mutation restockVariant                  permission: inventory.adjust
+Mutation restorePayment                  permission: payment.manage
+Mutation restoreProduct                  permission: catalog.product.write
+Mutation retryFailedJob                  permission: jobs.manage
+Mutation signIn                          public
+Mutation signInWithFacebook              public
+Mutation signInWithGoogle                public
+Mutation signOut                         authenticated
+Mutation signUp                          public
+Mutation softDeletePayment               permission: payment.manage
+Mutation updateAddress                   authenticated
+Mutation updateBrand                     permission: catalog.taxonomy.write
+Mutation updateCartItem                  authenticated
+Mutation updateCategory                  permission: catalog.taxonomy.write
+Mutation updateCoupon                    permission: promotion.manage
+Mutation updateDiscount                  permission: promotion.manage
+Mutation updateMyProfile                 authenticated
+Mutation updateOrderStatus               permission: order.manage
+Mutation updatePickupLocation            permission: shipping.manage
+Mutation updateProduct                   permission: catalog.product.write
+Mutation updateReview                    customer only
+Mutation updateShipping                  permission: order.manage
+Mutation updateShippingZone              permission: shipping.manage
+Mutation updateStaffRole                 permission: staff.manage
+Mutation updateStoreSettings             permission: store.settings.manage
+Mutation updateSubCategory               permission: catalog.taxonomy.write
+Mutation updateTag                       permission: catalog.taxonomy.write
+Mutation updateTax                       permission: tax.manage
+Mutation updateUser                      permission: user.manage
+Mutation updateVariant                   permission: catalog.product.write
+Mutation validateCoupon                  authenticated
+Mutation verifyEmail                     public
+Mutation verifyPayment                   customer only
+Query activePickupLocations              public
+Query activeShippingZones                public
+Query address                            authenticated
+Query addresses                          permission: user.view
+Query adminProduct                       permission: catalog.product.read
+Query adminProducts                      permission: catalog.product.read
+Query brand                              public
+Query brands                             public
+Query cart                               authenticated
+Query cartWithDiscount                   authenticated
+Query categories                         public
+Query category                           authenticated
+Query coupon                             permission: promotion.manage
+Query coupons                            permission: promotion.manage
+Query dashboardSummary                   permission: report.view
+Query discount                           permission: promotion.manage
+Query discounts                          permission: promotion.manage
+Query failedJobs                         permission: jobs.manage
+Query getMyPayments                      customer only
+Query getShippingFee                     authenticated
+Query getUserPayment                     permission: payment.view
+Query inventoryLogs                      permission: inventory.view
+Query myReturnRequests                   authenticated
+Query order                              authenticated
+Query orders                             permission: order.view
+Query payment                            authenticated
+Query payments                           permission: payment.view
+Query pickupLocations                    permission: shipping.manage
+Query product                            public
+Query productInventoryLogs               permission: inventory.view
+Query productReviews                     authenticated
+Query products                           public
+Query productVariants                    authenticated
+Query refunds                            permission: payment.view
+Query returnRequests                     permission: return.manage
+Query revenueByCategory                  permission: report.view
+Query review                             authenticated
+Query salesReport                        permission: report.view
+Query shippingZone                       permission: shipping.manage
+Query shippingZones                      permission: shipping.manage
+Query staffMembers                       permission: staff.view
+Query staffPermissions                   permission: staff.view
+Query staffRoles                         permission: staff.view
+Query storeSettings                      public
+Query subCategories                      authenticated
+Query subCategory                        authenticated
+Query tag                                authenticated
+Query tags                               authenticated
+Query tax                                permission: tax.manage
+Query taxes                              permission: tax.manage
+Query topProducts                        permission: report.view
+Query userAddresses                      authenticated
+Query userByEmail                        permission: user.view
+Query userById                           permission: user.view
+Query userByProviderId                   permission: user.view
+Query userOrders                         authenticated
+Query userProfile                        authenticated
+Query userReviews                        authenticated
+Query users                              permission: user.view
+Query variant                            authenticated
+Query variantInventoryLogs               permission: inventory.view
+Query variants                           authenticated
+Query viewOrder                          permission: order.view
+Query wishlist                           authenticated
+REST GET /                               authenticated
+REST GET /health                         public
+REST GET /health/live                    public
+REST GET /health/ready                   public
+REST POST /payment/initialize            authenticated
+REST POST /payment/webhook               public
+REST POST /upload/multiple-images        permission: catalog.media.upload
+REST POST /upload/single-image           permission: catalog.media.upload
+"
+`;
