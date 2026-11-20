@@ -8,6 +8,7 @@ import {
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StockCounts, StockEffect } from './stock';
+import { LedgerTotals } from './stock-reconciliation';
 
 type Db = Prisma.TransactionClient;
 
@@ -133,6 +134,57 @@ export class StockLedgerRepository {
       }),
       this.prisma.stockMovement.count({ where }),
     ]);
+  }
+
+  /**
+   * Every (variant, location) whose StockLevel disagrees with the sum of its movements or of its ACTIVE reservations,
+   * with all the totals; a side without rows counts as zero.
+   */
+  async findLedgerDisagreements(): Promise<LedgerTotals[]> {
+    return this.prisma.$queryRaw<LedgerTotals[]>`
+      WITH keys AS (
+        SELECT "variantId", "locationId" FROM "StockLevel"
+        UNION SELECT "variantId", "locationId" FROM "StockMovement"
+        UNION SELECT "variantId", "locationId" FROM "StockReservation" WHERE "status" = 'ACTIVE'
+      ), moved AS (
+        SELECT "variantId", "locationId", sum("onHandDelta")::int AS "onHand", sum("reservedDelta")::int AS "reserved"
+        FROM "StockMovement" GROUP BY "variantId", "locationId"
+      ), held AS (
+        SELECT "variantId", "locationId", sum("quantity")::int AS "quantity"
+        FROM "StockReservation" WHERE "status" = 'ACTIVE' GROUP BY "variantId", "locationId"
+      ), totals AS (
+        SELECT k."variantId", k."locationId",
+               COALESCE(sl."onHand", 0) AS "onHand", COALESCE(sl."reserved", 0) AS "reserved",
+               COALESCE(m."onHand", 0) AS "movedOnHand", COALESCE(m."reserved", 0) AS "movedReserved",
+               COALESCE(h."quantity", 0) AS "activeReserved"
+        FROM keys k
+        LEFT JOIN "StockLevel" sl ON sl."variantId" = k."variantId" AND sl."locationId" = k."locationId"
+        LEFT JOIN moved m ON m."variantId" = k."variantId" AND m."locationId" = k."locationId"
+        LEFT JOIN held h ON h."variantId" = k."variantId" AND h."locationId" = k."locationId"
+      )
+      SELECT * FROM totals
+      WHERE "onHand" <> "movedOnHand" OR "reserved" <> "movedReserved" OR "reserved" <> "activeReserved"
+      ORDER BY "variantId", "locationId"`;
+  }
+
+  async countLevels(): Promise<number> {
+    return this.prisma.stockLevel.count();
+  }
+
+  /**
+   * Runs `fn` only when no other process holds the Postgres advisory lock `lockKey`; returns null otherwise. The lock
+   * belongs to a transaction kept open while `fn` runs, so it is released even if the process dies.
+   */
+  async runWithAdvisoryLock<T>(lockKey: number, maxDurationMs: number, fn: () => Promise<T>): Promise<T | null> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const [{ locked }] = await tx.$queryRaw<
+          { locked: boolean }[]
+        >`SELECT pg_try_advisory_xact_lock(${lockKey}::bigint) AS locked`;
+        return locked ? fn() : null;
+      },
+      { timeout: maxDurationMs },
+    );
   }
 
   /** On-hand and reserved stock of each variant, summed over locations; variants without a level are absent. */
