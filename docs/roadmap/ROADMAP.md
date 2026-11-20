@@ -23,7 +23,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | Phase | Done | Status |
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
-| 1 — Foundations | 25 / 33 | 🔄 in progress |
+| 1 — Foundations | 28 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **71 / 154** | |
+| **All** | **74 / 154** | |
 
 ---
 
@@ -265,11 +265,11 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-V.3** Cart/order/stock reference `variantId` end to end [22ebb06]
 - [x] **P1-V.4** Attribute validation module (pure) used by admin create/update [c185063]
 
-### P1-N — Inventory ledger (ADR-0008)  🔄 in progress
+### P1-N — Inventory ledger (ADR-0008)  ✅ complete
 > Accept: Concurrency tests: last unit sold once; repeat release no-ops · Run: → after V.2 · L · 🟥
-- [ ] 🔄 **P1-N.1** `StockLocation`, `InventoryLevel`, `StockReservation`, `StockMovement` (M7 c–d)
-- [ ] 🔄 **P1-N.2** Reserve at placement, consume at capture/dispatch, release on cancel/expiry — all conditional
-- [ ] 🔄 **P1-N.3** Nightly reconciliation Σ movements = onHand
+- [x] **P1-N.1** `StockLocation`, `InventoryLevel`, `StockReservation`, `StockMovement` (M7 c–d) [3d7aa0a]
+- [x] **P1-N.2** Reserve at placement, consume at capture/dispatch, release on cancel/expiry — all conditional [aab5a0c, 76de3d8]
+- [x] **P1-N.3** Nightly reconciliation Σ movements = onHand [c7bc7d8]
 
 ### P1-O — Order snapshots & tax lines (ADR-0006/0014)
 > Accept: Σ lines + adjustments + tax + shipping = grand total (property test) · Run: → after V.3 · L · 🟥
