@@ -23,7 +23,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | Phase | Done | Status |
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
-| 1 — Foundations | 15 / 33 | 🔄 in progress |
+| 1 — Foundations | 18 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **61 / 154** | |
+| **All** | **64 / 154** | |
 
 ---
 
@@ -245,11 +245,11 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-J.3** Move crons (expiry, reconciliation, low-stock) to repeatable jobs (`ba08366`)
 - [x] **P1-J.4** Move emails and webhook processing onto queues with retries + DLQ (`02dcbbc`)
 
-### P1-R — RBAC (ADR-0013)
+### P1-R — RBAC (ADR-0013)  🔄 in progress
 > Accept: Matrix test in CI · Run: R.1 → R.2; R.3 ∥ · L · 🟥
-- [ ] **P1-R.1** Permissions + roles + `StaffAssignment`; `@RequirePermission`; migration M12
-- [ ] **P1-R.2** Auth-matrix snapshot test over all operations
-- [ ] **P1-R.3** TOTP MFA for staff; step-up for sensitive actions
+- [ ] 🔄 **P1-R.1** Permissions + roles + `StaffAssignment`; `@RequirePermission`; migration M12
+- [ ] 🔄 **P1-R.2** Auth-matrix snapshot test over all operations
+- [ ] 🔄 **P1-R.3** TOTP MFA for staff; step-up for sensitive actions
 
 ### P1-S — Store & Money (ADR-0001/0004)  ✅ complete
 > Accept: Money arithmetic tests (allocation, rounding); no float money in pricing paths · Run: S.1 ∥ S.2 → S.3 → S.4 · L · 🟥
@@ -281,11 +281,11 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-G.1** Address model (region enum, city/town, area, landmark, optional GhanaPostGPS with lenient validation, recipient, phone, lat/lng; zipCode optional) (M9, ADR-01) (`850b31b`)
 - [x] **P1-G.2** Phone E.164 normalisation + uniqueness (M13) (`a3a60fd`)
 
-### P1-L — Observability
+### P1-L — Observability  ✅ complete
 > Accept: Alerts fire in staging drills · Run: ∥ · M · 🟥
-- [ ] **P1-L.1** JSON logs with correlation id propagated to jobs
-- [ ] **P1-L.2** Error tracking (Sentry or equivalent)
-- [ ] **P1-L.3** Metrics (HTTP/GraphQL latency, queue depth, webhook failures) + alerts
+- [x] **P1-L.1** JSON logs with correlation id propagated to jobs [bc9d565, 1f30351]
+- [x] **P1-L.2** Error tracking (Sentry or equivalent) [7572113]
+- [x] **P1-L.3** Metrics (HTTP/GraphQL latency, queue depth, webhook failures) + alerts [013a032]
 
 ### P1-U — Upgrades  ✅ complete
 > Accept: All gates green · Run: U.2 ∥, U.1 → after P.1 · L · 🟥
