@@ -5,7 +5,9 @@
 **Last checkpoint:** 2026-11-20 · **Current phase:** Phase 1 — Foundations (21/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R done); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: see **Up next** (P1-K.2–K.4 blocked on hosting; then P1-V → P1-N → P1-O).
+**P1-V — Variant as SKU + catalogue model** (ADR-0002, ADR-0003) · branch `feat/p1-v-sku` · agent in a worktree · DB `emma_wt_sku_test`, Redis DB 11 · **State:** in progress
+  - Decisions (2026-11-20; Emmanuel: no API clients yet, so breaking changes are fine): `Variant` stays the model/type name and is the SKU; every product has ≥ 1 variant (default SKU for products without options); cart/order inputs take `variantId` (required, productId dropped); price/stock written only on variants; Product price/quantity fields replaced by derived read fields (price range, total stock); size/colour become validated `optionValues` governed by `ProductType`/`AttributeDefinition` (seed General + Apparel); capability columns per ADR-0002 option 4; legacy data per ROADMAP migration rule 7 (keep variant counts, report product counts, archived "Legacy" variant only where order lines need one); `[breaking-api]` commits, breaks listed in `FRONTEND_API_DOCUMENTATION.md`
+  - [ ] V.1 ← **Next step** (agent) · [ ] V.4 · [ ] V.2 · [ ] V.3 · [ ] merge, push
 
 **Last completed: P1-R RBAC + MFA (2026-11-20)** (ADR-0013; IAM-10, USR-03): R.1 `ce27858`, R.2 `b2a88de`, R.3 `730fc79`, merged into dev with P1-L (two conflicts in the exception filter/classification: kept P1-L's `stackForLog`/Sentry reporting and `errorCodeForStatus` plus P1-R's `extensions`).
   - R.1: migration `20261120100000_staff_roles`: `StaffRole` (key, name, `permissions[]`, `isSystem`, `mfaRequired`) and `StoreMembership` (one per user per store → the Store row); system roles Owner (whole catalogue, computed in code), Manager (all but `staff.manage`, `store.settings.manage`, `jobs.manage`, `customer.data.export`), InventoryClerk, Cashier, Support; Pharmacist/Rider wait for their verticals. Re-runnable backfill SUPER_ADMIN → Owner, ADMIN → Manager (e2e runs it twice on legacy users). 25 permissions derived from the resolvers; `@RequirePermission` replaces `@Roles` everywhere, `@CustomerOnly` keeps USER-only self-service refusing staff; permissions loaded with the user in the access-token guard per request. `User.role` deprecated but still written (Owner → SUPER_ADMIN, other staff → ADMIN, none → USER); seeder SUPER_ADMIN gets an Owner membership. Escalation rules: `staff.manage` (Owner only) to manage staff; only roles/custom roles/targets whose permissions you all hold; only an Owner assigns or touches Owner; last active Owner protected by an advisory lock in the transaction; role changes audited in the same transaction. New API: `staffRoles`, `staffPermissions`, `staffMembers` (`staff.view`); `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole` (`staff.manage` + step-up); `User.staffRole`, `permissions`, `mfaEnabled`.
@@ -97,8 +99,8 @@ None. Next: see **Up next** (P1-K.2–K.4 blocked on hosting; then P1-V → P1-N
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
-| 2 | P1-V → P1-N → P1-O (SKU model, inventory ledger, order snapshots) | → sequential, riskiest | after V.1 (S.2 Money done) |
+| 1 | P1-V (in progress) → P1-N → P1-O | → sequential | — |
+| 2 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -148,6 +150,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
 | 2026-11-20 | P1-R: 25 code-defined permissions, roles as data; Owner = whole catalogue computed in code; Manager cannot assign roles (as ADMIN today); `@CustomerOnly` for USER-only operations; custom roles may set `mfaRequired`; price step-up only when a price is sent; `approveReturn` needs `return.manage` + `order.refund`; wrong code → BAD_REQUEST for `stepUp`/enrolment, UNAUTHENTICATED for `completeMfaSignIn` | STATUS (P1-R) |
 | 2026-11-20 | P1-L: request id stored in a new `OutboxEvent.requestId` column (payloads unchanged); Sentry only for jobs with no attempts left (every failed attempt still counted in metrics); Sentry unhandled rejections exit the process; metrics server on 0.0.0.0 | STATUS (P1-L) |
 | 2026-11-20 | Workflow speed-up (Emmanuel approved all nine): parallel lanes; targeted tests while iterating, full gates per step, full e2e once; no orchestrator re-run on a pure fast-forward (CI checks); report on push, CI watched in background; STATUS pushed with code only; next task's decisions asked in each wrap-up; cached e2e runner `scripts/e2e/run.sh`; routine commands allow-listed locally; ∥ steps of large epics may split across two agents | WORKING-AGREEMENT §2b, memory |

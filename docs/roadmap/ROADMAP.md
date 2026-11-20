@@ -258,12 +258,12 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-S.3** Widen money columns `Decimal(14,2)` (M6) (`3fdf84d`)
 - [x] **P1-S.4** GraphQL `Money` type replacing `Float` in place, `Decimal` inputs (Emmanuel 2026-11-18: no deprecation window) (`687829a`)
 
-### P1-V — Variant as SKU + catalogue model (ADR-0002/0003)
+### P1-V — Variant as SKU + catalogue model (ADR-0002/0003)  🔄 in progress
 > Accept: Variants purchasable at variant price/stock (VAR-01 closed) · Run: V.1 → V.2 → V.3; V.4 ∥ · XL · 🟥
-- [ ] **P1-V.1** `ProductType`, `AttributeDefinition`, options/values, capability columns
-- [ ] **P1-V.2** Default SKU per product + convert size/colour (M7 a–b) with reconciliation report
-- [ ] **P1-V.3** Cart/order/stock reference `variantId` end to end
-- [ ] **P1-V.4** Attribute validation module (pure) used by admin create/update
+- [ ] 🔄 **P1-V.1** `ProductType`, `AttributeDefinition`, options/values, capability columns
+- [ ] 🔄 **P1-V.2** Default SKU per product + convert size/colour (M7 a–b) with reconciliation report
+- [ ] 🔄 **P1-V.3** Cart/order/stock reference `variantId` end to end
+- [ ] 🔄 **P1-V.4** Attribute validation module (pure) used by admin create/update
 
 ### P1-N — Inventory ledger (ADR-0008)
 > Accept: Concurrency tests: last unit sold once; repeat release no-ops · Run: → after V.2 · L · 🟥

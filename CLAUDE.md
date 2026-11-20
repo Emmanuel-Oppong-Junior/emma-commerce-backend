@@ -87,7 +87,8 @@ These describe what the code enforces today. ADR-0004 (money), ADR-0008 (invento
 - **Side effects** (email, webhook processing) run in the worker, never on the request path. After a state change, write an outbox event in the same transaction (`OutboxService.record(tx, ...)`); for an email with no surrounding transaction, use `NotificationsService` (it queues the job). Consumers are idempotent on the job id; errors and logs carry no addresses or tokens.
 - No secrets or PII in logs.
 - **Migrations:** create with `--create-only` and review the SQL. Never edit an applied migration. Backfills must be safe to re-run. `prisma migrate diff` must show no drift.
-- **API changes:** regenerate `schema.gql` with `npm run schema:generate` and commit it (CI fails on a stale file). Deprecate before removing; CI's graphql-inspector check fails on breaking changes unless a commit in the push/PR is marked `[breaking-api]`, and those must be listed for the frontend. Update `FRONTEND_API_DOCUMENTATION.md` with every API change.
+- **API changes:** regenerate `schema.gql` with `npm run schema:generate` and commit it (CI fails on a stale file). Update `FRONTEND_API_DOCUMENTATION.md` with every API change. CI's graphql-inspector check fails on breaking changes unless a commit in the push/PR is marked `[breaking-api]`.
+- **No API clients yet (Emmanuel, 2026-11-20):** no frontend or other client uses this API, so breaking changes are allowed without deprecation windows or compatibility shims: choose the clean design. Still mark such commits `[breaking-api]` and list the breaks in `FRONTEND_API_DOCUMENTATION.md`. This ends when the first frontend or client integrates; from then on, deprecate before removing.
 
 ## Architecture
 

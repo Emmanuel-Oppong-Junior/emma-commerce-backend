@@ -37,7 +37,7 @@ How future Claude Code sessions (and humans) take work from `ROADMAP.md` to `mai
 - [ ] **Migrations:** generated with `prisma migrate dev --create-only`, reviewed by hand, expand/contract for anything that renames/drops; never edit an applied migration; data backfills are idempotent scripts; `prisma migrate diff` shows no drift.
 - [ ] **Money:** no `number` arithmetic on money; uses the `Money` value object (ADR-0004) once it exists.
 - [ ] **Security checklist:** object-level authz on every new resolver/field; no `User`/PII on public types; DTO whitelist; rate limit on sensitive mutations; no secrets/PII in logs; errors mapped to standard codes.
-- [ ] **API:** `schema.gql` regenerated and committed; breaking changes called out (CI `graphql-inspector`); `FRONTEND_API_DOCUMENTATION.md` updated for every changed operation (docs must match code — they were 40 discrepancies behind).
+- [ ] **API:** `schema.gql` regenerated and committed; breaking changes called out (CI `graphql-inspector`) and marked `[breaking-api]` (allowed freely until the first frontend or client integrates: see `CLAUDE.md` → "No API clients yet"); `FRONTEND_API_DOCUMENTATION.md` updated for every changed operation (docs must match code — they were 40 discrepancies behind).
 - [ ] **Docs:** module report in `docs/audit/modules/<module>.md` updated: findings fixed get `Status: Fixed in <commit>`; verdict changed if the definition of done is now met; ADR status updated if the task implements one.
 - [ ] `docs/roadmap/STATUS.md` shows the task completed: Active task cleared, progress counts updated (see §2a); the task ticked in `ROADMAP.md` with its commit and the Progress table updated.
 - [ ] Report what ran (commands), what passed, what failed, what wasn't run.
