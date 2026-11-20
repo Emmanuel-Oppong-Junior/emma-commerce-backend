@@ -64,6 +64,7 @@ npm run test            # Run all unit tests (always via the npm scripts: Jest n
 npm run test:watch      # Watch mode
 npm run test:cov        # Coverage report
 npm run test:e2e        # End-to-end tests (test/jest-e2e.json, runs in band, separate .env.test DB)
+bash scripts/e2e/run.sh <db>_test <redis-db> [filters]  # e2e in Linux against the local emma-e2e-pg/emma-e2e-redis containers (cached node_modules)
 npm run test:repro      # Audit repro tests (test/jest-repro.json); failures are expected until each finding is fixed
 
 # Database

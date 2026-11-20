@@ -19,6 +19,16 @@ How future Claude Code sessions (and humans) take work from `ROADMAP.md` to `mai
 - It is updated **continuously at checkpoints** (task start, each finished step, each test run, each commit, blockers and decisions, task completion), never only at session end, because sessions can be deleted without warning. On resume it is cross-checked against git. See `CLAUDE.md` → Working state.
 - `ROADMAP.md` is the plan and the at-a-glance checklist: each task is `- [ ]` to do, `- [ ] 🔄` in progress or `- [x]` done (with its commit), and a Progress table counts tasks per phase. Update the marks when a task starts and completes; change the plan itself (split or reorder tasks) only with Emmanuel's OK.
 - Scratch and local-only files go in the gitignored `tmp/` folder.
+- STATUS checkpoints are local edits made as the work happens; they are pushed together with the code, never in a push of their own (a lone checkpoint push once stalled a task for 98 minutes).
+
+## 2b. Speed rules (Emmanuel, 2026-11-20)
+1. Independent lanes run in parallel, each agent with its own worktree, `_test` database and Redis DB index; the orchestrator resolves conflicts in shared files.
+2. While iterating, run only the affected tests (`npm test -- <paths>`, an e2e subset via `scripts/e2e/run.sh … <filter>`); run the full gates once at the end of each step and the full e2e suite once at the end of the task.
+3. When `dev` fast-forwards to the exact commit the agent tested, the orchestrator does not re-run its gates: CI is the independent check. Gates are re-run when branches are combined or the orchestrator changes code.
+4. Report once `dev` is pushed; CI is watched in the background and a failure is fixed straight away.
+5. Each wrap-up collects the decisions the next task needs, so its agent starts on Emmanuel's go.
+6. e2e runs through `scripts/e2e/run.sh`, which reuses a runner image with `node_modules` installed, rebuilt only when `package-lock.json` changes.
+7. On large epics, steps the roadmap marks parallel (∥) may go to two agents.
 
 ## 3. Definition of done (every task)
 - [ ] **A failing test first** for every bug fix (use or extend the matching file on `audit/repro-tests` / `test/repro/`; once fixed, move the test into the module's spec and delete the repro copy).
@@ -36,7 +46,7 @@ How future Claude Code sessions (and humans) take work from `ROADMAP.md` to `mai
 A module moves to **CLOSED** only when every item in its "Definition of done to close this module" is satisfied and evidenced (test names/commits). Whoever closes it edits the verdict line to `Verdict: CLOSED (YYYY-MM-DD, <commit>)` and updates the verdict table in `docs/audit/SUMMARY.md`.
 
 ## 5. Commits and PRs
-- Once every gate passes, commit, merge into `dev` and push `dev` without asking (Emmanuel, 2026-11-17). Ask only when a product or business decision is needed, or before moving to the next phase. Pushing `main` still needs Emmanuel's say-so. Message: short imperative subject focused on why, referencing the task ID: `Guard order cancel against repeat stock restore (P0-A.2)`.
+- Once every gate passes, commit, merge into `dev` and push `dev` without asking (Emmanuel, 2026-11-17); see §2b for which gates the orchestrator re-runs. Ask only when a product or business decision is needed, or before moving to the next phase. Pushing `main` still needs Emmanuel's say-so. Message: short imperative subject focused on why, referencing the task ID: `Guard order cancel against repeat stock restore (P0-A.2)`.
 - PR description: task ID, findings closed (IDs), tests added, migration notes, rollback notes.
 - No `--no-verify`, no force-push to shared branches.
 
