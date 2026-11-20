@@ -88,10 +88,18 @@ describe('log transports', () => {
   });
 
   it('add rotated local files in development', () => {
+    // A stand-in, so the test writes no files under logs/.
+    const rotate = jest
+      .spyOn(winstonTransports, 'DailyRotateFile')
+      .mockImplementation(() => new winstonTransports.Console() as never);
+
     const transports = logTransports('development');
 
     expect(transports).toHaveLength(3);
-    expect(transports.filter((transport) => transport instanceof winstonTransports.DailyRotateFile)).toHaveLength(2);
-    transports.forEach((transport) => transport.close?.());
+    expect(rotate.mock.calls.map(([options]) => [options?.filename, options?.level])).toEqual([
+      ['logs/combined-%DATE%.log', undefined],
+      ['logs/error-%DATE%.log', 'error'],
+    ]);
+    rotate.mockRestore();
   });
 });
