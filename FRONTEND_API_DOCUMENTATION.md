@@ -439,14 +439,14 @@ Resolver default: `SUPER_ADMIN` only, overridden per operation below. Super admi
   name: string;            // Required. 2–50 chars. Trimmed and lowercased.
   email: string;           // Required. Valid email. Trimmed and lowercased.
   password: string;        // Required. Password policy (same as signUp).
-  phoneNumber?: string;
+  phoneNumber?: string;    // Optional. Ghana number, stored as +233XXXXXXXXX (formats in 2.20 Addresses).
   profilePicture?: string; // Valid URL.
   isActive: boolean;       // Default true.
   role: Role;              // Default USER. USER or ADMIN; SUPER_ADMIN is refused.
 }
 ```
 
-**Possible Errors**: `FORBIDDEN` ("Super admin accounts cannot be created through the API"), `CONFLICT` (email or phone number already used), `BAD_USER_INPUT`.
+**Possible Errors**: `FORBIDDEN` ("Super admin accounts cannot be created through the API"), `CONFLICT` ("A user with this email already exists", or "Phone number is already in use"), `BAD_USER_INPUT` (including a phone number that is empty or not a Ghana number).
 
 ---
 
@@ -465,7 +465,7 @@ Resolver default: `SUPER_ADMIN` only, overridden per operation below. Super admi
   orderBy?: string;       // One of: id, name, email, phoneNumber, role, isActive, createdAt, updatedAt, lastLoginAt, profilePicture (also accepts "password")
   orderInAsc?: boolean;   // Default true
   email?: string;         // Partial match, case-insensitive
-  phoneNumber?: string;   // Exact match
+  phoneNumber?: string;   // Exact match against the stored form (+233XXXXXXXXX); not normalised
   role?: Role;            // USER | ADMIN (SUPER_ADMIN is always excluded)
   isActive?: boolean;
   name?: string;          // Partial match, case-insensitive
@@ -537,7 +537,9 @@ query {
 {
   name?: string;           // Optional. 2–50 chars.
   email?: string;          // Optional. Valid email. A new value becomes pendingEmail until verified.
-  phoneNumber?: string;    // Optional. No specific format enforced.
+  phoneNumber?: string | null; // Optional. Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX
+                               // (spaces, dashes, dots, parentheses ignored); stored as +233XXXXXXXXX. null removes it;
+                               // "" or any other format is BAD_USER_INPUT.
   profilePicture?: string; // Optional. Must be a valid URL.
 }
 ```
@@ -549,6 +551,8 @@ query {
 - `FORBIDDEN` — "Current password is incorrect". Nothing in the call is applied.
 - `CONFLICT` — "This email address is already in use".
 
+**Possible Errors** (phone number): `BAD_USER_INPUT` for an empty or non-Ghana number; `CONFLICT` "Phone number is already in use" when another account has the same number (compared after normalisation, so `0244123456` and `+233244123456` are the same). Nothing in the call is applied.
+
 ---
 
 #### `updateUser` (ADMIN, SUPER_ADMIN)
@@ -556,7 +560,7 @@ query {
 - **Args**: `id: String!`, `updateUserInput: UpdateUserInput!`
 - **Response**: `User!`
 - **Description**: Update another user's profile (super admin accounts cannot be modified; admin accounts only by a super admin). A new `email` goes through the same verification as `updateMyProfile` (stored as `pendingEmail`, verification email to the new address, notice to the old one, switch on `verifyEmail`), without a password.
-- **Possible Errors**: `FORBIDDEN`, `NOT_FOUND`, `CONFLICT` ("This email address is already in use").
+- **Possible Errors**: `FORBIDDEN`, `NOT_FOUND`, `CONFLICT` ("This email address is already in use", or "Phone number is already in use"), `BAD_USER_INPUT` (phone number as for `updateMyProfile`).
 
 ---
 
@@ -615,7 +619,7 @@ query {
   email: string;           // Owner or admin only.
   emailVerified: boolean;  // Owner or admin only. False until the current email is verified.
   pendingEmail?: string;   // Owner or admin only. New email awaiting verification.
-  phoneNumber?: string;    // Owner or admin only.
+  phoneNumber?: string;    // Owner or admin only. E.164, e.g. "+233244123456".
   authProvider?: string;   // Not populated today (always null).
   facebookId?: string;     // Not populated today (always null).
   isActive: boolean;

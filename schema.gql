@@ -493,7 +493,9 @@ input CreateUserInput {
   """
   password: String!
 
-  """Phone number"""
+  """
+  Phone number: Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX.
+  """
   phoneNumber: String
 
   """Profile picture URL"""
@@ -2073,7 +2075,9 @@ input UpdateUserInput {
   """User’s name"""
   name: String
 
-  """Phone number"""
+  """
+  Phone number: Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX. Send null to remove it.
+  """
   phoneNumber: String
 
   """Profile picture URL"""

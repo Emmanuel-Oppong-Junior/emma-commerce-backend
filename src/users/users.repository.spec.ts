@@ -54,6 +54,20 @@ const mockPrisma = {
   $transaction: jest.fn(),
 };
 
+// Prisma 7 through the pg driver adapter names the violated constraint instead of meta.target.
+const uniqueViolation = (index: string) =>
+  new Prisma.PrismaClientKnownRequestError('Unique constraint', {
+    code: 'P2002',
+    clientVersion: '7.0',
+    meta: {
+      modelName: 'User',
+      driverAdapterError: {
+        name: 'DriverAdapterError',
+        cause: { kind: 'UniqueConstraintViolation', constraint: { index } },
+      },
+    },
+  });
+
 describe('UsersRepository', () => {
   let repository: UsersRepository;
 
@@ -83,6 +97,22 @@ describe('UsersRepository', () => {
       mockPrismaUser.create.mockRejectedValue(prismaError);
 
       await expect(repository.create({ email: 'dup@example.com' } as any)).rejects.toThrow(ConflictException);
+    });
+
+    it('reports a phone number already used by another account as CONFLICT', async () => {
+      mockPrismaUser.create.mockRejectedValue(uniqueViolation('User_phoneNumber_key'));
+
+      await expect(repository.create({ email: 'new@example.com', phoneNumber: '+233244123456' })).rejects.toThrow(
+        new ConflictException('Phone number is already in use'),
+      );
+    });
+
+    it('keeps the email message for a duplicate email', async () => {
+      mockPrismaUser.create.mockRejectedValue(uniqueViolation('User_email_key'));
+
+      await expect(repository.create({ email: 'dup@example.com' })).rejects.toThrow(
+        new ConflictException('A user with this email already exists'),
+      );
     });
 
     it('should rethrow unknown errors', async () => {
@@ -219,6 +249,21 @@ describe('UsersRepository', () => {
       const result = await repository.update('user1', { name: 'Updated' });
 
       expect(result).toEqual(updated);
+    });
+
+    it('reports a phone number already used by another account as CONFLICT', async () => {
+      mockPrismaUser.update.mockRejectedValue(uniqueViolation('User_phoneNumber_key'));
+
+      await expect(repository.update('user1', { phoneNumber: '+233244123456' })).rejects.toThrow(
+        new ConflictException('Phone number is already in use'),
+      );
+    });
+
+    it('leaves other unique violations to the global error mapping', async () => {
+      const violation = uniqueViolation('User_emailVerificationToken_key');
+      mockPrismaUser.update.mockRejectedValue(violation);
+
+      await expect(repository.update('user1', { emailVerificationToken: 'hash' })).rejects.toBe(violation);
     });
 
     it('should throw NotFoundException on P2025', async () => {

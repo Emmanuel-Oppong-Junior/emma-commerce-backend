@@ -1,6 +1,7 @@
 import { Field, InputType } from '@nestjs/graphql';
 import { IsEmail, IsOptional, IsString, IsUrl, Length } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { GHANA_PHONE_FORMATS_DESCRIPTION, IsGhanaPhone } from '../../commons/phone/ghana-phone';
 
 @InputType()
 export class UpdateUserInput {
@@ -17,9 +18,13 @@ export class UpdateUserInput {
   @IsOptional()
   email?: string;
 
-  @Field(() => String, { nullable: true, description: 'Phone number' })
+  @Field(() => String, {
+    nullable: true,
+    description: `Phone number: ${GHANA_PHONE_FORMATS_DESCRIPTION}. Send null to remove it.`,
+  })
   @IsOptional()
-  phoneNumber?: string;
+  @IsGhanaPhone()
+  phoneNumber?: string | null;
 
   @Field(() => String, { nullable: true, description: 'Profile picture URL' })
   @IsOptional()

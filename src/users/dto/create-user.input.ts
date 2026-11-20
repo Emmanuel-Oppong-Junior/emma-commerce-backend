@@ -2,6 +2,7 @@ import { Field, InputType } from '@nestjs/graphql';
 import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, IsUrl, Length } from 'class-validator';
 import { Role } from '../enums/role.enum';
 import { Transform } from 'class-transformer';
+import { GHANA_PHONE_FORMATS_DESCRIPTION, IsGhanaPhone } from '../../commons/phone/ghana-phone';
 import { MeetsPasswordPolicy, PASSWORD_POLICY_DESCRIPTION } from '../../iam/authentication/password-policy';
 
 @InputType()
@@ -22,9 +23,10 @@ export class CreateUserInput {
   @MeetsPasswordPolicy()
   password?: string;
 
-  @Field(() => String, { nullable: true, description: 'Phone number' })
+  @Field(() => String, { nullable: true, description: `Phone number: ${GHANA_PHONE_FORMATS_DESCRIPTION}.` })
   @IsOptional()
-  phoneNumber?: string;
+  @IsGhanaPhone()
+  phoneNumber?: string | null;
 
   @Field(() => Boolean, {
     defaultValue: true,

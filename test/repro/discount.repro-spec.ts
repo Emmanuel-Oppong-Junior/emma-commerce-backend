@@ -63,7 +63,12 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
     const product = { id: 'product-1', name: 'Kettle', price: 500, currency: 'GHS', quantity: 5, categoryId: null };
     const repository = {
       findUserById: jest.fn().mockResolvedValue({ id: 'user-1', isActive: true }),
-      findAddressForUser: jest.fn().mockResolvedValue({ city: 'Accra' }),
+      findAddressForUser: jest.fn().mockResolvedValue({
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        recipientName: 'Ama Mensah',
+        phone: '+233244123456',
+      }),
       findProductById: jest.fn().mockResolvedValue(product),
       runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
       decrementProductStock: jest.fn().mockResolvedValue({ ...product, quantity: 4 }),

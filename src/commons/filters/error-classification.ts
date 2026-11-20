@@ -46,6 +46,12 @@ function uniqueFields(meta: Record<string, unknown> | undefined): string[] | und
   return fields.every(Boolean) ? fields : undefined;
 }
 
+/** The columns of the unique constraint a P2002 violated, or undefined for any other error or an unnamed constraint. */
+export function uniqueViolationFields(error: unknown): string[] | undefined {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return undefined;
+  return uniqueFields(error.meta);
+}
+
 function classifyPrisma(error: Prisma.PrismaClientKnownRequestError): ClassifiedError {
   switch (error.code) {
     case 'P2002': {

@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, RefreshToken, User } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { uniqueViolationFields } from '../commons/filters/error-classification';
 
 export type RefreshRotationOutcome = 'rotated' | 'reused' | 'invalid';
 
@@ -13,6 +14,12 @@ export type EmailVerificationOutcome =
 // A replay this soon after the token was rotated is a simultaneous refresh (two tabs), not theft.
 const CONCURRENT_REFRESH_GRACE_MS = 10_000;
 
+const PHONE_IN_USE_MESSAGE = 'Phone number is already in use';
+
+function isPhoneNumberTaken(error: unknown): boolean {
+  return uniqueViolationFields(error)?.includes('phoneNumber') ?? false;
+}
+
 @Injectable()
 export class UsersRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -21,6 +28,7 @@ export class UsersRepository {
     try {
       return await db.user.create({ data });
     } catch (e) {
+      if (isPhoneNumberTaken(e)) throw new ConflictException(PHONE_IN_USE_MESSAGE);
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException('A user with this email already exists');
       }
@@ -99,6 +107,7 @@ export class UsersRepository {
     try {
       return await db.user.update({ where: { id }, data });
     } catch (e) {
+      if (isPhoneNumberTaken(e)) throw new ConflictException(PHONE_IN_USE_MESSAGE);
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
         throw new NotFoundException('User not found');
       }

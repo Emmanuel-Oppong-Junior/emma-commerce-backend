@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
-import { classifyError, describeErrorForLog } from './error-classification';
+import { classifyError, describeErrorForLog, uniqueViolationFields } from './error-classification';
 import { InputValidationException } from '../validation-pipe';
 
 // The meta shape Prisma 7 gives through the pg driver adapter: no target, the constraint name instead.
@@ -118,6 +118,21 @@ describe('classifyError', () => {
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Internal server error',
     });
+  });
+});
+
+describe('uniqueViolationFields', () => {
+  it('reads the fields of a driver-adapter P2002', () => {
+    expect(
+      uniqueViolationFields(prismaError('P2002', adapterUniqueMeta('User', { index: 'User_phoneNumber_key' }))),
+    ).toEqual(['phoneNumber']);
+  });
+
+  it.each([
+    ['another Prisma error', prismaError('P2025')],
+    ['a non-Prisma error', new Error('boom')],
+  ])('is undefined for %s', (_case, error) => {
+    expect(uniqueViolationFields(error)).toBeUndefined();
   });
 });
 
