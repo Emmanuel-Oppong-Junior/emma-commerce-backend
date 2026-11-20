@@ -39,7 +39,7 @@ The fixes are tractable. Phase 0 of the roadmap closes all of these. 21 failing 
 | discount | **REWRITE** | Best-discount compares raw values; not applied at checkout; total rewrite | `modules/discount.md` |
 | tax | **REWRITE** | Tax baked into price, dropped on edit, not stored on orders | `modules/tax.md` |
 | currency | **REWRITE** | Hard-coded float rates; checkout ignores currency; client picks charge currency | `modules/currency.md` |
-| variant | **REWRITE** | Variants can't be bought; `size`/`color` hard-coded | `modules/variant.md` |
+| variant | CLOSED (2026-11-20, 22ebb06) | Variant is the SKU (P1-V) | `modules/variant.md` |
 | cart | **REWRITE** | No variant line identity; stale prices; duplicate lines under race | `modules/cart.md` |
 | shipping-zones | **REWRITE** | Unmatched city ships free; overlapping zones nondeterministic | `modules/shipping-zones.md` |
 | notifications | **REWRITE** | Email-only, fire-and-forget, errors ignored, unescaped templates | `modules/notifications.md` |
