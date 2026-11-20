@@ -24,6 +24,7 @@ import { CartModule } from './cart/cart.module';
 import { OrderModule } from './order/order.module';
 import { AddressesModule } from './addresses/addresses.module';
 import { VariantModule } from './variant/variant.module';
+import { ProductTypesModule } from './product-types/product-types.module';
 import { TagModule } from './tag/tag.module';
 import { WishlistModule } from './wishlist/wishlist.module';
 import { ReviewModule } from './review/review.module';
@@ -142,6 +143,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     OrderModule,
     AddressesModule,
     VariantModule,
+    ProductTypesModule,
     TagModule,
     WishlistModule,
     ReviewModule,

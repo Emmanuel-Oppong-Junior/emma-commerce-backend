@@ -6,9 +6,18 @@ import { SubCategory } from '../../sub-categories/entities/sub-category.entity';
 import { Variant } from '../../variant/entities/variant.entity';
 import { Review } from '../../review/entities/review.entity';
 import { Brand } from '../../brand/entities/brand.entity';
-import { CurrencyEnum, DeliveryOptionsEnum, ProductStatusEnum, StockStatusEnum } from '../enums/product.enum';
+import {
+  CurrencyEnum,
+  DeliveryOptionsEnum,
+  FulfilmentKindEnum,
+  ProductStatusEnum,
+  StockStatusEnum,
+  UnitOfMeasureEnum,
+} from '../enums/product.enum';
 import { MoneyObject } from '../../commons/money/money.object';
 import { Decimal } from '@prisma/client/runtime/client';
+import { GraphQLJSONObject } from 'graphql-type-json';
+import { ProductType } from '../../product-types/entities/product-type.entity';
 
 @ObjectType()
 export class Product {
@@ -77,6 +86,38 @@ export class Product {
 
   @Field(() => GraphQLISODateTime, { description: 'Expiry or best-before date', nullable: true })
   expiryDate?: Date;
+
+  @Field(() => ID, { description: 'ID of the product type' })
+  productTypeId: string;
+
+  @Field(() => ProductType, { description: 'The product type, whose attribute definitions describe attributes' })
+  productType?: ProductType;
+
+  @Field(() => GraphQLJSONObject, {
+    description: "Values of the product type's non-axis attributes, keyed by attribute key",
+  })
+  attributes: Record<string, unknown>;
+
+  @Field(() => Boolean, { description: 'Sold only against a prescription (pharmacy; enforced in a later phase)' })
+  requiresPrescription: boolean;
+
+  @Field(() => Boolean, { description: 'Perishable goods (expiry tracking comes with the inventory ledger)' })
+  isPerishable: boolean;
+
+  @Field(() => Int, { description: 'Shelf life in days for perishable goods', nullable: true })
+  shelfLifeDays?: number | null;
+
+  @Field(() => Boolean, { description: 'Stock is tracked per lot/batch (inventory ledger, later phase)' })
+  trackLots: boolean;
+
+  @Field(() => Boolean, { description: 'Each unit carries a serial number such as an IMEI (later phase)' })
+  trackSerials: boolean;
+
+  @Field(() => FulfilmentKindEnum, { description: 'How the product reaches the customer' })
+  fulfilmentKind: FulfilmentKindEnum;
+
+  @Field(() => UnitOfMeasureEnum, { description: 'Unit the product is sold in' })
+  unitOfMeasure: UnitOfMeasureEnum;
 
   @Field(() => MoneyObject, { description: 'Discounted price, if a discount is active', nullable: true })
   discountedPrice?: Decimal;

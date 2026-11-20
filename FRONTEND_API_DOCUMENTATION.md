@@ -33,6 +33,7 @@
    - [Background jobs](#223-background-jobs)
    - [Staff roles and permissions](#224-staff-roles-and-permissions)
    - [Two-factor authentication and step-up](#225-two-factor-authentication-and-step-up)
+   - [Product types and attributes](#226-product-types-and-attributes)
 3. [REST API Reference](#3-rest-api-reference)
 4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
@@ -2781,7 +2782,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 |---|---|
 | `catalog.product.read` | `adminProducts`, `adminProduct` |
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
-| `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories and tags; `addProductsToTag`, `removeProductsFromTag` |
+| `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
 | `inventory.view` | `inventoryLogs`, `productInventoryLogs`, `variantInventoryLogs` |
 | `inventory.adjust` | `restockProduct`, `restockVariant`, `adjustProductStock`, `adjustVariantStock` |
@@ -2924,6 +2925,58 @@ User.mfaEnabled: boolean                 // The user themself or user.view
 - **Response**: `StepUpResult!`
 - **Side effects**: audit entry (entity `User`, action `STEP_UP`, `details.method` `totp` or `recovery`).
 - **Possible Errors**: `BAD_REQUEST` ("Invalid two-factor code", "Enrol two-factor authentication first"), `UNAUTHENTICATED` (token without a session id: sign in again).
+
+### 2.26 Product types and attributes
+
+Every product has a **product type** (ADR-0002) that defines the attributes it carries. Attributes marked `isVariantAxis` are chosen per variant (`Variant.optionValues`, e.g. size and colour); the others describe the product (`Product.attributes`, e.g. warranty or material). Both are JSON objects keyed by attribute key and are validated against the type when a product or variant is saved.
+
+Two **system types** exist and are read-only: **General** (`id: "product_type_general"`, no attributes; the default for every product) and **Apparel** (`id: "product_type_apparel"`: `size` and `colour`, both TEXT variant axes, optional, filterable).
+
+```typescript
+{
+  id: string; key: string; name: string; description?: string; isSystem: boolean; createdAt: DateTime; updatedAt: DateTime;
+  attributes: AttributeDefinition[];          // in display order (position, then key)
+}                                             // ProductType
+{
+  id: string; productTypeId: string;
+  key: string;                                // lower-case, a-z 0-9 _, starts with a letter, <= 50 chars
+  label: string; dataType: 'TEXT' | 'NUMBER' | 'BOOLEAN';
+  unit?: string;                              // NUMBER only, e.g. "g", "GB"
+  isRequired: boolean;
+  allowedValues: string[];                    // empty = any value of the data type
+  isVariantAxis: boolean; isFilterable: boolean; position: number;
+}                                             // AttributeDefinition
+```
+
+#### `productTypes` / `productType`
+- **Type**: Query · **Auth Required**: No
+- **Args**: `productType(id: ID!)`
+- **Response**: `[ProductType!]!` (by name) / `ProductType!`
+- **Possible Errors**: `NOT_FOUND` (unknown id).
+
+`Product.productType` and `Product.productTypeId` return the same type for a product.
+
+#### `createProductType`
+- **Type**: Mutation · **Auth**: `catalog.taxonomy.write`
+- **Args**: `input: CreateProductTypeInput!` = `{ key: string; name: string (1-100); description?: string (<= 500); attributes?: AttributeDefinitionInput[] (<= 50) }`
+- `AttributeDefinitionInput` = `{ key; label (1-100); dataType; unit?: string (1-20); isRequired = false; allowedValues?: string[] (<= 200, each <= 100 chars); isVariantAxis = false; isFilterable = false; position = 0 (0-1000) }`
+- **Response**: `ProductType!` · **Side effects**: audit entry (entity `ProductType`, action `CREATE`).
+- **Possible Errors**: `CONFLICT` (key taken), `BAD_REQUEST` (repeated attribute keys), `BAD_USER_INPUT`, `FORBIDDEN`.
+
+#### `updateProductType` / `deleteProductType`
+- **Type**: Mutation · **Auth**: `catalog.taxonomy.write`
+- **Args**: `id: ID!`; update also `input: UpdateProductTypeInput!` = `{ name?; description? }` (the key never changes)
+- **Response**: `ProductType!` · **Side effects**: audit entry (`UPDATE` / `DELETE`).
+- **Possible Errors**: `CONFLICT` (system type; delete of a type any product uses), `NOT_FOUND`, `FORBIDDEN`.
+
+#### `addAttributeDefinition` / `updateAttributeDefinition` / `removeAttributeDefinition`
+- **Type**: Mutation · **Auth**: `catalog.taxonomy.write`
+- **Args**: `addAttributeDefinition(productTypeId: ID!, input: AttributeDefinitionInput!)`, `updateAttributeDefinition(attributeId: ID!, input: UpdateAttributeDefinitionInput!)` with `{ label?; unit?; isRequired?; allowedValues?; isFilterable?; position? }` (key, data type and variant-axis flag never change), `removeAttributeDefinition(attributeId: ID!)`
+- **Response**: the whole `ProductType!` · **Side effects**: audit entry (entity `AttributeDefinition`).
+- **Rules for a type that products use** (so stored values stay valid): new attributes must be optional; an attribute can be relabelled, reordered, made (un)filterable, made optional and given extra allowed values; making it required, changing its unit, narrowing its allowed values and removing it are refused with `CONFLICT`. System types refuse every change.
+- **Possible Errors**: `CONFLICT`, `NOT_FOUND`, `BAD_USER_INPUT`, `FORBIDDEN`.
+
+**Capability fields on Product** (typed, for rules later phases enforce; today they are stored and returned only): `requiresPrescription` (pharmacy checkout gate), `isPerishable` and `shelfLifeDays` (expiry tracking with the inventory ledger), `trackLots` and `trackSerials` (lot and serial tracking), `fulfilmentKind` (`PHYSICAL` | `DIGITAL` | `SERVICE`, for delivery rules) and `unitOfMeasure` (`EACH` | `KG` | `G` | `L` | `ML` | `M`, for weighable goods). `createProduct` / `updateProduct` accept them (all optional; defaults `false`, `PHYSICAL`, `EACH`; `shelfLifeDays` 1-3650). Physical sizes live on the variant: `weightGrams`, `lengthMm`, `widthMm`, `heightMm`.
 
 ---
 

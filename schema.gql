@@ -75,6 +75,76 @@ input ApproveReturnInput {
   returnRequestId: ID!
 }
 
+"""
+Type of an attribute value: TEXT, NUMBER (in the attribute unit) or BOOLEAN
+"""
+enum AttributeDataType {
+  BOOLEAN
+  NUMBER
+  TEXT
+}
+
+"""
+An attribute a product type defines for its products (or, for a variant axis, variants)
+"""
+type AttributeDefinition {
+  """The values allowed; empty means any value of the data type"""
+  allowedValues: [String!]!
+  dataType: AttributeDataType!
+  id: ID!
+
+  """Offered as a catalogue filter"""
+  isFilterable: Boolean!
+  isRequired: Boolean!
+
+  """
+  Set per variant (Variant.optionValues) rather than per product (Product.attributes)
+  """
+  isVariantAxis: Boolean!
+
+  """
+  Key used in Product.attributes and Variant.optionValues, e.g. "size"
+  """
+  key: String!
+
+  """
+  Label to show, e.g. "Size"
+  """
+  label: String!
+  position: Int!
+  productTypeId: ID!
+
+  """
+  Unit of a NUMBER attribute, e.g. "g"
+  """
+  unit: String
+}
+
+input AttributeDefinitionInput {
+  """Allowed values; omit or leave empty to allow any value"""
+  allowedValues: [String!]
+  dataType: AttributeDataType!
+  isFilterable: Boolean! = false
+  isRequired: Boolean! = false
+
+  """Set per variant (size, colour) rather than per product"""
+  isVariantAxis: Boolean! = false
+
+  """
+  Lower-case key used in attribute maps, e.g. "screen_size" (letters, digits, underscores)
+  """
+  key: String!
+  label: String!
+
+  """Display order, lowest first"""
+  position: Int! = 0
+
+  """
+  Unit of a NUMBER attribute, e.g. "g" or "ml"
+  """
+  unit: String
+}
+
 type AuthEntity {
   """authentication access token"""
   accessToken: String!
@@ -402,11 +472,17 @@ input CreateProductInput {
   """Expiry or best-before date for perishable products"""
   expiryDate: DateTime
 
+  """Defaults to PHYSICAL"""
+  fulfilmentKind: FulfilmentKind
+
   """HTTPS URLs to product images (max 10)"""
   images: [String!]
 
   """Whether the product is visible to customers"""
   isActive: Boolean! = false
+
+  """Perishable goods (defaults to false)"""
+  isPerishable: Boolean
 
   """Whether taxes apply to this product"""
   isTaxable: Boolean! = false
@@ -420,8 +496,14 @@ input CreateProductInput {
   """Initial stock quantity (0 or more)"""
   quantity: Int!
 
+  """Sold only against a prescription (defaults to false)"""
+  requiresPrescription: Boolean
+
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
+
+  """Shelf life in days for perishable goods (1-3650)"""
+  shelfLifeDays: Int
 
   """Short marketing description (max 500 characters)"""
   shortDescription: String
@@ -437,6 +519,26 @@ input CreateProductInput {
 
   """ID of the subcategory"""
   subcategoryId: String
+
+  """Track stock per lot/batch (defaults to false)"""
+  trackLots: Boolean
+
+  """Track a serial number per unit (defaults to false)"""
+  trackSerials: Boolean
+
+  """Defaults to EACH"""
+  unitOfMeasure: UnitOfMeasure
+}
+
+input CreateProductTypeInput {
+  attributes: [AttributeDefinitionInput!]
+  description: String
+
+  """
+  Stable lower-case identifier, e.g. "phone" (letters, digits, underscores)
+  """
+  key: String!
+  name: String!
 }
 
 input CreateReturnRequestInput {
@@ -673,6 +775,15 @@ enum FulfillmentType {
   PICKUP
 }
 
+"""
+How the product reaches the customer: shipped or collected, delivered digitally, or performed
+"""
+enum FulfilmentKind {
+  DIGITAL
+  PHYSICAL
+  SERVICE
+}
+
 """One of Ghana's 16 administrative regions"""
 enum GhanaRegion {
   AHAFO
@@ -716,6 +827,11 @@ type InventoryLogEntity {
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
 scalar JSON
+
+"""
+The `JSONObject` scalar type represents JSON objects as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSONObject
 
 """Background job queues run by the worker"""
 enum JobQueue {
@@ -767,6 +883,11 @@ type Money {
 }
 
 type Mutation {
+  """
+  Adds an attribute definition; a type that products use only takes optional ones
+  """
+  addAttributeDefinition(input: AttributeDefinitionInput!, productTypeId: ID!): ProductType!
+
   """Add products to a tag"""
   addProductsToTag(tagId: String!, updateDiscountInput: AddProductsToTagDto!): Tag!
   addTagToProduct(productId: String!, tagId: String!): Product!
@@ -846,6 +967,9 @@ type Mutation {
   createPickupLocation(input: CreatePickupLocationInput!): PickupLocationEntity!
   createProduct(createProductInput: CreateProductInput!): Product!
 
+  """Creates a product type, optionally with its attributes (admin only)"""
+  createProductType(input: CreateProductTypeInput!): ProductType!
+
   """Create a return request for a delivered order"""
   createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
 
@@ -894,6 +1018,9 @@ type Mutation {
   """Delete a pickup location (admin only)"""
   deletePickupLocation(id: ID!): PickupLocationEntity!
 
+  """Deletes a product type no product uses; system types are read-only"""
+  deleteProductType(id: ID!): ProductType!
+
   """Deletes the authenticated user's own review"""
   deleteReview(reviewId: String!): Review!
 
@@ -931,6 +1058,9 @@ type Mutation {
 
   """Reject a return request (admin only)"""
   rejectReturn(input: RejectReturnInput!): ReturnRequestEntity!
+
+  """Removes an attribute definition from a type no product uses"""
+  removeAttributeDefinition(attributeId: ID!): ProductType!
 
   """Deletes a category by ID (admin only)"""
   removeCategory(
@@ -1013,6 +1143,11 @@ type Mutation {
 
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
+
+  """
+  Changes an attribute definition; making it required, changing its unit or narrowing its allowed values needs a type no product uses
+  """
+  updateAttributeDefinition(attributeId: ID!, input: UpdateAttributeDefinitionInput!): ProductType!
   updateBrand(id: String!, input: UpdateBrandInput!): Brand!
 
   """Updates the quantity of an item in the user’s cart"""
@@ -1044,6 +1179,9 @@ type Mutation {
   """Update a pickup location (admin only)"""
   updatePickupLocation(id: ID!, input: UpdatePickupLocationInput!): PickupLocationEntity!
   updateProduct(productId: String!, updateProductInput: UpdateProductInput!): Product!
+
+  """Renames or redescribes a product type; system types are read-only"""
+  updateProductType(id: ID!, input: UpdateProductTypeInput!): ProductType!
 
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
@@ -1262,6 +1400,11 @@ type Product {
   """Downloadable or supplementary file URLs"""
   attachments: [String!]
 
+  """
+  Values of the product type's non-axis attributes, keyed by attribute key
+  """
+  attributes: JSONObject!
+
   """Barcode (EAN, UPC, etc.)"""
   barcode: String
 
@@ -1292,6 +1435,9 @@ type Product {
   """Expiry or best-before date"""
   expiryDate: DateTime
 
+  """How the product reaches the customer"""
+  fulfilmentKind: FulfilmentKind!
+
   """Unique identifier of the product"""
   id: ID!
 
@@ -1300,6 +1446,9 @@ type Product {
 
   """Whether the product is visible to customers"""
   isActive: Boolean!
+
+  """Perishable goods (expiry tracking comes with the inventory ledger)"""
+  isPerishable: Boolean!
 
   """Whether taxes are applied to this product"""
   isTaxable: Boolean!
@@ -1313,15 +1462,27 @@ type Product {
   """Tax-inclusive display price"""
   price: Money
 
+  """The product type, whose attribute definitions describe attributes"""
+  productType: ProductType!
+
+  """ID of the product type"""
+  productTypeId: ID!
+
   """When the product was published"""
   publishedAt: DateTime
 
   """Available stock quantity"""
   quantity: Int!
+
+  """Sold only against a prescription (pharmacy; enforced in a later phase)"""
+  requiresPrescription: Boolean!
   reviews: [Review!]
 
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
+
+  """Shelf life in days for perishable goods"""
+  shelfLifeDays: Int
 
   """Short marketing description (max 500 chars)"""
   shortDescription: String
@@ -1337,6 +1498,15 @@ type Product {
   subcategory: SubCategory
   subcategoryId: String
   tags: [Tag!]
+
+  """Stock is tracked per lot/batch (inventory ledger, later phase)"""
+  trackLots: Boolean!
+
+  """Each unit carries a serial number such as an IMEI (later phase)"""
+  trackSerials: Boolean!
+
+  """Unit the product is sold in"""
+  unitOfMeasure: UnitOfMeasure!
   updatedAt: DateTime!
   variants: [Variant!]
 }
@@ -1432,6 +1602,27 @@ enum ProductStatus {
   ARCHIVED
   DRAFT
   PUBLISHED
+}
+
+"""
+A kind of product (e.g. Apparel) and the attributes its products and variants carry
+"""
+type ProductType {
+  """Attribute definitions in display order"""
+  attributes: [AttributeDefinition!]!
+  createdAt: DateTime!
+  description: String
+  id: ID!
+
+  """Seeded by the platform and read-only"""
+  isSystem: Boolean!
+
+  """
+  Stable identifier, e.g. "apparel"
+  """
+  key: String!
+  name: String!
+  updatedAt: DateTime!
 }
 
 """What other customers may see about a user, e.g. on reviews"""
@@ -1534,6 +1725,12 @@ type Query {
 
   """Retrieves all reviews for a product"""
   productReviews(productId: String!): [Review!]!
+
+  """A product type and its attribute definitions"""
+  productType(id: ID!): ProductType!
+
+  """Product types and their attribute definitions, by name"""
+  productTypes: [ProductType!]!
 
   """Retrieves all variants for a product"""
   productVariants(productId: String!): [Variant!]!
@@ -1987,6 +2184,16 @@ type TopProduct {
   totalRevenue: Money!
 }
 
+"""Unit the product is sold in"""
+enum UnitOfMeasure {
+  EACH
+  G
+  KG
+  L
+  M
+  ML
+}
+
 input UpdateAddressInput {
   """Area, neighbourhood or suburb (up to 100 characters)"""
   area: String
@@ -2029,6 +2236,18 @@ input UpdateAddressInput {
 
   """Postal code, if any (Ghana has none in common use)"""
   zipCode: String
+}
+
+"""
+Changes to an attribute definition; key, data type and variant-axis flag cannot change
+"""
+input UpdateAttributeDefinitionInput {
+  allowedValues: [String!]
+  isFilterable: Boolean
+  isRequired: Boolean
+  label: String
+  position: Int
+  unit: String
 }
 
 input UpdateBrandInput {
@@ -2149,11 +2368,17 @@ input UpdateProductInput {
   """Expiry or best-before date for perishable products"""
   expiryDate: DateTime
 
+  """Defaults to PHYSICAL"""
+  fulfilmentKind: FulfilmentKind
+
   """HTTPS URLs to product images (max 10)"""
   images: [String!]
 
   """Whether the product is visible to customers"""
   isActive: Boolean
+
+  """Perishable goods (defaults to false)"""
+  isPerishable: Boolean
 
   """Whether taxes apply to this product"""
   isTaxable: Boolean
@@ -2164,8 +2389,14 @@ input UpdateProductInput {
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String
 
+  """Sold only against a prescription (defaults to false)"""
+  requiresPrescription: Boolean
+
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
+
+  """Shelf life in days for perishable goods (1-3650)"""
+  shelfLifeDays: Int
 
   """Short marketing description (max 500 characters)"""
   shortDescription: String
@@ -2181,6 +2412,20 @@ input UpdateProductInput {
 
   """ID of the subcategory"""
   subcategoryId: String
+
+  """Track stock per lot/batch (defaults to false)"""
+  trackLots: Boolean
+
+  """Track a serial number per unit (defaults to false)"""
+  trackSerials: Boolean
+
+  """Defaults to EACH"""
+  unitOfMeasure: UnitOfMeasure
+}
+
+input UpdateProductTypeInput {
+  description: String
+  name: String
 }
 
 input UpdateReviewInput {
@@ -2408,14 +2653,37 @@ input ValidateCouponInput {
 }
 
 type Variant {
+  """Barcode (EAN, UPC, GTIN, ...)"""
+  barcode: String
+
+  """Price before tax, as entered by an admin"""
+  basePrice: Money
   color: String
   discountId: ID
+  heightMm: Int
   id: ID!
+
+  """Image shown for this variant instead of the product images"""
+  image: String
+
+  """Inactive variants are archived: kept for history, never sold"""
+  isActive: Boolean!
+  lengthMm: Int
+
+  """
+  Values for the product type's variant axes, e.g. { size: "M", colour: "Red" }
+  """
+  optionValues: JSONObject!
   price: Money!
   product: Product!
   productId: ID!
   quantity: Float!
   size: String
+
+  """Stock keeping unit code"""
+  sku: String
+  weightGrams: Int
+  widthMm: Int
 }
 
 input VerifyEmailInput {

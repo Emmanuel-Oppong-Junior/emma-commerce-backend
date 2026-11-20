@@ -8,7 +8,7 @@ generator client {
   provider        = "prisma-client"
   output          = "../src/generated/prisma"
   moduleFormat    = "cjs"
-  previewFeatures = ["fullTextSearchPostgres"]
+  previewFeatures = ["fullTextSearchPostgres", "partialIndexes"]
 }
 
 datasource db {
@@ -181,12 +181,27 @@ model Tag {
   updatedAt DateTime  @updatedAt
 }
 
+/// The SKU: the unit that is priced, stocked and sold (ADR-0003). Every product has at least one.
 model Variant {
   id                String         @id @default(cuid())
   size              String?
   color             String?
+  sku               String?        @unique
+  barcode           String?        @unique
+  /// Values for the product type's variant axes (ADR-0002), checked by product-types/domain/attribute-validation.ts
+  optionValues      Json           @default("{}")
+  /// Canonical form of optionValues (attribute-validation.ts), unique per product among active variants
+  optionsKey        String         @default("")
   quantity          Int            @default(0)
   price             Decimal        @db.Decimal(14, 2)
+  /// Admin-entered price before tax; price is basePrice with tax added when the product is taxable
+  basePrice         Decimal?       @db.Decimal(14, 2)
+  isActive          Boolean        @default(true)
+  weightGrams       Int?
+  lengthMm          Int?
+  widthMm           Int?
+  heightMm          Int?
+  image             String?
   productId         String
   product           Product        @relation(fields: [productId], references: [id])
   cartItem          CartItem[]
@@ -201,6 +216,63 @@ model Variant {
 
   @@index([productId])
   @@index([discountId])
+}
+
+/// A kind of product (ADR-0002) owning the attribute definitions its products and variants are validated against.
+/// System types are seeded by migration and immutable.
+model ProductType {
+  id          String                @id @default(cuid())
+  key         String                @unique @db.VarChar(50)
+  name        String                @db.VarChar(100)
+  description String?               @db.VarChar(500)
+  isSystem    Boolean               @default(false)
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  attributes  AttributeDefinition[]
+  products    Product[]
+}
+
+model AttributeDefinition {
+  id            String            @id @default(cuid())
+  productTypeId String
+  key           String            @db.VarChar(50)
+  label         String            @db.VarChar(100)
+  dataType      AttributeDataType
+  /// Unit of a NUMBER attribute's values, e.g. "g" or "ml"
+  unit          String?           @db.VarChar(20)
+  isRequired    Boolean           @default(false)
+  /// Empty means any value of the data type
+  allowedValues String[]
+  /// Variant axes are set per variant (optionValues); the others per product (attributes)
+  isVariantAxis Boolean           @default(false)
+  isFilterable  Boolean           @default(false)
+  position      Int               @default(0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  productType   ProductType       @relation(fields: [productTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([productTypeId, key])
+}
+
+enum AttributeDataType {
+  TEXT
+  NUMBER
+  BOOLEAN
+}
+
+enum FulfilmentKind {
+  PHYSICAL
+  DIGITAL
+  SERVICE
+}
+
+enum UnitOfMeasure {
+  EACH
+  KG
+  G
+  L
+  ML
+  M
 }
 
 model Product {
@@ -235,6 +307,21 @@ model Product {
 
   expiryDate DateTime?
 
+  /// Defaults to the seeded General type
+  productTypeId String      @default("product_type_general")
+  productType   ProductType @relation(fields: [productTypeId], references: [id], onDelete: Restrict)
+  /// Values for the product type's non-axis attributes (ADR-0002), checked by attribute-validation.ts
+  attributes    Json        @default("{}")
+
+  // Capability columns (ADR-0002 option 4): typed because checkout, inventory, delivery or compliance will branch on them.
+  requiresPrescription Boolean        @default(false)
+  isPerishable         Boolean        @default(false)
+  shelfLifeDays        Int?
+  trackLots            Boolean        @default(false)
+  trackSerials         Boolean        @default(false)
+  fulfilmentKind       FulfilmentKind @default(PHYSICAL)
+  unitOfMeasure        UnitOfMeasure  @default(EACH)
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   categoryId    String?
@@ -256,6 +343,8 @@ model Product {
   @@index([categoryId])
   @@index([subcategoryId])
   @@index([isActive, status])
+  @@index([productTypeId])
+  @@index([attributes(ops: JsonbPathOps)], type: Gin)
 }
 
 enum ProductStatus {

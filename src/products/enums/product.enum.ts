@@ -34,3 +34,25 @@ export enum DeliveryOptionsEnum {
 }
 
 registerEnumType(DeliveryOptionsEnum, { name: 'DeliveryOptions' });
+
+export enum FulfilmentKindEnum {
+  PHYSICAL = 'PHYSICAL',
+  DIGITAL = 'DIGITAL',
+  SERVICE = 'SERVICE',
+}
+
+registerEnumType(FulfilmentKindEnum, {
+  name: 'FulfilmentKind',
+  description: 'How the product reaches the customer: shipped or collected, delivered digitally, or performed',
+});
+
+export enum UnitOfMeasureEnum {
+  EACH = 'EACH',
+  KG = 'KG',
+  G = 'G',
+  L = 'L',
+  ML = 'ML',
+  M = 'M',
+}
+
+registerEnumType(UnitOfMeasureEnum, { name: 'UnitOfMeasure', description: 'Unit the product is sold in' });

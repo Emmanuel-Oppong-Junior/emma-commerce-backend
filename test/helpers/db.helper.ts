@@ -64,6 +64,8 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   // Product hierarchy (variants before products; implicit join-table rows cascade)
   await prisma.variant.deleteMany();
   await prisma.product.deleteMany();
+  // Custom product types a test created (their attributes cascade); the seeded system types stay
+  await prisma.productType.deleteMany({ where: { isSystem: false } });
 
   // Catalogue
   await prisma.discount.deleteMany();

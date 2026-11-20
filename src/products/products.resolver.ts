@@ -21,6 +21,8 @@ import { Variant } from '../variant/entities/variant.entity';
 import { Review } from '../review/entities/review.entity';
 import { MoneyObject } from '../commons/money/money.object';
 import { RequirePermission, RequireStepUp, StepUpCondition } from '../iam/authorization/policy.decorators';
+import { ProductType } from '../product-types/entities/product-type.entity';
+import { ProductTypesLoader } from '../product-types/product-types.loader';
 
 const CHANGES_BASE_PRICE: StepUpCondition = {
   label: 'updateProductInput.basePrice is set',
@@ -28,7 +30,7 @@ const CHANGES_BASE_PRICE: StepUpCondition = {
 };
 
 // Field resolvers and nested product lists must never be loaded through the Prisma select.
-const RESOLVED_FIELDS = ['discountedPrice', 'appliedDiscount', 'variants', 'reviews', 'products'];
+const RESOLVED_FIELDS = ['discountedPrice', 'appliedDiscount', 'variants', 'reviews', 'products', 'productType'];
 // Decimal columns served as Money: the GraphQL sub-selection { amount currency } is not part of the Prisma select.
 const MONEY_COLUMNS = ['price', 'basePrice', 'currentPrice'];
 
@@ -50,6 +52,7 @@ export class ProductsResolver {
     private readonly discountLoader: DiscountLoader,
     private readonly variantsLoader: VariantsLoader,
     private readonly reviewsLoader: ReviewsLoader,
+    private readonly productTypesLoader: ProductTypesLoader,
   ) {}
 
   @RequirePermission('catalog.product.write')
@@ -172,6 +175,11 @@ export class ProductsResolver {
   @ResolveField(() => [Variant], { nullable: true })
   async variants(@Parent() product: Product) {
     return this.variantsLoader.loader.load(product.id);
+  }
+
+  @ResolveField(() => ProductType)
+  async productType(@Parent() product: Product) {
+    return this.productTypesLoader.loader.load(product.productTypeId);
   }
 
   @ResolveField(() => [Review], { nullable: true })

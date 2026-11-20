@@ -1,7 +1,7 @@
 export const PERMISSION_CATALOGUE = {
   'catalog.product.read': 'See products in every status (drafts, archived) in the admin catalogue',
   'catalog.product.write': 'Create, edit, archive and delete products and variants, and tag products',
-  'catalog.taxonomy.write': 'Create, edit and delete brands, categories, sub-categories and tags',
+  'catalog.taxonomy.write': 'Create, edit and delete brands, categories, sub-categories, tags and product types',
   'catalog.media.upload': 'Upload catalogue images',
   'inventory.view': 'Read inventory logs',
   'inventory.adjust': 'Restock and adjust product and variant stock',

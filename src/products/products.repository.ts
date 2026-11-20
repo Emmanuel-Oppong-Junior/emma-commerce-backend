@@ -50,13 +50,13 @@ export class ProductsRepository {
 
   async findById(id: string, select?: Prisma.ProductSelect): Promise<Product | null> {
     const opts: Prisma.ProductFindUniqueArgs = { where: { id } };
-    if (select && Object.keys(select).length) opts.select = { ...select, id: true };
+    if (select && Object.keys(select).length) opts.select = { ...select, id: true, productTypeId: true };
     return this.prisma.product.findUnique(opts);
   }
 
   async findFirst(where: Prisma.ProductWhereInput, select?: Prisma.ProductSelect): Promise<Product | null> {
     const opts: Prisma.ProductFindFirstArgs = { where };
-    if (select && Object.keys(select).length) opts.select = { ...select, id: true };
+    if (select && Object.keys(select).length) opts.select = { ...select, id: true, productTypeId: true };
     return this.prisma.product.findFirst(opts);
   }
 
@@ -71,7 +71,7 @@ export class ProductsRepository {
       where,
       orderBy,
     };
-    if (select && Object.keys(select).length) queryOptions.select = { ...select, id: true };
+    if (select && Object.keys(select).length) queryOptions.select = { ...select, id: true, productTypeId: true };
     return this.prisma.product.findMany(queryOptions);
   }
 

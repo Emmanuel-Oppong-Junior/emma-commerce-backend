@@ -16,7 +16,14 @@ import {
   Min,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { CurrencyEnum, DeliveryOptionsEnum, ProductStatusEnum, StockStatusEnum } from '../enums/product.enum';
+import {
+  CurrencyEnum,
+  DeliveryOptionsEnum,
+  FulfilmentKindEnum,
+  ProductStatusEnum,
+  StockStatusEnum,
+  UnitOfMeasureEnum,
+} from '../enums/product.enum';
 import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
 import { Decimal } from '@prisma/client/runtime/client';
 
@@ -130,6 +137,43 @@ export class CreateProductInput {
   @Type(() => Date)
   @IsDate({ message: 'expiryDate must be a valid date' })
   expiryDate?: Date;
+
+  @Field(() => Boolean, { nullable: true, description: 'Sold only against a prescription (defaults to false)' })
+  @IsOptional()
+  @IsBoolean()
+  requiresPrescription?: boolean;
+
+  @Field(() => Boolean, { nullable: true, description: 'Perishable goods (defaults to false)' })
+  @IsOptional()
+  @IsBoolean()
+  isPerishable?: boolean;
+
+  @Field(() => Int, { nullable: true, description: 'Shelf life in days for perishable goods (1-3650)' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  shelfLifeDays?: number;
+
+  @Field(() => Boolean, { nullable: true, description: 'Track stock per lot/batch (defaults to false)' })
+  @IsOptional()
+  @IsBoolean()
+  trackLots?: boolean;
+
+  @Field(() => Boolean, { nullable: true, description: 'Track a serial number per unit (defaults to false)' })
+  @IsOptional()
+  @IsBoolean()
+  trackSerials?: boolean;
+
+  @Field(() => FulfilmentKindEnum, { nullable: true, description: 'Defaults to PHYSICAL' })
+  @IsOptional()
+  @IsEnum(FulfilmentKindEnum)
+  fulfilmentKind?: FulfilmentKindEnum;
+
+  @Field(() => UnitOfMeasureEnum, { nullable: true, description: 'Defaults to EACH' })
+  @IsOptional()
+  @IsEnum(UnitOfMeasureEnum)
+  unitOfMeasure?: UnitOfMeasureEnum;
 
   @Field(() => String, { nullable: true, description: 'ID of the parent category' })
   @IsOptional()

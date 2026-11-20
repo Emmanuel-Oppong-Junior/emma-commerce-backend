@@ -109,7 +109,7 @@ feature/
 └── enums/                    # Feature-specific enums
 ```
 
-Feature modules: `users`, `products`, `categories`, `sub-categories`, `brand`, `tag`, `variant`, `cart`, `order`, `payment`, `addresses`, `discount`, `coupons`, `wishlist`, `review`, `returns`, `inventory`, `analytics`, `tax`, `shipping-zones`, `pickup-locations`.
+Feature modules: `users`, `products`, `product-types`, `categories`, `sub-categories`, `brand`, `tag`, `variant`, `cart`, `order`, `payment`, `addresses`, `discount`, `coupons`, `wishlist`, `review`, `returns`, `inventory`, `analytics`, `tax`, `shipping-zones`, `pickup-locations`.
 
 Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `env.validation.ts`, cache config), `currency`, `notifications` (Resend email + templates), `health` (health controller/indicators), `redis` (shared ioredis client), `jobs` (BullMQ queues), `outbox` (domain events + relay), `worker` (the `ROLE=worker` root module), plus `instrument.ts` (main.ts's first import: starts Sentry, then `telemetry.ts`: one OpenTelemetry NodeSDK for traces, enabled via `OTEL_ENABLED`, and Prometheus metrics) and `observability/` (Sentry options and PII scrubbing, `reportError`/`reportFailedJob`, `AppMetrics`, the HTTP metrics middleware and the GraphQL metrics plugin).
 

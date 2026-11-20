@@ -2,6 +2,7 @@
 
 exports[`Authorization matrix matches the reviewed matrix 1`] = `
 "
+Mutation addAttributeDefinition          permission: catalog.taxonomy.write
 Mutation addProductsToTag                permission: catalog.taxonomy.write
 Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
@@ -29,6 +30,7 @@ Mutation createDiscount                  permission: promotion.manage; step-up
 Mutation createOrder                     authenticated
 Mutation createPickupLocation            permission: shipping.manage
 Mutation createProduct                   permission: catalog.product.write
+Mutation createProductType               permission: catalog.taxonomy.write
 Mutation createReturnRequest             authenticated
 Mutation createReview                    customer only
 Mutation createShippingZone              permission: shipping.manage
@@ -44,6 +46,7 @@ Mutation deleteBrand                     permission: catalog.taxonomy.write
 Mutation deleteCoupon                    permission: promotion.manage; step-up
 Mutation deleteOrder                     permission: order.manage
 Mutation deletePickupLocation            permission: shipping.manage
+Mutation deleteProductType               permission: catalog.taxonomy.write
 Mutation deleteReview                    customer only
 Mutation deleteShippingZone              permission: shipping.manage
 Mutation deleteTag                       permission: catalog.taxonomy.write
@@ -56,6 +59,7 @@ Mutation processRefund                   permission: order.refund; step-up
 Mutation recordCodPayment                permission: payment.record
 Mutation refreshToken                    public
 Mutation rejectReturn                    permission: return.manage
+Mutation removeAttributeDefinition       permission: catalog.taxonomy.write
 Mutation removeCategory                  permission: catalog.taxonomy.write
 Mutation removeDiscount                  permission: promotion.manage; step-up
 Mutation removeFromCart                  authenticated
@@ -82,6 +86,7 @@ Mutation softDeletePayment               permission: payment.manage
 Mutation startMfaEnrollment              authenticated
 Mutation stepUp                          authenticated
 Mutation updateAddress                   authenticated
+Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
 Mutation updateCartItem                  authenticated
 Mutation updateCategory                  permission: catalog.taxonomy.write
@@ -91,6 +96,7 @@ Mutation updateMyProfile                 authenticated
 Mutation updateOrderStatus               permission: order.manage
 Mutation updatePickupLocation            permission: shipping.manage
 Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.basePrice is set
+Mutation updateProductType               permission: catalog.taxonomy.write
 Mutation updateReview                    customer only
 Mutation updateShipping                  permission: order.manage
 Mutation updateShippingZone              permission: shipping.manage
@@ -136,6 +142,8 @@ Query product                            public
 Query productInventoryLogs               permission: inventory.view
 Query productReviews                     authenticated
 Query products                           public
+Query productType                        public
+Query productTypes                       public
 Query productVariants                    authenticated
 Query refunds                            permission: payment.view
 Query returnRequests                     permission: return.manage

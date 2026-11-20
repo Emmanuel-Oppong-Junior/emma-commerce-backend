@@ -4,6 +4,7 @@ import { ProductsService } from './products.service';
 import { DiscountLoader } from './loaders/discount.loader';
 import { VariantsLoader } from './loaders/variants.loader';
 import { ReviewsLoader } from './loaders/reviews.loader';
+import { ProductTypesLoader } from '../product-types/product-types.loader';
 import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
@@ -61,6 +62,7 @@ describe('ProductsResolver', () => {
         { provide: DiscountLoader, useValue: mockDiscountLoader },
         { provide: VariantsLoader, useValue: mockVariantsLoader },
         { provide: ReviewsLoader, useValue: mockReviewsLoader },
+        { provide: ProductTypesLoader, useValue: { loader: { load: jest.fn() } } },
       ],
     }).compile();
 
