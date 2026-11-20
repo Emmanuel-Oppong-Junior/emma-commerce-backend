@@ -13,5 +13,6 @@
   "testTimeout": 60000,
   "forceExit": true,
   "verbose": true,
-  "maxWorkers": 1
+  "maxWorkers": 1,
+  "workerIdleMemoryLimit": "1GB"
 }

@@ -5,7 +5,10 @@
 **Last checkpoint:** 2026-11-20 · **Current phase:** Phase 1 — Foundations (25/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V done); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: see **Up next** (P1-N inventory ledger, then P1-O; P1-K.2–K.4 blocked on hosting).
+**P1-N — Inventory ledger** (ADR-0008) · branch `feat/p1-n-ledger` from `04d4a70` · agent in a worktree · DB `emma_wt_ledger_test`, Redis DB 12 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-20): one default `StockLocation` per store (allocation rules later); `StockLevel` (onHand, reserved) per variant and location with CHECKs; reserve at placement, consume on online payment success or COD dispatch, release on cancel/expiry, all conditional on reservation status; expiry with the existing unpaid-order window and job; `InventoryLog` migrated into append-only `StockMovement` then dropped (breaking API fine); low-stock as an outbox event on threshold crossing (replaces the 6-hourly scan); nightly reconciliation flags, never corrects; lots/serials out of scope
+  - [ ] N.1 ← **Next step** (agent) · [ ] N.2 · [ ] N.3 · [ ] merge, push
+  - Side fix (orchestrator): CI e2e on `04d4a70` died with exit 134 (heap) after P1-V grew the suite; `test:e2e` now runs one recycled Jest worker (`workerIdleMemoryLimit` 1GB) instead of `--runInBand`. Full e2e in one run: **455/455**, 52/52 suites, drift 0 (`scripts/e2e/run.sh emma_merge_test 10`).
 
 **Last completed: P1-V Variant as SKU + catalogue model (2026-11-20)** (ADR-0002, ADR-0003; VAR-01..10, CART-01, ORD-06, INV-01): V.1 `47f374b`, V.4 `c185063`, V.2 `1346b3e`, V.3 `22ebb06` (all but V.1 `[breaking-api]`), fast-forwarded onto dev.
   - V.1: migration `20261121000000_product_types_and_sku_columns`: `ProductType`, `AttributeDefinition` (key, label, data type, unit, required, allowedValues, `isVariantAxis`, `isFilterable`); system types General and Apparel (`size`, `colour` optional TEXT axes). `Product.productTypeId` (default General), `attributes` JSONB (GIN). Capability columns: on Product `requiresPrescription`, `isPerishable`, `shelfLifeDays`, `trackLots`, `trackSerials`, `fulfilmentKind`, `unitOfMeasure`; on Variant `weightGrams`, `lengthMm`/`widthMm`/`heightMm` (stored only; behaviour comes with pharmacy, P1-N, delivery rules). Variant gains `sku`, `barcode`, `optionValues`, `optionsKey`, `basePrice`, `isActive`, `image`. Type CRUD (`productTypes`/`productType` public; mutations `catalog.taxonomy.write`; system types immutable; a used type changes only safely, else CONFLICT; audited).
@@ -105,7 +108,7 @@ None. Next: see **Up next** (P1-N inventory ledger, then P1-O; P1-K.2–K.4 bloc
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P1-N → P1-O | → sequential | — |
+| 1 | P1-N (in progress) → P1-O | → sequential | — |
 | 2 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
 
 ## Phase 0 progress

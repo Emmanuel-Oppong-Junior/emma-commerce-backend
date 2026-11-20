@@ -265,11 +265,11 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-V.3** Cart/order/stock reference `variantId` end to end [22ebb06]
 - [x] **P1-V.4** Attribute validation module (pure) used by admin create/update [c185063]
 
-### P1-N — Inventory ledger (ADR-0008)
+### P1-N — Inventory ledger (ADR-0008)  🔄 in progress
 > Accept: Concurrency tests: last unit sold once; repeat release no-ops · Run: → after V.2 · L · 🟥
-- [ ] **P1-N.1** `StockLocation`, `InventoryLevel`, `StockReservation`, `StockMovement` (M7 c–d)
-- [ ] **P1-N.2** Reserve at placement, consume at capture/dispatch, release on cancel/expiry — all conditional
-- [ ] **P1-N.3** Nightly reconciliation Σ movements = onHand
+- [ ] 🔄 **P1-N.1** `StockLocation`, `InventoryLevel`, `StockReservation`, `StockMovement` (M7 c–d)
+- [ ] 🔄 **P1-N.2** Reserve at placement, consume at capture/dispatch, release on cancel/expiry — all conditional
+- [ ] 🔄 **P1-N.3** Nightly reconciliation Σ movements = onHand
 
 ### P1-O — Order snapshots & tax lines (ADR-0006/0014)
 > Accept: Σ lines + adjustments + tax + shipping = grand total (property test) · Run: → after V.3 · L · 🟥
