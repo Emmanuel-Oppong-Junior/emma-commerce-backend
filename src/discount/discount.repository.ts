@@ -44,50 +44,6 @@ export class DiscountRepository {
     }
   }
 
-  async findProductById(id: string, select?: Prisma.ProductSelect): Promise<Partial<Product> | null> {
-    return this.prisma.product.findUnique({ where: { id }, select: select ?? undefined });
-  }
-
-  async findProductWithDiscounts(
-    productId: string,
-  ): Promise<{ categoryId: string | null; discounts: Discount[] } | null> {
-    return this.prisma.product.findUnique({
-      where: { id: productId },
-      select: {
-        categoryId: true,
-        discounts: {
-          where: { isActive: true, startDate: { lte: new Date() }, endDate: { gte: new Date() } },
-        },
-      },
-    });
-  }
-
-  async findVariantById(id: string, select?: Prisma.VariantSelect): Promise<Partial<Variant> | null> {
-    return this.prisma.variant.findUnique({ where: { id }, select: select ?? undefined });
-  }
-
-  async findCategoryDiscounts(categoryId: string): Promise<Discount[]> {
-    return this.prisma.discount.findMany({
-      where: {
-        isActive: true,
-        startDate: { lte: new Date() },
-        endDate: { gte: new Date() },
-        categories: { some: { id: categoryId } },
-      },
-    });
-  }
-
-  async findVariantDiscounts(variantId: string): Promise<Discount[]> {
-    return this.prisma.discount.findMany({
-      where: {
-        isActive: true,
-        startDate: { lte: new Date() },
-        endDate: { gte: new Date() },
-        variants: { some: { id: variantId } },
-      },
-    });
-  }
-
   async getInvalidIds(ids: string[], model: 'product' | 'variant' | 'category'): Promise<string[]> {
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-expect-error
@@ -107,11 +63,11 @@ export class DiscountRepository {
 
   async findCartById(
     cartId: string,
-  ): Promise<(Cart & { items: (CartItem & { product: Product; variant?: Variant })[] }) | null> {
+  ): Promise<(Cart & { items: (CartItem & { product: Product; variant: Variant })[] }) | null> {
     return this.prisma.cart.findUnique({
       where: { id: cartId },
-      include: { items: { include: { product: true, variant: true } } },
-    }) as Promise<(Cart & { items: (CartItem & { product: Product; variant?: Variant })[] }) | null>;
+      include: { items: { include: { product: true, variant: true }, orderBy: { createdAt: 'asc' } } },
+    });
   }
 
   async updateCartItem(
@@ -138,9 +94,11 @@ export class DiscountRepository {
     return db.discount.update({ where: { id }, data });
   }
 
+  /** Active, in-date discounts on any of the products or categories, or with one of the ids (variant discounts). */
   async findActiveDiscountsFor(
     productIds: string[],
     categoryIds: string[],
+    discountIds: string[] = [],
   ): Promise<(Discount & { products: { id: string }[]; categories: { id: string }[] })[]> {
     const now = new Date();
     return this.prisma.discount.findMany({
@@ -148,7 +106,11 @@ export class DiscountRepository {
         isActive: true,
         startDate: { lte: now },
         endDate: { gte: now },
-        OR: [{ products: { some: { id: { in: productIds } } } }, { categories: { some: { id: { in: categoryIds } } } }],
+        OR: [
+          { id: { in: discountIds } },
+          { products: { some: { id: { in: productIds } } } },
+          { categories: { some: { id: { in: categoryIds } } } },
+        ],
       },
       include: {
         products: { where: { id: { in: productIds } }, select: { id: true } },

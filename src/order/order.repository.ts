@@ -9,12 +9,17 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
-  Product,
   User,
+  Variant,
 } from '../generated/prisma/client';
+import { VariantForSale } from '../cart/cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
 
 type OrderWithItems = Order & { items: OrderItem[] };
+export type NewOrderItem = Omit<Prisma.OrderItemUncheckedCreateWithoutOrderInput, 'optionValues' | 'quantity'> & {
+  quantity: number;
+  optionValues: Prisma.InputJsonValue;
+};
 
 /**
  * Unpaid online orders older than `cutoff` with no payment attempt, or whose attempts are all pending, failed
@@ -59,7 +64,7 @@ export class OrdersRepository {
   async findByUser(userId: string): Promise<OrderWithItems[]> {
     return this.prisma.order.findMany({
       where: { userId, deleted: false },
-      include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true, variant: true } } },
       orderBy: { createdAt: 'desc' },
     }) as unknown as Promise<OrderWithItems[]>;
   }
@@ -67,7 +72,7 @@ export class OrdersRepository {
   async findAll(): Promise<Order[]> {
     return this.prisma.order.findMany({
       where: { deleted: false },
-      include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true, variant: true } } },
     }) as unknown as Promise<Order[]>;
   }
 
@@ -75,7 +80,7 @@ export class OrdersRepository {
     tx: Prisma.TransactionClient,
     userId: string,
     orderDetails: {
-      orderItems: OrderItem[];
+      orderItems: NewOrderItem[];
       subtotal: Prisma.Decimal;
       discountTotal: Prisma.Decimal;
       shippingFee: Prisma.Decimal;
@@ -115,7 +120,7 @@ export class OrdersRepository {
         contactPhone: orderDetails.contactPhone,
         items: { create: orderDetails.orderItems },
       },
-      include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true, variant: true } } },
     }) as unknown as OrderWithItems;
   }
 
@@ -146,7 +151,7 @@ export class OrdersRepository {
       return (await db.order.update({
         where: { id: orderId },
         data: { trackingNumber, carrier },
-        include: { items: { include: { product: true } } },
+        include: { items: { include: { product: true, variant: true } } },
       })) as unknown as OrderWithItems;
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
@@ -188,7 +193,7 @@ export class OrdersRepository {
   private async findInTransaction(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems> {
     return tx.order.findUniqueOrThrow({
       where: { id: orderId },
-      include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true, variant: true } } },
     }) as unknown as OrderWithItems;
   }
 
@@ -200,41 +205,34 @@ export class OrdersRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  async updateProductStock(tx: Prisma.TransactionClient, productId: string, delta: number): Promise<Product> {
-    return tx.product.update({
-      where: { id: productId },
-      data: { quantity: { increment: delta } },
-    });
+  /** Puts `quantity` units back on the variant (cancellation, expiry); returns its new stock. */
+  async restoreVariantStock(tx: Prisma.TransactionClient, variantId: string, quantity: number): Promise<Variant> {
+    return tx.variant.update({ where: { id: variantId }, data: { quantity: { increment: quantity } } });
   }
 
-  /** Takes `quantity` units only if that many are left; returns null when stock is short. */
-  async decrementProductStock(
+  /** Takes `quantity` units of an on-sale variant only if that many are left; null when short or no longer on sale. */
+  async decrementVariantStock(
     tx: Prisma.TransactionClient,
-    productId: string,
+    variantId: string,
     quantity: number,
-  ): Promise<Product | null> {
-    const { count } = await tx.product.updateMany({
-      where: { id: productId, quantity: { gte: quantity } },
+  ): Promise<Variant | null> {
+    const { count } = await tx.variant.updateMany({
+      // Re-checks sellability in the transaction: the variant may have been archived or its product unpublished since
+      // the cart was priced.
+      where: {
+        id: variantId,
+        quantity: { gte: quantity },
+        isActive: true,
+        product: { isActive: true, status: 'PUBLISHED' },
+      },
       data: { quantity: { decrement: quantity } },
     });
     if (count === 0) return null;
-    return tx.product.findUniqueOrThrow({ where: { id: productId } });
+    return tx.variant.findUniqueOrThrow({ where: { id: variantId } });
   }
 
-  async findProductById(productId: string): Promise<Product | null> {
-    return this.prisma.product.findUnique({ where: { id: productId } });
-  }
-
-  async findProduct(tx: Prisma.TransactionClient, productId: string): Promise<Product | null> {
-    return tx.product.findUnique({ where: { id: productId } });
-  }
-
-  async findNamesOfProductsWithVariants(tx: Prisma.TransactionClient, productIds: string[]): Promise<string[]> {
-    const products = await tx.product.findMany({
-      where: { id: { in: productIds }, variants: { some: { optionsKey: { not: '' } } } },
-      select: { name: true },
-    });
-    return products.map((product) => product.name);
+  async findVariant(variantId: string): Promise<VariantForSale | null> {
+    return this.prisma.variant.findUnique({ where: { id: variantId }, include: { product: true } });
   }
 
   async clearCartItems(tx: Prisma.TransactionClient, cartId: string): Promise<void> {

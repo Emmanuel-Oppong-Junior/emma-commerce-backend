@@ -1,14 +1,5 @@
 import { registerEnumType } from '@nestjs/graphql';
 
-export enum StockStatusEnum {
-  IN_STOCK = 'IN_STOCK',
-  OUT_OF_STOCK = 'OUT_OF_STOCK',
-  PREORDER = 'PREORDER',
-  BACKORDER = 'BACKORDER',
-}
-
-registerEnumType(StockStatusEnum, { name: 'StockStatus' });
-
 export enum ProductStatusEnum {
   DRAFT = 'DRAFT',
   PUBLISHED = 'PUBLISHED',

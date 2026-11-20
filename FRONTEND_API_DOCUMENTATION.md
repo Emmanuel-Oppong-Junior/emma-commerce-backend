@@ -654,7 +654,9 @@ query {
 
 > **Visibility:** the public `products` and `product` queries only ever return products that are active **and** `PUBLISHED`; `isActive`/`status` sent in `filterArgs` cannot widen that. `product` returns `null` for a draft, archived or inactive product. Admins list and open products in any state with `adminProducts` / `adminProduct`. Nested `products` on `Category`, `SubCategory` and `Brand` also return published products only, newest first, capped by `first` (default 20, 1–100; anything else is an error).
 
-> **Price:** admins enter `basePrice`. `price` is what customers pay and what checkout charges: `basePrice × (1 + sum of active tax rates)` when `isTaxable`, otherwise `basePrice`. It is recomputed when `basePrice`/`isTaxable` change and whenever a tax is created, updated or deleted. Product discounts are shown via `discountedPrice` and charged at checkout (see [Section 10](#10-discounts-system)).
+> **Price and stock live on the variant (P1-V.3, ADR-0003).** A product is sold only through its variants (SKUs, see [2.8](#28-variants)): each variant has its own `basePrice`, `price`, `discountedPrice`, `sku`, `barcode` and `quantity`. A variant's `price` (what customers pay and checkout charges) is `basePrice × (1 + sum of active tax rates)` when the product `isTaxable`, otherwise `basePrice`. The product shows summaries: `priceRange`, `totalStock` and `inStock`. Customers pick a variant from `Product.variants` and put that in the cart.
+
+> **Breaking change (P1-V.3):** `Product.price`, `basePrice`, `currentPrice`, `quantity`, `sku`, `barcode`, `stockStatus`, `lowStockAlert`, `discountedPrice` and `appliedDiscount` → removed; read `priceRange` / `totalStock` / `inStock` on the product and `price` / `discountedPrice` / `appliedDiscount` / `sku` / `barcode` / `quantity` on each of its `variants`. The `StockStatus` enum is removed. `ProductSortField` loses `PRICE` and `QUANTITY`. `CreateProductInput` loses `basePrice`, `quantity`, `sku`, `barcode`, `stockStatus` and `lowStockAlert` and requires `variants`; `UpdateProductInput` loses `basePrice`, `sku`, `barcode`, `stockStatus` and `lowStockAlert`. `Product.variants` is now non-null and returns only active variants.
 
 ---
 
@@ -684,22 +686,22 @@ query {
   status?: ProductStatus;     // DRAFT | PUBLISHED | ARCHIVED; ignored by public queries
   search?: string;            // Full-text match on name/description, or partial tag name
   createdAfter?: string;      // ISO date string
-  priceMin?: Decimal;          // Inclusive, compared with price
-  priceMax?: Decimal;          // Inclusive, compared with price
+  priceMin?: Decimal;         // Inclusive, compared with an active variant's price
+  priceMax?: Decimal;         // Inclusive, compared with an active variant's price
   brand?: string;             // Brand name, exact, case-insensitive
-  inStock?: boolean;          // See note below
+  inStock?: boolean;          // true = an active variant has quantity > 0; false or omitted = no filter
   tagId?: string;
   tagName?: string;           // Exact, case-insensitive
 }
 
 // ProductSortArgs
 {
-  sortBy: ProductSortField;   // CREATED_AT (default) | NAME | PRICE | QUANTITY | UPDATED_AT
+  sortBy: ProductSortField;   // CREATED_AT (default) | NAME | UPDATED_AT
   sortOrder: SortOrder;       // DESC (default) | ASC
 }
 ```
 
-Known filter defects (do not rely on them yet): `subCategoryName` compares the subcategory name with the `categoryName` value, and `inStock: true` does not exclude out-of-stock products. Use `subcategoryId` instead.
+`priceMin`, `priceMax` and `inStock` match a product when **one** active variant satisfies every condition given (e.g. `priceMax: "50", inStock: true` needs a variant that costs at most 50 and is in stock). There is no price or stock sort.
 
 **Response: `ProductConnection`**
 
@@ -720,19 +722,18 @@ Known filter defects (do not rely on them yet): `subCategoryName` compares the s
   description?: string;
   images?: string[];            // HTTPS URLs
   attachments?: string[];
-  basePrice?: Money;            // Admin-entered price before tax
-  price?: Money;                // Tax-inclusive selling price (charged at checkout)
-  currentPrice?: Money;         // Not set by any API operation (null unless set in the database)
-  currency?: Currency;          // Default GHS; only GHS products can be checked out
-  isTaxable: boolean;
-  discountedPrice?: Money;      // price after the best active discount; null when no discount applies
-  appliedDiscount?: Discount;   // The discount behind discountedPrice, or null
+  priceRange?: { min: Money; max: Money };  // Lowest and highest price of the active variants; null when none is priced
+  totalStock: number;           // Units in stock across the active variants
+  inStock: boolean;             // true when an active variant has stock
+  currency?: Currency;          // Default GHS; only products in the store currency can be checked out
+  isTaxable: boolean;           // Variant prices add tax to their basePrice
   discounts?: Discount[];
-  sku?: string;
-  barcode?: string;
-  quantity: number;             // Stock
-  lowStockAlert?: number;
-  stockStatus?: StockStatus;    // Stored as entered; not updated automatically from quantity
+  productTypeId: string;        // See 2.26
+  productType: ProductType;
+  attributes: JSONObject;       // Non-axis attribute values, keyed by attribute key (see 2.26)
+  requiresPrescription: boolean; isPerishable: boolean; shelfLifeDays?: number;
+  trackLots: boolean; trackSerials: boolean;
+  fulfilmentKind: FulfilmentKind; unitOfMeasure: UnitOfMeasure;   // Capability fields, see 2.26
   status?: ProductStatus;       // DRAFT | PUBLISHED | ARCHIVED
   isActive: boolean;
   publishedAt?: DateTime;       // Not set by any API operation
@@ -746,7 +747,7 @@ Known filter defects (do not rely on them yet): `subCategoryName` compares the s
   brandId?: string;
   brand?: Brand;
   tags?: Tag[];
-  variants?: Variant[];
+  variants: Variant[];          // The active variants (SKUs): what a customer chooses and buys
   reviews?: Review[];
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -758,10 +759,17 @@ Known filter defects (do not rely on them yet): `subCategoryName` compares the s
 query {
   products(
     paginationArgs: { first: 12 }
-    filterArgs: { categoryId: "clx_cat" }
-    sortArgs: { sortBy: PRICE, sortOrder: ASC }
+    filterArgs: { categoryId: "clx_cat", inStock: true }
+    sortArgs: { sortBy: CREATED_AT, sortOrder: DESC }
   ) {
-    edges { cursor node { id name price { amount currency } discountedPrice { amount currency } currency images } }
+    edges {
+      cursor
+      node {
+        id name currency images inStock totalStock
+        priceRange { min { amount currency } max { amount currency } }
+        variants { id sku optionValues price { amount currency } discountedPrice { amount currency } quantity }
+      }
+    }
     pageInfo { hasNextPage totalCount }
   }
 }
@@ -804,33 +812,49 @@ query {
 ```typescript
 {
   name: string;                  // Required. 1–255 chars.
-  basePrice: Decimal;            // Required. e.g. "29.99" (at most 2 decimal places). There is no `price` input.
-  quantity: number;              // Required. Integer >= 0 (initial stock).
+  variants: VariantFieldsInput[]; // Required. 1–100 variants (SKUs) to sell; a product without options has one, with no optionValues.
   isActive: boolean;             // Default false.
-  isTaxable: boolean;            // Default false.
+  isTaxable: boolean;            // Default false. Variant prices add tax to their basePrice.
+  productTypeId?: string;        // Default General (see 2.26).
+  attributes?: JSONObject;       // Non-axis attribute values (see 2.26).
   status?: ProductStatus;        // Default DRAFT. Must be PUBLISHED (and isActive true) to appear publicly.
   shortDescription?: string;     // Max 500 chars.
   description?: string;          // Max 5000 chars.
   images?: string[];             // Max 10 HTTPS URLs.
   attachments?: string[];        // URLs.
   currency?: Currency;           // Default GHS.
-  sku?: string;                  // 1–50 chars, letters, digits and hyphens. Unique.
-  barcode?: string;              // 1–100 chars. Unique.
-  lowStockAlert?: number;        // Integer 0–10000. Default 5.
-  stockStatus?: StockStatus;     // Default IN_STOCK.
   deliveryOptions?: DeliveryOptions[];   // Default [LOCAL_DELIVERY].
   selectedDeliveryRegions?: string[];    // Region names when deliveryOptions includes SELECTED_REGIONS.
   expiryDate?: DateTime;
   categoryId?: string;           // Optional.
   subcategoryId?: string;        // Must belong to categoryId.
   brandId?: string;
+  // plus the optional capability fields of 2.26 (requiresPrescription, isPerishable, shelfLifeDays, trackLots,
+  // trackSerials, fulfilmentKind, unitOfMeasure)
+}
+
+// VariantFieldsInput: the CreateVariantInput fields (see 2.8) without productId and discountId
+{
+  basePrice: Decimal;            // Required, >= 0, at most 2 decimals. The variant's price adds tax when the product is taxable.
+  quantity: number;              // Required, integer 0–1,000,000: initial stock, logged as RESTOCK "Initial stock".
+  optionValues?: JSONObject;     // Values for the product type's variant axes; omit for none.
+  sku?: string;                  // 1–50 letters, digits, hyphens; unique; generated when omitted.
+  barcode?: string;              // 1–100 chars; unique.
+  lowStockThreshold?: number;    // Default 5.
+  image?: string;                // HTTPS URL.
+  weightGrams?: number; lengthMm?: number; widthMm?: number; heightMm?: number;
 }
 ```
 
+To attach a discount to a variant, use `createVariant`/`updateVariant` (`discountId`) or `addToDiscount`; a discount on the product applies to all its variants.
+
+**Side effects**: the product and its variants are created in one transaction; each variant's initial stock is logged as `RESTOCK` ("Initial stock"); audit entry (entity `Product`, `CREATE`).
+
 **Possible Errors**:
-- `BAD_USER_INPUT` — Validation failure.
-- `NOT_FOUND` — Category or subcategory not found.
-- `CONFLICT` — SKU already in use, subcategory does not belong to the category, or another unique value (barcode) already used.
+- `BAD_USER_INPUT` — Validation failure (including no variants or more than 100).
+- `NOT_FOUND` — Category, subcategory or product type not found.
+- `BAD_REQUEST` — Invalid attributes or option values for the product type; two variants with the same options ("Two variants have the same options (...)"); an SKU or barcode repeated in the list ("SKU or barcode \"...\" is repeated").
+- `CONFLICT` — SKU or barcode already used by another variant, or the subcategory does not belong to the category.
 
 ---
 
@@ -839,7 +863,11 @@ query {
 - **Args**: `productId: String!`, `updateProductInput: UpdateProductInput!`
 - **Response**: `Product!`
 
-`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `quantity`**: stock cannot be set here (sending it is a schema error, HTTP 400). Change stock with `restockProduct` or `adjustProductStock`. Omitted fields, including `isActive` and `isTaxable`, are left unchanged. Changing `isTaxable` on a product that has no `basePrice` (e.g. older seeded products) without also sending `basePrice` fails with `BAD_REQUEST`, instead of setting the price to 0.00.
+- **Auth**: step-up when `isTaxable` is sent (see [2.25](#225-two-factor-authentication-and-step-up))
+
+`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `variants`**: it has no price, stock, SKU or barcode fields (sending one is a schema error, HTTP 400). Change prices, SKUs and barcodes with `updateVariant`, add variants with `createVariant`, and change stock with `restockVariant` / `adjustVariantStock`. Omitted fields, including `isActive` and `isTaxable`, are left unchanged. Changing `isTaxable` reprices every variant of the product from its `basePrice` in the same transaction (variants without a `basePrice` keep their price).
+
+**Breaking change (P1-V.3):** `basePrice`, `sku`, `barcode`, `stockStatus`, `lowStockAlert` → removed from `UpdateProductInput` (set them per variant); the step-up condition changed from "`basePrice` is sent" to "`isTaxable` is sent".
 
 ---
 
@@ -847,6 +875,7 @@ query {
 - **Type**: Mutation
 - **Args**: `productId: String!`
 - **Response**: `Product!`
+- **Description**: Deletes the product together with its variants and their stock movements (inventory logs). Refused while any cart or order line references the product; archive it instead.
 - **Possible Errors**: `NOT_FOUND`; `CONFLICT` ("Cannot delete product referenced in active carts or orders").
 
 ---
@@ -1144,9 +1173,11 @@ A **variant is the SKU** (ADR-0003): the unit that is priced, stocked and sold. 
 
 **Breaking changes (P1-V.4):** `size` and `color` are gone (use `optionValues`, e.g. `{ "size": "M", "colour": "Red" }` on an Apparel product); `price` is no longer an input (send `basePrice`; `price` is computed from it, with tax added when the product is taxable); `quantity` is an `Int`; `productVariants` is removed (use `variants(productId:)`); `variant` and `variants` are admin reads (`catalog.product.read`) and `variants` is paginated; `updateVariant` no longer takes `productId` (a variant never moves to another product); `deleteVariant` refuses a variant with history.
 
-**Default variants and the migration (P1-V.2):** every product has at least one variant. `createProduct` creates a **default variant** (no option values) from its `basePrice`, `quantity`, `sku` and `barcode`; existing products were given one by migration, and existing size/color variants became Apparel option values. `Variant.price` is now nullable: it is `null` only for the archived default variant of a product migrated without a price. Archived "Legacy" variants (`isActive: false`, zero stock, SKU `LEGACY-...`) hold order and cart lines recorded before a product had variants. Products whose variants have option values still cannot be bought until variant checkout (P1-V.3); a product with only its default variant sells as before.
+**Default variants and the migration (P1-V.2):** every product has at least one variant. `createProduct` creates its variants from `variants` (a product without options sends one, with no option values); existing products were given a default variant by migration, and existing size/color variants became Apparel option values. `Variant.price` is nullable: it is `null` only for the archived default variant of a product migrated without a price. Archived "Legacy" variants (`isActive: false`, zero stock, SKU `LEGACY-...`) hold order and cart lines recorded before a product had variants (including the historical lines of products that already had variants).
 
-All variant operations need a staff permission. Customers see the active variants of published products through `Product.variants`.
+**Variant checkout (P1-V.3):** every variant is bought on its own: the cart, checkout, stock deduction and stock restores all work on the variant (see [2.9](#29-cart), [2.11](#211-orders), [2.15](#215-inventory)). A variant can be sold when it is active, priced, and its product is active and `PUBLISHED`. **Breaking change (P1-V.3):** `Variant.discountedPrice` and `appliedDiscount` are new; a discount attached to a product applies to all its variants.
+
+All variant operations need a staff permission. Customers see the active variants of published products through `Product.variants` (archived variants are never listed there).
 
 **`Variant` Object Type**:
 
@@ -1159,8 +1190,11 @@ All variant operations need a staff permission. Customers see the active variant
   barcode?: string;           // unique
   optionValues: JSONObject;   // e.g. { size: "M", colour: "Red" }; {} when the type has no axes
   quantity: Int;              // stock
+  lowStockThreshold?: Int;    // stock level that counts as low (default 5)
   price?: Money;              // selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
   basePrice?: Money;          // price before tax, as entered
+  discountedPrice?: Money;    // price of one unit after the best active discount (the variant's own, its product's or its category's); null without one
+  appliedDiscount?: Discount; // the discount behind discountedPrice
   isActive: boolean;          // false = archived
   weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
   image?: string;             // overrides the product images for this variant
@@ -1222,12 +1256,18 @@ All variant operations need a staff permission. Customers see the active variant
 
 All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) can access; each user has one cart.
 
+A cart line is one **variant** (SKU) of a product (see [2.8](#28-variants)). Only an active variant of an active and `PUBLISHED` product, with a price, can be added, and stock is the variant's.
+
+**Breaking change (P1-V.3):** `AddToCartInput.productId` → `variantId` (required); `CartItem.variantId` is new and `CartItem.variant` is now non-null. The old "comes in variants and cannot be bought until variant checkout is available" refusal is gone: products with options are bought by adding the chosen variant.
+
+**Migrated cart lines:** existing lines now point at the product's default variant, or, for a product that already had variants, at its archived "Legacy" variant (`isActive: false`, zero stock, SKU `LEGACY-...`). Such a Legacy line cannot be updated or checked out (`... is no longer sold`); show it as unavailable and let the customer remove it and pick a current variant.
+
 ---
 
 #### `cart`
 - **Type**: Query
 - **Auth Required**: Yes
-- **Description**: Retrieve the current user's cart. Item prices are the product `price` and totals are not filled in; use `cartWithDiscount` for the prices and totals checkout will charge.
+- **Description**: Retrieve the current user's cart. Each item's `originalPrice` is the variant `price` recorded when it was last added, and totals are not filled in; use `cartWithDiscount` for the current prices and totals checkout will charge.
 - **Response**: `Cart | null` (`null` until the first item is added)
 
 **`Cart` Object Type**:
@@ -1250,11 +1290,12 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
 ```typescript
 {
   id: string;
-  productId: string;
+  variantId: string;         // The variant (SKU) in the cart: what is priced and stocked
+  variant: Variant;
+  productId: string;         // The variant's product
   product: Product;
-  variant?: Variant;         // Always null today (variants cannot be added)
-  originalPrice?: Money;
-  discountedPrice?: Money;
+  originalPrice?: Money;     // List price of one unit of the variant
+  discountedPrice?: Money;   // Set by cartWithDiscount
   appliedDiscount?: Discount;
   quantity: number;
   createdAt: DateTime;
@@ -1269,22 +1310,21 @@ All cart operations require `Bearer` JWT. Any role (USER, ADMIN, SUPER_ADMIN) ca
 - **Auth Required**: Yes
 - **Args**: `input: AddToCartInput!`
 - **Response**: `Cart!`
-- **Description**: Adds the product, or increases the quantity if it is already in the cart. Creates the cart if needed. Stock is checked but not reserved.
+- **Description**: Adds the variant, or adds to the quantity of its line if that variant is already in the cart. Creates the cart if needed. Stock is checked but not reserved.
 
 **Input: `AddToCartInput`**
 
 ```typescript
 {
-  productId: string; // Required.
-  quantity: number;  // Required. Positive integer.
+  variantId: string; // Required. ID of the variant (SKU) to add, from Product.variants.
+  quantity: number;  // Required. Integer 1–1,000,000.
 }
 ```
 
-There is no `variantId`: variants cannot be added to the cart, and a product that has any variant is rejected (see [Variants](#28-variants)).
-
 **Possible Errors**:
-- `NOT_FOUND` — Product not found.
-- `BAD_REQUEST` — Product not active, the product has variants ("... comes in variants and cannot be bought until variant checkout is available"), or the resulting cart quantity exceeds stock.
+- `NOT_FOUND` — Variant not found (`Variant "<id>" not found`).
+- `BAD_REQUEST` — The variant cannot be sold: `"<product>" (<sku>) is not on sale` (product inactive or not `PUBLISHED`), `"<product>" (<sku>) is no longer sold` (variant archived), `"<product>" (<sku>) has no price and cannot be sold`; or the resulting line quantity exceeds the variant's stock: `Cannot add N of "<product>" (<sku>) to cart; only M in stock`.
+- `BAD_USER_INPUT` — `quantity` outside 1–1,000,000.
 
 ---
 
@@ -1303,7 +1343,9 @@ There is no `variantId`: variants cannot be added to the cart, and a product tha
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (item not in the caller's cart), `BAD_REQUEST` (exceeds stock).
+A quantity above 0 re-checks the line's variant exactly as `addToCart` does (still sellable, enough stock).
+
+**Possible Errors**: `NOT_FOUND` (item not in the caller's cart), `BAD_REQUEST` (variant no longer sellable, or the quantity exceeds its stock; same messages as `addToCart`).
 
 ---
 
@@ -1326,9 +1368,9 @@ There is no `variantId`: variants cannot be added to the cart, and a product tha
 #### `cartWithDiscount`
 - **Type**: Query
 - **Auth Required**: Yes
-- **Description**: Returns the cart priced exactly as `createOrder` will charge it: each item's `originalPrice` (list price), `discountedPrice` (unit price after the best active discount) and the cart's `total`, `discountTotal`, `finalTotal`. `createOrder` charges `finalTotal` for the items, plus shipping, minus any coupon (see [Section 10](#10-discounts-system)).
+- **Description**: Returns the cart priced exactly as `createOrder` will charge it, each line from its variant: `originalPrice` (the variant's current `price`), `discountedPrice` (unit price after the best active discount for that variant) and the cart's `total`, `discountTotal`, `finalTotal`. `createOrder` charges `finalTotal` for the items, plus shipping, minus any coupon (see [Section 10](#10-discounts-system)).
 - **Response**: `Cart!`
-- **Possible Errors**: `NOT_FOUND` (no cart yet); `BAD_REQUEST` if a product in the cart has no price. A discount whose `minimumPurchase` the cart does not reach is not applied.
+- **Possible Errors**: `NOT_FOUND` (no cart yet); `BAD_REQUEST` if a variant in the cart has no price (`"<product>" (<sku>) has no price and cannot be sold`). A discount whose `minimumPurchase` the cart does not reach is not applied.
 
 ---
 
@@ -1388,7 +1430,7 @@ All wishlist operations require `Bearer` JWT (any role).
 
 > **Status rules:** an order can only move `PENDING → PROCESSING | CANCELLED`, `PROCESSING → SHIPPED | CANCELLED`, `SHIPPED → DELIVERED`. `DELIVERED` and `CANCELLED` are final. Any other change, including cancelling an order twice, fails with `CONFLICT`. If two requests change the same order at once, one succeeds and the other gets `CONFLICT` ("was changed by another request; reload it and try again"). An unpaid `ONLINE` order leaves `PENDING` only through a confirmed payment. Cash-on-delivery orders start in `PROCESSING`.
 
-> **Unpaid orders expire:** every hour, `PENDING` `ONLINE` orders older than 1 hour are cancelled (stock and coupon use given back) if they have no payment attempt, or only pending/failed/abandoned attempts untouched for 1 hour.
+> **Unpaid orders expire:** every hour, `PENDING` `ONLINE` orders older than 1 hour are cancelled (each line's variant stock and the coupon use given back) if they have no payment attempt, or only pending/failed/abandoned attempts untouched for 1 hour.
 
 All order operations require `Bearer` JWT.
 
@@ -1439,17 +1481,22 @@ All order operations require `Bearer` JWT.
   id: string;
   orderId: string;
   productId: string;
-  variantId?: string;         // Always null today
-  quantity: Float;
+  variantId: string;          // The variant (SKU) ordered
+  sku?: string;               // SKU at order time; null on lines ordered before variant checkout (P1-V.3)
+  optionValues?: JSONObject;  // Option values at order time, e.g. { size: "M" }; null on lines ordered before P1-V.3
+  quantity: Int;              // Breaking change (P1-V.3): was Float
   priceAtOrder: Money;        // Unit price charged: originalPrice - discountAmount
-  originalPrice?: Money;      // List price per unit at the time of the order
-  discountAmount?: Money;     // Product discount taken off one unit at checkout (0 if none)
+  originalPrice?: Money;      // List price of one unit of the variant at the time of the order
+  discountAmount?: Money;     // Discount taken off one unit at checkout (0 if none)
   appliedDiscount?: Discount;
   createdAt: DateTime;
   updatedAt: DateTime;
   product: Product;
+  variant: Variant;           // The variant now (use sku/optionValues for what was ordered)
 }
 ```
+
+**Breaking change (P1-V.3):** `OrderItem.variantId` is now non-null and always set; `variant: Variant!`, `sku` and `optionValues` are new. Lines recorded before this release have `sku`/`optionValues` null and point at the product's default variant or, for a product that already had variants then, at its archived "Legacy" variant (`isActive: false`, zero stock, SKU `LEGACY-...`).
 
 **`OrderStatus` Enum**:
 
@@ -1510,18 +1557,18 @@ CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 **What happens**:
 1. The cart must exist and hold 1–50 items; the account must be active.
 2. `DELIVERY`: the address must belong to the caller and have a region, recipient name and phone (addresses saved before those fields existed may lack them). The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
-3. Each item is priced exactly as `cartWithDiscount` shows it: the product's current `price` (tax-inclusive) minus the best active product or category discount. `subtotal` equals the cart's `finalTotal` and `discountTotal` the cart's `discountTotal`. Every product must have a price in GHS and enough stock.
-4. A coupon, if given, is validated against `subtotal` (after product discounts, before shipping) and its use is recorded.
+3. Each line is priced from its **variant** exactly as `cartWithDiscount` shows it: the variant's current `price` (tax-inclusive) minus the best active discount for that variant (its own, its product's or its category's). `subtotal` equals the cart's `finalTotal` and `discountTotal` the cart's `discountTotal`. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
+4. A coupon, if given, is validated against `subtotal` (after discounts, before shipping) and its use is recorded.
 5. `totalAmount = max(0, subtotal + shippingFee - couponDiscount)`. This is the amount Paystack is asked for.
-6. Stock is decremented (logged as `ORDER_DEDUCTION`), the order is saved and the cart emptied, all in one transaction.
+6. In one transaction: each variant's stock is taken with a conditional update that also re-checks the variant is active and its product active and `PUBLISHED` (if not, the whole order fails and nothing is taken), each line logs `ORDER_DEDUCTION` with its `variantId`, the order is saved with each line's `sku` and `optionValues`, and the cart is emptied.
 7. Status: `PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`.
 8. A confirmation email goes to the account's email (not `contactEmail`) after the response.
 
-No tax is added at checkout; tax is already inside each product's `price`.
+No tax is added at checkout; tax is already inside each variant's `price`.
 
 **Possible Errors**:
-- `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, product no longer exists, unknown coupon code.
-- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; insufficient stock; product not priced in GHS or without a price; a product in the cart has variants (the message names it; remove it from the cart); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
+- `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
 - `BAD_USER_INPUT` — Invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:
@@ -1545,7 +1592,7 @@ mutation {
 - **Type**: Mutation
 - **Roles**: `USER` only (admins use `adminCancelOrder`; an ADMIN token gets `FORBIDDEN`)
 - **Args**: `orderId: String!`
-- **Description**: Cancel one of the caller's own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`. Stock and the coupon use are given back exactly once. If the order was paid online, a refund request (return request) is opened automatically for staff to process.
+- **Description**: Cancel one of the caller's own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`. Stock (each line's variant, logged as `RETURN_RESTORE` with its `variantId`) and the coupon use are given back exactly once. If the order was paid online, a refund request (return request) is opened automatically for staff to process.
 - **Response**: `Order!`
 - **Possible Errors**: `NOT_FOUND` (not the caller's order), `CONFLICT`.
 
@@ -1818,7 +1865,7 @@ Coupon codes are stored upper-case and matched case-insensitively.
 
 ### 2.14 Discounts
 
-Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). They are shown on products (`discountedPrice`, `appliedDiscount`) and in `cartWithDiscount`, and `createOrder` charges the same prices (see [Section 10](#10-discounts-system)).
+Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). A discount attached to a product applies to all its variants. They are shown on each variant (`Variant.discountedPrice`, `appliedDiscount`) and in `cartWithDiscount`, and `createOrder` charges the same prices (see [Section 10](#10-discounts-system)). **Breaking change (P1-V.3):** `Product.discountedPrice` / `Product.appliedDiscount` → removed; read them on `Product.variants`.
 
 ---
 
@@ -1918,49 +1965,33 @@ Discounts are admin-configured price reductions attached to products, variants o
 
 ### 2.15 Inventory
 
-All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes an `InventoryLogEntity`. Stock can never go below zero.
+Inventory writes need `inventory.adjust` and the log queries `inventory.view`; see [2.24](#224-staff-roles-and-permissions). **Stock lives on the variant** (the SKU): `Variant.quantity`. `Product.totalStock` and `Product.inStock` summarise its active variants. Every stock change writes an `InventoryLogEntity` with the `variantId`, and manual changes also write an audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`). Stock can never go below zero.
 
----
+**Breaking change (P1-V.3):** `restockProduct` / `RestockProductInput` → `restockVariant` / `RestockVariantInput`; `adjustProductStock` / `AdjustProductStockInput` → `adjustVariantStock` / `AdjustVariantStockInput`. `InventoryLogEntity.variantId` is now non-null. `productInventoryLogs` returns the logs of every variant of the product.
 
-#### `restockProduct`
-- **Type**: Mutation
-- **Args**: `input: RestockProductInput!`
-- **Response**: `InventoryLogEntity!` (action `RESTOCK`)
-
-**Input: `RestockProductInput`**
-
-```typescript
-{
-  productId: string;  // Required.
-  quantity: number;   // Required. Integer >= 1.
-  reason?: string;
-}
-```
-
-**Response: `InventoryLogEntity`**
+**`InventoryLogEntity`**
 
 ```typescript
 {
   id: string;
   productId: string;
-  variantId?: string;
+  variantId: string;           // The variant whose stock changed
   action: InventoryActionEnum; // RESTOCK | ORDER_DEDUCTION | RETURN_RESTORE | ADJUSTMENT
   quantityChange: number;      // Signed
-  quantityAfter: number;       // Stock after the change
+  quantityAfter: number;       // Variant stock after the change
   reason?: string;
   actorId?: string;
   createdAt: DateTime;
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (product).
-
 ---
 
 #### `restockVariant`
 - **Type**: Mutation
 - **Args**: `input: RestockVariantInput!`
-- **Response**: `InventoryLogEntity!`
+- **Response**: `InventoryLogEntity!` (action `RESTOCK`)
+- **Description**: Add stock to a variant, e.g. a delivery or goods returned by a customer.
 
 **Input: `RestockVariantInput`**
 
@@ -1968,36 +1999,31 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes
 {
   variantId: string;  // Required.
   quantity: number;   // Required. Integer >= 1.
-  reason?: string;
+  reason?: string;    // Default "Manual restock".
 }
 ```
 
----
-
-#### `adjustProductStock`
-- **Type**: Mutation
-- **Args**: `input: AdjustProductStockInput!`
-- **Response**: `InventoryLogEntity!` (action `ADJUSTMENT`)
-- **Description**: Change a product's stock by a signed amount, e.g. damage, loss or a stock count correction.
-
-**Input: `AdjustProductStockInput`**
-
-```typescript
-{
-  productId: string;  // Required.
-  delta: number;      // Required. Non-zero integer; negative removes stock.
-  reason: string;     // Required. 1–500 chars.
-}
-```
-
-**Possible Errors**: `NOT_FOUND` (product); `BAD_REQUEST` ("Cannot remove N units … only M in stock").
+**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`).
 
 ---
 
 #### `adjustVariantStock`
 - **Type**: Mutation
-- **Args**: `input: AdjustVariantStockInput!` (`variantId`, `delta`, `reason`; same rules as `adjustProductStock`)
-- **Response**: `InventoryLogEntity!`
+- **Args**: `input: AdjustVariantStockInput!`
+- **Response**: `InventoryLogEntity!` (action `ADJUSTMENT`)
+- **Description**: Change a variant's stock by a signed amount, e.g. damage, loss or a stock count correction.
+
+**Input: `AdjustVariantStockInput`**
+
+```typescript
+{
+  variantId: string;  // Required.
+  delta: number;      // Required. Non-zero integer; negative removes stock.
+  reason: string;     // Required. 1–500 chars.
+}
+```
+
+**Possible Errors**: `NOT_FOUND` (variant); `BAD_REQUEST` (`Cannot remove N units from variant "<id>": only M in stock`).
 
 ---
 
@@ -2010,7 +2036,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes
 #### `productInventoryLogs`
 - **Type**: Query
 - **Args**: `productId: ID!`
-- **Response**: `[InventoryLogEntity!]!`, newest first
+- **Response**: `[InventoryLogEntity!]!`, the logs of every variant of the product, newest first
 
 ---
 
@@ -2098,7 +2124,7 @@ All inventory operations: `ADMIN`, `SUPER_ADMIN` only. Every stock change writes
 - **Type**: Mutation
 - **Args**: `returnRequestId: ID!`
 - **Response**: `ReturnRequestEntity!`
-- **Description**: Refund the approved amount through Paystack and move the request from `APPROVED` to `REFUNDED`. **Moves money only, never stock:** a cancelled order already had its stock restored at cancellation, and physically returned goods are put back with `restockProduct` once received and inspected.
+- **Description**: Refund the approved amount through Paystack and move the request from `APPROVED` to `REFUNDED`. **Moves money only, never stock:** a cancelled order already had its stock restored at cancellation, and physically returned goods are put back with `restockVariant` (the order line's `variantId`) once received and inspected.
 - **How it runs**: the request is first claimed (`APPROVED → REFUND_PENDING`) and a `Refund` record is created, then Paystack is called once. On success the refund becomes `PROCESSED` (with Paystack's refund id in `providerRef`) and the request `REFUNDED`.
 - **Limits**: the amount must be greater than 0, and all refunds on the payment (including an auto-refund queued for a flagged payment) cannot exceed what was captured; otherwise `BAD_REQUEST` and nothing changes. Only Paystack payments can be refunded (cash-on-delivery: `BAD_REQUEST`).
 - **Errors and retries**:
@@ -2263,7 +2289,7 @@ The review queries and mutations below require a signed-in user. Guests can stil
 
 All tax operations: `ADMIN`, `SUPER_ADMIN` only.
 
-Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or region. The sum of the **active** rates is built into the `price` of every taxable product (`price = basePrice × (1 + sum)`); creating, updating or deleting a tax recomputes all taxable product prices in the same transaction, so if the reprice fails the mutation returns an error and neither the tax change nor any price is saved. Prices are rounded to 2 decimal places, half away from zero (basePrice 10.10 at 15% → 11.62), the same way whether the price was set by a product edit or a tax change. No tax is added at checkout and orders do not show a tax line.
+Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or region. The sum of the **active** rates is built into the `price` of every variant of a taxable product (`Variant.price = basePrice × (1 + sum)`); creating, updating or deleting a tax reprices all those variants in the same transaction, so if the reprice fails the mutation returns an error and neither the tax change nor any price is saved. Variants without a `basePrice` (unpriced migrated variants) keep their price; it is never reverse-computed. Prices are rounded to 2 decimal places, half away from zero (basePrice 10.10 at 15% → 11.62), the same way whether the price was set by a variant edit, a product's `isTaxable` change or a tax change. No tax is added at checkout and orders do not show a tax line.
 
 ---
 
@@ -2390,10 +2416,12 @@ All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenu
   revenueToday: Money;       // Net revenue today
   grossRevenueToday: Money;  // Payments accepted today
   refundsToday: Money;       // Refunds processed today
-  lowStockProductCount: number;
-  lowStockVariantCount: number;
+  lowStockProductCount: number;  // Active products with at least one active variant at or below its low-stock level
+  lowStockVariantCount: number;  // Active variants of active products at or below their low-stock level
 }
 ```
+
+A variant's low-stock level is its `lowStockThreshold` (default 5; set on `createVariant`/`updateVariant`/`createProduct`, read on `Variant.lowStockThreshold`).
 
 ---
 
@@ -2770,7 +2798,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
 | `inventory.view` | `inventoryLogs`, `productInventoryLogs`, `variantInventoryLogs` |
-| `inventory.adjust` | `restockProduct`, `restockVariant`, `adjustProductStock`, `adjustVariantStock` |
+| `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
 | `order.view` | `getOrders`, `viewOrder` |
 | `order.manage` | `updateOrderStatus`, `updateShipping`, `adminCancelOrder`, `deleteOrder` |
 | `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund` |
@@ -2873,7 +2901,7 @@ Time-based one-time passwords (RFC 6238: SHA1, 6 digits, 30-second steps, any au
 |---|---|
 | Role and permission changes | `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, `createUser` with `role: ADMIN` |
 | Refunds | `approveReturn`, `processRefund`, `processPendingRefund` |
-| Price changes | `updateProduct` when `basePrice` is sent, `updateVariant` when `price` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax` |
+| Price changes | `updateProduct` when `isTaxable` is sent (it reprices every variant), `updateVariant` when `basePrice` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax` |
 | Data exports | `addresses` without `userId` |
 
 A refreshed access token keeps its session, so a verification survives `refreshToken`; a new sign-in starts a new session. Tokens issued before this release have no session id: sign in again before stepping up.
@@ -3132,7 +3160,7 @@ The GraphQL schema (`schema.gql`) is the contract; the database models behind it
 | `DateTime` | ISO 8601 string in UTC, e.g. `2026-11-18T09:54:33.000Z` |
 | `JSON` | Any JSON value (used for address/pickup snapshots and `Payment.paymentDetails`) |
 | `Decimal` | Exact decimal as a string, e.g. `"12.50"`, `"0.15"` (no exponent). Used for money inputs, tax rates and discount/coupon `value`. See [Money](#money) |
-| `Float` | Only stock quantities (`Variant.quantity`, `OrderItem.quantity`, `CreateVariantInput.quantity`) and address coordinates (`Address.latitude`/`longitude`); never money |
+| `Float` | Only stock quantities (`Variant.quantity`, `OrderItem.quantity`) and address coordinates (`Address.latitude`/`longitude`); never money |
 
 ### Money
 
@@ -3155,12 +3183,14 @@ type Money {
 | `Order.subtotal`, `shippingFee`, `totalAmount`, `discountTotal`, `finalTotal`, `couponDiscount` |
 | `OrderItem.originalPrice`, `discountAmount`, `priceAtOrder` |
 | `Cart.total`, `discountTotal`, `finalTotal`; `CartItem.originalPrice`, `discountedPrice` |
-| `Product.price`, `basePrice`, `currentPrice`, `discountedPrice`; `Variant.price` |
+| `Variant.price` (`Product.price`, `basePrice`, `currentPrice`, `discountedPrice` were also converted, then removed in P1-V.3) |
 | `Payment.amount`; `RefundEntity.amount`; `ReturnRequestEntity.refundAmount` |
 | `Coupon.minimumOrderAmount`; `CouponValidation.discountAmount`; `Discount.minimumPurchase` |
 | `ShippingZoneEntity.fee`; query `getShippingFee` (`Float!` → `Money!`) |
 | `SalesReport.grossRevenue`, `refunds`, `netRevenue`, `totalRevenue`, `itemSales`, `averageOrderValue` |
 | `DashboardSummary.revenueToday`, `grossRevenueToday`, `refundsToday`; `TopProduct.totalRevenue`; `RevenueByCategoryEntity.totalRevenue` |
+
+Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice`, `Product.priceRange.min` / `max` (P1-V.3).
 
 | Changed fields (output, `Float` → `Decimal`) |
 |---|
@@ -3168,8 +3198,7 @@ type Money {
 
 | Changed inputs and arguments (→ `Decimal`) |
 |---|
-| `CreateProductInput.basePrice` / `UpdateProductInput.basePrice` (`String` → `Decimal`) |
-| `CreateVariantInput.price` / `UpdateVariantInput.price` |
+| `CreateVariantInput.basePrice` / `UpdateVariantInput.basePrice` / `VariantFieldsInput.basePrice` (the product's `basePrice` input moved to its variants in P1-V.3; the variant `price` input became `basePrice` in P1-V.4) |
 | `CreateCouponInput.value`, `minimumOrderAmount`; `UpdateCouponInput.value`, `minimumOrderAmount`; `ValidateCouponInput.orderTotal` |
 | `CreateDiscountInput.value`, `minimumPurchase`; `UpdateDiscountInput.value`, `minimumPurchase` (both must be greater than 0) |
 | `CreateShippingZoneInput.fee`, `UpdateShippingZoneInput.fee` |
@@ -3193,10 +3222,9 @@ type Money {
 | `DiscountType` | `PERCENTAGE`, `FLAT` | `Discount.type`, discount inputs |
 | `DiscountTypeEnum` | `PERCENTAGE`, `FLAT` | `Coupon.discountType`, coupon inputs (a separate enum with the same values) |
 | `ProductStatus` | `DRAFT`, `PUBLISHED`, `ARCHIVED` | `Product.status`, product inputs, `ProductFilterArgs.status` |
-| `StockStatus` | `IN_STOCK`, `OUT_OF_STOCK`, `PREORDER`, `BACKORDER` | `Product.stockStatus` |
-| `Currency` | `GHS`, `USD`, `EUR`, `GBP`, `NGN` | `Product.currency` (only `GHS` products can be checked out) |
+| `Currency` | `GHS`, `USD`, `EUR`, `GBP`, `NGN` | `Product.currency` (only products in the store currency, GHS, can be checked out) |
 | `DeliveryOptions` | `LOCAL_DELIVERY`, `INTERNATIONAL_DELIVERY`, `SELECTED_REGIONS` | `Product.deliveryOptions` (informational; not enforced at checkout) |
-| `ProductSortField` | `CREATED_AT`, `NAME`, `PRICE`, `QUANTITY`, `UPDATED_AT` | `ProductSortArgs.sortBy` |
+| `ProductSortField` | `CREATED_AT`, `NAME`, `UPDATED_AT` (`PRICE` and `QUANTITY` removed in P1-V.3) | `ProductSortArgs.sortBy` |
 | `SortOrder` | `ASC`, `DESC` | `ProductSortArgs.sortOrder` |
 
 ### Where each object type is described
@@ -3205,7 +3233,8 @@ type Money {
 |---|---|
 | `AuthEntity` | [2.1](#21-authentication-iam) |
 | `User`, `UserConnection`, `UserEdge`, `PublicProfile` | [2.2](#22-users), [2.17](#217-reviews) |
-| `Product`, `ProductConnection`, `ProductEdge` | [2.3](#23-products) |
+| `Product`, `PriceRange`, `ProductConnection`, `ProductEdge` | [2.3](#23-products) |
+| `ProductType`, `AttributeDefinition` | [2.26](#226-product-types-and-attributes) |
 | `Category`, `SubCategory`, `Brand`, `Tag`, `Variant` | [2.4](#24-categories)–[2.8](#28-variants) |
 | `Cart`, `CartItem`, `Wishlist` | [2.9](#29-cart), [2.10](#210-wishlist) |
 | `Order`, `OrderItem` | [2.11](#211-orders) |
@@ -3223,7 +3252,7 @@ type Money {
 ### Relationships and deletion
 
 - A **User** has one **Cart**, one **Wishlist**, many **Orders**, **Addresses**, **Reviews** and **ReturnRequests**.
-- A **Product** optionally belongs to one **Category**, **SubCategory** and **Brand**; has many **Tags**, **Variants**, **Reviews** and **Discounts**.
+- A **Product** has one **ProductType**, optionally belongs to one **Category**, **SubCategory** and **Brand**; has many **Tags**, **Variants** (at least one), **Reviews** and **Discounts**. A **Variant** (SKU) is what cart lines, order lines and inventory logs reference.
 - An **Order** belongs to one **User**; a `DELIVERY` order references an **Address** and a `PICKUP` order a **PickupLocation** (both also snapshotted on the order); it has many **OrderItems**, payment attempts and **ReturnRequests**, and optionally one **Coupon**.
 - A **Discount** can apply to many **Products**, **Variants** and **Categories**.
 - A **Coupon** can be used once per user and once per order.
@@ -3329,16 +3358,16 @@ Authorization: Bearer <accessToken>
 1. Frontend calls `query products(paginationArgs, filterArgs, sortArgs)` — **no auth required**.
 2. Response includes cursor-paginated `ProductConnection` with `pageInfo.hasNextPage` and `pageInfo.totalCount`.
 3. To load next page: call again with `after: lastCursor` from previous response.
-4. Resolved fields (`discountedPrice`, `appliedDiscount`, `variants`, `reviews`) are fetched via DataLoader only when requested.
-5. To view a single product: call `query product(productId)` (returns `null` for anything not published).
+4. Resolved fields (`priceRange`, `totalStock`, `inStock`, `variants` and their `discountedPrice`/`appliedDiscount`, `reviews`) are fetched via DataLoader only when requested.
+5. To view a single product: call `query product(productId)` (returns `null` for anything not published). Show its `variants` (each with `optionValues`, `price`, `discountedPrice`, `quantity`) and let the customer pick one; a product without options has a single variant with `optionValues: {}`.
 
 ### Add to Cart Flow
 
 1. User must be authenticated.
-2. Frontend calls `mutation addToCart(input: { productId, quantity })`.
-3. Backend checks the product exists, is active and has enough stock for the new cart quantity.
+2. Frontend calls `mutation addToCart(input: { variantId, quantity })` with the chosen variant's `id`.
+3. Backend checks the variant exists, is active and priced, its product is active and `PUBLISHED`, and the variant has enough stock for the new line quantity.
 4. If cart does not exist for user, it is created automatically.
-5. If item already in cart, quantity is incremented.
+5. If that variant is already in the cart, its line's quantity is incremented.
 6. Returns updated `Cart` with all items. Stock is not reserved until `createOrder`.
 
 ### Cart Update Flow
@@ -3355,7 +3384,7 @@ Authorization: Bearer <accessToken>
    - `PICKUP`: list locations with `query activePickupLocations` (public).
 2. Optionally validate a coupon: `mutation validateCoupon(input: { code, orderTotal: <cartWithDiscount.finalTotal> })`.
 3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, contactEmail, contactPhone, couponCode?, paymentMethod? })`.
-4. Backend validates stock, prices items as `cartWithDiscount` does, applies the coupon to that subtotal, adds the shipping fee → creates the `Order` (`PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`) → decrements inventory → clears cart → sends confirmation email.
+4. Backend checks each variant is still sellable and in stock, prices each line from its variant as `cartWithDiscount` does, applies the coupon to that subtotal, adds the shipping fee → creates the `Order` (`PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`) with each line's `sku` and `optionValues` → decrements each variant's stock → clears cart → sends confirmation email. A `BAD_REQUEST` naming a variant means the customer must remove or change that cart line.
 5. `ONLINE`: continue with the Order Placement Flow within 1 hour, or the order expires. `CASH_ON_DELIVERY`: done; staff ship it and record the cash with `recordCodPayment`.
 
 ### Order Placement Flow
@@ -3384,9 +3413,9 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 
 ### Inventory Deduction Flow
 
-- On `createOrder`: each item's quantity is decremented from the **product** stock with a conditional update inside the order transaction (never below zero). An `InventoryLog` record is created with `action = ORDER_DEDUCTION`.
-- On `cancelOrder`, `adminCancelOrder`, `updateOrderStatus(CANCELLED)` or expiry: stock is restored once, logged as `RETURN_RESTORE`. `deleteOrder` never moves stock.
-- Low-stock check: a repeatable background job every 6 hours logs warnings (server log only) for products/variants at or below their threshold.
+- On `createOrder`: each line's quantity is decremented from its **variant**'s stock with a conditional update inside the order transaction (never below zero, and only while the variant is active and its product active and `PUBLISHED`). An `InventoryLog` record is created per line with `action = ORDER_DEDUCTION` and the `variantId`.
+- On `cancelOrder`, `adminCancelOrder`, `updateOrderStatus(CANCELLED)` or expiry: each line's variant stock is restored once, logged as `RETURN_RESTORE` with the `variantId`. `deleteOrder` never moves stock.
+- Low-stock check: a repeatable background job every 6 hours logs warnings (server log only) for active variants of active products at or below their `lowStockThreshold` (default 5).
 
 ### Return Request Flow
 
@@ -3395,7 +3424,7 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 3. Admin reviews: `mutation approveReturn(input: { returnRequestId, refundAmount, adminNote? })` → status → `APPROVED`.
 4. Admin rejects: `mutation rejectReturn(input: { returnRequestId, adminNote? })` → status → `REJECTED`.
 5. Admin processes the refund through Paystack: `mutation processRefund(returnRequestId)` → status → `REFUND_PENDING` while it is sent, then `REFUNDED`. If Paystack refuses, it stays `REFUND_PENDING` and can be retried.
-6. Returned goods are put back in stock manually with `restockProduct` once received.
+6. Returned goods are put back in stock manually with `restockVariant` (the order line's `variantId`) once received.
 
 Cancelling a paid online order creates a return request automatically ("Automatic refund request for cancelled paid order") for staff to approve and refund.
 
@@ -3516,30 +3545,32 @@ A background sweep every 5 minutes also re-checks open attempts with Paystack an
 
 ## 9. Inventory Rules
 
+Stock is held per **variant** (`Variant.quantity`); a product has no stock of its own. `Product.totalStock` (sum over active variants) and `Product.inStock` (an active variant has stock) are computed summaries.
+
 ### When Stock Reduces
 
-- `createOrder`: each `OrderItem.quantity` is deducted from `Product.quantity` (variants are not purchasable). This happens **at order creation time**, not at payment time. Logged as `ORDER_DEDUCTION`.
-- `adjustProductStock` / `adjustVariantStock` with a negative `delta`. Logged as `ADJUSTMENT`.
+- `createOrder`: each `OrderItem.quantity` is deducted from its variant's `quantity`. This happens **at order creation time**, not at payment time. Logged as `ORDER_DEDUCTION` with the `variantId`.
+- `adjustVariantStock` with a negative `delta`. Logged as `ADJUSTMENT`.
 
 ### When Stock Restores
 
-- Cancelling an order (customer, admin, or expiry): all its item quantities, once. Logged as `RETURN_RESTORE`.
-- `restockProduct` / `restockVariant`: manual top-up. Logged as `RESTOCK`.
-- `adjustProductStock` / `adjustVariantStock` with a positive `delta`. Logged as `ADJUSTMENT`.
-- Not on `approveReturn`, `processRefund` or `deleteOrder`: returned goods are restocked manually.
+- Cancelling an order (customer, admin, or expiry): each line's quantity back to its variant, once. Logged as `RETURN_RESTORE` with the `variantId`.
+- `restockVariant`: manual top-up. Logged as `RESTOCK`. A new variant's initial stock (from `createProduct` or `createVariant`) is also logged as `RESTOCK` ("Initial stock").
+- `adjustVariantStock` with a positive `delta`. Logged as `ADJUSTMENT`.
+- Not on `approveReturn`, `processRefund` or `deleteOrder`: returned goods are restocked manually with `restockVariant`.
 
 ### Out-of-Stock Handling
 
 - Stock can never go negative (conditional updates plus a database check).
-- Adding to cart and creating an order check stock (`BAD_REQUEST` if insufficient).
-- `Product.stockStatus` (`IN_STOCK`, `OUT_OF_STOCK`, `PREORDER`, `BACKORDER`) is whatever the admin set; it is not derived from `quantity`. Use `quantity` to show availability.
-- `ProductFilterArgs.inStock` does not currently filter anything out (known defect).
+- Adding to cart and creating an order check the variant's stock (`BAD_REQUEST` if insufficient).
+- Show availability per variant from `Variant.quantity`, and on product cards from `Product.inStock` / `totalStock`. There is no stock status field.
+- `ProductFilterArgs.inStock: true` returns only products with an active variant in stock.
 
 ### Low Stock Logic
 
-- `Product.lowStockAlert` (default 5) and the variant's internal threshold (default 5, not exposed in GraphQL).
-- A repeatable background job every 6 hours logs warnings for items at or below their threshold. No emails or notifications.
-- `dashboardSummary.lowStockProductCount` / `lowStockVariantCount` report the counts.
+- Each variant has a `lowStockThreshold` (default 5), set on `createProduct` (`variants`), `createVariant` or `updateVariant`, and read on `Variant.lowStockThreshold`.
+- A repeatable background job every 6 hours logs warnings for active variants of active products at or below their threshold. No emails or notifications.
+- `dashboardSummary.lowStockVariantCount` counts those variants; `lowStockProductCount` counts active products with at least one of them.
 
 ### Reserved Stock
 
@@ -3554,17 +3585,17 @@ There is no separate reservation: stock is decremented on order creation. An unp
 | | Discount | Coupon |
 |---|---|---|
 | Scope | Product / Variant / Category | Order subtotal |
-| Applied | Shown automatically on products and in `cartWithDiscount` | Entered as `couponCode` at checkout |
+| Applied | Shown automatically on variants (`Variant.discountedPrice`) and in `cartWithDiscount` | Entered as `couponCode` at checkout |
 | Charged at checkout | Yes (`Order.discountTotal`, per item `discountAmount`) | Yes (`Order.couponDiscount`) |
 | Type | `Discount` | `Coupon` |
 
 ### Discount Application
 
 - A `Discount` applies when `isActive = true` and now is within `[startDate, endDate]`.
-- For a product, the candidates are its own discounts and its category's discounts. The **best** one is the one that saves the most money on one unit at the current price (on a GHS 50 item, GHS 8 off beats 10% off; on GHS 1,000, 30% off beats GHS 50 off). On an equal saving the first candidate is kept.
-- Unit discount: `PERCENTAGE` → `price × value / 100`, `FLAT` → `value`, rounded half-up to 2 decimal places and never more than the price. `discountedPrice = price - unit discount`; line total = `discountedPrice × quantity`.
-- `minimumPurchase`: in the cart and at checkout a discount applies only when the cart's list-price `total` (all items, before discounts) reaches its minimum; otherwise it is skipped and the next best discount applies. Product pages (`discountedPrice`) do not check minimums.
-- **Checkout charges the same prices**: product pages, `cartWithDiscount` and `createOrder` use one pricing function, so `Order.subtotal` equals `cartWithDiscount.finalTotal` at the moment of checkout. An order is priced once, when it is created; nothing re-prices an existing order.
+- Discounts are priced per **variant**. For a variant, the candidates are its own discounts, its product's discounts (a product discount applies to every variant of the product) and its product's category's discounts. The **best** one is the one that saves the most money on one unit at the variant's current price (on a GHS 50 item, GHS 8 off beats 10% off; on GHS 1,000, 30% off beats GHS 50 off). On an equal saving the first candidate is kept.
+- Unit discount: `PERCENTAGE` → `Variant.price × value / 100`, `FLAT` → `value`, rounded half-up to 2 decimal places and never more than the price. `discountedPrice = price - unit discount`; line total = `discountedPrice × quantity`.
+- `minimumPurchase`: in the cart and at checkout a discount applies only when the cart's list-price `total` (all items, before discounts) reaches its minimum; otherwise it is skipped and the next best discount applies. `Variant.discountedPrice` on product pages does not check minimums.
+- **Checkout charges the same prices**: `Variant.discountedPrice`, `cartWithDiscount` and `createOrder` use one pricing function, so `Order.subtotal` equals `cartWithDiscount.finalTotal` at the moment of checkout. An order is priced once, when it is created; nothing re-prices an existing order.
 
 ### Coupon Logic
 
@@ -3581,7 +3612,7 @@ There is no separate reservation: stock is decremented on order creation. An unp
 ### Stacking Rules
 
 - One coupon per order. Product discounts are applied first; the coupon is computed on the discounted subtotal (and its `minimumOrderAmount` checked against it). Shipping is added last.
-- Only one discount is shown per product (the best one, as above).
+- Only one discount is applied per variant (the best one, as above).
 
 ---
 
@@ -3590,8 +3621,8 @@ There is no separate reservation: stock is decremented on order creation. An unp
 ### Tax Calculation
 
 - Taxes are named rates (`TaxEntity { name, rate, isActive }`, e.g. VAT 0.15) with no country or region.
-- A taxable product's `price = basePrice × (1 + sum of active tax rates)`, stored on the product and recomputed whenever a tax is created, updated or deleted, or the product's `basePrice`/`isTaxable` changes. Non-taxable products: `price = basePrice`.
-- Checkout charges `price`; no tax is added at checkout, and orders carry no tax breakdown. The shipping address country is not used for tax.
+- Prices live on the variant. A variant of a taxable product has `price = basePrice × (1 + sum of active tax rates)`, stored on the variant and recomputed whenever a tax is created, updated or deleted, the variant's `basePrice` changes, or the product's `isTaxable` changes. Variants of non-taxable products: `price = basePrice`. Variants without a `basePrice` keep their stored price.
+- Checkout charges `Variant.price` (minus any discount); no tax is added at checkout, and orders carry no tax breakdown. The shipping address country is not used for tax.
 
 ### Currency
 
@@ -3777,12 +3808,12 @@ query {
 
 ### Sorting
 
-- **Products**: `sortArgs: ProductSortArgs { sortBy: CREATED_AT | NAME | PRICE | QUANTITY | UPDATED_AT, sortOrder: ASC | DESC }`, default `CREATED_AT DESC`. `paginationArgs.orderBy`/`orderInAsc` are ignored.
+- **Products**: `sortArgs: ProductSortArgs { sortBy: CREATED_AT | NAME | UPDATED_AT, sortOrder: ASC | DESC }`, default `CREATED_AT DESC` (price and stock sorts were removed in P1-V.3). `paginationArgs.orderBy`/`orderInAsc` are ignored.
 - **Users**: `filter.orderBy` (one of `id`, `name`, `email`, `phoneNumber`, `role`, `isActive`, `createdAt`, `updatedAt`, `lastLoginAt`, `profilePicture`) and `filter.orderInAsc`.
 
 ### Filtering Options per Resource
 
-**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName` (defective, see [2.3](#23-products)), `subcategoryId`, `isActive` (default `true`, admin only), `status` (admin only), `search`, `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `inStock` (no effect today), `tagId`, `tagName`.
+**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName`, `subcategoryId`, `isActive` (default `true`, admin only), `status` (admin only), `search`, `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `inStock` (`true` = an active variant in stock), `tagId`, `tagName`. `priceMin`/`priceMax`/`inStock` must all hold for the same active variant.
 
 **Users** (`UserPaginateArgs`): `email` (partial), `phoneNumber` (exact), `role`, `isActive`, `name` (partial), `createdAfter`.
 
@@ -3967,8 +3998,8 @@ Snapshot of key admin metrics:
   revenueToday: Money;          // Net revenue today
   grossRevenueToday: Money;     // Accepted payments today
   refundsToday: Money;          // Processed refunds today
-  lowStockProductCount: number;
-  lowStockVariantCount: number;
+  lowStockProductCount: number; // Active products with at least one active variant at or below its low-stock level
+  lowStockVariantCount: number; // Active variants of active products at or below their low-stock level (default 5)
 }
 ```
 
@@ -4141,12 +4172,12 @@ For `addToCart`, `updateCartItem`, and `removeFromCart`, use Apollo's `optimisti
 ```typescript
 client.mutate({
   mutation: ADD_TO_CART,
-  variables: { input: { productId, quantity } },
+  variables: { input: { variantId, quantity } },
   optimisticResponse: {
     addToCart: {
       __typename: 'Cart',
       id: existingCartId,
-      items: [...existingItems, { __typename: 'CartItem', id: 'temp-id', productId, quantity, ... }],
+      items: [...existingItems, { __typename: 'CartItem', id: 'temp-id', variantId, productId, quantity, ... }],
     },
   },
   update(cache, { data }) {
@@ -4227,21 +4258,27 @@ refetchQueries: [{ query: ADMIN_PRODUCTS_QUERY }]
 
 ```graphql
 fragment ProductSummary on Product {
-  id name price { amount currency } discountedPrice { amount currency } currency isActive status
-  images quantity categoryId
+  id name currency isActive status images categoryId inStock totalStock
+  priceRange { min { amount currency } max { amount currency } }
   category { id name }
   brand { id name logo }
 }
 
+fragment VariantOption on Variant {
+  id sku optionValues quantity image
+  price { amount currency } discountedPrice { amount currency }
+}
+
 fragment CartItemFull on CartItem {
-  id productId quantity originalPrice { amount currency } discountedPrice { amount currency }
-  product { id name images price { amount currency } currency quantity }
+  id variantId productId quantity originalPrice { amount currency } discountedPrice { amount currency }
+  variant { id sku optionValues quantity price { amount currency } }
+  product { id name images currency }
 }
 
 fragment OrderSummary on Order {
   id orderNumber status fulfillmentType paymentMethod
   subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency } createdAt
-  items { id quantity priceAtOrder { amount currency } product { id name } }
+  items { id quantity variantId sku optionValues priceAtOrder { amount currency } product { id name } }
 }
 
 fragment AuthTokens on AuthEntity {
@@ -4265,10 +4302,9 @@ export type ReturnStatusEnum = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REFUND_PEN
 export type RefundStatusEnum = 'PENDING' | 'SENDING' | 'PROCESSED' | 'FAILED';
 export type InventoryActionEnum = 'RESTOCK' | 'ORDER_DEDUCTION' | 'RETURN_RESTORE' | 'ADJUSTMENT';
 export type Currency = 'GHS' | 'USD' | 'EUR' | 'GBP' | 'NGN';
-export type StockStatus = 'IN_STOCK' | 'OUT_OF_STOCK' | 'PREORDER' | 'BACKORDER';
 export type ProductStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 export type DeliveryOptions = 'LOCAL_DELIVERY' | 'INTERNATIONAL_DELIVERY' | 'SELECTED_REGIONS';
-export type ProductSortField = 'CREATED_AT' | 'NAME' | 'PRICE' | 'QUANTITY' | 'UPDATED_AT';
+export type ProductSortField = 'CREATED_AT' | 'NAME' | 'UPDATED_AT';
 export type SortOrder = 'ASC' | 'DESC';
 
 // Auth
@@ -4359,8 +4395,8 @@ query {
       node {
         id
         name
-        price { amount currency }
-        discountedPrice { amount currency }
+        priceRange { min { amount currency } max { amount currency } }
+        inStock
         images
         currency
         brand { name }
@@ -4384,16 +4420,21 @@ query {
 ```graphql
 query {
   product(productId: "clx_product_abc123") {
-    id name description price { amount currency } currentPrice { amount currency }
-    discountedPrice { amount currency } appliedDiscount { name type value }
-    images sku quantity stockStatus
-    variants { id size color price { amount currency } quantity }
+    id name description images inStock totalStock
+    priceRange { min { amount currency } max { amount currency } }
+    variants {
+      id sku optionValues quantity
+      price { amount currency } discountedPrice { amount currency }
+      appliedDiscount { name type value }
+    }
     reviews { score comment user { displayName } }
     category { id name }
     brand { id name }
   }
 }
 ```
+
+The customer picks one of `variants` (e.g. size and colour from `optionValues`); its `id` is what goes into the cart. A product without options has one variant with `optionValues: {}`.
 
 ---
 
@@ -4435,13 +4476,14 @@ A `BAD_REQUEST` here means the address is incomplete (complete it with `updateAd
 ```graphql
 mutation {
   addToCart(input: {
-    productId: "clx_product_abc123"
+    variantId: "clx_variant_abc123_m_red"
     quantity: 2
   }) {
     id
     items {
-      id productId quantity
-      product { name images price { amount currency } }
+      id variantId productId quantity originalPrice { amount currency }
+      variant { sku optionValues }
+      product { name images }
     }
   }
 }
@@ -4458,6 +4500,7 @@ query {
     items {
       id quantity originalPrice { amount currency } discountedPrice { amount currency }
       product { name }
+      variant { sku optionValues }
       appliedDiscount { name type value }
     }
   }
@@ -4512,7 +4555,7 @@ mutation {
     id orderNumber status paymentMethod
     subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency }
     items {
-      id quantity priceAtOrder { amount currency }
+      id quantity variantId sku optionValues priceAtOrder { amount currency }
       product { name }
     }
   }
@@ -4538,7 +4581,7 @@ mutation {
 }
 ```
 
-*Side effects*: inventory decremented, cart cleared, coupon use recorded, confirmation email sent. Pay within 1 hour or the order is cancelled automatically.
+*Side effects*: each variant's stock decremented, cart cleared, coupon use recorded, confirmation email sent. Pay within 1 hour or the order is cancelled automatically.
 
 ---
 

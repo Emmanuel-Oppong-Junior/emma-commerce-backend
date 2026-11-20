@@ -144,7 +144,7 @@ export async function createTag(prisma: PrismaService) {
 
 /**
  * Creates multiple product records in the database for the specified category.
- * the ids of the product created are prod1 and prod2
+ * the ids of the product created are prod1 and prod2, each with one default variant (var1, var2)
  * @param prisma - An instance of PrismaService used to interact with the database.
  * @param categoryId - The ID of the category to associate with the new products.
  * @returns A promise that resolves when the products have been created.
@@ -155,9 +155,6 @@ export async function createProducts(prisma: PrismaService, categoryId: string) 
       {
         id: 'prod1',
         name: 'Laptop',
-        price: 999.99,
-        sku: 'LAP123',
-        quantity: 50,
         images: ['laptop.jpg'],
         isActive: true,
         categoryId,
@@ -166,14 +163,17 @@ export async function createProducts(prisma: PrismaService, categoryId: string) 
       {
         id: 'prod2',
         name: 'Phone',
-        price: 499.99,
-        sku: 'PHN123',
-        quantity: 100,
         images: ['phone.jpg'],
         isActive: true,
         categoryId,
         createdAt: new Date('2025-01-02'),
       },
+    ],
+  });
+  await prisma.variant.createMany({
+    data: [
+      { id: 'var1', productId: 'prod1', sku: 'LAP123', price: 999.99, basePrice: 999.99, quantity: 50 },
+      { id: 'var2', productId: 'prod2', sku: 'PHN123', price: 499.99, basePrice: 499.99, quantity: 100 },
     ],
   });
 }

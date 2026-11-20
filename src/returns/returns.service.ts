@@ -73,7 +73,7 @@ export class ReturnsService {
 
   /**
    * Refunds an approved return request through Paystack. Moves money only: stock is never restored here
-   * (cancellation already restored it, and returned goods are restocked by an admin via `restockProduct` once
+   * (cancellation already restored it, and returned goods are restocked by an admin via `restockVariant` once
    * received and inspected).
    *
    * An APPROVED request is claimed (-> REFUND_PENDING) together with its PENDING refund before Paystack is called; a

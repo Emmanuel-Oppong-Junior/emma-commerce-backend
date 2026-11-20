@@ -58,15 +58,15 @@ describe('priceCart', () => {
   it('totals the lines from the rounded unit prices, so lines add up to the cart total', () => {
     const priced = priceCart(
       [
-        { productId: 'p1', unitPrice: '19.99', quantity: 3 },
-        { productId: 'p2', unitPrice: '10.00', quantity: 1 },
+        { variantId: 'v1', productId: 'p1', unitPrice: '19.99', quantity: 3 },
+        { variantId: 'v2', productId: 'p2', unitPrice: '10.00', quantity: 1 },
       ],
-      new Map([['p1', [pct('pct15', 15)]]]),
+      new Map([['v1', [pct('pct15', 15)]]]),
     );
 
-    expect(priced.lines.map((line) => [line.productId, money(line.lineDiscount), money(line.lineTotal)])).toEqual([
-      ['p1', '9.00', '50.97'],
-      ['p2', '0.00', '10.00'],
+    expect(priced.lines.map((line) => [line.variantId, money(line.lineDiscount), money(line.lineTotal)])).toEqual([
+      ['v1', '9.00', '50.97'],
+      ['v2', '0.00', '10.00'],
     ]);
     expect(money(priced.grossSubtotal)).toBe('69.97');
     expect(money(priced.discountTotal)).toBe('9.00');
@@ -74,14 +74,45 @@ describe('priceCart', () => {
   });
 
   it('skips a discount whose minimum purchase the list-price subtotal does not reach', () => {
-    const lines = [{ productId: 'p1', unitPrice: 100, quantity: 2 }];
+    const lines = [{ variantId: 'v1', productId: 'p1', unitPrice: 100, quantity: 2 }];
 
-    const below = priceCart(lines, new Map([['p1', [pct('big', 50, 300), pct('small', 10)]]]));
-    const reached = priceCart(lines, new Map([['p1', [pct('big', 50, 200), pct('small', 10)]]]));
+    const below = priceCart(lines, new Map([['v1', [pct('big', 50, 300), pct('small', 10)]]]));
+    const reached = priceCart(lines, new Map([['v1', [pct('big', 50, 200), pct('small', 10)]]]));
 
     expect(below.lines[0].discountId).toBe('small');
     expect(money(below.subtotal)).toBe('180.00');
     expect(reached.lines[0].discountId).toBe('big');
     expect(money(reached.subtotal)).toBe('100.00');
+  });
+
+  it('keys discounts per variant, so two variants of one product can be priced differently', () => {
+    const priced = priceCart(
+      [
+        { variantId: 'small', productId: 'p1', unitPrice: 100, quantity: 1 },
+        { variantId: 'large', productId: 'p1', unitPrice: 120, quantity: 1 },
+      ],
+      new Map([
+        ['small', [pct('product10', 10)]],
+        ['large', [pct('product10', 10), flat('large30', 30)]],
+      ]),
+    );
+
+    expect(
+      priced.lines.map((line) => [line.variantId, line.productId, line.discountId, money(line.lineTotal)]),
+    ).toEqual([
+      ['small', 'p1', 'product10', '90.00'],
+      ['large', 'p1', 'large30', '90.00'],
+    ]);
+    expect(money(priced.subtotal)).toBe('180.00');
+  });
+
+  it('applies no discount to a variant missing from the map', () => {
+    const priced = priceCart(
+      [{ variantId: 'v2', productId: 'p1', unitPrice: 50, quantity: 2 }],
+      new Map([['v1', [pct('pct50', 50)]]]),
+    );
+
+    expect(priced.lines[0].discountId).toBeUndefined();
+    expect(money(priced.subtotal)).toBe('100.00');
   });
 });

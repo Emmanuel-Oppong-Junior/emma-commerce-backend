@@ -28,6 +28,9 @@ describe('Hot-query indexes (e2e)', () => {
     await prisma.$executeRawUnsafe(`
       INSERT INTO "Product" ("id", "name", "updatedAt")
       SELECT 'idx_p_' || g, 'Index product ' || g, now() FROM generate_series(1, 200) g`);
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO "Variant" ("id", "productId", "sku", "updatedAt")
+      SELECT 'idx_v_' || g, 'idx_p_' || g, 'IDX-' || g, now() FROM generate_series(1, 200) g`);
     // Order numbers come from the store counter: take a block of 500 and number the orders inside it.
     const [{ first }] = await prisma.$queryRaw<{ first: number }[]>`
       UPDATE "Store" SET "nextOrderNumber" = "nextOrderNumber" + 500 WHERE "singleton"
@@ -39,8 +42,8 @@ describe('Hot-query indexes (e2e)', () => {
       first,
     );
     await prisma.$executeRawUnsafe(`
-      INSERT INTO "OrderItem" ("id", "orderId", "productId", "priceAtOrder", "originalPrice")
-      SELECT 'idx_i_' || g, 'idx_o_' || (g % 500 + 1), 'idx_p_' || (g % 200 + 1), 10, 10
+      INSERT INTO "OrderItem" ("id", "orderId", "productId", "variantId", "priceAtOrder", "originalPrice")
+      SELECT 'idx_i_' || g, 'idx_o_' || (g % 500 + 1), 'idx_p_' || (g % 200 + 1), 'idx_v_' || (g % 200 + 1), 10, 10
       FROM generate_series(1, 5000) g`);
     await prisma.$executeRawUnsafe('ANALYZE "OrderItem"');
   };

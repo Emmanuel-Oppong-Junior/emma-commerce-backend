@@ -21,7 +21,7 @@ export class ProductsRepository {
       return await db.product.create({ data, include });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new ConflictException('A product with this SKU already exists');
+        throw new ConflictException('The product conflicts with an existing one');
       }
       throw e;
     }
@@ -121,6 +121,18 @@ export class ProductsRepository {
       where: { id: variant.id },
       data: { optionValues: variant.optionValues, optionsKey: variant.optionsKey },
     });
+  }
+
+  /** Sets each variant's price to basePrice × (1 + totalRate), rounded like taxInclusivePrice; 0 removes tax. */
+  async repriceVariants(
+    productId: string,
+    totalRate: Prisma.Decimal,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<void> {
+    await db.$executeRaw`
+      UPDATE "Variant" SET "price" = ROUND("basePrice" * ${totalRate.plus(1)}::numeric, 2), "updatedAt" = now()
+      WHERE "productId" = ${productId} AND "basePrice" IS NOT NULL
+    `;
   }
 
   async countCartItems(productId: string): Promise<number> {

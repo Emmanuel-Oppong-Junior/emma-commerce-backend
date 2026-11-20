@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Address, FulfillmentType, Order, OrderItem, Prisma, Product, User } from '../generated/prisma/client';
+import { Address, FulfillmentType, Order, OrderItem, Prisma, User, Variant } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -30,13 +30,13 @@ const mockPrismaOrder = {
 
 const mockPrismaAddress = { findUnique: jest.fn(), findFirst: jest.fn() };
 const mockPrismaUser = { findUnique: jest.fn() };
-const mockPrismaProduct = { findUnique: jest.fn() };
+const mockPrismaVariant = { findUnique: jest.fn() };
 
 const mockPrisma = {
   order: mockPrismaOrder,
   address: mockPrismaAddress,
   user: mockPrismaUser,
-  product: mockPrismaProduct,
+  variant: mockPrismaVariant,
   $transaction: jest.fn(),
 };
 
@@ -301,84 +301,59 @@ describe('OrdersRepository', () => {
     });
   });
 
-  describe('updateProductStock', () => {
-    it('should increment product quantity via transaction', async () => {
-      const updatedProduct = { id: 'prod1', quantity: 15 } as unknown as Product;
-      const mockTx = { product: { update: jest.fn().mockResolvedValue(updatedProduct) } };
+  describe('restoreVariantStock', () => {
+    it('should increment variant quantity via transaction', async () => {
+      const updatedVariant = { id: 'var1', quantity: 15 } as unknown as Variant;
+      const mockTx = { variant: { update: jest.fn().mockResolvedValue(updatedVariant) } };
 
-      const result = await repository.updateProductStock(mockTx as any, 'prod1', 5);
+      const result = await repository.restoreVariantStock(mockTx as any, 'var1', 5);
 
-      expect(result).toEqual(updatedProduct);
-      expect(mockTx.product.update).toHaveBeenCalledWith({
-        where: { id: 'prod1' },
+      expect(result).toEqual(updatedVariant);
+      expect(mockTx.variant.update).toHaveBeenCalledWith({
+        where: { id: 'var1' },
         data: { quantity: { increment: 5 } },
       });
     });
   });
 
-  describe('decrementProductStock', () => {
-    it('decrements only when enough stock is left and returns the product after the write', async () => {
-      const updatedProduct = { id: 'prod1', quantity: 8 } as unknown as Product;
+  describe('decrementVariantStock', () => {
+    it('decrements only when enough stock is left and returns the variant after the write', async () => {
+      const updatedVariant = { id: 'var1', quantity: 8 } as unknown as Variant;
       const mockTx = {
-        product: {
+        variant: {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-          findUniqueOrThrow: jest.fn().mockResolvedValue(updatedProduct),
+          findUniqueOrThrow: jest.fn().mockResolvedValue(updatedVariant),
         },
       };
 
-      const result = await repository.decrementProductStock(mockTx as any, 'prod1', 2);
+      const result = await repository.decrementVariantStock(mockTx as any, 'var1', 2);
 
-      expect(result).toEqual(updatedProduct);
-      expect(mockTx.product.updateMany).toHaveBeenCalledWith({
-        where: { id: 'prod1', quantity: { gte: 2 } },
+      expect(result).toEqual(updatedVariant);
+      expect(mockTx.variant.updateMany).toHaveBeenCalledWith({
+        where: { id: 'var1', quantity: { gte: 2 }, isActive: true, product: { isActive: true, status: 'PUBLISHED' } },
         data: { quantity: { decrement: 2 } },
       });
     });
 
     it('returns null and reads nothing when stock is short', async () => {
       const mockTx = {
-        product: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), findUniqueOrThrow: jest.fn() },
+        variant: { updateMany: jest.fn().mockResolvedValue({ count: 0 }), findUniqueOrThrow: jest.fn() },
       };
 
-      await expect(repository.decrementProductStock(mockTx as any, 'prod1', 5)).resolves.toBeNull();
-      expect(mockTx.product.findUniqueOrThrow).not.toHaveBeenCalled();
+      await expect(repository.decrementVariantStock(mockTx as any, 'var1', 5)).resolves.toBeNull();
+      expect(mockTx.variant.findUniqueOrThrow).not.toHaveBeenCalled();
     });
   });
 
-  describe('findProductById', () => {
-    it('should find a product by ID', async () => {
-      const mockProduct = { id: 'prod1', name: 'T-Shirt' } as unknown as Product;
-      mockPrismaProduct.findUnique.mockResolvedValue(mockProduct);
+  describe('findVariant', () => {
+    it('should find a variant with its product by ID', async () => {
+      const mockVariant = { id: 'var1', sku: 'TSHIRT-M', product: { id: 'prod1', name: 'T-Shirt' } };
+      mockPrismaVariant.findUnique.mockResolvedValue(mockVariant);
 
-      const result = await repository.findProductById('prod1');
+      const result = await repository.findVariant('var1');
 
-      expect(result).toEqual(mockProduct);
-    });
-  });
-
-  describe('findProduct', () => {
-    it('should find a product via transaction', async () => {
-      const mockProductData = { id: 'prod1', name: 'T-Shirt' } as unknown as Product;
-      const mockTx = { product: { findUnique: jest.fn().mockResolvedValue(mockProductData) } };
-
-      const result = await repository.findProduct(mockTx as any, 'prod1');
-
-      expect(result).toEqual(mockProductData);
-      expect(mockTx.product.findUnique).toHaveBeenCalledWith({ where: { id: 'prod1' } });
-    });
-  });
-
-  describe('findNamesOfProductsWithVariants', () => {
-    it('returns the names of the given products that have at least one variant', async () => {
-      const mockTx = { product: { findMany: jest.fn().mockResolvedValue([{ name: 'Linen Shirt' }]) } };
-
-      const result = await repository.findNamesOfProductsWithVariants(mockTx as any, ['p1', 'p2']);
-
-      expect(result).toEqual(['Linen Shirt']);
-      expect(mockTx.product.findMany).toHaveBeenCalledWith({
-        where: { id: { in: ['p1', 'p2'] }, variants: { some: { optionsKey: { not: '' } } } },
-        select: { name: true },
-      });
+      expect(result).toEqual(mockVariant);
+      expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({ where: { id: 'var1' }, include: { product: true } });
     });
   });
 

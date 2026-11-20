@@ -34,7 +34,7 @@ describe('Payments & Returns (e2e)', () => {
     // Add item to cart
     await gqlRequest(
       app,
-      `mutation { addToCart(input: { productId: "seed_prod1", quantity: 1 }) { id } }`,
+      `mutation { addToCart(input: { variantId: "seed_var1", quantity: 1 }) { id } }`,
       undefined,
       userToken,
     ).expect(200);
@@ -250,7 +250,7 @@ describe('Payments & Returns (e2e)', () => {
       const user2AddressId = addrRes.body.data.createAddress.id;
       await gqlRequest(
         app,
-        `mutation { addToCart(input: { productId: "seed_prod1", quantity: 1 }) { id } }`,
+        `mutation { addToCart(input: { variantId: "seed_var1", quantity: 1 }) { id } }`,
         undefined,
         user2Token,
       ).expect(200);

@@ -19,9 +19,9 @@ export class DashboardSummary {
   @Field(() => MoneyObject, { description: 'Refunds processed today (salesReport.refunds for today)' })
   refundsToday: Decimal;
 
-  @Field(() => Int)
+  @Field(() => Int, { description: 'Active products with at least one active variant at or below its low-stock level' })
   lowStockProductCount: number;
 
-  @Field(() => Int)
+  @Field(() => Int, { description: 'Active variants of active products at or below their low-stock level' })
   lowStockVariantCount: number;
 }

@@ -3,77 +3,44 @@ import * as DataLoader from 'dataloader';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '../../generated/prisma/client';
 import { DiscountCalculation } from '../../discount/types';
-import { bestUnitPrice, CandidateDiscount, toDiscountCalculation } from '../../discount/pricing';
+import { bestUnitPrice, toDiscountCalculation } from '../../discount/pricing';
+import { DiscountService } from '../../discount/discount.service';
 
-type CategoryDiscount = CandidateDiscount & { categories: { id: string }[] };
+const NO_DISCOUNT: DiscountCalculation = {
+  discountedPrice: new Prisma.Decimal(0),
+  discountAmount: new Prisma.Decimal(0),
+};
 
 @Injectable({ scope: Scope.REQUEST })
 export class DiscountLoader {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly discountService: DiscountService,
+  ) {}
 
   /**
-   * Batches discount lookups for multiple products in a single request.
-   * Prevents N+1 queries when resolving discountedPrice / appliedDiscount fields.
+   * The best active discount on one unit of each variant (its own, its product's or its category's), batched per
+   * request: one variant query and one discount query however many variants are resolved.
    */
   readonly loader = new DataLoader<string, DiscountCalculation>(
-    async (productIds: readonly string[]) => {
-      const ids = [...productIds];
-
-      // Fetch products with their active discounts + category discounts in bulk
-      const products = await this.prisma.product.findMany({
-        where: { id: { in: ids } },
-        select: {
-          id: true,
-          price: true,
-          categoryId: true,
-          discounts: {
-            where: {
-              isActive: true,
-              startDate: { lte: new Date() },
-              endDate: { gte: new Date() },
-            },
-          },
-        },
+    async (variantIds: readonly string[]) => {
+      const variants = await this.prisma.variant.findMany({
+        where: { id: { in: [...variantIds] } },
+        select: { id: true, price: true, productId: true, discountId: true, product: { select: { categoryId: true } } },
       });
-
-      // Collect all unique categoryIds to batch category-discount lookup
-      const categoryIds = [
-        ...new Set(products.map((p) => p.categoryId).filter((id): id is string => id !== null && id !== undefined)),
-      ];
-
-      const categoryDiscounts: CategoryDiscount[] =
-        categoryIds.length > 0
-          ? ((await this.prisma.discount.findMany({
-              where: {
-                isActive: true,
-                startDate: { lte: new Date() },
-                endDate: { gte: new Date() },
-                categories: { some: { id: { in: categoryIds } } },
-              },
-              include: { categories: { select: { id: true } } },
-            })) as unknown as CategoryDiscount[])
-          : [];
-
-      // Build a map: categoryId → discounts[]
-      const categoryDiscountMap = new Map<string, CategoryDiscount[]>();
-      for (const discount of categoryDiscounts) {
-        for (const cat of discount.categories) {
-          if (!categoryDiscountMap.has(cat.id)) categoryDiscountMap.set(cat.id, []);
-          categoryDiscountMap.get(cat.id)!.push(discount);
-        }
-      }
-
-      // Map results back in the same order as productIds
-      return ids.map((productId) => {
-        const product = products.find((p) => p.id === productId);
-        if (!product) return { discountedPrice: new Prisma.Decimal(0), discountAmount: new Prisma.Decimal(0) };
-
-        const allDiscounts: CandidateDiscount[] = [
-          ...product.discounts,
-          ...(product.categoryId ? (categoryDiscountMap.get(product.categoryId) ?? []) : []),
-        ];
-
-        return toDiscountCalculation(bestUnitPrice(product.price ?? 0, allDiscounts));
+      const discounts = await this.discountService.findActiveDiscountsByVariant(
+        variants.map((variant) => ({
+          id: variant.id,
+          productId: variant.productId,
+          categoryId: variant.product.categoryId,
+          discountId: variant.discountId,
+        })),
+      );
+      const byId = new Map(variants.map((variant) => [variant.id, variant]));
+      return variantIds.map((id) => {
+        const variant = byId.get(id);
+        if (!variant || variant.price === null) return NO_DISCOUNT;
+        return toDiscountCalculation(bestUnitPrice(variant.price, discounts.get(id) ?? []));
       });
     },
     { cache: false }, // Per-request cache disabled — data can change between resolves

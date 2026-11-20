@@ -5,6 +5,8 @@ import { TagModule } from '../tag/tag.module';
 import { DiscountModule } from '../discount/discount.module';
 import { DiscountLoader } from './loaders/discount.loader';
 import { VariantsLoader } from './loaders/variants.loader';
+import { VariantSummaryLoader } from './loaders/variant-summary.loader';
+import { VariantFieldsResolver } from './variant-fields.resolver';
 import { ReviewsLoader } from './loaders/reviews.loader';
 import { ProductsLoader } from './loaders/products.loader';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -29,6 +31,8 @@ import {
     ProductsRepository,
     DiscountLoader,
     VariantsLoader,
+    VariantSummaryLoader,
+    VariantFieldsResolver,
     ReviewsLoader,
     ProductsLoader,
   ],

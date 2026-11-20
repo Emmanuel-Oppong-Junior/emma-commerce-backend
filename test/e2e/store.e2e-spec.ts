@@ -134,7 +134,9 @@ describe('Store settings and order numbering (e2e)', () => {
     const shopperIds = Array.from({ length: SHOPPERS }, (_, n) => `numbering_shopper_${n}`);
     await prisma.user.createMany({ data: shopperIds.map((id) => ({ id, email: `${id}@example.com` })) });
     for (const userId of shopperIds) {
-      await prisma.cart.create({ data: { userId, items: { create: { productId: 'seed_prod2', quantity: 1 } } } });
+      await prisma.cart.create({
+        data: { userId, items: { create: { productId: 'seed_prod2', variantId: 'seed_var2', quantity: 1 } } },
+      });
     }
     const counterBefore = (await prisma.store.findUniqueOrThrow({ where: { singleton: true } })).nextOrderNumber;
 

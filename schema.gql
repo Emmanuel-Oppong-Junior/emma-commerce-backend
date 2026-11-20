@@ -8,11 +8,13 @@ input AddProductsToTagDto {
 }
 
 input AddToCartInput {
-  """ID of the product to add to the cart"""
-  productId: String!
-
-  """Quantity of the product to add"""
+  """Quantity to add"""
   quantity: Int!
+
+  """
+  ID of the variant (SKU) to add; every product is sold through its variants
+  """
+  variantId: ID!
 }
 
 type Address {
@@ -45,17 +47,6 @@ type Address {
   updatedAt: DateTime!
   userId: ID!
   zipCode: String
-}
-
-input AdjustProductStockInput {
-  """
-  Signed change: negative removes stock (damage, loss, count), positive adds it
-  """
-  delta: Int!
-  productId: ID!
-
-  """Why the stock changed"""
-  reason: String!
 }
 
 input AdjustVariantStockInput {
@@ -207,13 +198,13 @@ type CartItem {
   """Unique identifier of the cart item"""
   id: ID!
 
-  """Original price per unit of the product or variant"""
+  """List price of one unit of the variant"""
   originalPrice: Money
 
   """The product in the cart"""
   product: Product!
 
-  """ID of the product in the cart"""
+  """ID of the product of the variant"""
   productId: String!
 
   """Quantity of the product in the cart"""
@@ -222,8 +213,11 @@ type CartItem {
   """Timestamp when the item was last updated"""
   updatedAt: DateTime!
 
-  """Variant of the product, if applicable"""
-  variant: Variant
+  """The variant (SKU) in the cart: what is priced and stocked"""
+  variant: Variant!
+
+  """ID of the variant (SKU) in the cart"""
+  variantId: ID!
 }
 
 type Category {
@@ -453,12 +447,6 @@ input CreateProductInput {
   """
   attributes: JSONObject
 
-  """Barcode (EAN, UPC, GTIN, etc.)"""
-  barcode: String
-
-  """Base price before taxes — decimal string (e.g., "29.99")"""
-  basePrice: Decimal!
-
   """ID of the brand"""
   brandId: String
 
@@ -489,20 +477,14 @@ input CreateProductInput {
   """Perishable goods (defaults to false)"""
   isPerishable: Boolean
 
-  """Whether taxes apply to this product"""
+  """Whether variant prices add tax to their basePrice"""
   isTaxable: Boolean! = false
-
-  """Quantity threshold that triggers a low-stock alert (defaults to 5)"""
-  lowStockAlert: Int
 
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String!
 
   """ID of the product type (defaults to General)"""
   productTypeId: String
-
-  """Initial stock quantity (0 or more)"""
-  quantity: Int!
 
   """Sold only against a prescription (defaults to false)"""
   requiresPrescription: Boolean
@@ -516,14 +498,8 @@ input CreateProductInput {
   """Short marketing description (max 500 characters)"""
   shortDescription: String
 
-  """SKU code (e.g., "TSHIRT-XL")"""
-  sku: String
-
   """Publishing lifecycle status (defaults to DRAFT)"""
   status: ProductStatus
-
-  """Stock availability status (defaults to IN_STOCK)"""
-  stockStatus: StockStatus
 
   """ID of the subcategory"""
   subcategoryId: String
@@ -536,6 +512,11 @@ input CreateProductInput {
 
   """Defaults to EACH"""
   unitOfMeasure: UnitOfMeasure
+
+  """
+  The variants (SKUs) to sell, at least one; a product without options has one, with no optionValues
+  """
+  variants: [VariantFieldsInput!]!
 }
 
 input CreateProductTypeInput {
@@ -689,7 +670,13 @@ enum Currency {
 type DashboardSummary {
   """Payments accepted today (salesReport.grossRevenue for today)"""
   grossRevenueToday: Money!
+
+  """
+  Active products with at least one active variant at or below its low-stock level
+  """
   lowStockProductCount: Int!
+
+  """Active variants of active products at or below their low-stock level"""
   lowStockVariantCount: Int!
 
   """Orders paid today (salesReport.orderCount for today)"""
@@ -847,7 +834,7 @@ type InventoryLogEntity {
   quantityAfter: Int!
   quantityChange: Int!
   reason: String
-  variantId: ID
+  variantId: ID!
 }
 
 """
@@ -925,11 +912,6 @@ type Mutation {
 
   """Adds a product to the user’s wishlist"""
   addToWishlist(productId: String!): Wishlist!
-
-  """
-  Change a product’s stock by a signed amount with a reason, never below zero (admin only)
-  """
-  adjustProductStock(input: AdjustProductStockInput!): InventoryLogEntity!
 
   """
   Change a variant’s stock by a signed amount with a reason, never below zero (admin only)
@@ -1130,9 +1112,6 @@ type Mutation {
 
   """Reset password using a valid reset token"""
   resetPassword(input: ResetPasswordInput!): Boolean!
-
-  """Restock a product (admin only)"""
-  restockProduct(input: RestockProductInput!): InventoryLogEntity!
 
   """Restock a product variant (admin only)"""
   restockVariant(input: RestockVariantInput!): InventoryLogEntity!
@@ -1336,18 +1315,27 @@ type OrderItem {
   """Discount taken off one unit at checkout"""
   discountAmount: Money
   id: ID!
+
+  """Option values when ordered, e.g. { size: "M" }"""
+  optionValues: JSONObject
   orderId: ID!
 
-  """Original price per unit of the product or variant"""
+  """List price of one unit of the variant"""
   originalPrice: Money
 
   """Unit price charged: originalPrice - discountAmount"""
   priceAtOrder: Money!
   product: Product!
   productId: ID!
-  quantity: Float!
+  quantity: Int!
+
+  """SKU when ordered (null on lines ordered before variants were sold)"""
+  sku: String
   updatedAt: DateTime!
-  variantId: ID
+  variant: Variant!
+
+  """The variant (SKU) ordered"""
+  variantId: ID!
 }
 
 enum OrderPaymentMethod {
@@ -1422,10 +1410,13 @@ type PickupLocationEntity {
   updatedAt: DateTime!
 }
 
-type Product {
-  """Active discount applied to the product"""
-  appliedDiscount: Discount
+"""Lowest and highest selling price of a product's active variants"""
+type PriceRange {
+  max: Money!
+  min: Money!
+}
 
+type Product {
   """Downloadable or supplementary file URLs"""
   attachments: [String!]
 
@@ -1433,12 +1424,6 @@ type Product {
   Values of the product type's non-axis attributes, keyed by attribute key
   """
   attributes: JSONObject!
-
-  """Barcode (EAN, UPC, etc.)"""
-  barcode: String
-
-  """Base price before taxes (admin-entered)"""
-  basePrice: Money
   brand: Brand
   brandId: String
   category: Category
@@ -1448,17 +1433,11 @@ type Product {
   """Currency of the product price"""
   currency: Currency
 
-  """Current selling price after any adjustments"""
-  currentPrice: Money
-
   """Available delivery methods for this product"""
   deliveryOptions: [DeliveryOptions!]
 
   """Full description of the product"""
   description: String
-
-  """Discounted price, if a discount is active"""
-  discountedPrice: Money
   discounts: [Discount!]
 
   """Expiry or best-before date"""
@@ -1473,23 +1452,25 @@ type Product {
   """Array of image URLs"""
   images: [String!]
 
+  """Whether an active variant has stock"""
+  inStock: Boolean!
+
   """Whether the product is visible to customers"""
   isActive: Boolean!
 
   """Perishable goods (expiry tracking comes with the inventory ledger)"""
   isPerishable: Boolean!
 
-  """Whether taxes are applied to this product"""
+  """Whether variant prices add tax to their basePrice"""
   isTaxable: Boolean!
-
-  """Quantity threshold that triggers a low-stock alert"""
-  lowStockAlert: Int
 
   """Name of the product"""
   name: String!
 
-  """Tax-inclusive display price"""
-  price: Money
+  """
+  Lowest and highest price of the active variants; null when none is priced
+  """
+  priceRange: PriceRange
 
   """The product type, whose attribute definitions describe attributes"""
   productType: ProductType!
@@ -1499,9 +1480,6 @@ type Product {
 
   """When the product was published"""
   publishedAt: DateTime
-
-  """Available stock quantity"""
-  quantity: Int!
 
   """Sold only against a prescription (pharmacy; enforced in a later phase)"""
   requiresPrescription: Boolean!
@@ -1516,17 +1494,14 @@ type Product {
   """Short marketing description (max 500 chars)"""
   shortDescription: String
 
-  """Stock Keeping Unit code"""
-  sku: String
-
   """Publishing lifecycle status"""
   status: ProductStatus
-
-  """Current stock availability status"""
-  stockStatus: StockStatus
   subcategory: SubCategory
   subcategoryId: String
   tags: [Tag!]
+
+  """Units in stock across the active variants"""
+  totalStock: Int!
 
   """Stock is tracked per lot/batch (inventory ledger, later phase)"""
   trackLots: Boolean!
@@ -1537,7 +1512,9 @@ type Product {
   """Unit the product is sold in"""
   unitOfMeasure: UnitOfMeasure!
   updatedAt: DateTime!
-  variants: [Variant!]
+
+  """The active variants (SKUs): what a customer chooses and buys"""
+  variants: [Variant!]!
 }
 
 type ProductConnection {
@@ -1568,7 +1545,9 @@ input ProductFilterArgs {
   """Filter products created after this ISO date"""
   createdAfter: String
 
-  """Filter by instock status"""
+  """
+  true: only products with an active variant in stock; false or omitted: no stock filter
+  """
   inStock: Boolean
 
   """Filter by active status"""
@@ -1616,12 +1595,6 @@ enum ProductSortField {
 
   """Sort by product name"""
   NAME
-
-  """Sort by price"""
-  PRICE
-
-  """Sort by stock quantity"""
-  QUANTITY
 
   """Sort by last update date"""
   UPDATED_AT
@@ -1749,7 +1722,7 @@ type Query {
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
 
-  """Get inventory logs for a product (admin only)"""
+  """Get the inventory logs of every variant of a product (admin only)"""
   productInventoryLogs(productId: ID!): [InventoryLogEntity!]!
 
   """Retrieves all reviews for a product"""
@@ -1928,12 +1901,6 @@ input ResetPasswordInput {
   """
   newPassword: String!
   resetToken: String!
-}
-
-input RestockProductInput {
-  productId: ID!
-  quantity: Int!
-  reason: String
 }
 
 input RestockVariantInput {
@@ -2120,13 +2087,6 @@ type StaffRole {
 type StepUpResult {
   """Sensitive actions are allowed in this session until then"""
   validUntil: DateTime!
-}
-
-enum StockStatus {
-  BACKORDER
-  IN_STOCK
-  OUT_OF_STOCK
-  PREORDER
 }
 
 """The settings of the store this deployment serves"""
@@ -2377,12 +2337,6 @@ input UpdateProductInput {
   """
   attributes: JSONObject
 
-  """Barcode (EAN, UPC, GTIN, etc.)"""
-  barcode: String
-
-  """Base price before taxes — decimal string (e.g., "29.99")"""
-  basePrice: Decimal
-
   """ID of the brand"""
   brandId: String
 
@@ -2413,11 +2367,10 @@ input UpdateProductInput {
   """Perishable goods (defaults to false)"""
   isPerishable: Boolean
 
-  """Whether taxes apply to this product"""
+  """
+  Whether variant prices add tax to their basePrice; changing it reprices every variant
+  """
   isTaxable: Boolean
-
-  """Quantity threshold that triggers a low-stock alert (defaults to 5)"""
-  lowStockAlert: Int
 
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String
@@ -2437,14 +2390,8 @@ input UpdateProductInput {
   """Short marketing description (max 500 characters)"""
   shortDescription: String
 
-  """SKU code (e.g., "TSHIRT-XL")"""
-  sku: String
-
   """Publishing lifecycle status (defaults to DRAFT)"""
   status: ProductStatus
-
-  """Stock availability status (defaults to IN_STOCK)"""
-  stockStatus: StockStatus
 
   """ID of the subcategory"""
   subcategoryId: String
@@ -2706,12 +2653,20 @@ input ValidateCouponInput {
 }
 
 type Variant {
+  """The discount behind discountedPrice"""
+  appliedDiscount: Discount
+
   """Barcode (EAN, UPC, GTIN, ...)"""
   barcode: String
 
   """Price before tax, as entered by an admin"""
   basePrice: Money
   discountId: ID
+
+  """
+  Price of one unit after the best active discount (its own, its product's or its category's); null without one
+  """
+  discountedPrice: Money
   heightMm: Int
   id: ID!
 
@@ -2721,6 +2676,9 @@ type Variant {
   """Inactive variants are archived: kept for history, never sold"""
   isActive: Boolean!
   lengthMm: Int
+
+  """Stock level that counts as low (default 5)"""
+  lowStockThreshold: Int
 
   """
   Values for the product type's variant axes, e.g. { size: "M", colour: "Red" }
@@ -2733,7 +2691,9 @@ type Variant {
   price: Money
   product: Product!
   productId: ID!
-  quantity: Float!
+
+  """Units in stock"""
+  quantity: Int!
 
   """Stock keeping unit code"""
   sku: String
@@ -2750,6 +2710,39 @@ type VariantEdge {
   """Pass as paginationArgs.after to get the next page"""
   cursor: String!
   node: Variant!
+}
+
+input VariantFieldsInput {
+  """Unique barcode (EAN, UPC, GTIN, ...)"""
+  barcode: String
+
+  """
+  Price before tax, e.g. "29.99"; the selling price adds tax when the product is taxable
+  """
+  basePrice: Decimal!
+  heightMm: Int
+
+  """HTTPS image shown for this variant"""
+  image: String
+  lengthMm: Int
+
+  """Stock level that counts as low (defaults to 5)"""
+  lowStockThreshold: Int
+
+  """
+  Values for the product type's variant axes, e.g. { "size": "M", "colour": "Red" }; omit for none
+  """
+  optionValues: JSONObject
+
+  """
+  Initial stock, logged as a RESTOCK; later changes go through restock/adjust
+  """
+  quantity: Int!
+
+  """Unique SKU code; generated when omitted"""
+  sku: String
+  weightGrams: Int
+  widthMm: Int
 }
 
 input VerifyEmailInput {

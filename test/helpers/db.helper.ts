@@ -158,12 +158,20 @@ export interface SeedResult {
     draft: string;
     inactive: string;
   };
+  /** The default variant (SKU) of each seeded product: what carts and orders reference. */
+  variantIds: {
+    prod1: string;
+    prod2: string;
+    draft: string;
+    inactive: string;
+  };
 }
 
 /**
  * Seeds the minimum set of records required across all e2e test suites:
  * three users (super admin, admin, regular user), one brand, one category,
- * two published products, one DRAFT product, one inactive product and shipping zones
+ * two published products, one DRAFT product, one inactive product (each with one default variant
+ * seed_var1, seed_var2, seed_var_draft, seed_var_inactive) and shipping zones
  * covering Accra, Tema and Kumasi.
  *
  * Credentials used here mirror the constants in `auth.helper.ts`.
@@ -225,9 +233,6 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
       {
         id: 'seed_prod1',
         name: 'Laptop',
-        price: 999.99,
-        sku: 'SEED-LAP-001',
-        quantity: 50,
         images: ['laptop.jpg'],
         isActive: true,
         status: 'PUBLISHED',
@@ -237,9 +242,6 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
       {
         id: 'seed_prod2',
         name: 'Phone',
-        price: 499.99,
-        sku: 'SEED-PHN-001',
-        quantity: 100,
         images: ['phone.jpg'],
         isActive: true,
         status: 'PUBLISHED',
@@ -249,9 +251,6 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
       {
         id: 'seed_prod_draft',
         name: 'Unreleased Tablet',
-        price: 299.99,
-        sku: 'SEED-TAB-DRAFT',
-        quantity: 10,
         images: [],
         isActive: true,
         status: 'DRAFT',
@@ -261,14 +260,43 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
       {
         id: 'seed_prod_inactive',
         name: 'Discontinued Watch',
-        price: 199.99,
-        sku: 'SEED-WAT-OFF',
-        quantity: 5,
         images: [],
         isActive: false,
         status: 'PUBLISHED',
         categoryId: category.id,
         brandId: brand.id,
+      },
+    ],
+  });
+
+  // Every product sells through a variant: each seeded product has one default variant (no options), holding the
+  // price and stock the product used to have. Inserted directly, so the initial stock is not logged.
+  await prisma.variant.createMany({
+    data: [
+      { id: 'seed_var1', productId: 'seed_prod1', sku: 'SEED-LAP-001', price: 999.99, basePrice: 999.99, quantity: 50 },
+      {
+        id: 'seed_var2',
+        productId: 'seed_prod2',
+        sku: 'SEED-PHN-001',
+        price: 499.99,
+        basePrice: 499.99,
+        quantity: 100,
+      },
+      {
+        id: 'seed_var_draft',
+        productId: 'seed_prod_draft',
+        sku: 'SEED-TAB-DRAFT',
+        price: 299.99,
+        basePrice: 299.99,
+        quantity: 10,
+      },
+      {
+        id: 'seed_var_inactive',
+        productId: 'seed_prod_inactive',
+        sku: 'SEED-WAT-OFF',
+        price: 199.99,
+        basePrice: 199.99,
+        quantity: 5,
       },
     ],
   });
@@ -290,5 +318,6 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
     categoryId: category.id,
     brandId: brand.id,
     productIds: { prod1: 'seed_prod1', prod2: 'seed_prod2', draft: 'seed_prod_draft', inactive: 'seed_prod_inactive' },
+    variantIds: { prod1: 'seed_var1', prod2: 'seed_var2', draft: 'seed_var_draft', inactive: 'seed_var_inactive' },
   };
 }

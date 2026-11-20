@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export interface CreateLogData {
   productId: string;
-  variantId?: string;
+  variantId: string;
   action: InventoryAction;
   quantityChange: number;
   quantityAfter: number;
@@ -40,42 +40,14 @@ export class InventoryRepository {
     });
   }
 
-  async incrementProductStock(productId: string, quantity: number): Promise<{ quantity: number }> {
-    const result = await this.prisma.product.update({
-      where: { id: productId },
-      data: { quantity: { increment: quantity } },
-      select: { quantity: true },
-    });
-    return result;
-  }
-
-  async incrementVariantStock(variantId: string, quantity: number): Promise<{ quantity: number }> {
-    const result = await this.prisma.variant.update({
-      where: { id: variantId },
-      data: { quantity: { increment: quantity } },
-      select: { quantity: true },
-    });
-    return result;
-  }
-
-  async findLowStockProducts(
-    threshold?: number,
-  ): Promise<{ id: string; name: string; quantity: number; lowStockAlert: number | null }[]> {
-    return this.prisma.$queryRaw`
-      SELECT id, name, quantity, "lowStockAlert"
-      FROM "Product"
-      WHERE quantity <= COALESCE("lowStockAlert", ${threshold ?? 5})
-        AND "isActive" = true
-    `;
-  }
-
+  /** Active variants of active products at or below their low-stock threshold (default 5 when unset). */
   async findLowStockVariants(
     threshold?: number,
-  ): Promise<{ id: string; productId: string; quantity: number; lowStockThreshold: number | null }[]> {
+  ): Promise<{ id: string; productId: string; sku: string; quantity: number; lowStockThreshold: number | null }[]> {
     return this.prisma.$queryRaw`
-      SELECT id, "productId", quantity, "lowStockThreshold"
-      FROM "Variant"
-      WHERE quantity <= COALESCE("lowStockThreshold", ${threshold ?? 5})
+      SELECT v.id, v."productId", v.sku, v.quantity, v."lowStockThreshold"
+      FROM "Variant" v JOIN "Product" p ON p.id = v."productId"
+      WHERE v."isActive" AND p."isActive" AND v.quantity <= COALESCE(v."lowStockThreshold", ${threshold ?? 5})
     `;
   }
 }

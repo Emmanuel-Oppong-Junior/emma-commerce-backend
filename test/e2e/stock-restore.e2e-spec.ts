@@ -15,14 +15,14 @@ describe('Stock is restored exactly once (e2e)', () => {
   const paystack = { createRefund: jest.fn(async () => ({ id: 'rf_stock', status: 'pending' })) };
 
   const stockOf = async () =>
-    (await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' }, select: { quantity: true } })).quantity;
+    (await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' }, select: { quantity: true } })).quantity;
   const restoreLogsFor = (orderId: string) =>
     prisma.inventoryLog.count({ where: { action: 'RETURN_RESTORE', reason: { contains: orderId } } });
 
   const placeOrder = async (): Promise<string> => {
     await gqlRequest(
       app,
-      'mutation { addToCart(input: { productId: "seed_prod1", quantity: 2 }) { id } }',
+      'mutation { addToCart(input: { variantId: "seed_var1", quantity: 2 }) { id } }',
       undefined,
       userToken,
     ).expect(200);

@@ -72,10 +72,13 @@ describe('Money and Decimal on the GraphQL API (e2e)', () => {
   it('labels amounts with the store currency', async () => {
     await prisma.store.update({ where: { singleton: true }, data: { currency: 'USD' } });
 
-    const res = await gqlRequest(app, `{ product(productId: "seed_prod1") { price { amount currency } } }`).expect(200);
+    const res = await gqlRequest(
+      app,
+      `{ product(productId: "seed_prod1") { variants { price { amount currency } } } }`,
+    ).expect(200);
 
     expect(res.body.errors).toBeUndefined();
-    expect(res.body.data.product.price).toEqual({ amount: '999.99', currency: 'USD' });
+    expect(res.body.data.product.variants[0].price).toEqual({ amount: '999.99', currency: 'USD' });
   });
 
   it('returns a tax rate as a Decimal string', async () => {

@@ -6,6 +6,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { clearPaymentLedger, resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 
 const PRODUCT_ID = 'seed_prod2';
+const VARIANT_ID = 'seed_var2';
 const USER_ID = 'seed_user';
 const TWO_HOURS_AGO = () => new Date(Date.now() - 2 * 60 * 60 * 1000);
 
@@ -16,7 +17,7 @@ describe('Abandoned order expiry (e2e)', () => {
   let addressId: string;
 
   const stock = async () =>
-    (await prisma.product.findUniqueOrThrow({ where: { id: PRODUCT_ID }, select: { quantity: true } })).quantity;
+    (await prisma.variant.findUniqueOrThrow({ where: { id: VARIANT_ID }, select: { quantity: true } })).quantity;
   const statusOf = async (orderId: string) =>
     (await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { status: true } })).status;
   const restoreLogsFor = (orderId: string) =>
@@ -24,7 +25,7 @@ describe('Abandoned order expiry (e2e)', () => {
 
   const placeOrder = async (quantity: number): Promise<string> => {
     const cart = await prisma.cart.upsert({ where: { userId: USER_ID }, create: { userId: USER_ID }, update: {} });
-    await prisma.cartItem.create({ data: { cartId: cart.id, productId: PRODUCT_ID, quantity } });
+    await prisma.cartItem.create({ data: { cartId: cart.id, productId: PRODUCT_ID, variantId: VARIANT_ID, quantity } });
     const order = await orders.createOrderFromCart(USER_ID, {
       fulfillmentType: FulfillmentType.DELIVERY,
       shippingAddressId: addressId,
@@ -70,7 +71,7 @@ describe('Abandoned order expiry (e2e)', () => {
     await clearPaymentLedger(prisma);
     await prisma.orderItem.deleteMany();
     await prisma.order.deleteMany();
-    await prisma.product.update({ where: { id: PRODUCT_ID }, data: { quantity: 100 } });
+    await prisma.variant.update({ where: { id: VARIANT_ID }, data: { quantity: 100 } });
   });
 
   afterAll(async () => {

@@ -11,11 +11,9 @@ import {
   DeliveryOptionsEnum,
   FulfilmentKindEnum,
   ProductStatusEnum,
-  StockStatusEnum,
   UnitOfMeasureEnum,
 } from '../enums/product.enum';
-import { MoneyObject } from '../../commons/money/money.object';
-import { Decimal } from '@prisma/client/runtime/client';
+import { PriceRange } from './price-range.entity';
 import { GraphQLJSONObject } from 'graphql-type-json';
 import { ProductType } from '../../product-types/entities/product-type.entity';
 
@@ -39,35 +37,11 @@ export class Product {
   @Field(() => [String], { description: 'Downloadable or supplementary file URLs', nullable: true })
   attachments?: string[];
 
-  @Field(() => MoneyObject, { description: 'Tax-inclusive display price', nullable: true })
-  price?: Decimal;
-
-  @Field(() => MoneyObject, { description: 'Base price before taxes (admin-entered)', nullable: true })
-  basePrice?: Decimal;
-
-  @Field(() => MoneyObject, { description: 'Current selling price after any adjustments', nullable: true })
-  currentPrice?: Decimal;
-
   @Field(() => CurrencyEnum, { description: 'Currency of the product price', nullable: true })
   currency?: string;
 
-  @Field(() => Boolean, { description: 'Whether taxes are applied to this product' })
+  @Field(() => Boolean, { description: 'Whether variant prices add tax to their basePrice' })
   isTaxable: boolean;
-
-  @Field(() => String, { description: 'Stock Keeping Unit code', nullable: true })
-  sku?: string;
-
-  @Field(() => String, { description: 'Barcode (EAN, UPC, etc.)', nullable: true })
-  barcode?: string;
-
-  @Field(() => Int, { description: 'Available stock quantity' })
-  quantity: number;
-
-  @Field(() => StockStatusEnum, { description: 'Current stock availability status', nullable: true })
-  stockStatus?: string;
-
-  @Field(() => Int, { description: 'Quantity threshold that triggers a low-stock alert', nullable: true })
-  lowStockAlert?: number;
 
   @Field(() => Boolean, { description: 'Whether the product is visible to customers', defaultValue: false })
   isActive: boolean;
@@ -119,12 +93,6 @@ export class Product {
   @Field(() => UnitOfMeasureEnum, { description: 'Unit the product is sold in' })
   unitOfMeasure: UnitOfMeasureEnum;
 
-  @Field(() => MoneyObject, { description: 'Discounted price, if a discount is active', nullable: true })
-  discountedPrice?: Decimal;
-
-  @Field(() => Discount, { description: 'Active discount applied to the product', nullable: true })
-  appliedDiscount?: Discount;
-
   @Field(() => String, { nullable: true })
   categoryId?: string;
 
@@ -143,8 +111,17 @@ export class Product {
   @Field(() => Brand, { nullable: true })
   brand?: Brand;
 
-  @Field(() => [Variant], { nullable: true })
+  @Field(() => [Variant], { description: 'The active variants (SKUs)' })
   variants?: Variant[];
+
+  @Field(() => PriceRange, { nullable: true })
+  priceRange?: PriceRange | null;
+
+  @Field(() => Int)
+  totalStock?: number;
+
+  @Field(() => Boolean)
+  inStock?: boolean;
 
   @Field(() => [Discount], { nullable: true })
   discounts?: Discount[];

@@ -14,8 +14,8 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
   const admin = (query: string, variables?: Record<string, unknown>) =>
     gqlRequest(app, query, variables, adminToken).expect(200);
   const rejectedBySchema = (query: string) => gqlRequest(app, query, undefined, adminToken).expect(400);
-  const productStock = async () =>
-    (await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' }, select: { quantity: true } })).quantity;
+  const defaultVariantStock = async () =>
+    (await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' }, select: { quantity: true } })).quantity;
   const variantStock = async () =>
     (await prisma.variant.findUniqueOrThrow({ where: { id: variantId }, select: { quantity: true } })).quantity;
 
@@ -26,7 +26,14 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
     adminToken = await signInAdmin(app);
     variantId = (
       await prisma.variant.create({
-        data: { productId: 'seed_prod1', size: 'M', quantity: 10, price: 999.99, sku: 'STOCK-M' },
+        data: {
+          productId: 'seed_prod1',
+          optionValues: { size: 'M' },
+          optionsKey: 'size=M',
+          quantity: 10,
+          price: 999.99,
+          sku: 'STOCK-M',
+        },
       })
     ).id;
   });
@@ -36,23 +43,23 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
   });
 
   it('updateProduct no longer accepts quantity, so an edit form cannot overwrite live stock', async () => {
-    const before = await productStock();
+    const before = await defaultVariantStock();
 
     const res = await rejectedBySchema(
       `mutation { updateProduct(productId: "seed_prod1", updateProductInput: { name: "Laptop", quantity: 999 }) { id } }`,
     );
 
     expect(res.body.errors?.[0].message).toMatch(/quantity/);
-    expect(await productStock()).toBe(before);
+    expect(await defaultVariantStock()).toBe(before);
   });
 
-  it('updateProduct still edits other fields, including stockStatus', async () => {
+  it('updateProduct still edits other fields', async () => {
     const res = await admin(
-      `mutation { updateProduct(productId: "seed_prod1", updateProductInput: { name: "Laptop Pro", stockStatus: PREORDER }) { name stockStatus } }`,
+      `mutation { updateProduct(productId: "seed_prod1", updateProductInput: { name: "Laptop Pro", shortDescription: "Pre-order" }) { name shortDescription } }`,
     );
 
     expect(res.body.errors).toBeUndefined();
-    expect(res.body.data.updateProduct).toEqual({ name: 'Laptop Pro', stockStatus: 'PREORDER' });
+    expect(res.body.data.updateProduct).toEqual({ name: 'Laptop Pro', shortDescription: 'Pre-order' });
   });
 
   it('updateVariant no longer accepts quantity', async () => {
@@ -64,35 +71,35 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
     expect(await variantStock()).toBe(10);
   });
 
-  it('adjustProductStock removes stock with a reason and logs an ADJUSTMENT', async () => {
-    const before = await productStock();
+  it('adjustVariantStock removes stock with a reason and logs an ADJUSTMENT', async () => {
+    const before = await defaultVariantStock();
 
     const res = await admin(
-      `mutation { adjustProductStock(input: { productId: "seed_prod1", delta: -3, reason: "Damaged in storage" }) {
+      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: -3, reason: "Damaged in storage" }) {
         action quantityChange quantityAfter reason } }`,
     );
 
     expect(res.body.errors).toBeUndefined();
-    expect(res.body.data.adjustProductStock).toEqual({
+    expect(res.body.data.adjustVariantStock).toEqual({
       action: 'ADJUSTMENT',
       quantityChange: -3,
       quantityAfter: before - 3,
       reason: 'Damaged in storage',
     });
-    expect(await productStock()).toBe(before - 3);
+    expect(await defaultVariantStock()).toBe(before - 3);
   });
 
-  it('adjustProductStock refuses to go below zero and changes nothing', async () => {
-    const before = await productStock();
-    const logsBefore = await prisma.inventoryLog.count({ where: { productId: 'seed_prod1' } });
+  it('adjustVariantStock refuses to go below zero and changes nothing', async () => {
+    const before = await defaultVariantStock();
+    const logsBefore = await prisma.inventoryLog.count({ where: { variantId: 'seed_var1' } });
 
     const res = await admin(
-      `mutation { adjustProductStock(input: { productId: "seed_prod1", delta: -${before + 1}, reason: "Write-off" }) { id } }`,
+      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: -${before + 1}, reason: "Write-off" }) { id } }`,
     );
 
     expect(res.body.errors?.[0].extensions.code).toBe('BAD_REQUEST');
-    expect(await productStock()).toBe(before);
-    expect(await prisma.inventoryLog.count({ where: { productId: 'seed_prod1' } })).toBe(logsBefore);
+    expect(await defaultVariantStock()).toBe(before);
+    expect(await prisma.inventoryLog.count({ where: { variantId: 'seed_var1' } })).toBe(logsBefore);
   });
 
   it('adjustVariantStock moves variant stock and logs it against the product', async () => {
@@ -112,16 +119,13 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
 
   it('rejects a zero delta', async () => {
     const res = await admin(
-      `mutation { adjustProductStock(input: { productId: "seed_prod1", delta: 0, reason: "Nothing" }) { id } }`,
+      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: 0, reason: "Nothing" }) { id } }`,
     );
 
     expect(res.body.errors?.[0].extensions.code).toBe('BAD_USER_INPUT');
   });
 
-  it('the database refuses negative product and variant stock', async () => {
-    await expect(prisma.$executeRaw`UPDATE "Product" SET quantity = -1 WHERE id = 'seed_prod1'`).rejects.toThrow(
-      /Product_quantity_non_negative/,
-    );
+  it('the database refuses negative variant stock', async () => {
     await expect(prisma.$executeRaw`UPDATE "Variant" SET quantity = -1 WHERE id = ${variantId}`).rejects.toThrow(
       /Variant_quantity_non_negative/,
     );

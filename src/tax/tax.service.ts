@@ -21,7 +21,7 @@ export class TaxService {
           { name: input.name, rate: input.rate, isActive: input.isActive ?? true },
           tx,
         );
-        await this.repriceTaxableProducts(tx);
+        await this.repriceTaxableVariants(tx);
         return created;
       },
       (created) => ({
@@ -39,7 +39,7 @@ export class TaxService {
     return this.auditService.record(
       async (tx) => {
         const updated = await this.taxRepository.update(id, input, tx);
-        await this.repriceTaxableProducts(tx);
+        await this.repriceTaxableVariants(tx);
         return updated;
       },
       (updated) => ({
@@ -56,7 +56,7 @@ export class TaxService {
     return this.auditService.record(
       async (tx) => {
         const deleted = await this.taxRepository.delete(id, tx);
-        await this.repriceTaxableProducts(tx);
+        await this.repriceTaxableVariants(tx);
         return deleted;
       },
       (deleted) => ({
@@ -84,8 +84,8 @@ export class TaxService {
   }
 
   /** Runs on the tax change's transaction, so a failed reprice rolls the tax change back. */
-  private async repriceTaxableProducts(tx: Prisma.TransactionClient): Promise<void> {
+  private async repriceTaxableVariants(tx: Prisma.TransactionClient): Promise<void> {
     const totalRate = await this.taxRepository.getTotalActiveRate(tx);
-    await this.taxRepository.repriceTaxableProducts(totalRate, tx);
+    await this.taxRepository.repriceTaxableVariants(totalRate, tx);
   }
 }

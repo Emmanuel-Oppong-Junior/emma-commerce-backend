@@ -6,6 +6,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
 
 const PRODUCT_ID = 'seed_prod2';
+const VARIANT_ID = 'seed_var2';
 const SHOPPERS = 20;
 const USAGE_LIMIT = 10;
 
@@ -24,7 +25,9 @@ describe('Coupon usage limits and release (e2e)', () => {
 
   const checkout = async (userId: string, couponCode: string) => {
     const cart = await prisma.cart.upsert({ where: { userId }, create: { userId }, update: {} });
-    await prisma.cartItem.create({ data: { cartId: cart.id, productId: PRODUCT_ID, quantity: 1 } });
+    await prisma.cartItem.create({
+      data: { cartId: cart.id, productId: PRODUCT_ID, variantId: VARIANT_ID, quantity: 1 },
+    });
     return orders.createOrderFromCart(userId, {
       fulfillmentType: FulfillmentType.DELIVERY,
       shippingAddressId: await addressFor(userId),
@@ -79,10 +82,12 @@ describe('Coupon usage limits and release (e2e)', () => {
         create: { userId: shopperId(n) },
         update: {},
       });
-      await prisma.cartItem.create({ data: { cartId: cart.id, productId: PRODUCT_ID, quantity: 1 } });
+      await prisma.cartItem.create({
+        data: { cartId: cart.id, productId: PRODUCT_ID, variantId: VARIANT_ID, quantity: 1 },
+      });
       await addressFor(shopperId(n));
     }
-    const stockBefore = (await prisma.product.findUniqueOrThrow({ where: { id: PRODUCT_ID } })).quantity;
+    const stockBefore = (await prisma.variant.findUniqueOrThrow({ where: { id: VARIANT_ID } })).quantity;
 
     const results = await Promise.allSettled(
       Array.from({ length: SHOPPERS }, async (_, n) =>
@@ -102,7 +107,7 @@ describe('Coupon usage limits and release (e2e)', () => {
     for (const r of refused) expect(r.reason).toBeInstanceOf(BadRequestException);
     expect(await prisma.order.count({ where: { coupon: { code: 'FIRST10' } } })).toBe(USAGE_LIMIT);
     expect(await couponState('FIRST10')).toEqual({ usedCount: USAGE_LIMIT, usages: USAGE_LIMIT });
-    const stockAfter = (await prisma.product.findUniqueOrThrow({ where: { id: PRODUCT_ID } })).quantity;
+    const stockAfter = (await prisma.variant.findUniqueOrThrow({ where: { id: VARIANT_ID } })).quantity;
     expect(stockAfter).toBe(stockBefore - USAGE_LIMIT);
   });
 

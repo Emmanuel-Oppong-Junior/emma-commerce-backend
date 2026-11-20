@@ -88,7 +88,7 @@ export class ProductFilterArgs {
 
   @Field(() => Boolean, {
     nullable: true,
-    description: 'Filter by instock status',
+    description: 'true: only products with an active variant in stock; false or omitted: no stock filter',
   })
   @IsOptional()
   inStock?: boolean;

@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Cart, CartItem, Prisma, Product } from '../generated/prisma/client';
+import { Cart, CartItem, Prisma, Product, Variant } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type CartWithItems = Cart & { items: CartItem[] };
+export type VariantForSale = Variant & { product: Product };
 
 @Injectable()
 export class CartRepository {
@@ -11,7 +12,7 @@ export class CartRepository {
   async findByUser(userId: string): Promise<CartWithItems | null> {
     return this.prisma.cart.findUnique({
       where: { userId },
-      include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true, variant: true }, orderBy: { createdAt: 'asc' } } },
     });
   }
 
@@ -21,18 +22,13 @@ export class CartRepository {
     return this.prisma.cart.create({ data: { userId } });
   }
 
-  async findProductById(productId: string): Promise<Product | null> {
-    return this.prisma.product.findUnique({ where: { id: productId } });
+  async findVariant(variantId: string): Promise<VariantForSale | null> {
+    return this.prisma.variant.findUnique({ where: { id: variantId }, include: { product: true } });
   }
 
-  async countVariants(productId: string): Promise<number> {
-    // A default variant (no options) mirrors the product; only variants with options can't be sold yet.
-    return this.prisma.variant.count({ where: { productId, optionsKey: { not: '' } } });
-  }
-
-  async findCartItem(cartId: string, productId: string): Promise<Pick<CartItem, 'id' | 'quantity'> | null> {
+  async findCartItem(cartId: string, variantId: string): Promise<Pick<CartItem, 'id' | 'quantity'> | null> {
     return this.prisma.cartItem.findFirst({
-      where: { cartId, productId },
+      where: { cartId, variantId },
       select: { id: true, quantity: true },
     });
   }
@@ -40,15 +36,20 @@ export class CartRepository {
   async upsertCartItem(
     existingItemId: string | undefined,
     cartId: string,
-    productId: string,
+    variant: Pick<Variant, 'id' | 'productId'>,
     price: Prisma.Decimal,
     newQuantity: number,
-    quantity: number,
   ): Promise<void> {
     await this.prisma.cartItem.upsert({
       where: { id: existingItemId ?? '' },
       update: { quantity: newQuantity, originalPrice: price },
-      create: { cartId, productId, quantity, originalPrice: price },
+      create: {
+        cartId,
+        productId: variant.productId,
+        variantId: variant.id,
+        quantity: newQuantity,
+        originalPrice: price,
+      },
     });
   }
 

@@ -30,13 +30,17 @@ export class TaxRepository {
     return taxes.reduce((sum, t) => sum.plus(t.rate), new Prisma.Decimal(0));
   }
 
-  /** Sets price = basePrice × (1 + totalRate) on every taxable product; the rounding matches `taxInclusivePrice`. */
-  async repriceTaxableProducts(totalRate: Prisma.Decimal, db: Prisma.TransactionClient = this.prisma): Promise<void> {
+  /**
+   * Sets price = basePrice × (1 + totalRate) on every variant of a taxable product; the rounding matches
+   * `taxInclusivePrice`. Variants without a basePrice keep their price (it is never reverse-computed).
+   */
+  async repriceTaxableVariants(totalRate: Prisma.Decimal, db: Prisma.TransactionClient = this.prisma): Promise<void> {
     // Bound as a Decimal and cast to numeric so the multiply and ROUND stay exact decimal arithmetic, never float8.
     await db.$executeRaw`
-      UPDATE "Product"
-      SET "price" = ROUND("basePrice" * ${totalRate.plus(1)}::numeric, 2)
-      WHERE "isTaxable" = true AND "basePrice" IS NOT NULL
+      UPDATE "Variant" v
+      SET "price" = ROUND(v."basePrice" * ${totalRate.plus(1)}::numeric, 2), "updatedAt" = now()
+      FROM "Product" p
+      WHERE p.id = v."productId" AND p."isTaxable" = true AND v."basePrice" IS NOT NULL
     `;
   }
 

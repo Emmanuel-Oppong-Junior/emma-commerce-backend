@@ -19,6 +19,11 @@ import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../he
 const LAPTOP = 'seed_prod1';
 const PHONE = 'seed_prod2';
 const NOVEL = 'analytics_novel';
+const VARIANT_OF: Record<string, string> = {
+  [LAPTOP]: 'seed_var1',
+  [PHONE]: 'seed_var2',
+  [NOVEL]: 'analytics_novel_var',
+};
 
 interface SalesReport {
   grossRevenue: MoneyValue;
@@ -76,6 +81,7 @@ describe('Analytics revenue (e2e)', () => {
         items: {
           create: order.items.map(([productId, quantity, price]) => ({
             productId,
+            variantId: VARIANT_OF[productId],
             quantity,
             priceAtOrder: price,
             originalPrice: price,
@@ -97,9 +103,9 @@ describe('Analytics revenue (e2e)', () => {
       data: {
         id: NOVEL,
         name: 'Novel',
-        price: 30,
-        sku: 'ANALYTICS-NOVEL',
-        quantity: 100,
+        variants: {
+          create: { id: VARIANT_OF[NOVEL], sku: 'ANALYTICS-NOVEL', price: 30, basePrice: 30, quantity: 100 },
+        },
         images: ['novel.jpg'],
         isActive: true,
         status: 'PUBLISHED',

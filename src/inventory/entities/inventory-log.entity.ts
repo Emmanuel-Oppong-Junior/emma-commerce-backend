@@ -10,8 +10,8 @@ export class InventoryLogEntity {
   @Field(() => ID)
   productId: string;
 
-  @Field(() => ID, { nullable: true })
-  variantId?: string;
+  @Field(() => ID)
+  variantId: string;
 
   @Field(() => InventoryActionEnum)
   action: InventoryAction;

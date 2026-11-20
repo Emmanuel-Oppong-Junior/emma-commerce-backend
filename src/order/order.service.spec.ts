@@ -25,7 +25,7 @@ const mockOutbox = { record: jest.fn() };
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
-const mockDiscountService = { findActiveDiscountsByProduct: jest.fn() };
+const mockDiscountService = { findActiveDiscountsByVariant: jest.fn() };
 const mockStoreService = { getCurrency: jest.fn() };
 
 const mockOrdersRepository = {
@@ -40,12 +40,10 @@ const mockOrdersRepository = {
   hasCompletedPayment: jest.fn(),
   findAddressForUser: jest.fn(),
   findUserById: jest.fn(),
-  updateProductStock: jest.fn(),
-  decrementProductStock: jest.fn(),
-  findProductById: jest.fn(),
-  findProduct: jest.fn(),
+  restoreVariantStock: jest.fn(),
+  decrementVariantStock: jest.fn(),
+  findVariant: jest.fn(),
   clearCartItems: jest.fn(),
-  findNamesOfProductsWithVariants: jest.fn(),
   runTransaction: jest.fn(),
   runWithAdvisoryLock: jest.fn(),
 };
@@ -60,19 +58,30 @@ const fixedDate = new Date('2025-03-18T00:00:00.000Z');
 const mockProduct = {
   id: 'prod1',
   name: 'T-Shirt',
-  price: 19.99,
   currency: 'GHS',
-  quantity: 100,
   isActive: true,
+  status: 'PUBLISHED',
   categoryId: 'cat1',
   createdAt: fixedDate,
   updatedAt: fixedDate,
   images: [],
 };
+const mockVariant = {
+  id: 'var1',
+  productId: 'prod1',
+  sku: 'TSHIRT-M',
+  optionValues: { size: 'M' },
+  price: new Decimal('19.99'),
+  quantity: 100,
+  isActive: true,
+  discountId: null,
+  product: mockProduct,
+};
 const mockCartItem = {
   id: 'item1',
   cartId: 'cart1',
   productId: 'prod1',
+  variantId: 'var1',
   quantity: 2,
   createdAt: fixedDate,
   updatedAt: fixedDate,
@@ -88,7 +97,9 @@ const mockOrderItem = {
   id: 'orderItem1',
   orderId: 'order1',
   productId: 'prod1',
-  variantId: null,
+  variantId: 'var1',
+  sku: 'TSHIRT-M',
+  optionValues: { size: 'M' },
   quantity: 2,
   priceAtOrder: 19.99,
   createdAt: fixedDate,
@@ -186,13 +197,12 @@ describe('OrdersService', () => {
       return callback(stubTx as any);
     });
     mockOrdersRepository.runWithAdvisoryLock.mockImplementation((_key, _maxMs, fn: () => Promise<unknown>) => fn());
-    // Default product stock operations return the product unchanged
-    mockOrdersRepository.decrementProductStock.mockResolvedValue({ ...mockProduct, quantity: 98 });
-    mockOrdersRepository.updateProductStock.mockResolvedValue(mockProduct);
+    // Default variant stock operations return the variant after the write
+    mockOrdersRepository.decrementVariantStock.mockResolvedValue({ ...mockVariant, quantity: 98 });
+    mockOrdersRepository.restoreVariantStock.mockResolvedValue(mockVariant);
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
     mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
-    mockDiscountService.findActiveDiscountsByProduct.mockResolvedValue(new Map());
-    mockOrdersRepository.findNamesOfProductsWithVariants.mockResolvedValue([]);
+    mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(new Map());
   });
 
   describe('createOrderFromCart', () => {
@@ -210,7 +220,7 @@ describe('OrdersService', () => {
         zipCode: '00233',
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
 
       const result = await ordersService.createOrderFromCart(mockUserId, {
@@ -231,7 +241,7 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
 
       await ordersService.createOrderFromCart(mockUserId, deliveryParams);
@@ -251,8 +261,8 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
-      mockOrdersRepository.decrementProductStock.mockResolvedValue(null);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
+      mockOrdersRepository.decrementVariantStock.mockResolvedValue(null);
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(BadRequestException);
       expect(mockOutbox.record).not.toHaveBeenCalled();
@@ -262,7 +272,7 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
 
       await ordersService.createOrderFromCart(mockUserId, deliveryParams);
@@ -286,16 +296,16 @@ describe('OrdersService', () => {
         mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
         mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
         mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-        mockOrdersRepository.findProductById.mockResolvedValue({ ...mockProduct, price: new Decimal('100') });
+        mockOrdersRepository.findVariant.mockResolvedValue({ ...mockVariant, price: new Decimal('100') });
         mockOrdersRepository.create.mockResolvedValue(mockOrder);
-        mockDiscountService.findActiveDiscountsByProduct.mockResolvedValue(new Map([['prod1', [tenPercentOff]]]));
+        mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(new Map([['var1', [tenPercentOff]]]));
       });
 
       it('charges the discounted price and records the list price and discount on each line', async () => {
         await ordersService.createOrderFromCart(mockUserId, deliveryParams);
 
-        expect(mockDiscountService.findActiveDiscountsByProduct).toHaveBeenCalledWith([
-          expect.objectContaining({ id: 'prod1', categoryId: 'cat1' }),
+        expect(mockDiscountService.findActiveDiscountsByVariant).toHaveBeenCalledWith([
+          { id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null },
         ]);
         expect(mockOrdersRepository.create).toHaveBeenCalledWith(
           expect.anything(),
@@ -304,6 +314,7 @@ describe('OrdersService', () => {
             orderItems: [
               expect.objectContaining({
                 productId: 'prod1',
+                variantId: 'var1',
                 quantity: 2,
                 originalPrice: new Decimal('100'),
                 priceAtOrder: new Decimal('90'),
@@ -340,46 +351,199 @@ describe('OrdersService', () => {
       });
     });
 
-    it('rejects a cart holding a product that has variants, inside the transaction and before taking stock', async () => {
+    describe('with variants', () => {
+      const large = {
+        ...mockVariant,
+        id: 'var2',
+        sku: 'TSHIRT-L',
+        optionValues: { size: 'L' },
+        price: new Decimal('120'),
+        quantity: 10,
+        discountId: 'large20',
+      };
+      const productTenPercent = { id: 'product10', type: 'PERCENTAGE', value: new Decimal(10), minimumPurchase: null };
+      const largeTwentyOff = { id: 'large20', type: 'FLAT', value: new Decimal(20), minimumPurchase: null };
+
+      beforeEach(() => {
+        mockCartService.getCartOrThrow.mockResolvedValue({
+          ...mockCart,
+          items: [
+            { ...mockCartItem, variantId: 'var1', quantity: 2 },
+            { ...mockCartItem, id: 'item2', variantId: 'var2', quantity: 1 },
+          ],
+        });
+        mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+        mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+        mockOrdersRepository.findVariant.mockImplementation(async (id: string) =>
+          id === 'var1' ? { ...mockVariant, price: new Decimal('100') } : large,
+        );
+        mockOrdersRepository.decrementVariantStock.mockImplementation(async (_tx, id: string, quantity: number) =>
+          id === 'var1' ? { ...mockVariant, quantity: 100 - quantity } : { ...large, quantity: 10 - quantity },
+        );
+        mockOrdersRepository.create.mockResolvedValue(mockOrder);
+        mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(
+          new Map([
+            ['var1', [productTenPercent]],
+            ['var2', [productTenPercent, largeTwentyOff]],
+          ]),
+        );
+      });
+
+      it('prices each line from its own variant, with a product discount on every variant and a variant discount on one', async () => {
+        await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+        expect(mockOrdersRepository.findVariant).toHaveBeenCalledWith('var1');
+        expect(mockOrdersRepository.findVariant).toHaveBeenCalledWith('var2');
+        expect(mockDiscountService.findActiveDiscountsByVariant).toHaveBeenCalledWith([
+          { id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null },
+          { id: 'var2', productId: 'prod1', categoryId: 'cat1', discountId: 'large20' },
+        ]);
+        expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+          expect.anything(),
+          mockUserId,
+          expect.objectContaining({
+            orderItems: [
+              expect.objectContaining({
+                variantId: 'var1',
+                originalPrice: new Decimal('100'),
+                priceAtOrder: new Decimal('90'),
+                discountId: 'product10',
+              }),
+              expect.objectContaining({
+                variantId: 'var2',
+                originalPrice: new Decimal('120'),
+                priceAtOrder: new Decimal('100'),
+                discountId: 'large20',
+              }),
+            ],
+            subtotal: new Decimal('280'),
+            discountTotal: new Decimal('40'),
+          }),
+        );
+      });
+
+      it('snapshots each variant SKU and option values onto its order item', async () => {
+        await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+        const [, , details] = mockOrdersRepository.create.mock.calls[0];
+        expect(details.orderItems).toEqual([
+          expect.objectContaining({
+            productId: 'prod1',
+            variantId: 'var1',
+            sku: 'TSHIRT-M',
+            optionValues: { size: 'M' },
+          }),
+          expect.objectContaining({
+            productId: 'prod1',
+            variantId: 'var2',
+            sku: 'TSHIRT-L',
+            optionValues: { size: 'L' },
+          }),
+        ]);
+      });
+
+      it('takes stock from and logs the deduction against each variant', async () => {
+        await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+        expect(mockOrdersRepository.decrementVariantStock).toHaveBeenCalledWith({}, 'var1', 2);
+        expect(mockOrdersRepository.decrementVariantStock).toHaveBeenCalledWith({}, 'var2', 1);
+        expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
+          {},
+          expect.objectContaining({
+            productId: 'prod1',
+            variantId: 'var1',
+            action: 'ORDER_DEDUCTION',
+            quantityChange: -2,
+            quantityAfter: 98,
+          }),
+        );
+        expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
+          {},
+          expect.objectContaining({
+            productId: 'prod1',
+            variantId: 'var2',
+            action: 'ORDER_DEDUCTION',
+            quantityChange: -1,
+            quantityAfter: 9,
+          }),
+        );
+      });
+
+      it('checks stock per variant, so one short variant fails the order before any stock is taken', async () => {
+        mockOrdersRepository.findVariant.mockImplementation(async (id: string) =>
+          id === 'var1' ? mockVariant : { ...large, quantity: 0 },
+        );
+
+        await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+          new BadRequestException('Insufficient stock for "T-Shirt" (TSHIRT-L): 0 available, 1 requested'),
+        );
+        expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+      });
+
+      it('rolls back with the SKU named when a variant runs out inside the transaction', async () => {
+        mockOrdersRepository.decrementVariantStock.mockImplementation(async (_tx, id: string) =>
+          id === 'var1' ? { ...mockVariant, quantity: 98 } : null,
+        );
+
+        await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+          new BadRequestException('Variant "TSHIRT-L" is out of stock or no longer on sale — please review your cart'),
+        );
+        expect(mockOrdersRepository.create).not.toHaveBeenCalled();
+      });
+    });
+
+    it('rejects checkout of a variant without a price, without reserving stock', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
-      mockOrdersRepository.findNamesOfProductsWithVariants.mockResolvedValue(['T-Shirt']);
+      mockOrdersRepository.findVariant.mockResolvedValue({ ...mockVariant, price: null });
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
-        new BadRequestException(
-          '"T-Shirt" comes in variants and cannot be bought until variant checkout is available; remove it from the cart',
-        ),
+        new BadRequestException('"T-Shirt" (TSHIRT-M) has no price and cannot be sold; remove it from the cart'),
       );
-      expect(mockOrdersRepository.findNamesOfProductsWithVariants).toHaveBeenCalledWith({}, ['prod1']);
-      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a variant of an unpublished product', { product: { ...mockProduct, status: 'DRAFT' } }, 'is not on sale'],
+      ['a variant of an inactive product', { product: { ...mockProduct, isActive: false } }, 'is not on sale'],
+      ['an archived variant', { isActive: false }, 'is no longer sold'],
+    ])('rejects checkout of %s, without reserving stock', async (_case, change, reason) => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findVariant.mockResolvedValue({ ...mockVariant, ...change });
+
+      await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
+        new BadRequestException(`"T-Shirt" (TSHIRT-M) ${reason}; remove it from the cart`),
+      );
+      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
-    it('rejects checkout of a product without a price, without reserving stock', async () => {
+    it('rejects a cart line whose variant no longer exists', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue({ ...mockProduct, price: null });
+      mockOrdersRepository.findVariant.mockResolvedValue(null);
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
-        new BadRequestException('"T-Shirt" has no price and cannot be sold'),
+        new NotFoundException('Variant "var1" not found'),
       );
-      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
     });
 
     it('rejects delivery to a city no shipping zone covers, without reserving stock', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue({ ...mockAddress, city: 'Tamale' });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockShippingZonesService.getFeeForCity.mockRejectedValue(
         new BadRequestException('Delivery is not available to city "Tamale": no active shipping zone covers it'),
       );
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(BadRequestException);
-      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
@@ -391,13 +555,13 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue({ ...mockAddress, ...gap });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
         new BadRequestException('Complete the delivery address (region, recipient name and phone) before checkout'),
       );
       expect(mockShippingZonesService.getFeeForCity).not.toHaveBeenCalled();
-      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
@@ -412,7 +576,7 @@ describe('OrdersService', () => {
         longitude: new Decimal('-0.1969'),
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
 
       await ordersService.createOrderFromCart(mockUserId, deliveryParams);
@@ -443,7 +607,7 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockPickupLocationsService.findActiveById.mockResolvedValue(mockPickupLocation);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
 
       await ordersService.createOrderFromCart(mockUserId, pickupParams);
@@ -464,7 +628,7 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockPickupLocationsService.findActiveById.mockResolvedValue(mockPickupLocation);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockOrdersRepository.create.mockResolvedValue(mockOrder);
 
       await ordersService.createOrderFromCart(mockUserId, pickupParams);
@@ -489,13 +653,13 @@ describe('OrdersService', () => {
     it('rejects a pickup order for an unknown or inactive location, without reserving stock', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
       mockPickupLocationsService.findActiveById.mockRejectedValue(
         new BadRequestException('Pickup location "pickup1" does not exist or is not active'),
       );
 
       await expect(ordersService.createOrderFromCart(mockUserId, pickupParams)).rejects.toThrow(BadRequestException);
-      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
 
@@ -503,14 +667,14 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue({ ...mockProduct, currency });
+      mockOrdersRepository.findVariant.mockResolvedValue({ ...mockVariant, product: { ...mockProduct, currency } });
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
         new BadRequestException(
           `"T-Shirt" is priced in ${currency ?? 'no currency'}; only GHS products can be checked out`,
         ),
       );
-      expect(mockOrdersRepository.decrementProductStock).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.decrementVariantStock).not.toHaveBeenCalled();
     });
 
     it('checks products against the store currency, not a fixed GHS', async () => {
@@ -518,7 +682,7 @@ describe('OrdersService', () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
 
       await expect(ordersService.createOrderFromCart(mockUserId, deliveryParams)).rejects.toThrow(
         new BadRequestException('"T-Shirt" is priced in GHS; only USD products can be checked out'),
@@ -597,7 +761,7 @@ describe('OrdersService', () => {
         zipCode: '00233',
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
 
       await expect(
         ordersService.createOrderFromCart(mockUserId, {
@@ -623,8 +787,8 @@ describe('OrdersService', () => {
         zipCode: '00233',
       });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
-      mockOrdersRepository.findProductById.mockResolvedValue(mockProduct);
-      mockOrdersRepository.decrementProductStock.mockResolvedValue(null);
+      mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
+      mockOrdersRepository.decrementVariantStock.mockResolvedValue(null);
 
       await expect(
         ordersService.createOrderFromCart(mockUserId, {
@@ -775,7 +939,7 @@ describe('OrdersService', () => {
 
       await ordersService.updateOrderStatus('order1', OrderStatus.CANCELLED, 'admin1');
 
-      expect(ordersRepository.updateProductStock).toHaveBeenCalledWith(expect.anything(), 'prod1', 2);
+      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledWith(expect.anything(), 'var1', 2);
     });
 
     it('reports a conflict when another request changed the order first', async () => {
@@ -804,7 +968,7 @@ describe('OrdersService', () => {
         [OrderStatus.PENDING, OrderStatus.PROCESSING],
         undefined,
       );
-      expect(ordersRepository.updateProductStock).toHaveBeenCalledWith(expect.anything(), 'prod1', 2);
+      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledWith(expect.anything(), 'var1', 2);
       expect(result.status).toBe('CANCELLED');
     });
 
@@ -812,14 +976,14 @@ describe('OrdersService', () => {
       mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: 'SHIPPED' as OrderStatus });
 
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
-      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
+      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
     });
 
     it('rejects cancelling an already cancelled order without restoring stock', async () => {
       mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
 
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
-      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
+      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
     });
 
     it('restores no stock when a concurrent request cancelled the order first', async () => {
@@ -827,7 +991,7 @@ describe('OrdersService', () => {
       mockOrdersRepository.transitionStatus.mockResolvedValue(null);
 
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(/changed by another request/);
-      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
+      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
     });
 
     it("should not allow cancelling another user's order", async () => {
@@ -852,7 +1016,7 @@ describe('OrdersService', () => {
         OrderStatus.DELIVERED,
         OrderStatus.CANCELLED,
       ]);
-      expect(ordersRepository.updateProductStock).not.toHaveBeenCalled();
+      expect(ordersRepository.restoreVariantStock).not.toHaveBeenCalled();
       const [tx] = ordersRepository.softDelete.mock.calls[0];
       expect(mockAuditService.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Order', action: 'DELETE', userId: 'admin1' }),
@@ -922,7 +1086,22 @@ describe('OrdersService', () => {
       expect(mockInventoryService.logInventoryChange).toHaveBeenCalledTimes(1);
       expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ productId: 'prod1', action: 'RETURN_RESTORE', quantityChange: 2 }),
+        expect.objectContaining({ productId: 'prod1', variantId: 'var1', action: 'RETURN_RESTORE', quantityChange: 2 }),
+      );
+    });
+
+    it('puts the stock back on the variant that was ordered and logs its new quantity', async () => {
+      mockOrdersRepository.findById.mockResolvedValue(mockOrder);
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+      mockOrdersRepository.restoreVariantStock.mockResolvedValue({ ...mockVariant, quantity: 102 });
+
+      await ordersService.cancelOrder(mockUserId, 'order1');
+
+      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledTimes(1);
+      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledWith(expect.anything(), 'var1', 2);
+      expect(mockInventoryService.logInventoryChange).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ variantId: 'var1', quantityAfter: 102 }),
       );
     });
   });
@@ -938,7 +1117,7 @@ describe('OrdersService', () => {
     it('audits an admin cancellation with from/to inside the cancel-and-restock transaction', async () => {
       mockOrdersRepository.findById.mockResolvedValue(mockOrder);
       mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
-      mockOrdersRepository.updateProductStock.mockResolvedValue({ quantity: 10 });
+      mockOrdersRepository.restoreVariantStock.mockResolvedValue({ quantity: 10 });
 
       await ordersService.adminCancelOrder('order1', 'admin1');
 
@@ -1019,7 +1198,7 @@ describe('OrdersService', () => {
       const expired = await ordersService.expireAbandonedOrders(24);
 
       expect(expired).toBe(1);
-      expect(ordersRepository.updateProductStock).toHaveBeenCalledTimes(1);
+      expect(ordersRepository.restoreVariantStock).toHaveBeenCalledTimes(1);
     });
 
     it('claims each order only while it still matches the expiry rule, so a restarted payment is not cancelled', async () => {

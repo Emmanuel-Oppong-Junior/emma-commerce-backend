@@ -31,6 +31,7 @@ const mockProductsRepository = {
   findTagById: jest.fn(),
   countCartItems: jest.fn(),
   countOrderItems: jest.fn(),
+  repriceVariants: jest.fn(),
 };
 
 const mockTaxService = {
@@ -67,23 +68,24 @@ describe('ProductsService', () => {
   });
 
   describe('create', () => {
+    const variants = [
+      { basePrice: new Decimal('19.99'), quantity: 100, sku: 'TSHIRT-M', optionValues: { size: 'M' } },
+      { basePrice: new Decimal('21.99'), quantity: 40, sku: 'TSHIRT-L', optionValues: { size: 'L' } },
+    ];
     const input: CreateProductInput = {
       name: 'T-Shirt',
-      basePrice: new Decimal('19.99'),
+      variants,
       isTaxable: false,
-      quantity: 100,
       categoryId: 'cat1',
       subcategoryId: 'sub1',
-      sku: 'TSHIRT001',
       isActive: true,
       images: ['https://example.com/tshirt.jpg'],
     };
 
-    it('should create a product successfully', async () => {
-      const product = { id: 'prod1', ...input, price: '19.99', createdAt: new Date(), updatedAt: new Date() };
+    it('should create a product successfully, without price, stock or SKU on the product row', async () => {
+      const product = { id: 'prod1', name: 'T-Shirt', createdAt: new Date(), updatedAt: new Date() };
       mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
       mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
-      mockProductsRepository.findFirst.mockResolvedValue(null);
       mockProductsRepository.create.mockResolvedValue(product);
 
       const result = await service.create(input, 'admin1');
@@ -92,52 +94,63 @@ describe('ProductsService', () => {
       expect(productsRepository.findSubCategoryById).toHaveBeenCalledWith('sub1');
       expect(productsRepository.create).toHaveBeenCalledWith(
         {
-          ...input,
-          basePrice: '19.99',
-          price: '19.99',
+          name: 'T-Shirt',
+          isTaxable: false,
+          categoryId: 'cat1',
+          subcategoryId: 'sub1',
+          isActive: true,
+          images: ['https://example.com/tshirt.jpg'],
           productType: { connect: { id: 'product_type_general' } },
           attributes: {},
         },
         { category: true, subcategory: true },
         AUDIT_TX,
       );
-      expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
       expect(result).toEqual(product);
     });
 
-    it('creates the default variant from the price, stock and codes in the same transaction', async () => {
+    it('creates every given variant in the same transaction', async () => {
+      const prepared = [
+        { data: { optionsKey: 'size=M' }, quantity: 100 },
+        { data: { optionsKey: 'size=L' }, quantity: 40 },
+      ];
+      mockVariantService.prepare.mockResolvedValue(prepared);
       mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
       mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
-      mockProductsRepository.findFirst.mockResolvedValue(null);
       mockProductsRepository.create.mockResolvedValue({ id: 'prod1' });
 
       await service.create(input, 'admin1');
 
-      expect(mockVariantService.prepare).toHaveBeenCalledWith({ isTaxable: false, productType: generalType }, [
-        {
-          basePrice: input.basePrice,
-          quantity: 100,
-          sku: 'TSHIRT001',
-          barcode: undefined,
-          lowStockThreshold: undefined,
-        },
-      ]);
-      expect(mockVariantService.insertPrepared).toHaveBeenCalledWith(AUDIT_TX, 'prod1', preparedDefault, 'admin1');
+      expect(mockVariantService.prepare).toHaveBeenCalledWith({ isTaxable: false, productType: generalType }, variants);
+      expect(mockVariantService.insertPrepared).toHaveBeenCalledWith(AUDIT_TX, 'prod1', prepared, 'admin1');
+      expect(mockVariantService.prepare.mock.invocationCallOrder[0]).toBeLessThan(
+        mockProductsRepository.create.mock.invocationCallOrder[0],
+      );
     });
 
-    it('should set price to basePrice plus the total active tax rate when taxable', async () => {
+    it('prepares the variants as taxable when the product is, so their prices add tax', async () => {
       mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
       mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
-      mockProductsRepository.findFirst.mockResolvedValue(null);
-      mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.15'));
+      mockProductsRepository.create.mockResolvedValue({ id: 'prod1' });
 
-      await service.create({ ...input, basePrice: new Decimal('100.00'), isTaxable: true }, 'admin1');
+      await service.create({ ...input, isTaxable: true }, 'admin1');
 
+      expect(mockVariantService.prepare).toHaveBeenCalledWith({ isTaxable: true, productType: generalType }, variants);
       expect(productsRepository.create).toHaveBeenCalledWith(
-        expect.objectContaining({ basePrice: '100.00', price: '115.00', isTaxable: true }),
+        expect.objectContaining({ isTaxable: true }),
         { category: true, subcategory: true },
         AUDIT_TX,
       );
+    });
+
+    it('writes nothing when a variant is rejected', async () => {
+      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
+      mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
+      mockVariantService.prepare.mockRejectedValue(new ConflictException('SKU "TSHIRT-M" is already in use'));
+
+      await expect(service.create(input, 'admin1')).rejects.toThrow(ConflictException);
+      expect(productsRepository.create).not.toHaveBeenCalled();
+      expect(mockAuditService.record).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if category does not exist', async () => {
@@ -145,16 +158,6 @@ describe('ProductsService', () => {
 
       await expect(service.create(input, 'admin1')).rejects.toThrow(
         new NotFoundException('Category ID "cat1" not found'),
-      );
-    });
-
-    it('should throw ConflictException if SKU is already in use', async () => {
-      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
-      mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
-      mockProductsRepository.findFirst.mockResolvedValue({ id: 'prod2', sku: 'TSHIRT001' });
-
-      await expect(service.create(input, 'admin1')).rejects.toThrow(
-        new ConflictException('SKU "TSHIRT001" is already in use'),
       );
     });
   });
@@ -252,14 +255,49 @@ describe('ProductsService', () => {
     it('should order by the requested sort field and direction', async () => {
       mockProductsRepository.findMany.mockResolvedValue(products);
 
-      await service.findAll(paginate, filter, { sortBy: ProductSortField.PRICE, sortOrder: SortOrder.ASC });
+      await service.findAll(paginate, filter, { sortBy: ProductSortField.NAME, sortOrder: SortOrder.ASC });
 
       expect(productsRepository.findMany).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),
-        { price: 'asc' },
+        { name: 'asc' },
         undefined,
       );
+    });
+
+    it('filters on price and stock through one active variant that matches them all', async () => {
+      mockProductsRepository.findMany.mockResolvedValue([]);
+      mockProductsRepository.count.mockResolvedValue(0);
+
+      await service.findAll(paginate, { priceMin: new Decimal(10), priceMax: new Decimal(50), inStock: true });
+
+      expect(productsRepository.count).toHaveBeenCalledWith({
+        variants: {
+          some: { isActive: true, price: { gte: new Decimal(10), lte: new Decimal(50) }, quantity: { gt: 0 } },
+        },
+      });
+    });
+
+    it.each<[string, ProductFilterArgs, object]>([
+      ['a minimum price', { priceMin: new Decimal(10) }, { isActive: true, price: { gte: new Decimal(10) } }],
+      ['a maximum price', { priceMax: new Decimal(50) }, { isActive: true, price: { lte: new Decimal(50) } }],
+      ['in stock', { inStock: true }, { isActive: true, quantity: { gt: 0 } }],
+    ])('filters on %s alone through the variants', async (_case, variantFilter, some) => {
+      mockProductsRepository.findMany.mockResolvedValue([]);
+      mockProductsRepository.count.mockResolvedValue(0);
+
+      await service.findAll(paginate, variantFilter);
+
+      expect(productsRepository.count).toHaveBeenCalledWith({ variants: { some } });
+    });
+
+    it('adds no variant condition without a price or stock filter', async () => {
+      mockProductsRepository.findMany.mockResolvedValue([]);
+      mockProductsRepository.count.mockResolvedValue(0);
+
+      await service.findAll(paginate, { inStock: false });
+
+      expect(productsRepository.count).toHaveBeenCalledWith({});
     });
 
     it('should respect pagination with after cursor', async () => {
@@ -365,71 +403,68 @@ describe('ProductsService', () => {
   });
 
   describe('update', () => {
-    const updateInput: UpdateProductInput = { name: 'Updated T-Shirt', basePrice: new Decimal('29.99') };
+    const updateInput: UpdateProductInput = { name: 'Updated T-Shirt', description: 'Soft cotton' };
+    const repriceVariants = () => productsRepository.repriceVariants;
 
     it('should update a product successfully', async () => {
       const product = {
         id: 'prod1',
         name: 'T-Shirt',
         categoryId: 'cat1',
-        basePrice: '19.99',
         isTaxable: false,
         isActive: true,
         createdAt: new Date(),
         updatedAt: new Date(),
         images: [],
       };
-      const updatedProduct = { ...product, ...updateInput, price: '29.99' };
+      const updatedProduct = { ...product, ...updateInput };
       mockProductsRepository.findById.mockResolvedValue(product);
-      mockProductsRepository.findFirst.mockResolvedValue(null);
       mockProductsRepository.update.mockResolvedValue(updatedProduct);
 
       const result = await service.update('prod1', updateInput, 'admin1');
 
       expect(productsRepository.update).toHaveBeenCalledWith(
         'prod1',
-        { name: 'Updated T-Shirt', basePrice: '29.99', price: '29.99' },
+        { name: 'Updated T-Shirt', description: 'Soft cotton' },
         { category: true, subcategory: true },
         AUDIT_TX,
       );
+      expect(repriceVariants()).not.toHaveBeenCalled();
+      expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
       expect(result).toEqual(updatedProduct);
     });
 
-    it('should recompute price from the existing basePrice when only isTaxable changes', async () => {
-      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: '100.00', isTaxable: false });
+    it('reprices every variant with the total active tax rate when tax is turned on, in the same transaction', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', isTaxable: false });
       mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.2'));
 
       await service.update('prod1', { isTaxable: true }, 'admin1');
 
+      expect(repriceVariants()).toHaveBeenCalledWith('prod1', new Prisma.Decimal('0.2'), AUDIT_TX);
       expect(productsRepository.update).toHaveBeenCalledWith(
         'prod1',
-        { isTaxable: true, price: '120.00' },
+        { isTaxable: true },
         { category: true, subcategory: true },
         AUDIT_TX,
       );
     });
 
-    it('should round the tax-inclusive price half away from zero, like the tax reprice', async () => {
-      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: '10.10', isTaxable: false });
+    it('reprices every variant back to its base price when tax is turned off', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', isTaxable: true });
       mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.15'));
+
+      await service.update('prod1', { isTaxable: false }, 'admin1');
+
+      expect(repriceVariants()).toHaveBeenCalledWith('prod1', new Prisma.Decimal(0), AUDIT_TX);
+    });
+
+    it('does not reprice when isTaxable is sent unchanged', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', isTaxable: true });
 
       await service.update('prod1', { isTaxable: true }, 'admin1');
 
-      expect(productsRepository.update).toHaveBeenCalledWith(
-        'prod1',
-        { isTaxable: true, price: '11.62' },
-        { category: true, subcategory: true },
-        AUDIT_TX,
-      );
-    });
-
-    it('should refuse to recompute the price of a product without a basePrice', async () => {
-      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', basePrice: null, isTaxable: false });
-
-      await expect(service.update('prod1', { isTaxable: true }, 'admin1')).rejects.toThrow(
-        new BadRequestException('Product "prod1" has no basePrice; set basePrice to recompute its price'),
-      );
-      expect(productsRepository.update).not.toHaveBeenCalled();
+      expect(repriceVariants()).not.toHaveBeenCalled();
+      expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if product does not exist', async () => {
@@ -437,16 +472,6 @@ describe('ProductsService', () => {
 
       await expect(service.update('prod999', updateInput, 'admin1')).rejects.toThrow(
         new NotFoundException('Product not found'),
-      );
-    });
-
-    it('should throw ConflictException if SKU conflicts', async () => {
-      const skuInput: UpdateProductInput = { sku: 'TSHIRT002' };
-      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', categoryId: 'cat1' });
-      mockProductsRepository.findFirst.mockResolvedValue({ id: 'prod2', sku: 'TSHIRT002' });
-
-      await expect(service.update('prod1', skuInput, 'admin1')).rejects.toThrow(
-        new ConflictException('SKU "TSHIRT002" is already in use by another product'),
       );
     });
   });
@@ -547,9 +572,6 @@ describe('ProductsService', () => {
     const existing = {
       id: 'prod1',
       name: 'T-Shirt',
-      sku: 'TSHIRT001',
-      basePrice: '100.00',
-      price: '100.00',
       isTaxable: false,
       isActive: true,
       status: 'PUBLISHED',
@@ -574,27 +596,31 @@ describe('ProductsService', () => {
         'create',
         () =>
           service.create(
-            { name: 'Mug', basePrice: new Decimal('10.00'), isTaxable: true, quantity: 1, isActive: true },
+            {
+              name: 'Mug',
+              variants: [{ basePrice: new Decimal('10.00'), quantity: 1 }],
+              isTaxable: true,
+              isActive: true,
+            },
             'admin1',
           ),
         {
           entityId: 'prod2',
           action: 'CREATE',
           details: {
-            after: expect.objectContaining({ name: 'Mug', basePrice: '10.00', price: '12.00', isTaxable: true }),
+            after: expect.objectContaining({ name: 'Mug', isTaxable: true, isActive: true }),
+            variants: 1,
           },
         },
       ],
       [
-        'update (price)',
-        () => service.update('prod1', { basePrice: new Decimal('150.00'), isTaxable: true }, 'admin1'),
+        'update (tax)',
+        () => service.update('prod1', { isTaxable: true }, 'admin1'),
         {
           entityId: 'prod1',
           action: 'UPDATE',
           details: {
             changes: {
-              basePrice: { from: '100.00', to: '150.00' },
-              price: { from: '100.00', to: '180.00' },
               isTaxable: { from: false, to: true },
             },
           },
@@ -606,7 +632,7 @@ describe('ProductsService', () => {
         {
           entityId: 'prod1',
           action: 'DELETE',
-          details: { before: expect.objectContaining({ name: 'T-Shirt', price: '100.00', sku: 'TSHIRT001' }) },
+          details: { before: expect.objectContaining({ name: 'T-Shirt', isTaxable: false, status: 'PUBLISHED' }) },
         },
       ],
       [
@@ -690,9 +716,8 @@ describe('ProductsService', () => {
 
     const base: CreateProductInput = {
       name: 'Phone',
-      basePrice: new Decimal('10'),
+      variants: [{ basePrice: new Decimal('10'), quantity: 1 }],
       isTaxable: false,
-      quantity: 1,
       isActive: true,
     };
 

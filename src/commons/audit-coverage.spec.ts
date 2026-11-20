@@ -49,9 +49,7 @@ const AUDITED: Record<string, string> = {
   createPickupLocation: 'pickup-locations.service.spec (audit trail)',
   updatePickupLocation: 'pickup-locations.service.spec (audit trail)',
   deletePickupLocation: 'pickup-locations.service.spec (audit trail)',
-  restockProduct: 'inventory.service.spec (audit trail)',
   restockVariant: 'inventory.service.spec (audit trail)',
-  adjustProductStock: 'inventory.service.spec (audit trail)',
   adjustVariantStock: 'inventory.service.spec (audit trail)',
   updateOrderStatus: 'order.service.spec',
   adminCancelOrder: 'order.service.spec',
@@ -123,7 +121,7 @@ describe('Audit coverage of privileged mutations', () => {
   });
 
   it('finds the admin-only mutations it is meant to check', () => {
-    expect(mutations).toEqual(expect.arrayContaining(['processRefund', 'updateUser', 'adjustProductStock']));
+    expect(mutations).toEqual(expect.arrayContaining(['processRefund', 'updateUser', 'adjustVariantStock']));
   });
 
   it('classifies every admin-only mutation as audited or as a reviewed exemption', () => {

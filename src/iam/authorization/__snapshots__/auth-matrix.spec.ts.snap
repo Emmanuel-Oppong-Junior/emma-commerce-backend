@@ -8,7 +8,6 @@ Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
 Mutation addToDiscount                   permission: promotion.manage; step-up
 Mutation addToWishlist                   authenticated
-Mutation adjustProductStock              permission: inventory.adjust
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
 Mutation adminDeleteReview               permission: review.moderate
@@ -72,7 +71,6 @@ Mutation removeTagFromProduct            permission: catalog.product.write
 Mutation removeUser                      permission: user.manage
 Mutation resendVerificationEmail         authenticated
 Mutation resetPassword                   public
-Mutation restockProduct                  permission: inventory.adjust
 Mutation restockVariant                  permission: inventory.adjust
 Mutation restorePayment                  permission: payment.manage
 Mutation restoreProduct                  permission: catalog.product.write
@@ -95,7 +93,7 @@ Mutation updateDiscount                  permission: promotion.manage; step-up
 Mutation updateMyProfile                 authenticated
 Mutation updateOrderStatus               permission: order.manage
 Mutation updatePickupLocation            permission: shipping.manage
-Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.basePrice is set
+Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.isTaxable is set
 Mutation updateProductType               permission: catalog.taxonomy.write
 Mutation updateReview                    customer only
 Mutation updateShipping                  permission: order.manage

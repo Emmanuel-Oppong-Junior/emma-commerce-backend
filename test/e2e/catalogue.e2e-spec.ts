@@ -29,8 +29,8 @@ describe('Public Catalogue (e2e)', () => {
               node {
                 id
                 name
-                price { amount currency }
-                quantity
+                priceRange { min { amount currency } max { amount currency } }
+                totalStock
                 isActive
               }
               cursor
@@ -100,7 +100,7 @@ describe('Public Catalogue (e2e)', () => {
               node {
                 id
                 name
-                price { amount currency }
+                priceRange { min { amount currency } }
               }
             }
           }
@@ -115,7 +115,7 @@ describe('Public Catalogue (e2e)', () => {
       const { edges } = res.body.data.products;
       expect(edges.length).toBe(1);
       expect(edges[0].node.name).toBe('Laptop');
-      expect(edges[0].node.price).toEqual(ghs('999.99'));
+      expect(edges[0].node.priceRange.min).toEqual(ghs('999.99'));
     });
   });
 
@@ -130,10 +130,9 @@ describe('Public Catalogue (e2e)', () => {
           product(productId: "${productId}") {
             id
             name
-            price { amount currency }
-            quantity
-            sku
+            totalStock
             isActive
+            variants { price { amount currency } quantity sku }
           }
         }
       `;
@@ -146,9 +145,8 @@ describe('Public Catalogue (e2e)', () => {
       expect(res.body.data.product).toMatchObject({
         id: productId,
         name: 'Laptop',
-        price: ghs('999.99'),
-        sku: 'SEED-LAP-001',
         isActive: true,
+        variants: [{ price: ghs('999.99'), sku: 'SEED-LAP-001' }],
       });
     });
 

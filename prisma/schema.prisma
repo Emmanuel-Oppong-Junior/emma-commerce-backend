@@ -184,8 +184,6 @@ model Tag {
 /// The SKU: the unit that is priced, stocked and sold (ADR-0003). Every product has at least one.
 model Variant {
   id                String         @id @default(cuid())
-  size              String?
-  color             String?
   sku               String         @unique
   barcode           String?        @unique
   /// Values for the product type's variant axes (ADR-0002), checked by product-types/domain/attribute-validation.ts
@@ -204,7 +202,7 @@ model Variant {
   heightMm          Int?
   image             String?
   productId         String
-  product           Product        @relation(fields: [productId], references: [id])
+  product           Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
   cartItem          CartItem[]
   orderItem         OrderItem[]
   discount          Discount?      @relation(fields: [discountId], references: [id])
@@ -284,18 +282,10 @@ model Product {
   description      String? @db.Text
   shortDescription String? @db.VarChar(500)
 
-  price        Decimal?  @db.Decimal(14, 2)
-  currentPrice Decimal?  @db.Decimal(14, 2)
-  currency     Currency? @default(GHS)
-  basePrice    Decimal?  @db.Decimal(14, 2)
-  isTaxable    Boolean   @default(false)
-
-  sku     String? @unique
-  barcode String? @unique
-
-  quantity      Int          @default(0)
-  stockStatus   StockStatus? @default(IN_STOCK)
-  lowStockAlert Int?         @default(5)
+  // Price, stock, SKU and barcode live on the variants (ADR-0003).
+  currency  Currency? @default(GHS)
+  /// Variant prices add tax to their basePrice when true
+  isTaxable Boolean   @default(false)
 
   images      String[]
   attachments String[]
@@ -353,13 +343,6 @@ enum ProductStatus {
   DRAFT
   PUBLISHED
   ARCHIVED
-}
-
-enum StockStatus {
-  IN_STOCK
-  OUT_OF_STOCK
-  PREORDER
-  BACKORDER
 }
 
 enum Currency {
@@ -426,12 +409,13 @@ model Cart {
 model CartItem {
   id              String    @id @default(cuid())
   cartId          String
+  /// The variant's product, kept for lookups by product (a variant never changes product)
   productId       String
-  variantId       String?
+  variantId       String
   quantity        Int       @default(1)
   cart            Cart      @relation(fields: [cartId], references: [id], onDelete: Cascade)
   product         Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  variant         Variant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  variant         Variant   @relation(fields: [variantId], references: [id], onDelete: Restrict)
   originalPrice   Decimal?  @db.Decimal(14, 2)
   discountedPrice Decimal?  @db.Decimal(14, 2)
   discount        Discount? @relation(fields: [discountId], references: [id])
@@ -439,7 +423,7 @@ model CartItem {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  @@index([cartId, productId])
+  @@index([cartId, variantId])
   @@index([variantId])
   @@index([discountId])
 }
@@ -488,12 +472,15 @@ model OrderItem {
   id             String    @id @default(cuid())
   orderId        String
   productId      String
-  variantId      String?
+  variantId      String
+  /// Snapshot of the variant's SKU and option values when ordered (null on lines ordered before P1-V.3)
+  sku            String?
+  optionValues   Json?
   quantity       Int       @default(1)
   priceAtOrder   Decimal   @db.Decimal(14, 2)
   order          Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product        Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  variant        Variant?  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  variant        Variant   @relation(fields: [variantId], references: [id], onDelete: Restrict)
   createdAt      DateTime  @default(now())
   originalPrice  Decimal   @db.Decimal(14, 2)
   discountAmount Decimal?  @db.Decimal(14, 2)
@@ -763,7 +750,7 @@ model ReturnRequest {
 model InventoryLog {
   id             String          @id @default(cuid())
   productId      String
-  variantId      String?
+  variantId      String
   action         InventoryAction
   quantityChange Int
   quantityAfter  Int
@@ -771,7 +758,9 @@ model InventoryLog {
   actorId        String?
   createdAt      DateTime        @default(now())
   product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
-  variant        Variant?        @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  // NoAction (checked at the end of the statement): deleting a product cascades to its variants and its logs at once.
+  // deleteVariant itself refuses a variant with logs.
+  variant        Variant         @relation(fields: [variantId], references: [id], onDelete: NoAction)
 
   @@index([productId])
   @@index([variantId])

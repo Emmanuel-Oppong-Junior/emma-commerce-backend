@@ -51,7 +51,7 @@ describe('Cart (e2e)', () => {
       // Arrange
       const mutation = `
         mutation {
-          addToCart(input: { productId: "seed_prod1", quantity: 2 }) {
+          addToCart(input: { variantId: "seed_var1", quantity: 2 }) {
             id
             items {
               id
@@ -74,11 +74,11 @@ describe('Cart (e2e)', () => {
       expect(addedItem.quantity).toBe(2);
     });
 
-    it('fails when the product does not exist', async () => {
+    it('fails when the variant does not exist', async () => {
       // Arrange
       const mutation = `
         mutation {
-          addToCart(input: { productId: "nonexistent-product", quantity: 1 }) {
+          addToCart(input: { variantId: "nonexistent-variant", quantity: 1 }) {
             id
           }
         }
@@ -93,15 +93,15 @@ describe('Cart (e2e)', () => {
     });
 
     it('fails when the requested quantity exceeds available stock', async () => {
-      // Arrange — set product stock to 1 so requesting 999 fails
-      await prisma.product.update({
-        where: { id: 'seed_prod2' },
+      // Arrange — set the variant's stock to 1 so requesting 999 fails
+      await prisma.variant.update({
+        where: { id: 'seed_var2' },
         data: { quantity: 1 },
       });
 
       const mutation = `
         mutation {
-          addToCart(input: { productId: "seed_prod2", quantity: 999 }) {
+          addToCart(input: { variantId: "seed_var2", quantity: 999 }) {
             id
           }
         }
@@ -115,8 +115,8 @@ describe('Cart (e2e)', () => {
       expect(res.body.errors[0].message).toMatch(/stock|quantity/i);
 
       // Restore stock to avoid affecting downstream tests
-      await prisma.product.update({
-        where: { id: 'seed_prod2' },
+      await prisma.variant.update({
+        where: { id: 'seed_var2' },
         data: { quantity: 100 },
       });
     });
@@ -191,7 +191,7 @@ describe('Cart (e2e)', () => {
       const cart = await prisma.cart.findUnique({ where: { userId: 'seed_user' } });
       expect(cart).not.toBeNull();
       const inserted = await prisma.cartItem.create({
-        data: { cartId: cart!.id, productId: 'seed_prod2', quantity: 1 },
+        data: { cartId: cart!.id, productId: 'seed_prod2', variantId: 'seed_var2', quantity: 1 },
       });
 
       const mutation = `

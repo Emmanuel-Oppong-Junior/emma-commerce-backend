@@ -119,15 +119,17 @@ async function createProducts() {
   const subCategories = await prisma.subCategory.findMany({ select: { id: true, categoryId: true } });
   const brandIds = (await prisma.brand.findMany({ select: { id: true } })).map((item) => item.id);
 
-  const products: Prisma.ProductCreateManyInput[] = Array.from({ length: 500 }, () => {
+  const products: Prisma.ProductCreateManyInput[] = [];
+  const variants: Prisma.VariantCreateManyInput[] = [];
+  for (let i = 0; i < 500; i++) {
     const categoryId = categoryIds[Math.floor(Math.random() * categoryIds.length)];
     const validSubCategoryIds = subCategories.filter((sub) => sub.categoryId === categoryId).map((sub) => sub.id);
+    const id = faker.string.uuid();
+    const price = new Prisma.Decimal(faker.number.int({ min: 10, max: 1000 }));
 
-    return {
+    products.push({
+      id,
       name: faker.commerce.productName(),
-      sku: faker.string.uuid(),
-      price: new Prisma.Decimal(faker.number.int({ min: 10, max: 1000 })),
-      quantity: faker.number.int({ max: 1000 }),
       isActive: true,
       status: 'PUBLISHED',
       description: faker.lorem.paragraph({ min: 3, max: 10 }),
@@ -138,13 +140,19 @@ async function createProducts() {
           : null,
       brandId: brandIds[Math.floor(Math.random() * brandIds.length)],
       images: Array.from({ length: 3 }, () => faker.image.url()),
-    };
-  });
+    });
+    // Every product sells through a variant; these have one default variant each (seed data, so its stock is not logged).
+    variants.push({
+      productId: id,
+      sku: `SEED-${id.slice(0, 8).toUpperCase()}`,
+      price,
+      basePrice: price,
+      quantity: faker.number.int({ max: 1000 }),
+    });
+  }
 
-  return prisma.product.createMany({
-    data: products,
-    skipDuplicates: true,
-  });
+  await prisma.product.createMany({ data: products, skipDuplicates: true });
+  return prisma.variant.createMany({ data: variants, skipDuplicates: true });
 }
 
 async function createSuperAdmin() {

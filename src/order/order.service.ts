@@ -11,10 +11,11 @@ import {
   OrderStatus,
   PaymentMethod,
   Prisma,
-  Product,
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
-import { abandonedOrderWhere, OrdersRepository } from './order.repository';
+import { abandonedOrderWhere, NewOrderItem, OrdersRepository } from './order.repository';
+import { VariantForSale } from '../cart/cart.repository';
+import { notSellableReason } from '../variant/sellable';
 import { CouponsService } from '../coupons/coupons.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { OutboxService } from '../outbox/outbox.service';
@@ -137,7 +138,7 @@ export class OrdersService {
    * Retrieves an order by ID without any ownership check (admin use).
    */
   async viewOrder(orderId: string) {
-    return this.ordersRepository.findById(orderId, { items: { include: { product: true } } });
+    return this.ordersRepository.findById(orderId, { items: { include: { product: true, variant: true } } });
   }
 
   /**
@@ -340,7 +341,7 @@ export class OrdersService {
     shippingFee: Prisma.Decimal,
     couponCode?: string,
   ): Promise<{
-    orderItems: OrderItem[];
+    orderItems: NewOrderItem[];
     subtotal: Prisma.Decimal;
     discountTotal: Prisma.Decimal;
     shippingFee: Prisma.Decimal;
@@ -349,14 +350,22 @@ export class OrdersService {
     couponDiscount?: Prisma.Decimal;
   }> {
     const currency = await this.storeService.getCurrency();
-    const products: Product[] = [];
-    for (const item of cartItems) products.push(await this.checkProductAvailability(item, currency));
-    const discounts = await this.discountService.findActiveDiscountsByProduct(products);
+    const variants: VariantForSale[] = [];
+    for (const item of cartItems) variants.push(await this.checkVariantAvailability(item, currency));
+    const discounts = await this.discountService.findActiveDiscountsByVariant(
+      variants.map((variant) => ({
+        id: variant.id,
+        productId: variant.productId,
+        categoryId: variant.product.categoryId,
+        discountId: variant.discountId,
+      })),
+    );
     const priced = priceCart(
-      cartItems.map((item, index) => ({
-        productId: item.productId,
-        quantity: item.quantity,
-        unitPrice: products[index].price as Prisma.Decimal,
+      variants.map((variant, index) => ({
+        variantId: variant.id,
+        productId: variant.productId,
+        quantity: cartItems[index].quantity,
+        unitPrice: variant.price!,
       })),
       discounts,
     );
@@ -371,17 +380,17 @@ export class OrdersService {
 
     const totalAmount = Prisma.Decimal.max(0, priced.subtotal.add(shippingFee).sub(couponDiscount ?? 0));
     return {
-      orderItems: priced.lines.map(
-        (line) =>
-          ({
-            productId: line.productId,
-            quantity: line.quantity,
-            priceAtOrder: line.discountedUnitPrice,
-            originalPrice: line.unitPrice,
-            discountAmount: line.unitDiscount,
-            discountId: line.discountId ?? null,
-          }) as OrderItem,
-      ),
+      orderItems: priced.lines.map((line, index) => ({
+        productId: line.productId,
+        variantId: line.variantId,
+        sku: variants[index].sku,
+        optionValues: variants[index].optionValues as Prisma.InputJsonValue,
+        quantity: line.quantity,
+        priceAtOrder: line.discountedUnitPrice,
+        originalPrice: line.unitPrice,
+        discountAmount: line.unitDiscount,
+        discountId: line.discountId ?? null,
+      })),
       subtotal: priced.subtotal,
       discountTotal: priced.discountTotal,
       shippingFee: roundHalfUp(shippingFee),
@@ -391,29 +400,30 @@ export class OrdersService {
     };
   }
 
-  private async checkProductAvailability(item: CartItem, currency: Currency): Promise<Product> {
-    const product = await this.ordersRepository.findProductById(item.productId);
-    if (!product) throw new NotFoundException(`Product "${item.productId}" not found`);
+  private async checkVariantAvailability(item: CartItem, currency: Currency): Promise<VariantForSale> {
+    const variant = await this.ordersRepository.findVariant(item.variantId);
+    if (!variant) throw new NotFoundException(`Variant "${item.variantId}" not found`);
+    const reason = notSellableReason(variant);
+    if (reason) throw new BadRequestException(`${reason}; remove it from the cart`);
     // Prices are summed and charged in the store currency; a product priced in another one would be mis-charged.
-    if (product.currency !== currency) {
+    if (variant.product.currency !== currency) {
       throw new BadRequestException(
-        `"${product.name}" is priced in ${product.currency ?? 'no currency'}; only ${currency} products can be checked out`,
+        `"${variant.product.name}" is priced in ${variant.product.currency ?? 'no currency'}; only ${currency} products can be checked out`,
       );
     }
-    if (product.price === null) throw new BadRequestException(`"${product.name}" has no price and cannot be sold`);
-    if (product.quantity < item.quantity) {
+    if (variant.quantity < item.quantity) {
       throw new BadRequestException(
-        `Insufficient stock for "${product.name}": ${product.quantity} available, ${item.quantity} requested`,
+        `Insufficient stock for "${variant.product.name}" (${variant.sku}): ${variant.quantity} available, ${item.quantity} requested`,
       );
     }
-    return product;
+    return variant;
   }
 
   private async saveOrderAndUpdateInventory(
     userId: string,
     cartId: string,
     orderDetails: {
-      orderItems: OrderItem[];
+      orderItems: NewOrderItem[];
       subtotal: Prisma.Decimal;
       shippingFee: Prisma.Decimal;
       discountTotal: Prisma.Decimal;
@@ -431,20 +441,19 @@ export class OrdersService {
     },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
-      await this.ensureSoldWithoutVariants(
-        tx,
-        orderDetails.orderItems.map((item) => item.productId),
-      );
       for (const item of orderDetails.orderItems) {
-        const product = await this.ordersRepository.decrementProductStock(tx, item.productId, item.quantity);
-        if (!product) {
-          throw new BadRequestException(`Insufficient stock for product "${item.productId}" — please review your cart`);
+        const variant = await this.ordersRepository.decrementVariantStock(tx, item.variantId, item.quantity);
+        if (!variant) {
+          throw new BadRequestException(
+            `Variant "${item.sku}" is out of stock or no longer on sale — please review your cart`,
+          );
         }
         await this.inventoryService.logInventoryChange(tx, {
           productId: item.productId,
+          variantId: item.variantId,
           action: 'ORDER_DEDUCTION',
           quantityChange: -item.quantity,
-          quantityAfter: product.quantity,
+          quantityAfter: variant.quantity,
           reason: `Order placed by user ${userId}`,
           actorId: userId,
         });
@@ -470,18 +479,10 @@ export class OrdersService {
     });
   }
 
-  /** Checked in the order transaction: the cart may predate the variant, and a variant may be added meanwhile. */
-  private async ensureSoldWithoutVariants(tx: Prisma.TransactionClient, productIds: string[]): Promise<void> {
-    const names = await this.ordersRepository.findNamesOfProductsWithVariants(tx, productIds);
-    if (names.length > 0) {
-      throw new BadRequestException(
-        `${names.map((name) => `"${name}"`).join(', ')} comes in variants and cannot be bought until variant checkout is available; remove it from the cart`,
-      );
-    }
-  }
-
   private async retrieveUserOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
-    const order = await this.ordersRepository.findById(orderId, { items: { include: { product: true } } });
+    const order = await this.ordersRepository.findById(orderId, {
+      items: { include: { product: true, variant: true } },
+    });
     if (order?.userId !== userId) {
       throw new NotFoundException(`Order "${orderId}" not found`);
     }
@@ -524,12 +525,13 @@ export class OrdersService {
       }
       if (order.couponId) await this.couponsService.releaseUsage(tx, order.id);
       for (const item of order.items) {
-        const product = await this.ordersRepository.updateProductStock(tx, item.productId, item.quantity);
+        const variant = await this.ordersRepository.restoreVariantStock(tx, item.variantId, item.quantity);
         await this.inventoryService.logInventoryChange(tx, {
           productId: item.productId,
+          variantId: item.variantId,
           action: 'RETURN_RESTORE',
           quantityChange: item.quantity,
-          quantityAfter: product.quantity,
+          quantityAfter: variant.quantity,
           reason: `Order ${order.id} cancelled`,
         });
       }

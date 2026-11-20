@@ -258,7 +258,7 @@ describe('Two-factor authentication and step-up (e2e)', () => {
 
     const changePrice = (token: string, basePrice: string) =>
       gql(
-        `mutation { updateProduct(productId: "seed_prod1", updateProductInput: { basePrice: "${basePrice}" }) { id basePrice { amount } } }`,
+        `mutation { updateVariant(input: { id: "seed_var1", basePrice: "${basePrice}" }) { id basePrice { amount } } }`,
         token,
       );
 
@@ -277,7 +277,7 @@ describe('Two-factor authentication and step-up (e2e)', () => {
       expect(renamed.body.errors).toBeUndefined();
       expect(new Date(verified.body.data.stepUp.validUntil).getTime()).toBeGreaterThan(Date.now() + 9 * 60 * 1000);
       expect(changed.body.errors).toBeUndefined();
-      expect(changed.body.data.updateProduct.basePrice).toEqual({ amount: '899.99' });
+      expect(changed.body.data.updateVariant.basePrice).toEqual({ amount: '899.99' });
       expect(await prisma.auditLog.count({ where: { entityId: 'seed_admin', action: 'STEP_UP' } })).toBeGreaterThan(0);
     });
 

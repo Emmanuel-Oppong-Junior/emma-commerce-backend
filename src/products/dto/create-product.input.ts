@@ -1,6 +1,7 @@
 import { Field, GraphQLISODateTime, InputType, Int } from '@nestjs/graphql';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   IsBoolean,
   IsDate,
   IsEnum,
@@ -10,10 +11,10 @@ import {
   IsString,
   IsUrl,
   Length,
-  Matches,
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import {
@@ -21,12 +22,10 @@ import {
   DeliveryOptionsEnum,
   FulfilmentKindEnum,
   ProductStatusEnum,
-  StockStatusEnum,
   UnitOfMeasureEnum,
 } from '../enums/product.enum';
-import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
 import { GraphQLJSONObject } from 'graphql-type-json';
-import { Decimal } from '@prisma/client/runtime/client';
+import { VariantFieldsInput } from '../../variant/dto/create-variant.input';
 
 @InputType()
 export class CreateProductInput {
@@ -63,13 +62,16 @@ export class CreateProductInput {
   )
   attachments?: string[];
 
-  @DecimalInputField({
-    description: 'Base price before taxes — decimal string (e.g., "29.99")',
+  @Field(() => [VariantFieldsInput], {
+    description: 'The variants (SKUs) to sell, at least one; a product without options has one, with no optionValues',
   })
-  @IsMoneyAmount()
-  basePrice: Decimal;
+  @ArrayMinSize(1, { message: 'A product needs at least one variant' })
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => VariantFieldsInput)
+  variants: VariantFieldsInput[];
 
-  @Field(() => Boolean, { description: 'Whether taxes apply to this product', defaultValue: false })
+  @Field(() => Boolean, { description: 'Whether variant prices add tax to their basePrice', defaultValue: false })
   @IsBoolean()
   isTaxable: boolean = false;
 
@@ -77,39 +79,6 @@ export class CreateProductInput {
   @IsOptional()
   @IsEnum(CurrencyEnum, { message: 'currency must be a valid Currency value' })
   currency?: CurrencyEnum;
-
-  @Field(() => String, { nullable: true, description: 'SKU code (e.g., "TSHIRT-XL")' })
-  @IsOptional()
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
-  @Length(1, 50, { message: 'SKU must be between 1 and 50 characters' })
-  @Matches(/^[a-zA-Z0-9\-]+$/, { message: 'SKU can only contain letters, numbers, and hyphens' })
-  sku?: string;
-
-  @Field(() => String, { nullable: true, description: 'Barcode (EAN, UPC, GTIN, etc.)' })
-  @IsOptional()
-  @IsString()
-  @Length(1, 100, { message: 'Barcode must be between 1 and 100 characters' })
-  barcode?: string;
-
-  @Field(() => Int, { description: 'Initial stock quantity (0 or more)' })
-  @IsInt({ message: 'Quantity must be an integer' })
-  @Min(0, { message: 'Quantity cannot be negative' })
-  quantity: number;
-
-  @Field(() => StockStatusEnum, { nullable: true, description: 'Stock availability status (defaults to IN_STOCK)' })
-  @IsOptional()
-  @IsEnum(StockStatusEnum, { message: 'stockStatus must be a valid StockStatus value' })
-  stockStatus?: StockStatusEnum;
-
-  @Field(() => Int, {
-    nullable: true,
-    description: 'Quantity threshold that triggers a low-stock alert (defaults to 5)',
-  })
-  @IsOptional()
-  @IsInt({ message: 'Low stock alert must be an integer' })
-  @Min(0, { message: 'Low stock alert cannot be negative' })
-  @Max(10000)
-  lowStockAlert?: number;
 
   @Field(() => Boolean, { description: 'Whether the product is visible to customers', defaultValue: false })
   @IsBoolean()

@@ -16,10 +16,10 @@ describe('Orders (e2e)', () => {
 
   // ─── helpers ──────────────────────────────────────────────────────────────────
 
-  const addItemToCart = (token: string, productId = 'seed_prod1', qty = 1) =>
+  const addItemToCart = (token: string, variantId = 'seed_var1', qty = 1) =>
     gqlRequest(
       app,
-      `mutation { addToCart(input: { productId: "${productId}", quantity: ${qty} }) { id } }`,
+      `mutation { addToCart(input: { variantId: "${variantId}", quantity: ${qty} }) { id } }`,
       undefined,
       token,
     ).expect(200);
@@ -173,7 +173,7 @@ describe('Orders (e2e)', () => {
       ).expect(200);
       const uncoveredAddressId = addrRes.body.data.createAddress.id;
       await addItemToCart(userToken);
-      const stockBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
 
       const res = await gqlRequest(
         app,
@@ -184,7 +184,7 @@ describe('Orders (e2e)', () => {
 
       expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
       expect(res.body.errors[0].message).toContain('Tamale');
-      const stockAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
       expect(stockAfter.quantity).toBe(stockBefore.quantity);
       const cart = await gqlRequest(app, `query { cart { items { id } } }`, undefined, userToken).expect(200);
       expect(cart.body.data.cart.items).toHaveLength(1);
@@ -198,7 +198,7 @@ describe('Orders (e2e)', () => {
         data: { userId: me.id, street: '3 Old St', city: 'Accra', zipCode: '00233', country: 'GH' },
       });
       await addItemToCart(userToken);
-      const stockBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
 
       const order = await gqlRequest(
         app,
@@ -218,7 +218,7 @@ describe('Orders (e2e)', () => {
       expect(order.body.errors[0].message).toBe(incomplete);
       expect(fee.body.errors[0].extensions.code).toBe('BAD_REQUEST');
       expect(fee.body.errors[0].message).toBe(incomplete);
-      const stockAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
       expect(stockAfter.quantity).toBe(stockBefore.quantity);
 
       await clearUserCart(userToken);
@@ -264,13 +264,13 @@ describe('Orders (e2e)', () => {
         'rejects a pickup order for location %s and reserves no stock',
         async (pickupLocationId) => {
           await addItemToCart(userToken);
-          const stockBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+          const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
 
           const res = await createPickupOrder(pickupLocationId);
 
           expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
           expect(res.body.errors[0].message).toContain(pickupLocationId);
-          const stockAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+          const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
           expect(stockAfter.quantity).toBe(stockBefore.quantity);
         },
       );
@@ -304,10 +304,8 @@ describe('Orders (e2e)', () => {
         data: {
           id: 'e2e_prod_usd',
           name: 'Imported Camera',
-          price: 50,
           currency: 'USD',
-          sku: 'E2E-CAM-USD',
-          quantity: 5,
+          variants: { create: { id: 'e2e_var_usd', sku: 'E2E-CAM-USD', price: 50, basePrice: 50, quantity: 5 } },
           images: [],
           isActive: true,
           status: 'PUBLISHED',
@@ -315,7 +313,7 @@ describe('Orders (e2e)', () => {
           brandId: 'seed_brand',
         },
       });
-      await addItemToCart(userToken, 'e2e_prod_usd');
+      await addItemToCart(userToken, 'e2e_var_usd');
 
       const res = await gqlRequest(
         app,
@@ -326,16 +324,16 @@ describe('Orders (e2e)', () => {
 
       expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
       expect(res.body.errors[0].message).toContain('only GHS products can be checked out');
-      const product = await prisma.product.findUniqueOrThrow({ where: { id: 'e2e_prod_usd' } });
-      expect(product.quantity).toBe(5);
+      const variant = await prisma.variant.findUniqueOrThrow({ where: { id: 'e2e_var_usd' } });
+      expect(variant.quantity).toBe(5);
 
       await clearUserCart(userToken);
     });
 
-    it('decrements product stock after a successful order', async () => {
+    it('decrements variant stock after a successful order', async () => {
       // Arrange — record the current stock, add the product to cart, create an order
-      const productBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod2' } });
-      await addItemToCart(userToken, 'seed_prod2', 2);
+      const productBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var2' } });
+      await addItemToCart(userToken, 'seed_var2', 2);
 
       const mutation = `
         mutation {
@@ -349,7 +347,7 @@ describe('Orders (e2e)', () => {
       await gqlRequest(app, mutation, undefined, userToken).expect(200);
 
       // Assert
-      const productAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod2' } });
+      const productAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var2' } });
       expect(Number(productAfter.quantity)).toBe(Number(productBefore.quantity) - 2);
     });
 
@@ -363,7 +361,7 @@ describe('Orders (e2e)', () => {
           isActive: true,
         },
       });
-      await addItemToCart(userToken, 'seed_prod1', 1);
+      await addItemToCart(userToken, 'seed_var1', 1);
 
       const mutation = `
         mutation {
@@ -496,7 +494,7 @@ describe('Orders (e2e)', () => {
   describe('cancelOrder', () => {
     it('cancels a PENDING order and restores product stock', async () => {
       // Arrange — create a fresh order to cancel
-      await addItemToCart(userToken, 'seed_prod1', 1);
+      await addItemToCart(userToken, 'seed_var1', 1);
       const orderRes = await gqlRequest(
         app,
         `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
@@ -505,7 +503,7 @@ describe('Orders (e2e)', () => {
       ).expect(200);
       const pendingOrderId = orderRes.body.data.createOrder.id;
 
-      const stockBefore = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
 
       const mutation = `
         mutation {
@@ -524,13 +522,13 @@ describe('Orders (e2e)', () => {
       expect(res.body.data.cancelOrder.status).toBe('CANCELLED');
 
       // Stock should be restored
-      const stockAfter = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
+      const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
       expect(Number(stockAfter.quantity)).toBe(Number(stockBefore.quantity) + 1);
     });
 
     it('fails when trying to cancel a DELIVERED order', async () => {
       // Arrange — create an order and forcibly set its status to DELIVERED in the DB
-      await addItemToCart(userToken, 'seed_prod1', 1);
+      await addItemToCart(userToken, 'seed_var1', 1);
       const orderRes = await gqlRequest(
         app,
         `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,

@@ -69,7 +69,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
         zipCode: "00233", country: "GH" }) { id } }`,
       userToken,
     );
-    await run('mutation { addToCart(input: { productId: "seed_prod1", quantity: 1 }) { id } }', userToken);
+    await run('mutation { addToCart(input: { variantId: "seed_var1", quantity: 1 }) { id } }', userToken);
     const order = await run(
       `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${address.createAddress.id}",
         contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,

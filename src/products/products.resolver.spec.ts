@@ -1,8 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProductsResolver } from './products.resolver';
 import { ProductsService } from './products.service';
-import { DiscountLoader } from './loaders/discount.loader';
 import { VariantsLoader } from './loaders/variants.loader';
+import { VariantSummaryLoader } from './loaders/variant-summary.loader';
 import { ReviewsLoader } from './loaders/reviews.loader';
 import { ProductTypesLoader } from '../product-types/product-types.loader';
 import { CreateProductInput } from './dto/create-product.input';
@@ -10,9 +10,7 @@ import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
 import { Product } from './entities/product.entity';
 import { PaginationArgs } from '../commons/dto/paginate.args';
-import { DiscountService } from '../discount/discount.service';
 import { Prisma } from '../generated/prisma/client';
-import { DiscountType } from '../discount/enums/discount-type.enum';
 import { Decimal } from '@prisma/client/runtime/client';
 
 const mockProductsService = {
@@ -26,19 +24,13 @@ const mockProductsService = {
   archiveProduct: jest.fn(),
   restoreProduct: jest.fn(),
 };
-const mockDiscountService = {
-  getDiscountedPriceForProduct: jest.fn(),
-  findOneDiscount: jest.fn(),
-};
-const mockDiscountLoaderFn = jest.fn();
-const mockDiscountLoader = { loader: { load: mockDiscountLoaderFn } };
+const mockVariantSummaryLoaderFn = jest.fn();
+const mockVariantSummaryLoader = { loader: { load: mockVariantSummaryLoaderFn } };
 const mockVariantsLoader = { loader: { load: jest.fn().mockResolvedValue([]) } };
 const mockReviewsLoader = { loader: { load: jest.fn().mockResolvedValue([]) } };
 const mockProduct = {
   id: 'prod1',
   name: 'T-Shirt',
-  price: 19.99,
-  quantity: 100,
   categoryId: 'cat1',
   isActive: true,
   images: [],
@@ -51,15 +43,13 @@ jest.mock('../commons/useful-functions', () => ({
 describe('ProductsResolver', () => {
   let resolver: ProductsResolver;
   let service: ProductsService;
-  let discountService: DiscountService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductsResolver,
         { provide: ProductsService, useValue: mockProductsService },
-        { provide: DiscountService, useValue: mockDiscountService },
-        { provide: DiscountLoader, useValue: mockDiscountLoader },
+        { provide: VariantSummaryLoader, useValue: mockVariantSummaryLoader },
         { provide: VariantsLoader, useValue: mockVariantsLoader },
         { provide: ReviewsLoader, useValue: mockReviewsLoader },
         { provide: ProductTypesLoader, useValue: { loader: { load: jest.fn() } } },
@@ -68,7 +58,6 @@ describe('ProductsResolver', () => {
 
     resolver = module.get<ProductsResolver>(ProductsResolver);
     service = module.get<ProductsService>(ProductsService);
-    discountService = module.get<DiscountService>(DiscountService);
     jest.clearAllMocks();
   });
 
@@ -76,9 +65,8 @@ describe('ProductsResolver', () => {
     it('should create a product', async () => {
       const input: CreateProductInput = {
         name: 'T-Shirt',
-        basePrice: new Decimal('19.99'),
+        variants: [{ basePrice: new Decimal('19.99'), quantity: 100 }],
         isTaxable: false,
-        quantity: 100,
         categoryId: 'cat1',
         isActive: true,
       };
@@ -96,12 +84,12 @@ describe('ProductsResolver', () => {
     it('should update a product', async () => {
       const input: UpdateProductInput = {
         name: 'Updated T-Shirt',
-        basePrice: new Decimal('29.99'),
+        isTaxable: true,
       };
       const product: Product = {
         ...mockProduct,
         name: 'Updated T-Shirt',
-        price: 29.99,
+        isTaxable: true,
       } as unknown as Product;
       mockProductsService.update.mockResolvedValue(product);
 
@@ -209,46 +197,39 @@ describe('ProductsResolver', () => {
       expect(service.findPublishedById).not.toHaveBeenCalled();
     });
   });
-  describe('discountedPrice', () => {
-    it('should return discounted price', async () => {
-      mockDiscountLoaderFn.mockResolvedValue({
-        discountedPrice: new Prisma.Decimal('5.00'),
-        discountAmount: new Prisma.Decimal('14.99'),
-        discountId: 'disc1',
+  describe('variant summary fields', () => {
+    const product = mockProduct as unknown as Product;
+
+    it("returns the lowest and highest price of the product's active variants", async () => {
+      mockVariantSummaryLoaderFn.mockResolvedValue({
+        minPrice: new Prisma.Decimal('19.99'),
+        maxPrice: new Prisma.Decimal('24.99'),
+        totalStock: 7,
       });
-      const result = await resolver.discountedPrice(mockProduct as unknown as Product);
-      expect(mockDiscountLoaderFn).toHaveBeenCalledWith('prod1');
-      expect(result).toEqual(new Prisma.Decimal('5.00'));
+
+      const result = await resolver.priceRange(product);
+
+      expect(mockVariantSummaryLoaderFn).toHaveBeenCalledWith('prod1');
+      expect(result).toEqual({ min: new Prisma.Decimal('19.99'), max: new Prisma.Decimal('24.99') });
     });
-    it('should return null if discounted price is equal to price', async () => {
-      mockDiscountLoaderFn.mockResolvedValue({
-        discountedPrice: new Prisma.Decimal('19.99'),
-        discountAmount: new Prisma.Decimal(0),
-        discountId: null,
-      });
-      const result = await resolver.discountedPrice(mockProduct as unknown as Product);
-      expect(result).toEqual(null);
+
+    it('returns no price range when no active variant is priced', async () => {
+      mockVariantSummaryLoaderFn.mockResolvedValue({ minPrice: null, maxPrice: null, totalStock: 0 });
+
+      await expect(resolver.priceRange(product)).resolves.toBeNull();
     });
-  });
-  describe('appliedDiscount', () => {
-    it('should return applied discount', async () => {
-      const mockDiscount = {
-        id: 'discount1',
-        name: 'Summer Sale',
-        description: '20% off',
-        type: DiscountType.PERCENTAGE,
-        value: new Prisma.Decimal(20),
-        startDate: new Date('2025-06-01'),
-        endDate: new Date('2025-06-30'),
-        isActive: true,
-        minimumPurchase: null,
-      };
-      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 80, discountId: mockDiscount.id });
-      mockDiscountService.findOneDiscount.mockResolvedValueOnce(mockDiscount);
-      const result = await resolver.appliedDiscount(mockProduct as unknown as Product);
-      expect(mockDiscountLoaderFn).toHaveBeenCalledWith('prod1');
-      expect(discountService.findOneDiscount).toHaveBeenCalledWith(mockDiscount.id);
-      expect(result).toEqual(mockDiscount);
+
+    it('sums the stock of the active variants', async () => {
+      mockVariantSummaryLoaderFn.mockResolvedValue({ minPrice: null, maxPrice: null, totalStock: 7 });
+
+      await expect(resolver.totalStock(product)).resolves.toBe(7);
+      await expect(resolver.inStock(product)).resolves.toBe(true);
+    });
+
+    it('is out of stock when no active variant has stock', async () => {
+      mockVariantSummaryLoaderFn.mockResolvedValue({ minPrice: null, maxPrice: null, totalStock: 0 });
+
+      await expect(resolver.inStock(product)).resolves.toBe(false);
     });
   });
 });

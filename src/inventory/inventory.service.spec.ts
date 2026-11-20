@@ -14,7 +14,6 @@ const mockInventoryRepository = {
 };
 
 const mockPrisma = {
-  product: { findUnique: jest.fn() },
   variant: { findUnique: jest.fn() },
   $transaction: jest.fn(),
 };
@@ -51,43 +50,43 @@ describe('InventoryService', () => {
     jest.clearAllMocks();
   });
 
-  describe('restockProduct', () => {
-    it('should restock a product and log the change', async () => {
-      mockPrisma.product.findUnique.mockResolvedValue({ id: 'prod1', quantity: 100 });
-      mockPrisma.$transaction.mockImplementation(async (cb: any) => {
-        const mockTx = {
-          product: { update: jest.fn().mockResolvedValue({ quantity: 150 }) },
-        };
-        return cb(mockTx);
+  describe('restockVariant', () => {
+    it('increments the variant stock and logs the change against the variant and its product', async () => {
+      const update = jest.fn().mockResolvedValue({ quantity: 60 });
+      mockPrisma.variant.findUnique.mockResolvedValue({ id: 'var1', productId: 'prod1' });
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb({ variant: { update } }));
+      mockInventoryRepository.createLog.mockResolvedValue({ ...mockLog, variantId: 'var1' });
+
+      await service.restockVariant({ variantId: 'var1', quantity: 50 }, 'admin1');
+
+      expect(update).toHaveBeenCalledWith({
+        where: { id: 'var1' },
+        data: { quantity: { increment: 50 } },
+        select: { quantity: true },
       });
-      mockInventoryRepository.createLog.mockResolvedValue(mockLog);
-
-      const result = await service.restockProduct({ productId: 'prod1', quantity: 50 }, 'admin1');
-
-      expect(result).toEqual(mockLog);
-      expect(mockPrisma.$transaction).toHaveBeenCalled();
-    });
-
-    it('should throw NotFoundException if product not found', async () => {
-      mockPrisma.product.findUnique.mockResolvedValue(null);
-
-      await expect(service.restockProduct({ productId: 'nonexistent', quantity: 10 }, 'admin1')).rejects.toThrow(
-        NotFoundException,
-      );
+      expect(mockInventoryRepository.createLog).toHaveBeenCalledWith(expect.anything(), {
+        productId: 'prod1',
+        variantId: 'var1',
+        action: 'RESTOCK',
+        quantityChange: 50,
+        quantityAfter: 60,
+        reason: 'Manual restock',
+        actorId: 'admin1',
+      });
     });
 
     it('should use custom reason when provided', async () => {
-      mockPrisma.product.findUnique.mockResolvedValue({ id: 'prod1', quantity: 100 });
+      mockPrisma.variant.findUnique.mockResolvedValue({ id: 'var1', productId: 'prod1' });
       mockPrisma.$transaction.mockImplementation(async (cb: any) => {
         const mockTx = {
-          product: { update: jest.fn().mockResolvedValue({ quantity: 120 }) },
+          variant: { update: jest.fn().mockResolvedValue({ quantity: 120 }) },
         };
         return cb(mockTx);
       });
       mockInventoryRepository.createLog.mockResolvedValue({ ...mockLog, reason: 'Received shipment' });
 
-      const result = await service.restockProduct(
-        { productId: 'prod1', quantity: 20, reason: 'Received shipment' },
+      const result = await service.restockVariant(
+        { variantId: 'var1', quantity: 20, reason: 'Received shipment' },
         'admin1',
       );
 
@@ -97,9 +96,7 @@ describe('InventoryService', () => {
       );
       expect(result.reason).toBe('Received shipment');
     });
-  });
 
-  describe('restockVariant', () => {
     it('should restock a variant and log the change', async () => {
       mockPrisma.variant.findUnique.mockResolvedValue({ id: 'var1', quantity: 10, productId: 'prod1' });
       mockPrisma.$transaction.mockImplementation(async (cb: any) => {
@@ -150,6 +147,7 @@ describe('InventoryService', () => {
 
       await service.logInventoryChange(mockTx, {
         productId: 'prod1',
+        variantId: 'var1',
         action: 'ORDER_DEDUCTION',
         quantityChange: -5,
         quantityAfter: 95,
@@ -157,20 +155,12 @@ describe('InventoryService', () => {
 
       expect(mockInventoryRepository.createLog).toHaveBeenCalledWith(
         mockTx,
-        expect.objectContaining({ productId: 'prod1', action: 'ORDER_DEDUCTION' }),
+        expect.objectContaining({ productId: 'prod1', variantId: 'var1', action: 'ORDER_DEDUCTION' }),
       );
     });
   });
 
   describe.each([
-    {
-      target: 'product',
-      adjust: (s: InventoryService) =>
-        s.adjustProductStock.bind(s) as (input: any, actorId: string) => Promise<InventoryLog>,
-      idField: 'productId',
-      found: { quantity: 7 },
-      expectedLog: { productId: 'id1' },
-    },
     {
       target: 'variant',
       adjust: (s: InventoryService) =>
@@ -267,12 +257,12 @@ describe('InventoryService', () => {
 
     it.each<[string, () => Promise<unknown>, InventoryLog, object]>([
       [
-        'restockProduct',
-        () => service.restockProduct({ productId: 'prod1', quantity: 50 }, 'admin1'),
-        mockLog,
+        'restockVariant',
+        () => service.restockVariant({ variantId: 'var1', quantity: 50 }, 'admin1'),
+        { ...mockLog, variantId: 'var1' } as InventoryLog,
         {
-          entity: 'Product',
-          entityId: 'prod1',
+          entity: 'Variant',
+          entityId: 'var1',
           details: {
             inventoryLogId: 'log1',
             kind: 'RESTOCK',
@@ -281,26 +271,6 @@ describe('InventoryService', () => {
             quantityAfter: 150,
             reason: 'Manual restock',
           },
-        },
-      ],
-      [
-        'restockVariant',
-        () => service.restockVariant({ variantId: 'var1', quantity: 50 }, 'admin1'),
-        { ...mockLog, variantId: 'var1' } as InventoryLog,
-        {
-          entity: 'Variant',
-          entityId: 'var1',
-          details: expect.objectContaining({ kind: 'RESTOCK', productId: 'prod1' }),
-        },
-      ],
-      [
-        'adjustProductStock',
-        () => service.adjustProductStock({ productId: 'prod1', delta: -3, reason: 'Damaged' }, 'admin1'),
-        { ...mockLog, action: 'ADJUSTMENT', quantityChange: -3 } as InventoryLog,
-        {
-          entity: 'Product',
-          entityId: 'prod1',
-          details: expect.objectContaining({ kind: 'ADJUSTMENT', quantityChange: -3 }),
         },
       ],
       [
@@ -315,18 +285,12 @@ describe('InventoryService', () => {
       ],
     ])('%s audits the stock change on the transaction that moved the stock', async (_name, act, log, expected) => {
       const tx = {
-        product: {
-          update: jest.fn().mockResolvedValue({ quantity: 150 }),
-          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-          findUnique: jest.fn().mockResolvedValue({ quantity: 147 }),
-        },
         variant: {
           update: jest.fn().mockResolvedValue({ quantity: 150 }),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           findUnique: jest.fn().mockResolvedValue({ quantity: 147, productId: 'prod1' }),
         },
       };
-      mockPrisma.product.findUnique.mockResolvedValue({ id: 'prod1', quantity: 100 });
       mockPrisma.variant.findUnique.mockResolvedValue({ id: 'var1', quantity: 100, productId: 'prod1' });
       mockPrisma.$transaction.mockImplementation(async (cb: any) => cb(tx));
       mockInventoryRepository.createLog.mockResolvedValue(log);
@@ -343,12 +307,12 @@ describe('InventoryService', () => {
     it('does not audit a refused adjustment', async () => {
       const model = {
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-        findUnique: jest.fn().mockResolvedValue({ quantity: 1 }),
+        findUnique: jest.fn().mockResolvedValue({ quantity: 1, productId: 'prod1' }),
       };
-      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb({ product: model }));
+      mockPrisma.$transaction.mockImplementation(async (cb: any) => cb({ variant: model }));
 
       await expect(
-        service.adjustProductStock({ productId: 'prod1', delta: -5, reason: 'Lost' }, 'admin1'),
+        service.adjustVariantStock({ variantId: 'var1', delta: -5, reason: 'Lost' }, 'admin1'),
       ).rejects.toThrow(BadRequestException);
       expect(mockAuditService.log).not.toHaveBeenCalled();
     });

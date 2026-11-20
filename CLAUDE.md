@@ -80,7 +80,8 @@ psql "$DATABASE_URL" -f scripts/reports/variant-migration-report.sql  # What the
 
 These describe what the code enforces today. ADR-0004 (money), ADR-0008 (inventory) and ADR-0014 (order state machine) are still Proposed and will replace some of them.
 
-- **Stock** changes only through logged `restock*`/`adjust*Stock` mutations or the order/cancel transactions, using conditional updates. Never write an absolute quantity. The database rejects negative stock.
+- **Variant = SKU (ADR-0003):** price, stock, SKU and barcode live on `Variant`; every product has at least one (a default variant without options). Carts, orders and inventory logs reference `variantId`. Product attributes and variant option values are checked by the pure `src/product-types/domain/attribute-validation.ts` against the product type.
+- **Stock** changes only through the logged `restockVariant`/`adjustVariantStock` mutations, a variant's initial stock at creation (logged) or the order/cancel transactions, using conditional updates. Never write an absolute quantity. The database rejects negative stock.
 - **Order status** changes only through the transition table in `src/order/order-status.ts`, applied with a conditional `updateMany` claim, never a plain update.
 - **Authorization:** every resolver, and every sensitive field resolver, has an explicit policy (`@Auth`, `@RequirePermission`, `@CustomerOnly`, field middleware). Permissions are code constants in `src/iam/authorization/permissions.ts`; never check `User.role` (deprecated, kept in step for old clients). `src/iam/authorization/auth-matrix.spec.ts` snapshots every operation's policy and fails on an operation without one; after a deliberate policy change review the diff and accept it with `npm test -- -u auth-matrix`. Never expose `User` on a public type; use `PublicProfile`.
 - Guards and interceptors must work in both `http` and `graphql` contexts.

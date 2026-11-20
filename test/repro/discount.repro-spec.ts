@@ -3,54 +3,49 @@ import { join } from 'path';
 import { Prisma } from '../../src/generated/prisma/client';
 import { DiscountService } from '../../src/discount/discount.service';
 import { OrdersService } from '../../src/order/order.service';
+import { priceCart } from '../../src/discount/pricing';
 
 function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number) {
   return { id, name: id, type, value, minimumPurchase: null };
 }
 
-function buildDiscountService(repositoryOverrides: Record<string, unknown>) {
-  const repository = {
-    findProductById: jest.fn().mockResolvedValue({ price: 1000 }),
-    findProductWithDiscounts: jest.fn().mockResolvedValue({ discounts: [], categoryId: null }),
-    findCategoryDiscounts: jest.fn().mockResolvedValue([]),
-    findVariantDiscounts: jest.fn().mockResolvedValue([]),
-    ...repositoryOverrides,
-  };
+function onProduct(...discounts: ReturnType<typeof discount>[]) {
+  return discounts.map((d) => ({ ...d, products: [{ id: 'product-1' }], categories: [] }));
+}
+
+/** Prices one unit of variant-1 (of product-1) at `price` with the discounts the DiscountService finds for it. */
+async function priceOneUnit(price: number, discounts: ReturnType<typeof onProduct>) {
+  const repository = { findActiveDiscountsFor: jest.fn().mockResolvedValue(discounts) };
   const service = new DiscountService(
     repository as never,
     { get: jest.fn(), set: jest.fn(), del: jest.fn() } as never,
     {} as never,
   );
-  return { service, repository };
+  const candidates = await service.findActiveDiscountsByVariant([
+    { id: 'variant-1', productId: 'product-1', categoryId: null, discountId: null },
+  ]);
+  return priceCart([{ variantId: 'variant-1', productId: 'product-1', unitPrice: price, quantity: 1 }], candidates)
+    .lines[0];
 }
 
 describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
   it('DISC-02: the best discount is the one that saves the customer the most money (30% beats GHS 50 off on GHS 1,000)', async () => {
-    const { service } = buildDiscountService({
-      findProductWithDiscounts: jest.fn().mockResolvedValue({
-        discounts: [discount('flat-50', 'FLAT', 50), discount('pct-30', 'PERCENTAGE', 30)],
-        categoryId: null,
-      }),
-    });
+    const result = await priceOneUnit(
+      1000,
+      onProduct(discount('flat-50', 'FLAT', 50), discount('pct-30', 'PERCENTAGE', 30)),
+    );
 
-    const result = await service.getDiscountedPriceForProduct('product-1');
-
-    expect(result.discountAmount.toFixed(2)).toBe('300.00');
-    expect(result.discountedPrice.toFixed(2)).toBe('700.00');
+    expect(result.unitDiscount.toFixed(2)).toBe('300.00');
+    expect(result.discountedUnitPrice.toFixed(2)).toBe('700.00');
   });
 
   it('DISC-02: a GHS 8 flat discount beats 10% on a GHS 50 item', async () => {
-    const { service } = buildDiscountService({
-      findProductById: jest.fn().mockResolvedValue({ price: 50 }),
-      findProductWithDiscounts: jest.fn().mockResolvedValue({
-        discounts: [discount('pct-10', 'PERCENTAGE', 10), discount('flat-8', 'FLAT', 8)],
-        categoryId: null,
-      }),
-    });
+    const result = await priceOneUnit(
+      50,
+      onProduct(discount('pct-10', 'PERCENTAGE', 10), discount('flat-8', 'FLAT', 8)),
+    );
 
-    const result = await service.getDiscountedPriceForProduct('product-1');
-
-    expect(result.discountAmount.toFixed(2)).toBe('8.00');
+    expect(result.unitDiscount.toFixed(2)).toBe('8.00');
   });
 
   it('DISC-01: the API has no client-callable mutation that re-prices an existing order', () => {
@@ -60,7 +55,24 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
   });
 
   it('DISC-01: createOrder charges the discounted price and keeps the GHS 30 shipping fee', async () => {
-    const product = { id: 'product-1', name: 'Kettle', price: 500, currency: 'GHS', quantity: 5, categoryId: null };
+    const variant = {
+      id: 'variant-1',
+      productId: 'product-1',
+      sku: 'KETTLE',
+      optionValues: {},
+      price: 500,
+      quantity: 5,
+      isActive: true,
+      discountId: null,
+      product: {
+        id: 'product-1',
+        name: 'Kettle',
+        currency: 'GHS',
+        isActive: true,
+        status: 'PUBLISHED',
+        categoryId: null,
+      },
+    };
     const repository = {
       findUserById: jest.fn().mockResolvedValue({ id: 'user-1', isActive: true }),
       findAddressForUser: jest.fn().mockResolvedValue({
@@ -69,18 +81,17 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
         recipientName: 'Ama Mensah',
         phone: '+233244123456',
       }),
-      findProductById: jest.fn().mockResolvedValue(product),
+      findVariant: jest.fn().mockResolvedValue(variant),
       runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
-      decrementProductStock: jest.fn().mockResolvedValue({ ...product, quantity: 4 }),
+      decrementVariantStock: jest.fn().mockResolvedValue({ ...variant, quantity: 4 }),
       create: jest.fn().mockImplementation((_tx, _userId, details) => ({ id: 'order-1', ...details, items: [] })),
       clearCartItems: jest.fn(),
-      findNamesOfProductsWithVariants: jest.fn().mockResolvedValue([]),
     };
-    const cart = { id: 'cart-1', items: [{ productId: 'product-1', quantity: 1 }] };
+    const cart = { id: 'cart-1', items: [{ productId: 'product-1', variantId: 'variant-1', quantity: 1 }] };
     const discounts = {
-      findActiveDiscountsByProduct: jest
+      findActiveDiscountsByVariant: jest
         .fn()
-        .mockResolvedValue(new Map([['product-1', [discount('pct-10', 'PERCENTAGE', 10)]]])),
+        .mockResolvedValue(new Map([['variant-1', [discount('pct-10', 'PERCENTAGE', 10)]]])),
     };
     const service = new OrdersService(
       repository as never,

@@ -5,11 +5,9 @@ import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
 import { CartItem, Discount, Prisma } from '../generated/prisma/client';
-import { Decimal } from '@prisma/client/runtime/client';
 import {
   CartWithDiscount,
   CreateOrUpdateDiscountInput,
-  DiscountCalculation,
   DiscountConnectInput,
   DiscountConnectionOperation,
   DiscountConnectOrSetInput,
@@ -17,7 +15,7 @@ import {
 } from './types';
 import { DiscountRepository } from './discount.repository';
 import { AuditEntry, AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
-import { bestUnitPrice, CandidateDiscount, priceCart, toDiscountCalculation } from './pricing';
+import { CandidateDiscount, priceCart } from './pricing';
 
 const DISCOUNT_ALL_KEY = 'discount:all';
 const discountKey = (id: string) => `discount:${id}`;
@@ -53,11 +51,22 @@ function discountItemsChange(
   };
 }
 
-function requirePrice(product: { id: string; name: string; price: Prisma.Decimal | null }): Prisma.Decimal {
-  if (product.price === null) {
-    throw new BadRequestException(`Product "${product.name}" (${product.id}) has no price and cannot be sold`);
+/** A variant with what decides which discounts apply to it. */
+export interface DiscountableVariant {
+  id: string;
+  productId: string;
+  categoryId: string | null;
+  discountId: string | null;
+}
+
+function requirePrice(
+  product: { name: string },
+  variant: { id: string; sku: string; price: Prisma.Decimal | null },
+): Prisma.Decimal {
+  if (variant.price === null) {
+    throw new BadRequestException(`"${product.name}" (${variant.sku}) has no price and cannot be sold`);
   }
-  return product.price;
+  return variant.price;
 }
 
 @Injectable()
@@ -254,37 +263,26 @@ export class DiscountService {
   }
 
   /**
-   * Calculates the discounted price for a product or variant.
-   * @param productId - The ID of the product.
-   * @param variantId - The ID of the variant, if applicable.
-   * @returns The discounted price, discount amount, and discount ID (if applicable).
-   */
-  async getDiscountedPriceForProduct(productId: string, variantId?: string): Promise<DiscountCalculation> {
-    const product = await this.getProductOrThrow(productId);
-    let price = (product.price as Decimal.Value | null) ?? 0;
-
-    if (variantId) {
-      const variant = await this.getVariantOrThrow(variantId);
-      price = (variant.price as Decimal.Value | null) ?? price;
-    }
-
-    const discounts = await this.getApplicableDiscounts(productId, variantId);
-    return toDiscountCalculation(bestUnitPrice(price, discounts));
-  }
-
-  /**
    * Prices the cart with the same rules createOrder charges, and records each line's price on the cart item.
    * @throws NotFoundException if the cart is not found.
-   * @throws BadRequestException if a product in the cart has no price.
+   * @throws BadRequestException if a variant in the cart has no price.
    */
   async applyDiscountsToCart(cartId: string): Promise<CartWithDiscount> {
     const cart = await this.findCartOrThrow(cartId);
-    const discounts = await this.findActiveDiscountsByProduct(cart.items.map((item) => item.product));
+    const discounts = await this.findActiveDiscountsByVariant(
+      cart.items.map((item) => ({
+        id: item.variantId,
+        productId: item.productId,
+        categoryId: item.product.categoryId,
+        discountId: item.variant.discountId,
+      })),
+    );
     const priced = priceCart(
       cart.items.map((item) => ({
+        variantId: item.variantId,
         productId: item.productId,
         quantity: item.quantity,
-        unitPrice: requirePrice(item.product),
+        unitPrice: requirePrice(item.product, item.variant),
       })),
       discounts,
     );
@@ -309,25 +307,27 @@ export class DiscountService {
     };
   }
 
-  /** Active, in-date discounts that target each product directly or through its category, keyed by product ID. */
-  async findActiveDiscountsByProduct(
-    products: { id: string; categoryId: string | null }[],
-  ): Promise<Map<string, CandidateDiscount[]>> {
-    const productIds = [...new Set(products.map((product) => product.id))];
-    const categoryIds = [
-      ...new Set(products.map((product) => product.categoryId).filter((id): id is string => id !== null)),
-    ];
-    const discounts = productIds.length
-      ? await this.discountRepository.findActiveDiscountsFor(productIds, categoryIds)
+  /**
+   * Active, in-date discounts for each variant, keyed by variant ID: its own discount and those that target its
+   * product or its product's category (a discount on a product applies to all its variants).
+   */
+  async findActiveDiscountsByVariant(variants: DiscountableVariant[]): Promise<Map<string, CandidateDiscount[]>> {
+    const unique = <T>(values: (T | null)[]) => [...new Set(values.filter((value): value is T => value !== null))];
+    const productIds = unique(variants.map((variant) => variant.productId));
+    const categoryIds = unique(variants.map((variant) => variant.categoryId));
+    const discountIds = unique(variants.map((variant) => variant.discountId));
+    const discounts = variants.length
+      ? await this.discountRepository.findActiveDiscountsFor(productIds, categoryIds, discountIds)
       : [];
 
     return new Map(
-      products.map((product) => [
-        product.id,
+      variants.map((variant) => [
+        variant.id,
         discounts.filter(
           (discount) =>
-            discount.products.some(({ id }) => id === product.id) ||
-            discount.categories.some(({ id }) => id === product.categoryId),
+            discount.id === variant.discountId ||
+            discount.products.some(({ id }) => id === variant.productId) ||
+            discount.categories.some(({ id }) => id === variant.categoryId),
         ),
       ]),
     );
@@ -359,34 +359,6 @@ export class DiscountService {
     const discount = await this.discountRepository.findById(id);
     if (!discount) throw new NotFoundException(`Discount with ID ${id} not found`);
     return discount;
-  }
-
-  private async getApplicableDiscounts(productId: string, variantId?: string): Promise<Discount[]> {
-    const product = await this.discountRepository.findProductWithDiscounts(productId);
-    const discounts: Discount[] = product ? [...product.discounts] : [];
-    const categoryDiscounts = product?.categoryId
-      ? await this.discountRepository.findCategoryDiscounts(product.categoryId)
-      : [];
-    discounts.push(...categoryDiscounts);
-
-    if (variantId) {
-      const variantDiscounts = await this.discountRepository.findVariantDiscounts(variantId);
-      discounts.push(...variantDiscounts);
-    }
-
-    return discounts;
-  }
-
-  private async getProductOrThrow(id: string) {
-    const product = await this.discountRepository.findProductById(id, { price: true });
-    if (!product) throw new NotFoundException(`Product with ID ${id} not found`);
-    return product as { price: unknown };
-  }
-
-  private async getVariantOrThrow(id: string) {
-    const variant = await this.discountRepository.findVariantById(id, { price: true });
-    if (!variant) throw new NotFoundException(`Variant with ID ${id} not found`);
-    return variant as { price: unknown };
   }
 
   private async findCartOrThrow(cartId: string) {

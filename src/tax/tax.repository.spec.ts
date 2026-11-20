@@ -112,11 +112,11 @@ describe('TaxRepository', () => {
     });
   });
 
-  describe('repriceTaxableProducts', () => {
+  describe('repriceTaxableVariants', () => {
     it('binds the multiplier as a Decimal cast to numeric, never a float', async () => {
       const executeRaw = jest.fn().mockResolvedValue(3);
 
-      await repository.repriceTaxableProducts(new Prisma.Decimal('0.15'), {
+      await repository.repriceTaxableVariants(new Prisma.Decimal('0.15'), {
         $executeRaw: executeRaw,
       } as unknown as Prisma.TransactionClient);
 
@@ -125,6 +125,22 @@ describe('TaxRepository', () => {
       expect(multiplier).toEqual(new Prisma.Decimal('1.15'));
       expect(multiplier).toBeInstanceOf(Prisma.Decimal);
       expect(sql.join('?')).toContain('?::numeric, 2)');
+    });
+
+    it('reprices the variants of taxable products from their base price', async () => {
+      const executeRaw = jest.fn().mockResolvedValue(3);
+
+      await repository.repriceTaxableVariants(new Prisma.Decimal('0.15'), {
+        $executeRaw: executeRaw,
+      } as unknown as Prisma.TransactionClient);
+
+      const [sql] = executeRaw.mock.calls[0] as [TemplateStringsArray];
+      const query = sql.join('?').replace(/\s+/g, ' ');
+      expect(query).toContain('UPDATE "Variant" v');
+      expect(query).toContain('ROUND(v."basePrice" * ?::numeric, 2)');
+      expect(query).toContain('FROM "Product" p');
+      expect(query).toContain('p.id = v."productId" AND p."isTaxable" = true AND v."basePrice" IS NOT NULL');
+      expect(query).not.toContain('UPDATE "Product"');
     });
   });
 

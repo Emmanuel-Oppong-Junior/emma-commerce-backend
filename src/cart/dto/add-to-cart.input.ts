@@ -1,14 +1,17 @@
-import { Field, InputType, Int } from '@nestjs/graphql';
-import { IsNotEmpty, IsPositive, IsString } from 'class-validator';
+import { Field, ID, InputType, Int } from '@nestjs/graphql';
+import { IsInt, IsNotEmpty, IsString, Max, Min } from 'class-validator';
+import { MAX_STOCK_QUANTITY } from '../../variant/dto/create-variant.input';
 
 @InputType()
 export class AddToCartInput {
-  @Field(() => String, { description: 'ID of the product to add to the cart' })
-  @IsNotEmpty({ message: 'Product ID is required' })
+  @Field(() => ID, { description: 'ID of the variant (SKU) to add; every product is sold through its variants' })
+  @IsNotEmpty({ message: 'Variant ID is required' })
   @IsString()
-  productId: string;
+  variantId: string;
 
-  @Field(() => Int, { description: 'Quantity of the product to add' })
-  @IsPositive({ message: 'Quantity must be positive' })
+  @Field(() => Int, { description: 'Quantity to add' })
+  @IsInt({ message: 'Quantity must be an integer' })
+  @Min(1, { message: 'Quantity must be positive' })
+  @Max(MAX_STOCK_QUANTITY)
   quantity: number;
 }

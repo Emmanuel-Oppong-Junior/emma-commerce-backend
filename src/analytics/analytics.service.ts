@@ -159,14 +159,16 @@ export class AnalyticsService {
       this.prisma.user.count({ where: { isActive: true } }),
       this.getSalesReport(todayStart, now),
       this.prisma.$queryRaw<[{ count: bigint }]>`
-        SELECT COUNT(*)::bigint AS count FROM "Product"
-        WHERE "isActive" = true AND quantity <= COALESCE("lowStockAlert", 5)
+        SELECT COUNT(DISTINCT p.id)::bigint AS count
+        FROM "Product" p JOIN "Variant" v ON v."productId" = p.id
+        WHERE p."isActive" AND v."isActive" AND v.quantity <= COALESCE(v."lowStockThreshold", 5)
       `
         // eslint-disable-next-line no-restricted-syntax -- a row count (COUNT returns bigint), not money
         .then((r) => Number(r[0].count)),
       this.prisma.$queryRaw<[{ count: bigint }]>`
-        SELECT COUNT(*)::bigint AS count FROM "Variant"
-        WHERE quantity <= COALESCE("lowStockThreshold", 5)
+        SELECT COUNT(*)::bigint AS count
+        FROM "Variant" v JOIN "Product" p ON p.id = v."productId"
+        WHERE p."isActive" AND v."isActive" AND v.quantity <= COALESCE(v."lowStockThreshold", 5)
       `
         // eslint-disable-next-line no-restricted-syntax -- a row count (COUNT returns bigint), not money
         .then((r) => Number(r[0].count)),

@@ -3,10 +3,10 @@ import { IsNotEmpty, IsPositive, IsString } from 'class-validator';
 
 @InputType()
 export class CreateCartInput {
-  @Field(() => String, { description: 'ID of the product to add' })
+  @Field(() => String, { description: 'ID of the variant to add' })
   @IsNotEmpty()
   @IsString()
-  productId: string;
+  variantId: string;
 
   @Field(() => Int, { description: 'Quantity to add' })
   @IsPositive()

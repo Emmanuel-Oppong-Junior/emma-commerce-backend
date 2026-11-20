@@ -84,7 +84,7 @@ describe('CartResolver', () => {
   });
 
   describe('addToCart', () => {
-    const input: AddToCartInput = { productId: 'prod1', quantity: 3 };
+    const input: AddToCartInput = { variantId: 'var1', quantity: 3 };
 
     it('should add a product to the cart successfully', async () => {
       mockCartService.addToCart.mockResolvedValueOnce(mockCart);
@@ -108,7 +108,7 @@ describe('CartResolver', () => {
 
     it('should throw BadRequestException when quantity exceeds stock', async () => {
       const highQuantityInput: AddToCartInput = {
-        productId: 'prod1',
+        variantId: 'var1',
         quantity: 101,
       };
       mockCartService.addToCart.mockRejectedValueOnce(

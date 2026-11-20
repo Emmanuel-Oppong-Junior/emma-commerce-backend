@@ -10,16 +10,19 @@ export class CartItem {
   @Field(() => ID, { description: 'Unique identifier of the cart item' })
   id: string;
 
-  @Field(() => String, { description: 'ID of the product in the cart' })
+  @Field(() => String, { description: 'ID of the product of the variant' })
   productId: string;
 
   @Field(() => Product, { description: 'The product in the cart' })
   product: Product;
 
-  @Field(() => Variant, { description: 'Variant of the product, if applicable', nullable: true })
-  variant?: Variant;
+  @Field(() => ID, { description: 'ID of the variant (SKU) in the cart' })
+  variantId: string;
 
-  @Field(() => MoneyObject, { description: 'Original price per unit of the product or variant', nullable: true })
+  @Field(() => Variant, { description: 'The variant (SKU) in the cart: what is priced and stocked' })
+  variant: Variant;
+
+  @Field(() => MoneyObject, { description: 'List price of one unit of the variant', nullable: true })
   originalPrice?: Decimal;
 
   @Field(() => MoneyObject, { description: 'Discounted price per unit, if applicable', nullable: true })

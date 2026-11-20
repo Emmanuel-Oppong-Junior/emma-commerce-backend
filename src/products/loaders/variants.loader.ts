@@ -8,7 +8,7 @@ export class VariantsLoader {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Batches variant lookups for multiple products in a single request.
+   * Batches the lookup of each product's active variants (archived ones are history, not for sale) in one query.
    * Prevents N+1 queries when resolving the `variants` field on Product.
    */
   readonly loader = new DataLoader<string, Variant[]>(
@@ -16,7 +16,7 @@ export class VariantsLoader {
       const ids = [...productIds];
 
       const variants = await this.prisma.variant.findMany({
-        where: { productId: { in: ids } },
+        where: { productId: { in: ids }, isActive: true },
         orderBy: { id: 'asc' },
       });
 

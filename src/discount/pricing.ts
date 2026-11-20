@@ -21,12 +21,14 @@ export interface UnitPrice {
 }
 
 export interface CartLine {
+  variantId: string;
   productId: string;
   unitPrice: Decimal.Value;
   quantity: number;
 }
 
 export interface PricedLine extends UnitPrice {
+  variantId: string;
   productId: string;
   quantity: number;
   lineDiscount: Money;
@@ -83,7 +85,7 @@ export function toDiscountCalculation(unit: UnitPrice): DiscountCalculation {
  */
 export function priceCart(
   lines: readonly CartLine[],
-  discountsByProduct: ReadonlyMap<string, readonly CandidateDiscount[]>,
+  discountsByVariant: ReadonlyMap<string, readonly CandidateDiscount[]>,
 ): PricedCart {
   const grossSubtotal = lines.reduce((sum, line) => sum.add(toCedis(line.unitPrice).mul(line.quantity)), ZERO);
   const isEligible = (discount: CandidateDiscount) =>
@@ -92,10 +94,11 @@ export function priceCart(
     grossSubtotal.gte(discount.minimumPurchase);
 
   const priced = lines.map((line): PricedLine => {
-    const eligible = (discountsByProduct.get(line.productId) ?? []).filter(isEligible);
+    const eligible = (discountsByVariant.get(line.variantId) ?? []).filter(isEligible);
     const unit = bestUnitPrice(line.unitPrice, eligible);
     return {
       ...unit,
+      variantId: line.variantId,
       productId: line.productId,
       quantity: line.quantity,
       lineDiscount: unit.unitDiscount.mul(line.quantity),

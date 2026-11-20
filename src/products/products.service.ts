@@ -6,12 +6,10 @@ import { ProductSortArgs } from './dto/product-sort.args';
 import { ProductSortField } from './enums/product-sort-field.enum';
 import { SortOrder } from '../commons/enums/sort-order.enum';
 import { Prisma, Product } from '../generated/prisma/client';
-import { Decimal } from '@prisma/client/runtime/client';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { ProductsRepository } from './products.repository';
 import { TaxService } from '../tax/tax.service';
-import { taxInclusivePrice } from '../tax/tax-inclusive-price';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 import { ProductTypesRepository, ProductTypeWithAttributes } from '../product-types/product-types.repository';
 import {
@@ -28,16 +26,21 @@ export const PUBLIC_PRODUCT_WHERE = { isActive: true, status: 'PUBLISHED' } sati
 export const MAX_NESTED_PRODUCTS = 100;
 const AUDITED_PRODUCT_FIELDS = [
   'name',
-  'sku',
-  'basePrice',
-  'price',
-  'currentPrice',
+  'productTypeId',
+  'attributes',
   'isTaxable',
   'status',
   'isActive',
   'categoryId',
   'subcategoryId',
   'brandId',
+  'requiresPrescription',
+  'isPerishable',
+  'shelfLifeDays',
+  'trackLots',
+  'trackSerials',
+  'fulfilmentKind',
+  'unitOfMeasure',
 ] as const satisfies readonly (keyof Product)[];
 
 @Injectable()
@@ -51,41 +54,23 @@ export class ProductsService {
   ) {}
 
   /**
-   * Creates a new product.
-   * If isTaxable is true, price is computed as basePrice × (1 + total active tax rate).
-   * Otherwise price equals basePrice.
+   * Creates a product with its variants (at least one; a product without options has one variant with none). Each
+   * variant's price is its basePrice, plus tax when the product is taxable; its initial stock is logged.
    */
   async create(createProductInput: CreateProductInput, actorId: string): Promise<Product> {
     await this.validateProductInput(createProductInput);
-    const { basePrice, isTaxable, productTypeId, attributes: rawAttributes, ...rest } = createProductInput;
+    const { variants, isTaxable, productTypeId, attributes: rawAttributes, ...rest } = createProductInput;
     const productType = await this.findProductType(productTypeId ?? GENERAL_PRODUCT_TYPE_ID);
     const attributes = this.checkAttributes(productType, rawAttributes);
-    const price = await this.computePrice(basePrice, isTaxable);
-    // Every product sells through a variant (ADR-0003): this one starts with a default variant without options.
-    const defaultVariant = await this.variantService.prepare({ isTaxable: isTaxable ?? false, productType }, [
-      {
-        basePrice,
-        quantity: rest.quantity,
-        sku: rest.sku,
-        barcode: rest.barcode,
-        lowStockThreshold: rest.lowStockAlert,
-      },
-    ]);
+    const prepared = await this.variantService.prepare({ isTaxable: isTaxable ?? false, productType }, variants);
     return this.auditService.record(
       async (tx) => {
         const product = await this.productsRepository.create(
-          {
-            ...rest,
-            productType: { connect: { id: productType.id } },
-            attributes,
-            basePrice: basePrice.toFixed(2),
-            price: price.toFixed(2),
-            isTaxable: isTaxable ?? false,
-          },
+          { ...rest, productType: { connect: { id: productType.id } }, attributes, isTaxable: isTaxable ?? false },
           { category: true, subcategory: true },
           tx,
         );
-        await this.variantService.insertPrepared(tx, product.id, defaultVariant, actorId);
+        await this.variantService.insertPrepared(tx, product.id, prepared, actorId);
         return product;
       },
       (product) => ({
@@ -93,24 +78,27 @@ export class ProductsService {
         entityId: product.id,
         action: 'CREATE',
         userId: actorId,
-        details: { after: fieldValues(product, AUDITED_PRODUCT_FIELDS) },
+        details: { after: fieldValues(product, AUDITED_PRODUCT_FIELDS), variants: prepared.length },
       }),
     );
   }
 
-  /**
-   * Updates an existing product.
-   * Recomputes price whenever basePrice or isTaxable changes.
-   */
+  /** Updates a product. Turning tax on or off reprices its variants (from their basePrice) in the same transaction. */
   async update(id: string, updateProductInput: UpdateProductInput, actorId: string): Promise<Product> {
     const existing = await this.productsRepository.findById(id);
     if (!existing) throw new NotFoundException('Product not found');
     await this.validateProductInput({ ...updateProductInput, id });
-    const updateData = await this.buildUpdateData(existing, updateProductInput);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type and attributes are validated by retype
+    const { productTypeId, attributes, ...rest } = updateProductInput;
+    const updateData: Prisma.ProductUpdateInput = { ...rest };
     const retyped = await this.retype(existing, updateProductInput, updateData);
+    const reprice = rest.isTaxable !== undefined && rest.isTaxable !== existing.isTaxable;
+    const rate = reprice ? await this.taxService.getTotalActiveRate() : undefined;
     return this.auditService.record(
       async (tx) => {
         for (const variant of retyped) await this.productsRepository.updateVariantOptions(variant, tx);
+        if (rate !== undefined)
+          await this.productsRepository.repriceVariants(id, rest.isTaxable ? rate : new Prisma.Decimal(0), tx);
         return this.productsRepository.update(id, updateData, { category: true, subcategory: true }, tx);
       },
       (updated) => ({
@@ -123,9 +111,7 @@ export class ProductsService {
     );
   }
 
-  /**
-   * Removes a product from the database by its ID.
-   */
+  /** Deletes a product no cart or order refers to, with its variants and their stock movements. */
   async remove(id: string, actorId: string): Promise<Product> {
     await this.ensureProductExist(id);
     await this.checkProductDependencies(id);
@@ -233,33 +219,6 @@ export class ProductsService {
     );
   }
 
-  private async computePrice(basePrice: Decimal.Value, isTaxable: boolean): Promise<Prisma.Decimal> {
-    if (!isTaxable) return new Prisma.Decimal(basePrice);
-    return taxInclusivePrice(basePrice, await this.taxService.getTotalActiveRate());
-  }
-
-  private async buildUpdateData(existing: Product, input: UpdateProductInput): Promise<Prisma.ProductUpdateInput> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type and attributes are validated by retype
-    const { basePrice, isTaxable, productTypeId, attributes, ...rest } = input;
-    const updateData: Prisma.ProductUpdateInput = { ...rest };
-
-    if (basePrice !== undefined || isTaxable !== undefined) {
-      const effectiveBase = basePrice ?? existing.basePrice;
-      if (effectiveBase === null) {
-        throw new BadRequestException(
-          `Product "${existing.id}" has no basePrice; set basePrice to recompute its price`,
-        );
-      }
-      const effectiveTaxable = isTaxable !== undefined ? isTaxable : existing.isTaxable;
-      const price = await this.computePrice(effectiveBase, effectiveTaxable);
-      updateData.price = price.toFixed(2);
-      if (basePrice !== undefined) updateData.basePrice = basePrice.toFixed(2);
-      if (isTaxable !== undefined) updateData.isTaxable = isTaxable;
-    }
-
-    return updateData;
-  }
-
   /**
    * Validates a new type and/or attribute map and adds them to `updateData`. A product changes type only if each of
    * its variants' option values is valid for the new type; returns the variants with their re-normalised options.
@@ -316,7 +275,6 @@ export class ProductsService {
 
   private async validateProductInput(input: CreateProductInput | (UpdateProductInput & { id: string })) {
     await this.validateCategoryAndSubcategory(input.categoryId ?? '', input.subcategoryId);
-    await this.validateSkuUniqueness(input);
   }
 
   private async validateCategoryAndSubcategory(categoryId: string, subcategoryId?: string): Promise<void> {
@@ -330,22 +288,6 @@ export class ProductsService {
       if (!subcategory) throw new NotFoundException(`Subcategory ID "${subcategoryId}" not found`);
       if (subcategory.categoryId !== categoryId) {
         throw new ConflictException(`Subcategory ID "${subcategoryId}" does not belong to category ID "${categoryId}"`);
-      }
-    }
-  }
-
-  private async validateSkuUniqueness(input: CreateProductInput | UpdateProductInput): Promise<void> {
-    const { sku } = input;
-    if (sku) {
-      const existing = await this.productsRepository.findFirst({
-        sku: { equals: sku, mode: 'insensitive' },
-      });
-      if ('id' in input && existing && existing.id != input.id) {
-        throw new ConflictException(`SKU "${sku}" is already in use by another product`);
-      }
-
-      if (!('id' in input) && existing) {
-        throw new ConflictException(`SKU "${sku}" is already in use`);
       }
     }
   }
@@ -371,18 +313,15 @@ export class ProductsService {
       status,
       search,
       createdAfter,
-      priceMin,
-      priceMax,
       brand,
       categoryName,
       subCategoryName,
-      inStock,
       tagId,
       tagName,
     } = filter;
     return {
       ...(categoryName && { category: { name: { equals: categoryName, mode: 'insensitive' } } }),
-      ...(subCategoryName && { subcategory: { name: { equals: categoryName, mode: 'insensitive' } } }),
+      ...(subCategoryName && { subcategory: { name: { equals: subCategoryName, mode: 'insensitive' } } }),
       ...(categoryId && { categoryId }),
       ...(subcategoryId && { subcategoryId }),
       ...(isActive !== undefined && { isActive }),
@@ -395,12 +334,22 @@ export class ProductsService {
         ],
       }),
       ...(createdAfter && { createdAt: { gte: new Date(createdAfter) } }),
-      ...(priceMin !== undefined && { price: { gte: priceMin } }),
-      ...(priceMax !== undefined && { price: { lte: priceMax } }),
+      ...(this.variantFilter(filter) && { variants: { some: this.variantFilter(filter) } }),
       ...(brand && { brand: { name: { equals: brand, mode: 'insensitive' } } }),
-      ...(inStock && { quantity: { gte: 0 } }),
       ...(tagId && { tags: { some: { id: { equals: tagId } } } }),
       ...(tagName && { tags: { some: { name: { equals: tagName, mode: 'insensitive' } } } }),
+    };
+  }
+
+  /** One active variant must match every price/stock condition, so the filters run on variants in SQL. */
+  private variantFilter({ priceMin, priceMax, inStock }: ProductFilterArgs): Prisma.VariantWhereInput | undefined {
+    if (priceMin === undefined && priceMax === undefined && inStock !== true) return undefined;
+    return {
+      isActive: true,
+      ...((priceMin !== undefined || priceMax !== undefined) && {
+        price: { ...(priceMin !== undefined && { gte: priceMin }), ...(priceMax !== undefined && { lte: priceMax }) },
+      }),
+      ...(inStock === true && { quantity: { gt: 0 } }),
     };
   }
 

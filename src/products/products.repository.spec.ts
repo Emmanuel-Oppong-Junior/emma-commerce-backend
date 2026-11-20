@@ -75,7 +75,7 @@ describe('ProductsRepository', () => {
       expect(mockPrismaProduct.create).toHaveBeenCalledWith(expect.objectContaining({ include: { category: true } }));
     });
 
-    it('should throw ConflictException on P2002 (duplicate SKU)', async () => {
+    it('should throw ConflictException on P2002 (unique conflict)', async () => {
       const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint', {
         code: 'P2002',
         clientVersion: '5.0',
@@ -178,7 +178,7 @@ describe('ProductsRepository', () => {
     it('should find first product matching condition', async () => {
       mockPrismaProduct.findFirst.mockResolvedValue(mockProduct);
 
-      const result = await repository.findFirst({ sku: 'TSHIRT001' });
+      const result = await repository.findFirst({ name: 'T-Shirt' });
 
       expect(result).toEqual(mockProduct);
     });
@@ -186,7 +186,7 @@ describe('ProductsRepository', () => {
     it('should return null if none match', async () => {
       mockPrismaProduct.findFirst.mockResolvedValue(null);
 
-      const result = await repository.findFirst({ sku: 'NONEXISTENT' });
+      const result = await repository.findFirst({ name: 'Nonexistent' });
 
       expect(result).toBeNull();
     });
@@ -313,6 +313,35 @@ describe('ProductsRepository', () => {
 
       expect(result).toBe(7);
       expect(mockPrismaOrderItem.count).toHaveBeenCalledWith({ where: { productId: 'prod1' } });
+    });
+  });
+
+  describe('repriceVariants', () => {
+    it('sets each priced variant of the product to its base price times (1 + rate), as exact rounded decimals', async () => {
+      const executeRaw = jest.fn().mockResolvedValue(2);
+
+      await repository.repriceVariants('prod1', new Prisma.Decimal('0.15'), {
+        $executeRaw: executeRaw,
+      } as unknown as Prisma.TransactionClient);
+
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      const [sql, multiplier, productId] = executeRaw.mock.calls[0] as [TemplateStringsArray, unknown, unknown];
+      expect(multiplier).toEqual(new Prisma.Decimal('1.15'));
+      expect(multiplier).toBeInstanceOf(Prisma.Decimal);
+      expect(productId).toBe('prod1');
+      const query = sql.join('?').replace(/\s+/g, ' ');
+      expect(query).toContain('UPDATE "Variant" SET "price" = ROUND("basePrice" * ?::numeric, 2)');
+      expect(query).toContain('WHERE "productId" = ? AND "basePrice" IS NOT NULL');
+    });
+
+    it('removes tax with a zero rate', async () => {
+      const executeRaw = jest.fn().mockResolvedValue(2);
+
+      await repository.repriceVariants('prod1', new Prisma.Decimal(0), {
+        $executeRaw: executeRaw,
+      } as unknown as Prisma.TransactionClient);
+
+      expect(executeRaw.mock.calls[0][1]).toEqual(new Prisma.Decimal(1));
     });
   });
 });

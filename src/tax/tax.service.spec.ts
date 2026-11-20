@@ -16,7 +16,7 @@ const vat = {
 
 describe('TaxService', () => {
   let repository: jest.Mocked<
-    Pick<TaxRepository, 'create' | 'update' | 'delete' | 'findById' | 'getTotalActiveRate' | 'repriceTaxableProducts'>
+    Pick<TaxRepository, 'create' | 'update' | 'delete' | 'findById' | 'getTotalActiveRate' | 'repriceTaxableVariants'>
   >;
   let audit: ReturnType<typeof createAuditServiceMock>;
   let service: TaxService;
@@ -28,7 +28,7 @@ describe('TaxService', () => {
       delete: jest.fn().mockResolvedValue(vat),
       findById: jest.fn().mockResolvedValue(vat),
       getTotalActiveRate: jest.fn().mockResolvedValue(new Prisma.Decimal('0.15')),
-      repriceTaxableProducts: jest.fn().mockResolvedValue(undefined),
+      repriceTaxableVariants: jest.fn().mockResolvedValue(undefined),
     };
     audit = createAuditServiceMock();
     service = new TaxService(repository as never, audit as never);
@@ -68,12 +68,12 @@ describe('TaxService', () => {
     await act();
 
     expect(repository.getTotalActiveRate).toHaveBeenCalledWith(AUDIT_TX);
-    expect(repository.repriceTaxableProducts).toHaveBeenCalledWith(new Prisma.Decimal('0.15'), AUDIT_TX);
+    expect(repository.repriceTaxableVariants).toHaveBeenCalledWith(new Prisma.Decimal('0.15'), AUDIT_TX);
   });
 
   it('fails the tax change without an audit entry when the reprice fails', async () => {
     const failure = new Error('reprice failed');
-    repository.repriceTaxableProducts.mockRejectedValue(failure);
+    repository.repriceTaxableVariants.mockRejectedValue(failure);
 
     await expect(service.create({ name: 'VAT', rate: new Decimal('0.15') }, 'admin1')).rejects.toBe(failure);
     expect(audit.record).toHaveBeenCalledTimes(1);
@@ -94,6 +94,6 @@ describe('TaxService', () => {
     );
     expect(repository.update).not.toHaveBeenCalled();
     expect(audit.log).not.toHaveBeenCalled();
-    expect(repository.repriceTaxableProducts).not.toHaveBeenCalled();
+    expect(repository.repriceTaxableVariants).not.toHaveBeenCalled();
   });
 });

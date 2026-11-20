@@ -178,57 +178,6 @@ describe('DiscountRepository', () => {
     });
   });
 
-  describe('findProductById', () => {
-    it('should find a product by ID with select', async () => {
-      mockPrismaProduct.findUnique.mockResolvedValue({ price: 100 });
-
-      const result = await repository.findProductById('prod1', { price: true });
-
-      expect(result).toEqual({ price: 100 });
-    });
-  });
-
-  describe('findProductWithDiscounts', () => {
-    it('should return product with active discounts', async () => {
-      const productWithDiscounts = { categoryId: 'cat1', discounts: [mockDiscount] };
-      mockPrismaProduct.findUnique.mockResolvedValue(productWithDiscounts);
-
-      const result = await repository.findProductWithDiscounts('prod1');
-
-      expect(result).toEqual(productWithDiscounts);
-    });
-  });
-
-  describe('findVariantById', () => {
-    it('should find a variant by ID with select', async () => {
-      mockPrismaVariant.findUnique.mockResolvedValue({ price: 50 });
-
-      const result = await repository.findVariantById('var1', { price: true });
-
-      expect(result).toEqual({ price: 50 });
-    });
-  });
-
-  describe('findCategoryDiscounts', () => {
-    it('should return active discounts for a category', async () => {
-      mockPrismaDiscount.findMany.mockResolvedValue([mockDiscount]);
-
-      const result = await repository.findCategoryDiscounts('cat1');
-
-      expect(result).toEqual([mockDiscount]);
-    });
-  });
-
-  describe('findVariantDiscounts', () => {
-    it('should return active discounts for a variant', async () => {
-      mockPrismaDiscount.findMany.mockResolvedValue([mockDiscount]);
-
-      const result = await repository.findVariantDiscounts('var1');
-
-      expect(result).toEqual([mockDiscount]);
-    });
-  });
-
   describe('getInvalidIds', () => {
     it('should return empty array if all IDs are valid', async () => {
       mockPrismaProduct.count.mockResolvedValue(2);
@@ -291,13 +240,27 @@ describe('DiscountRepository', () => {
           isActive: true,
           startDate: { lte: expect.any(Date) },
           endDate: { gte: expect.any(Date) },
-          OR: [{ products: { some: { id: { in: ['p1'] } } } }, { categories: { some: { id: { in: ['c1'] } } } }],
+          OR: [
+            { id: { in: [] } },
+            { products: { some: { id: { in: ['p1'] } } } },
+            { categories: { some: { id: { in: ['c1'] } } } },
+          ],
         }),
       );
       expect(query.include).toEqual({
         products: { where: { id: { in: ['p1'] } }, select: { id: true } },
         categories: { where: { id: { in: ['c1'] } }, select: { id: true } },
       });
+    });
+
+    it("also finds the variants' own discounts by id", async () => {
+      mockPrismaDiscount.findMany.mockResolvedValue([mockDiscount]);
+
+      const result = await repository.findActiveDiscountsFor(['p1'], [], ['discount1']);
+
+      expect(result).toEqual([mockDiscount]);
+      const query = mockPrismaDiscount.findMany.mock.calls[0][0];
+      expect(query.where.OR).toContainEqual({ id: { in: ['discount1'] } });
     });
   });
 });

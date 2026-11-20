@@ -1,8 +1,10 @@
-import { Field, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { Product } from '../../products/entities/product.entity';
 import { Discount } from '../../discount/entities/discount.entity';
 import { Decimal } from '@prisma/client/runtime/client';
 import { MoneyObject } from '../../commons/money/money.object';
+import { Variant } from '../../variant/entities/variant.entity';
+import { GraphQLJSONObject } from 'graphql-type-json';
 
 @ObjectType()
 export class OrderItem {
@@ -15,13 +17,22 @@ export class OrderItem {
   @Field(() => ID)
   productId: string;
 
-  @Field(() => ID, { nullable: true })
-  variantId?: string;
+  @Field(() => ID, { description: 'The variant (SKU) ordered' })
+  variantId: string;
 
-  @Field()
+  @Field(() => String, {
+    nullable: true,
+    description: 'SKU when ordered (null on lines ordered before variants were sold)',
+  })
+  sku?: string | null;
+
+  @Field(() => GraphQLJSONObject, { nullable: true, description: 'Option values when ordered, e.g. { size: "M" }' })
+  optionValues?: Record<string, unknown> | null;
+
+  @Field(() => Int)
   quantity: number;
 
-  @Field(() => MoneyObject, { description: 'Original price per unit of the product or variant', nullable: true })
+  @Field(() => MoneyObject, { description: 'List price of one unit of the variant', nullable: true })
   originalPrice?: Decimal;
 
   @Field(() => MoneyObject, { description: 'Discount taken off one unit at checkout', nullable: true })
@@ -41,4 +52,7 @@ export class OrderItem {
 
   @Field(() => Product)
   product: Product;
+
+  @Field(() => Variant)
+  variant: Variant;
 }

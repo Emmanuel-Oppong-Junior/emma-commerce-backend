@@ -5,6 +5,7 @@ import { migrationSql, ScratchSchema } from '../helpers/migration.helper';
 
 const EXPAND = '20261121000000_product_types_and_sku_columns';
 const BACKFILL = '20261121010000_default_variants';
+const CONTRACT = '20261121020000_variant_contract';
 
 // Legacy shapes as they existed before P1-V.2: product-level price and stock, variants with size/color, history
 // rows pointing only at products. Inserted after the expand migration, then the backfill runs twice.
@@ -220,5 +221,16 @@ describe('Variant migration on legacy data (P1-V.2, e2e)', () => {
     await legacy.exec(
       `INSERT INTO "Variant" ("id", "productId", "sku", "optionsKey", "price", "isActive", "updatedAt") VALUES ('v_m4', 'p_sized', 'X-4', 'size=m', 1, false, now())`,
     );
+  });
+
+  it('lets the contract migration require variants on history and drop the product price and stock columns', async () => {
+    await legacy.exec(migrationSql(CONTRACT));
+
+    const productColumns = await legacy.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = 'legacy_variant_migration' AND table_name = 'Product'`,
+    );
+    const names = productColumns.map((c) => c.column_name);
+    expect(names.filter((n) => ['price', 'basePrice', 'quantity', 'sku', 'barcode'].includes(n))).toEqual([]);
+    expect(await variantOf('OrderItem', 'oi_sized')).toBe('p_sized_legacy');
   });
 });

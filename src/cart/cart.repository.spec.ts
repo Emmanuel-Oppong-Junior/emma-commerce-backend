@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { CartRepository } from './cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Cart, CartItem, Prisma, Product } from '../generated/prisma/client';
+import { Cart, CartItem, Prisma, Product, Variant } from '../generated/prisma/client';
 
 const mockCart = {
   id: 'cart1',
@@ -12,13 +12,15 @@ const mockCart = {
   items: [],
 } as unknown as Cart & { items: CartItem[] };
 
-const mockProduct = {
-  id: 'prod1',
-  name: 'T-Shirt',
+const mockVariant = {
+  id: 'var1',
+  productId: 'prod1',
+  sku: 'TSHIRT-M',
   price: new Prisma.Decimal(50),
   quantity: 10,
   isActive: true,
-} as unknown as Product;
+  product: { id: 'prod1', name: 'T-Shirt', isActive: true, status: 'PUBLISHED' },
+} as unknown as Variant & { product: Product };
 
 const mockCartItem = {
   id: 'ci1',
@@ -34,8 +36,7 @@ const mockCartItem = {
 } as unknown as CartItem;
 
 const mockPrismaCart = { findUnique: jest.fn(), create: jest.fn() };
-const mockPrismaProduct = { findUnique: jest.fn() };
-const mockPrismaVariant = { count: jest.fn() };
+const mockPrismaVariant = { findUnique: jest.fn() };
 const mockPrismaCartItem = {
   findFirst: jest.fn(),
   upsert: jest.fn(),
@@ -46,7 +47,6 @@ const mockPrismaCartItem = {
 
 const mockPrisma = {
   cart: mockPrismaCart,
-  product: mockPrismaProduct,
   variant: mockPrismaVariant,
   cartItem: mockPrismaCartItem,
 };
@@ -103,48 +103,41 @@ describe('CartRepository', () => {
     });
   });
 
-  describe('findProductById', () => {
-    it('should return product by ID', async () => {
-      mockPrismaProduct.findUnique.mockResolvedValue(mockProduct);
+  describe('findVariant', () => {
+    it('should return the variant with its product by ID', async () => {
+      mockPrismaVariant.findUnique.mockResolvedValue(mockVariant);
 
-      const result = await repository.findProductById('prod1');
+      const result = await repository.findVariant('var1');
 
-      expect(result).toEqual(mockProduct);
+      expect(result).toEqual(mockVariant);
+      expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({ where: { id: 'var1' }, include: { product: true } });
     });
 
-    it('should return null if product not found', async () => {
-      mockPrismaProduct.findUnique.mockResolvedValue(null);
+    it('should return null if variant not found', async () => {
+      mockPrismaVariant.findUnique.mockResolvedValue(null);
 
-      const result = await repository.findProductById('nonexistent');
+      const result = await repository.findVariant('nonexistent');
 
       expect(result).toBeNull();
     });
   });
 
-  describe('countVariants', () => {
-    it("counts the product's variants", async () => {
-      mockPrismaVariant.count.mockResolvedValue(2);
-
-      const result = await repository.countVariants('prod1');
-
-      expect(result).toBe(2);
-      expect(mockPrismaVariant.count).toHaveBeenCalledWith({ where: { productId: 'prod1', optionsKey: { not: '' } } });
-    });
-  });
-
   describe('findCartItem', () => {
-    it('should return cart item by cartId and productId', async () => {
+    it('should return cart item by cartId and variantId', async () => {
       mockPrismaCartItem.findFirst.mockResolvedValue({ id: 'ci1', quantity: 2 });
 
-      const result = await repository.findCartItem('cart1', 'prod1');
+      const result = await repository.findCartItem('cart1', 'var1');
 
       expect(result).toEqual({ id: 'ci1', quantity: 2 });
+      expect(mockPrismaCartItem.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { cartId: 'cart1', variantId: 'var1' } }),
+      );
     });
 
     it('should return null if no item found', async () => {
       mockPrismaCartItem.findFirst.mockResolvedValue(null);
 
-      const result = await repository.findCartItem('cart1', 'prod1');
+      const result = await repository.findCartItem('cart1', 'var1');
 
       expect(result).toBeNull();
     });
@@ -154,19 +147,31 @@ describe('CartRepository', () => {
     it('should upsert a cart item', async () => {
       mockPrismaCartItem.upsert.mockResolvedValue(undefined);
 
-      await repository.upsertCartItem('ci1', 'cart1', 'prod1', new Prisma.Decimal(50), 3, 1);
+      await repository.upsertCartItem('ci1', 'cart1', { id: 'var1', productId: 'prod1' }, new Prisma.Decimal(50), 3);
 
       expect(mockPrismaCartItem.upsert).toHaveBeenCalledWith({
         where: { id: 'ci1' },
         update: { quantity: 3, originalPrice: new Prisma.Decimal(50) },
-        create: { cartId: 'cart1', productId: 'prod1', quantity: 1, originalPrice: new Prisma.Decimal(50) },
+        create: {
+          cartId: 'cart1',
+          productId: 'prod1',
+          variantId: 'var1',
+          quantity: 3,
+          originalPrice: new Prisma.Decimal(50),
+        },
       });
     });
 
     it('should use empty string when no existing item ID', async () => {
       mockPrismaCartItem.upsert.mockResolvedValue(undefined);
 
-      await repository.upsertCartItem(undefined, 'cart1', 'prod1', new Prisma.Decimal(50), 1, 1);
+      await repository.upsertCartItem(
+        undefined,
+        'cart1',
+        { id: 'var1', productId: 'prod1' },
+        new Prisma.Decimal(50),
+        1,
+      );
 
       expect(mockPrismaCartItem.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { id: '' } }));
     });

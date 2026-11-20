@@ -13,12 +13,12 @@ describe('Order status rules (e2e)', () => {
   let addressId: string;
 
   const stockOf = async () =>
-    (await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' }, select: { quantity: true } })).quantity;
+    (await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' }, select: { quantity: true } })).quantity;
 
   const placeOrder = async (): Promise<string> => {
     await gqlRequest(
       app,
-      'mutation { addToCart(input: { productId: "seed_prod1", quantity: 2 }) { id } }',
+      'mutation { addToCart(input: { variantId: "seed_var1", quantity: 2 }) { id } }',
       undefined,
       userToken,
     ).expect(200);

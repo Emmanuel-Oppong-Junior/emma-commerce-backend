@@ -12,26 +12,25 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
   let vatId: string;
 
   const admin = (query: string) => gqlRequest(app, query, undefined, adminToken).expect(200);
-  const priceOf = async (id: string) =>
-    (await prisma.product.findUniqueOrThrow({ where: { id } })).price?.toFixed(2) ?? null;
+  const DEFAULT_VARIANT: Record<string, string> = {
+    seed_prod1: 'seed_var1',
+    seed_prod2: 'seed_var2',
+    seed_prod_draft: 'seed_var_draft',
+  };
+  const priceOf = async (productId: string) =>
+    (await prisma.variant.findUniqueOrThrow({ where: { id: DEFAULT_VARIANT[productId] } })).price?.toFixed(2) ?? null;
 
   beforeAll(async () => {
     ({ app, prisma } = await createTestApp());
     await resetDb(prisma);
     await seedMinimal(prisma);
     adminToken = await signInAdmin(app);
-    await prisma.product.update({
-      where: { id: 'seed_prod1' },
-      data: { isTaxable: true, basePrice: '10.10', price: '10.10' },
-    });
-    await prisma.product.update({
-      where: { id: 'seed_prod2' },
-      data: { isTaxable: false, basePrice: '20.00', price: '20.00' },
-    });
-    await prisma.product.update({
-      where: { id: 'seed_prod_draft' },
-      data: { isTaxable: true, basePrice: null, price: '299.99' },
-    });
+    await prisma.product.update({ where: { id: 'seed_prod1' }, data: { isTaxable: true } });
+    await prisma.variant.update({ where: { id: 'seed_var1' }, data: { basePrice: '10.10', price: '10.10' } });
+    await prisma.product.update({ where: { id: 'seed_prod2' }, data: { isTaxable: false } });
+    await prisma.variant.update({ where: { id: 'seed_var2' }, data: { basePrice: '20.00', price: '20.00' } });
+    await prisma.product.update({ where: { id: 'seed_prod_draft' }, data: { isTaxable: true } });
+    await prisma.variant.update({ where: { id: 'seed_var_draft' }, data: { basePrice: null, price: '299.99' } });
   });
 
   afterAll(async () => {
@@ -77,9 +76,8 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
         id: 'tax_overflow',
         name: 'Overflow',
         isTaxable: true,
-        basePrice: '999999999999.99',
-        price: '999999999999.99',
         categoryId: 'seed_cat',
+        variants: { create: { sku: 'TAX-OVERFLOW', basePrice: '999999999999.99', price: '999999999999.99' } },
       },
     });
     const auditRowsBefore = await prisma.auditLog.count({ where: { entity: 'Tax' } });
@@ -106,16 +104,16 @@ describe('Tax changes reprice taxable products atomically (e2e)', () => {
     expect(res.body.errors).toBeUndefined();
     const product = await prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod1' } });
     expect(product.isTaxable).toBe(true);
-    expect(product.price?.toFixed(2)).toBe('10.35');
+    expect(await priceOf('seed_prod1')).toBe('10.35');
   });
 
-  it('updateProduct with a new basePrice prices it the same way the tax reprice does', async () => {
+  it('updateVariant with a new basePrice prices it the same way the tax reprice does', async () => {
     const res = await admin(
-      `mutation { updateProduct(productId: "seed_prod1", updateProductInput: { basePrice: "1.40" }) { price { amount currency } } }`,
+      `mutation { updateVariant(input: { id: "seed_var1", basePrice: "1.40" }) { price { amount currency } } }`,
     );
 
     expect(res.body.errors).toBeUndefined();
     expect(await priceOf('seed_prod1')).toBe('1.44');
-    expect(res.body.data.updateProduct.price).toEqual({ amount: '1.44', currency: 'GHS' });
+    expect(res.body.data.updateVariant.price).toEqual({ amount: '1.44', currency: 'GHS' });
   });
 });

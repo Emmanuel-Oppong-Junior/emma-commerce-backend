@@ -4,7 +4,7 @@ function buildOrdersService(order: Record<string, unknown>) {
   const repository = {
     findById: jest.fn().mockResolvedValue(order),
     runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
-    updateProductStock: jest.fn().mockResolvedValue({ quantity: 10 }),
+    restoreVariantStock: jest.fn().mockResolvedValue({ quantity: 10 }),
     updateStatus: jest.fn().mockResolvedValue({ ...order, status: 'CANCELLED' }),
     softDelete: jest.fn().mockResolvedValue({ ...order, deleted: true }),
     hasCompletedPayment: jest.fn().mockResolvedValue(false),
@@ -39,7 +39,7 @@ describe('Order lifecycle (audit repro: ORD-01, ORD-03, ORD-04)', () => {
     const { service, repository } = buildOrdersService(order);
 
     await expect(service.cancelOrder('user-1', 'order-1')).rejects.toThrow();
-    expect(repository.updateProductStock).not.toHaveBeenCalled();
+    expect(repository.restoreVariantStock).not.toHaveBeenCalled();
   });
 
   it('ORD-03: soft-deleting a DELIVERED order does not put its items back into stock', async () => {
@@ -54,7 +54,7 @@ describe('Order lifecycle (audit repro: ORD-01, ORD-03, ORD-04)', () => {
 
     await service.deleteOrder('order-1', 'admin-1').catch(() => undefined);
 
-    expect(repository.updateProductStock).not.toHaveBeenCalled();
+    expect(repository.restoreVariantStock).not.toHaveBeenCalled();
   });
 
   it('ORD-04: an admin cannot move a CANCELLED order to SHIPPED', async () => {

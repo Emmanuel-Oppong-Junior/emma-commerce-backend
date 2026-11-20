@@ -35,10 +35,10 @@ describe('Checkout pricing (e2e)', () => {
     endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
 
-  const addToCart = (productId: string, quantity: number) =>
+  const addToCart = (variantId: string, quantity: number) =>
     gqlRequest(
       app,
-      `mutation { addToCart(input: { productId: "${productId}", quantity: ${quantity} }) { id } }`,
+      `mutation { addToCart(input: { variantId: "${variantId}", quantity: ${quantity} }) { id } }`,
       undefined,
       userToken,
     ).expect(200);
@@ -103,7 +103,7 @@ describe('Checkout pricing (e2e)', () => {
         products: { connect: { id: 'seed_prod1' } },
       },
     });
-    await addToCart('seed_prod1', 2);
+    await addToCart('seed_var1', 2);
 
     const cart = await cartWithDiscount();
     expect(cart).toMatchObject({ total: ghs('1999.98'), discountTotal: ghs('200.00'), finalTotal: ghs('1799.98') });
@@ -144,8 +144,9 @@ describe('Checkout pricing (e2e)', () => {
       data: {
         id: 'pricing_kettle',
         name: 'Kettle',
-        price: 200,
-        quantity: 10,
+        variants: {
+          create: { id: 'pricing_kettle_var', sku: 'PRICING-KETTLE', price: 200, basePrice: 200, quantity: 10 },
+        },
         images: [],
         isActive: true,
         status: 'PUBLISHED',
@@ -172,7 +173,7 @@ describe('Checkout pricing (e2e)', () => {
         categories: { connect: { id: 'pricing_cat' } },
       },
     });
-    await addToCart('pricing_kettle', 1);
+    await addToCart('pricing_kettle_var', 1);
 
     const cart = await cartWithDiscount();
     expect(cart).toMatchObject({ total: ghs('200.00'), discountTotal: ghs('50.00'), finalTotal: ghs('150.00') });
@@ -196,39 +197,50 @@ describe('Checkout pricing (e2e)', () => {
         data: {
           id: 'pricing_shirt',
           name: 'Linen Shirt',
-          price: 150,
-          quantity: 20,
           images: [],
           isActive: true,
           status: 'PUBLISHED',
           variants: {
-            create: {
-              size: 'M',
-              optionValues: { size: 'M' },
-              optionsKey: 'size=m',
-              price: 180,
-              quantity: 5,
-              sku: 'CHECKOUT-M',
-            },
+            create: [
+              {
+                id: 'pricing_shirt_s',
+                optionValues: { size: 'S' },
+                optionsKey: 'size=s',
+                price: 150,
+                basePrice: 150,
+                quantity: 20,
+                sku: 'CHECKOUT-S',
+              },
+              {
+                id: 'pricing_shirt_m',
+                optionValues: { size: 'M' },
+                optionsKey: 'size=m',
+                price: 180,
+                basePrice: 180,
+                quantity: 5,
+                sku: 'CHECKOUT-M',
+              },
+            ],
           },
         },
       });
     });
 
-    it('refuses to add a product that has variants to the cart', async () => {
-      const res = await gqlRequest(
-        app,
-        `mutation { addToCart(input: { productId: "pricing_shirt", quantity: 1 }) { id } }`,
-        undefined,
-        userToken,
-      ).expect(200);
+    const stockOf = async (variantId: string) =>
+      (await prisma.variant.findUniqueOrThrow({ where: { id: variantId } })).quantity;
 
-      expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
-      expect(res.body.errors[0].message).toContain('"Linen Shirt"');
-      expect(await prisma.cartItem.count({ where: { productId: 'pricing_shirt' } })).toBe(0);
+    it('adds the chosen variant of a product with several variants to the cart at that variant’s price', async () => {
+      const res = await addToCart('pricing_shirt_m', 1);
+
+      expect(res.body.errors).toBeUndefined();
+      const cart = await cartWithDiscount();
+      expect(cart.items).toHaveLength(1);
+      expect(cart.items[0]).toMatchObject({ productId: 'pricing_shirt', originalPrice: ghs('180.00') });
+      expect(await prisma.cartItem.count({ where: { variantId: 'pricing_shirt_m' } })).toBe(1);
+      expect(await prisma.cartItem.count({ where: { variantId: 'pricing_shirt_s' } })).toBe(0);
     });
 
-    it('refuses to check out a cart that already holds a product with variants, without taking stock', async () => {
+    it('checks out a cart holding one variant of a product with several, taking stock from that variant only', async () => {
       const cart = await prisma.cart.upsert({
         where: { userId: 'seed_user' },
         create: { userId: 'seed_user' },
@@ -236,26 +248,28 @@ describe('Checkout pricing (e2e)', () => {
       });
       await prisma.cartItem.createMany({
         data: [
-          { cartId: cart.id, productId: 'seed_prod2', quantity: 1 },
-          { cartId: cart.id, productId: 'pricing_shirt', quantity: 1 },
+          { cartId: cart.id, productId: 'seed_prod2', variantId: 'seed_var2', quantity: 1 },
+          { cartId: cart.id, productId: 'pricing_shirt', variantId: 'pricing_shirt_m', quantity: 1 },
         ],
       });
+      const phoneBefore = await stockOf('seed_var2');
 
       const res = await createPickupOrder();
 
-      expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
-      expect(res.body.errors[0].message).toContain('"Linen Shirt"');
-      const [shirt, phone] = await Promise.all([
-        prisma.product.findUniqueOrThrow({ where: { id: 'pricing_shirt' } }),
-        prisma.product.findUniqueOrThrow({ where: { id: 'seed_prod2' } }),
-      ]);
-      expect(shirt.quantity).toBe(20);
-      expect(phone.quantity).toBe(100);
-      expect(await prisma.order.count({ where: { items: { some: { productId: 'pricing_shirt' } } } })).toBe(0);
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.createOrder).toMatchObject({ totalAmount: ghs('679.99') });
+      expect(await stockOf('pricing_shirt_m')).toBe(4);
+      expect(await stockOf('pricing_shirt_s')).toBe(20);
+      expect(await stockOf('seed_var2')).toBe(phoneBefore - 1);
+      const shirtLine = await prisma.orderItem.findFirstOrThrow({
+        where: { orderId: res.body.data.createOrder.id, productId: 'pricing_shirt' },
+      });
+      expect(shirtLine).toMatchObject({ variantId: 'pricing_shirt_m', sku: 'CHECKOUT-M', quantity: 1 });
+      expect(shirtLine.priceAtOrder.toFixed(2)).toBe('180.00');
     });
 
-    it('still sells a product without variants', async () => {
-      await addToCart('seed_prod2', 1);
+    it('still sells a product with a single default variant', async () => {
+      await addToCart('seed_var2', 1);
 
       const res = await createPickupOrder();
 
