@@ -13,6 +13,7 @@ import { PickupLocationsModule } from '../pickup-locations/pickup-locations.modu
 import { ReturnsModule } from '../returns/returns.module';
 import { UsersModule } from '../users/users.module';
 import { StoreModule } from '../store/store.module';
+import { TaxModule } from '../tax/tax.module';
 
 @Module({
   providers: [OrdersService, OrdersResolver, OrdersRepository],
@@ -28,6 +29,7 @@ import { StoreModule } from '../store/store.module';
     ReturnsModule,
     UsersModule,
     StoreModule,
+    TaxModule,
   ],
   exports: [OrdersService, OrdersRepository],
 })

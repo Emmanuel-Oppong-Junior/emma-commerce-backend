@@ -1,7 +1,7 @@
 import { Prisma } from '../generated/prisma/client';
 import { NotificationSender } from './notification-sender';
 
-const ORDER = { id: 'order1', totalAmount: new Prisma.Decimal('250.5'), user: { email: 'kwame@gmail.com' } };
+const ORDER = { id: 'order1', grandTotal: new Prisma.Decimal('250.5'), user: { email: 'kwame@gmail.com' } };
 
 function buildSender(order: typeof ORDER | null = ORDER) {
   const prisma = { order: { findUnique: jest.fn().mockResolvedValue(order) } };

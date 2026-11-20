@@ -23,3 +23,10 @@ export enum FulfillmentTypeEnum {
 }
 
 registerEnumType(FulfillmentTypeEnum, { name: 'FulfillmentType' });
+
+export enum OrderAdjustmentTypeEnum {
+  DISCOUNT = 'DISCOUNT',
+  COUPON = 'COUPON',
+}
+
+registerEnumType(OrderAdjustmentTypeEnum, { name: 'OrderAdjustmentType' });

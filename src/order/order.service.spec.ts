@@ -19,7 +19,7 @@ import { StoreService } from '../store/store.service';
 
 const mockAuditService = { log: jest.fn() };
 const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
-const mockTaxService = { getRateForCountry: jest.fn().mockResolvedValue(new Decimal('0.1')) };
+const mockTaxService = { findActive: jest.fn() };
 const mockStockLedger = { reserve: jest.fn(), consumeOrder: jest.fn(), releaseOrder: jest.fn() };
 const mockOutbox = { record: jest.fn() };
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
@@ -61,6 +61,7 @@ const mockProduct = {
   isActive: true,
   status: 'PUBLISHED',
   categoryId: 'cat1',
+  isTaxable: false,
   createdAt: fixedDate,
   updatedAt: fixedDate,
   images: [],
@@ -71,6 +72,7 @@ const mockVariant = {
   sku: 'TSHIRT-M',
   optionValues: { size: 'M' },
   price: new Decimal('19.99'),
+  basePrice: null,
   stockLevels: [{ onHand: 100, reserved: 0 }],
   isActive: true,
   discountId: null,
@@ -189,6 +191,7 @@ describe('OrdersService', () => {
     cartService = module.get(CartService);
     jest.resetAllMocks();
     mockStoreService.getCurrency.mockResolvedValue('GHS');
+    mockTaxService.findActive.mockResolvedValue([]);
 
     // Default transaction mock: executes the callback with a stub tx
     mockOrdersRepository.runTransaction.mockImplementation(async (callback) => {
@@ -305,11 +308,41 @@ describe('OrdersService', () => {
         expect.anything(),
         mockUserId,
         expect.objectContaining({
-          subtotal: new Decimal('39.98'),
-          shippingFee: new Decimal('5'),
-          totalAmount: new Decimal('44.98'),
+          snapshot: expect.objectContaining({
+            subtotal: new Decimal('39.98'),
+            shippingTotal: new Decimal('5'),
+            grandTotal: new Decimal('44.98'),
+          }),
         }),
       );
+    });
+
+    it('snapshots the tax a taxable variant price includes, one line per active tax, and none on other lines', async () => {
+      mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+      mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+      mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+      mockOrdersRepository.findVariant.mockResolvedValue({
+        ...mockVariant,
+        price: new Decimal('115'),
+        basePrice: new Decimal('100'),
+        product: { ...mockProduct, isTaxable: true },
+      });
+      mockTaxService.findActive.mockResolvedValue([
+        { id: 'vat', name: 'VAT', rate: new Decimal('0.1') },
+        { id: 'nhil', name: 'NHIL', rate: new Decimal('0.05') },
+      ]);
+
+      await ordersService.createOrderFromCart(mockUserId, deliveryParams);
+
+      const [, , details] = mockOrdersRepository.create.mock.calls[0];
+      const [line] = details.snapshot.lines;
+      expect([line.unitNet, line.unitTax, line.lineTotal].map(String)).toEqual(['100', '15', '230']);
+      expect(line.taxLines.map((t: { taxId: string; amount: Decimal }) => [t.taxId, String(t.amount)])).toEqual([
+        ['vat', '20'],
+        ['nhil', '10'],
+      ]);
+      expect(String(details.snapshot.taxTotal)).toBe('30');
+      expect(String(details.snapshot.grandTotal)).toBe('235');
     });
 
     describe('with product discounts', () => {
@@ -334,21 +367,24 @@ describe('OrdersService', () => {
           expect.anything(),
           mockUserId,
           expect.objectContaining({
-            orderItems: [
-              expect.objectContaining({
-                productId: 'prod1',
-                variantId: 'var1',
-                quantity: 2,
-                originalPrice: new Decimal('100'),
-                priceAtOrder: new Decimal('90'),
-                discountAmount: new Decimal('10'),
-                discountId: 'disc10',
-              }),
-            ],
-            subtotal: new Decimal('180'),
-            discountTotal: new Decimal('20'),
-            shippingFee: new Decimal('5'),
-            totalAmount: new Decimal('185'),
+            snapshot: expect.objectContaining({
+              lines: [
+                expect.objectContaining({
+                  productId: 'prod1',
+                  variantId: 'var1',
+                  quantity: 2,
+                  unitListPrice: new Decimal('100'),
+                  unitDiscount: new Decimal('10'),
+                  lineTotal: new Decimal('180'),
+                  discountId: 'disc10',
+                  adjustments: [{ type: 'DISCOUNT', sourceId: 'disc10', code: null, amount: new Decimal('-20') }],
+                }),
+              ],
+              subtotal: new Decimal('200'),
+              discountTotal: new Decimal('20'),
+              shippingTotal: new Decimal('5'),
+              grandTotal: new Decimal('185'),
+            }),
           }),
         );
       });
@@ -356,7 +392,7 @@ describe('OrdersService', () => {
       it('takes the coupon off the discounted subtotal, before shipping', async () => {
         mockCouponsService.validateCoupon.mockResolvedValue({
           discountAmount: new Decimal('18.00'),
-          coupon: { id: 'coupon1' },
+          coupon: { id: 'coupon1', code: 'SAVE10' },
         });
 
         await ordersService.createOrderFromCart(mockUserId, { ...deliveryParams, couponCode: 'SAVE10' });
@@ -367,8 +403,10 @@ describe('OrdersService', () => {
           mockUserId,
           expect.objectContaining({
             couponId: 'coupon1',
-            couponDiscount: new Decimal('18'),
-            totalAmount: new Decimal('167'),
+            snapshot: expect.objectContaining({
+              adjustments: [{ type: 'COUPON', sourceId: 'coupon1', code: 'SAVE10', amount: new Decimal('-18') }],
+              grandTotal: new Decimal('167'),
+            }),
           }),
         );
       });
@@ -428,22 +466,27 @@ describe('OrdersService', () => {
           expect.anything(),
           mockUserId,
           expect.objectContaining({
-            orderItems: [
-              expect.objectContaining({
-                variantId: 'var1',
-                originalPrice: new Decimal('100'),
-                priceAtOrder: new Decimal('90'),
-                discountId: 'product10',
-              }),
-              expect.objectContaining({
-                variantId: 'var2',
-                originalPrice: new Decimal('120'),
-                priceAtOrder: new Decimal('100'),
-                discountId: 'large20',
-              }),
-            ],
-            subtotal: new Decimal('280'),
-            discountTotal: new Decimal('40'),
+            snapshot: expect.objectContaining({
+              lines: [
+                expect.objectContaining({
+                  variantId: 'var1',
+                  unitListPrice: new Decimal('100'),
+                  unitDiscount: new Decimal('10'),
+                  lineTotal: new Decimal('180'),
+                  discountId: 'product10',
+                }),
+                expect.objectContaining({
+                  variantId: 'var2',
+                  unitListPrice: new Decimal('120'),
+                  unitDiscount: new Decimal('20'),
+                  lineTotal: new Decimal('100'),
+                  discountId: 'large20',
+                }),
+              ],
+              subtotal: new Decimal('320'),
+              discountTotal: new Decimal('40'),
+              grandTotal: new Decimal('285'),
+            }),
           }),
         );
       });
@@ -452,7 +495,7 @@ describe('OrdersService', () => {
         await ordersService.createOrderFromCart(mockUserId, deliveryParams);
 
         const [, , details] = mockOrdersRepository.create.mock.calls[0];
-        expect(details.orderItems).toEqual([
+        expect(details.snapshot.lines).toEqual([
           expect.objectContaining({
             productId: 'prod1',
             variantId: 'var1',
@@ -646,9 +689,11 @@ describe('OrdersService', () => {
         expect.anything(),
         mockUserId,
         expect.objectContaining({
-          subtotal: new Decimal('39.98'),
-          shippingFee: new Decimal('0'),
-          totalAmount: new Decimal('39.98'),
+          snapshot: expect.objectContaining({
+            subtotal: new Decimal('39.98'),
+            shippingTotal: new Decimal('0'),
+            grandTotal: new Decimal('39.98'),
+          }),
         }),
       );
     });

@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { Prisma, Refund, RefundStatus, ReturnRequest, ReturnStatus } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RefundLedger } from './refund-cap';
+import { OrderTaxSnapshot, refundTax } from './refund-tax';
 
 type Tx = Prisma.TransactionClient;
 
@@ -55,11 +56,13 @@ export class RefundRepository {
       }
       const ledger = await this.lockLedger(tx, attemptId);
       check(ledger);
+      const taxAmount = refundTax(returnRequest.refundAmount, await this.orderTax(tx, returnRequest.orderId));
       const refund = await tx.refund.create({
         data: {
           attemptId,
           returnRequestId: returnRequest.id,
           amount: returnRequest.refundAmount,
+          taxAmount,
           currency: ledger.attempt.currency,
           idempotencyKey: returnRefundKey(returnRequest.id),
         },
@@ -149,6 +152,24 @@ export class RefundRepository {
     const { count } = await tx.refund.updateMany({ where: { id: refundId, status: RefundStatus.SENDING }, data });
     if (count === 0) throw new ConflictException(`Refund "${refundId}" is no longer SENDING`);
     return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
+  }
+
+  /** The order's stored tax snapshot and the tax its earlier refunds already returned. */
+  private async orderTax(tx: Tx, orderId: string): Promise<OrderTaxSnapshot> {
+    const order = await tx.order.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { pricingVersion: true, grandTotal: true },
+    });
+    const taxLines = await tx.orderLineTax.findMany({ where: { orderItem: { orderId } }, select: { amount: true } });
+    const refunds = await tx.refund.findMany({
+      where: { attempt: { intent: { orderId } }, status: { not: RefundStatus.FAILED }, taxAmount: { not: null } },
+      select: { taxAmount: true },
+    });
+    return {
+      ...order,
+      taxLineAmounts: taxLines.map((line) => line.amount),
+      refundedTax: refunds.map((refund) => refund.taxAmount as Prisma.Decimal),
+    };
   }
 
   // The attempt row lock serialises every refund written against one payment, so the cap check cannot race.

@@ -79,6 +79,11 @@ export class TaxService {
     return tax;
   }
 
+  /** The taxes whose rates variant prices currently include (see repriceTaxableVariants). */
+  async findActive(): Promise<Tax[]> {
+    return this.taxRepository.findActive();
+  }
+
   async getTotalActiveRate(): Promise<Prisma.Decimal> {
     return this.taxRepository.getTotalActiveRate();
   }

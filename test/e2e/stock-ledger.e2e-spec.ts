@@ -150,7 +150,7 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
     const variantId = await newVariant(10);
     const order = await placeOrder(variantId, 2);
 
-    const settled = await settleSuccessfully(order.id, Number(order.totalAmount));
+    const settled = await settleSuccessfully(order.id, Number(order.grandTotal));
     const again = await prisma.$transaction((tx) => ledger.consumeOrder(tx, order.id));
 
     expect(settled.outcome.kind).toBe('paid');
@@ -227,7 +227,7 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
   it('puts paid stock back on hand once when a paid order is cancelled before dispatch', async () => {
     const variantId = await newVariant(5);
     const order = await placeOrder(variantId, 2);
-    await settleSuccessfully(order.id, Number(order.totalAmount));
+    await settleSuccessfully(order.id, Number(order.grandTotal));
 
     await orders.cancelOrder(BUYERS[0], order.id);
 
@@ -244,7 +244,7 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
     await orders.expireAbandonedOrders(1);
     const other = await placeOrder(variantId, 2, { buyer: BUYERS[1] });
 
-    const settled = await settleSuccessfully(order.id, Number(order.totalAmount));
+    const settled = await settleSuccessfully(order.id, Number(order.grandTotal));
 
     expect(settled.outcome).toMatchObject({ kind: 'review', reason: 'ORDER_NOT_PAYABLE' });
     expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: 'CANCELLED' });
@@ -277,7 +277,9 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
       data: {
         orderNumber: 990_001,
         userId: BUYERS[0],
-        totalAmount: 10,
+        grandTotal: 10,
+        currency: 'GHS',
+        pricingVersion: 0,
         status: 'DELIVERED',
         contactEmail: 'buyer@example.com',
         contactPhone: '+233244000000',

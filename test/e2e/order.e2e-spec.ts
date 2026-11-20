@@ -69,8 +69,8 @@ describe('Orders (e2e)', () => {
             id
             status
             subtotal { amount currency }
-            shippingFee { amount currency }
-            totalAmount { amount currency }
+            shippingTotal { amount currency }
+            grandTotal { amount currency }
             shippingAddressSnapshot
             items {
               id
@@ -104,8 +104,8 @@ describe('Orders (e2e)', () => {
       expect(res.body.data.createOrder.items.length).toBeGreaterThanOrEqual(1);
       // seed_prod1 (999.99) delivered to Accra, covered by the seeded Greater Accra zone (fee 15)
       expect(res.body.data.createOrder.subtotal).toEqual(ghs('999.99'));
-      expect(res.body.data.createOrder.shippingFee).toEqual(ghs('15.00'));
-      expect(res.body.data.createOrder.totalAmount).toEqual(ghs('1014.99'));
+      expect(res.body.data.createOrder.shippingTotal).toEqual(ghs('15.00'));
+      expect(res.body.data.createOrder.grandTotal).toEqual(ghs('1014.99'));
 
       // Persist the order ID for subsequent tests
       createdOrderId = res.body.data.createOrder.id;
@@ -229,7 +229,7 @@ describe('Orders (e2e)', () => {
       const createPickupOrder = (pickupLocationId: string) =>
         gqlRequest(
           app,
-          `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "${pickupLocationId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id subtotal { amount currency } shippingFee { amount currency } totalAmount { amount currency } pickupLocationId pickupLocationSnapshot } }`,
+          `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "${pickupLocationId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id subtotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency } pickupLocationId pickupLocationSnapshot } }`,
           undefined,
           userToken,
         ).expect(200);
@@ -283,8 +283,8 @@ describe('Orders (e2e)', () => {
         expect(res.body.errors).toBeUndefined();
         const order = res.body.data.createOrder;
         expect(order.pickupLocationId).toBe('e2e_pickup_osu');
-        expect(order.shippingFee).toEqual(ghs('0.00'));
-        expect(order.totalAmount).toEqual(order.subtotal);
+        expect(order.shippingTotal).toEqual(ghs('0.00'));
+        expect(order.grandTotal).toEqual(order.subtotal);
         expect(order.pickupLocationSnapshot).toEqual({
           name: 'Osu Store',
           address: '12 Oxford St',
@@ -374,7 +374,7 @@ describe('Orders (e2e)', () => {
             couponCode: "${coupon.code}"
           }) {
             id
-            couponDiscount { amount currency }
+            adjustments { type code amount { amount currency } }
           }
         }
       `;
@@ -384,7 +384,9 @@ describe('Orders (e2e)', () => {
 
       // Assert
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.data.createOrder.couponDiscount).toEqual(ghs('50.00'));
+      expect(res.body.data.createOrder.adjustments).toEqual([
+        { type: 'COUPON', code: coupon.code, amount: ghs('-50.00') },
+      ]);
     });
   });
 
@@ -424,7 +426,7 @@ describe('Orders (e2e)', () => {
           order(orderId: "${createdOrderId}") {
             id
             status
-            totalAmount { amount currency }
+            grandTotal { amount currency }
           }
         }
       `;
@@ -435,7 +437,7 @@ describe('Orders (e2e)', () => {
       // Assert
       expect(res.body.errors).toBeUndefined();
       expect(res.body.data.order.id).toBe(createdOrderId);
-      expect(res.body.data.order.totalAmount).toEqual(ghs('1014.99'));
+      expect(res.body.data.order.grandTotal).toEqual(ghs('1014.99'));
     });
 
     it("fails when a user tries to access another user's order", async () => {

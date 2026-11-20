@@ -1225,6 +1225,9 @@ type Mutation {
 }
 
 type Order {
+  """Product discounts (per line) and the coupon, as placed"""
+  adjustments: [OrderAdjustment!]!
+
   """Carrier name"""
   carrier: String
 
@@ -1233,19 +1236,19 @@ type Order {
 
   """Contact phone number for delivery coordination"""
   contactPhone: String!
-
-  """Coupon discount amount"""
-  couponDiscount: Money
   createdAt: DateTime!
+  currency: Currency!
 
-  """Product discounts taken off the list prices at checkout"""
+  """
+  Product discounts plus the coupon (the negated sum of the adjustments); null on some older orders
+  """
   discountTotal: Money
-
-  """Final total after discounts"""
-  finalTotal: Money
 
   """Whether the order is for delivery or pickup"""
   fulfillmentType: FulfillmentType!
+
+  """Amount charged: subtotal - discountTotal + shippingTotal"""
+  grandTotal: Money!
   id: ID!
   items: [OrderItem!]!
 
@@ -1261,6 +1264,11 @@ type Order {
   """Pickup location (name, address, city, state, country) at time of order"""
   pickupLocationSnapshot: JSON
 
+  """
+  1 for orders with a full price and tax snapshot; 0 for orders placed before it, whose breakdown may be partly null
+  """
+  pricingVersion: Int!
+
   """Set when fulfillmentType is DELIVERY"""
   shippingAddressId: ID
 
@@ -1269,19 +1277,19 @@ type Order {
   """
   shippingAddressSnapshot: JSON
 
-  """
-  Shipping fee charged at order time (0 for pickup); null on older orders
-  """
-  shippingFee: Money
+  """Shipping charged (0 for pickup); null on some older orders"""
+  shippingTotal: Money
   status: OrderStatus!
 
   """
-  Sum of item prices charged at order time, after product discounts; null on older orders
+  Sum of unit list price x quantity, before any discount, tax included; null on some older orders
   """
   subtotal: Money
 
-  """Amount charged: subtotal + shippingFee - couponDiscount"""
-  totalAmount: Money!
+  """
+  Tax included in the line totals; null on orders placed before tax was recorded
+  """
+  taxTotal: Money
 
   """Shipment tracking number"""
   trackingNumber: String
@@ -1290,35 +1298,91 @@ type Order {
   userId: ID!
 }
 
-type OrderItem {
-  """Discount applied to the order item, if any"""
-  appliedDiscount: Discount
-  createdAt: DateTime!
+"""A discount or coupon taken off the order when it was placed"""
+type OrderAdjustment {
+  """Signed amount: reductions are negative"""
+  amount: Money!
 
-  """Discount taken off one unit at checkout"""
-  discountAmount: Money
+  """Coupon code when ordered"""
+  code: String
   id: ID!
+
+  """
+  The line it applies to (a product discount, already in its unitDiscount); null for the coupon
+  """
+  orderItemId: ID
+
+  """The discount or coupon it came from"""
+  sourceId: ID
+  type: OrderAdjustmentType!
+}
+
+enum OrderAdjustmentType {
+  COUPON
+  DISCOUNT
+}
+
+type OrderItem {
+  createdAt: DateTime!
+  id: ID!
+
+  """(unitListPrice - unitDiscount) x quantity, tax included"""
+  lineTotal: Money!
 
   """Option values when ordered, e.g. { size: "M" }"""
   optionValues: JSONObject
   orderId: ID!
-
-  """List price of one unit of the variant"""
-  originalPrice: Money
-
-  """Unit price charged: originalPrice - discountAmount"""
-  priceAtOrder: Money!
   product: Product!
   productId: ID!
+
+  """
+  Product name when ordered (older orders: the name when they were migrated)
+  """
+  productName: String!
   quantity: Int!
 
   """SKU when ordered (null on lines ordered before variants were sold)"""
   sku: String
+
+  """Taxes included in the line; empty on orders placed before"""
+  taxLines: [OrderLineTax!]!
+
+  """Product discount taken off one unit"""
+  unitDiscount: Money!
+
+  """Catalogue price of one unit when ordered, tax included"""
+  unitListPrice: Money!
+
+  """
+  One unit after its discount, without tax; null on orders placed before tax was recorded
+  """
+  unitNet: Money
+
+  """
+  Tax included in one discounted unit; null on orders placed before tax was recorded
+  """
+  unitTax: Money
   updatedAt: DateTime!
   variant: Variant!
 
   """The variant (SKU) ordered"""
   variantId: ID!
+}
+
+"""A tax included in an order line, as computed when the order was placed"""
+type OrderLineTax {
+  amount: Money!
+
+  """The line amount without tax that the rate applied to"""
+  base: Money!
+  id: ID!
+  name: String!
+
+  """Rate as a decimal when ordered (e.g., 0.15 for 15%)"""
+  rate: Decimal!
+
+  """The tax rate it came from (it may have changed since)"""
+  taxId: ID
 }
 
 enum OrderPaymentMethod {
@@ -1856,6 +1920,11 @@ type RefundEntity {
   """Set when the refund belongs to a return request"""
   returnRequestId: ID
   status: RefundStatusEnum!
+
+  """
+  Tax included in the amount, from the order's stored tax lines in proportion; null for orders placed before tax was recorded and for refunds of charges that never paid the order
+  """
+  taxAmount: Money
   updatedAt: DateTime!
 }
 

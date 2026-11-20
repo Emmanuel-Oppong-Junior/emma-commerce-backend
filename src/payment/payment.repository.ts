@@ -137,7 +137,7 @@ export class PaymentRepository {
       const currency = await this.storeRepository.findCurrency(tx);
       const intent = await tx.paymentIntent.upsert({
         where: { orderId: request.orderId },
-        create: { orderId: request.orderId, amount: order.totalAmount, currency },
+        create: { orderId: request.orderId, amount: order.grandTotal, currency },
         update: {},
       });
       await tx.paymentAttempt.updateMany({
@@ -190,7 +190,7 @@ export class PaymentRepository {
       const order = await tx.order.findUnique({ where: { id: orderId }, include: COLLECTABLE_ORDER });
       assertCollectable(order);
 
-      const amount = order.totalAmount;
+      const amount = order.grandTotal;
       const currency = await this.storeRepository.findCurrency(tx);
       const intent = await tx.paymentIntent.upsert({
         where: { orderId },

@@ -13,7 +13,7 @@ import {
   Prisma,
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
-import { abandonedOrderWhere, NewOrderItem, OrdersRepository } from './order.repository';
+import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { VariantForSale } from '../cart/cart.repository';
 import { notSellableReason } from '../variant/sellable';
 import { CouponsService } from '../coupons/coupons.service';
@@ -26,7 +26,8 @@ import { ReturnsService } from '../returns/returns.service';
 import { DiscountService } from '../discount/discount.service';
 import { priceCart } from '../discount/pricing';
 import { StoreService } from '../store/store.service';
-import { roundHalfUp } from '../commons/money/money';
+import { TaxService } from '../tax/tax.service';
+import { OrderSnapshot, snapshotOrder } from './order-totals';
 import { assertDeliverableAddress } from '../addresses/deliverable-address';
 import { toAddressSnapshot } from '../addresses/address-snapshot';
 
@@ -59,6 +60,7 @@ export class OrdersService {
     private readonly returnsService: ReturnsService,
     private readonly discountService: DiscountService,
     private readonly storeService: StoreService,
+    private readonly taxService: TaxService,
   ) {}
 
   /**
@@ -141,7 +143,7 @@ export class OrdersService {
    * Retrieves an order by ID without any ownership check (admin use).
    */
   async viewOrder(orderId: string) {
-    return this.ordersRepository.findById(orderId, { items: { include: { product: true, variant: true } } });
+    return this.ordersRepository.findById(orderId);
   }
 
   /**
@@ -341,22 +343,15 @@ export class OrdersService {
 
   /**
    * Prices the cart with the same function as cartWithDiscount, then takes the coupon off the discounted
-   * merchandise subtotal and adds shipping, so the total charged is the total the customer was shown.
+   * merchandise subtotal and adds shipping, so the total charged is the total the customer was shown. The result is
+   * snapshotted with the tax the prices include (taxable variants with a basePrice) and the discounts as adjustments.
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
     shippingFee: Prisma.Decimal,
     couponCode?: string,
-  ): Promise<{
-    orderItems: NewOrderItem[];
-    subtotal: Prisma.Decimal;
-    discountTotal: Prisma.Decimal;
-    shippingFee: Prisma.Decimal;
-    totalAmount: Prisma.Decimal;
-    couponId?: string;
-    couponDiscount?: Prisma.Decimal;
-  }> {
+  ): Promise<{ snapshot: OrderSnapshot; couponId?: string }> {
     const currency = await this.storeService.getCurrency();
     const variants: VariantForSale[] = [];
     for (const item of cartItems) variants.push(await this.checkVariantAvailability(item, currency));
@@ -378,34 +373,32 @@ export class OrdersService {
       discounts,
     );
 
-    let couponId: string | undefined;
-    let couponDiscount: Prisma.Decimal | undefined;
+    let coupon: { couponId: string; code: string; amount: Prisma.Decimal } | undefined;
     if (couponCode) {
-      const { discountAmount, coupon } = await this.couponsService.validateCoupon(couponCode, userId, priced.subtotal);
-      couponId = coupon.id;
-      couponDiscount = discountAmount;
+      const validated = await this.couponsService.validateCoupon(couponCode, userId, priced.subtotal);
+      coupon = { couponId: validated.coupon.id, code: validated.coupon.code, amount: validated.discountAmount };
     }
 
-    const totalAmount = Prisma.Decimal.max(0, priced.subtotal.add(shippingFee).sub(couponDiscount ?? 0));
-    return {
-      orderItems: priced.lines.map((line, index) => ({
+    const taxes = await this.taxService.findActive();
+    const snapshot = snapshotOrder({
+      currency,
+      lines: priced.lines.map((line, index) => ({
         productId: line.productId,
         variantId: line.variantId,
+        productName: variants[index].product.name,
         sku: variants[index].sku,
-        optionValues: variants[index].optionValues as Prisma.InputJsonValue,
+        optionValues: variants[index].optionValues,
         quantity: line.quantity,
-        priceAtOrder: line.discountedUnitPrice,
-        originalPrice: line.unitPrice,
-        discountAmount: line.unitDiscount,
-        discountId: line.discountId ?? null,
+        unitListPrice: line.unitPrice,
+        unitDiscount: line.unitDiscount,
+        discountId: line.discountId,
+        taxable: variants[index].product.isTaxable && variants[index].basePrice !== null,
       })),
-      subtotal: priced.subtotal,
-      discountTotal: priced.discountTotal,
-      shippingFee: roundHalfUp(shippingFee),
-      totalAmount: roundHalfUp(totalAmount),
-      couponId,
-      couponDiscount: couponDiscount?.isZero() ? undefined : couponDiscount,
-    };
+      taxes: taxes.map((tax) => ({ taxId: tax.id, name: tax.name, rate: tax.rate })),
+      shipping: shippingFee,
+      coupon,
+    });
+    return { snapshot, couponId: coupon?.couponId };
   }
 
   private async checkVariantAvailability(item: CartItem, currency: Currency): Promise<VariantForSale> {
@@ -432,13 +425,8 @@ export class OrdersService {
     userId: string,
     cartId: string,
     orderDetails: {
-      orderItems: NewOrderItem[];
-      subtotal: Prisma.Decimal;
-      shippingFee: Prisma.Decimal;
-      discountTotal: Prisma.Decimal;
-      totalAmount: Prisma.Decimal;
+      snapshot: OrderSnapshot;
       couponId?: string;
-      couponDiscount?: Prisma.Decimal;
       paymentMethod?: PaymentMethod;
       contactEmail: string;
       contactPhone: string;
@@ -494,9 +482,7 @@ export class OrdersService {
   }
 
   private async retrieveUserOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
-    const order = await this.ordersRepository.findById(orderId, {
-      items: { include: { product: true, variant: true } },
-    });
+    const order = await this.ordersRepository.findById(orderId);
     if (order?.userId !== userId) {
       throw new NotFoundException(`Order "${orderId}" not found`);
     }

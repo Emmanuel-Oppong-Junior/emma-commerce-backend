@@ -1,6 +1,8 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { FulfillmentTypeEnum, OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
-import { FulfillmentType, OrderStatus, PaymentMethod } from '../../generated/prisma/client';
+import { Currency, FulfillmentType, OrderStatus, PaymentMethod } from '../../generated/prisma/client';
+import { CurrencyEnum } from '../../products/enums/product.enum';
+import { OrderAdjustment } from './order-adjustment.entity';
 import { OrderItem } from './order-item.entity';
 import { Decimal } from '@prisma/client/runtime/client';
 import GraphQLJSON from 'graphql-type-json';
@@ -18,29 +20,44 @@ export class Order {
   @Field(() => ID)
   userId: string;
 
+  @Field(() => CurrencyEnum)
+  currency: Currency;
+
+  @Field(() => Int, {
+    description:
+      '1 for orders with a full price and tax snapshot; 0 for orders placed before it, whose breakdown may be partly null',
+  })
+  pricingVersion: number;
+
   @Field(() => MoneyObject, {
     nullable: true,
-    description: 'Sum of item prices charged at order time, after product discounts; null on older orders',
+    description: 'Sum of unit list price x quantity, before any discount, tax included; null on some older orders',
   })
-  subtotal?: Decimal;
+  subtotal?: Decimal | null;
 
   @Field(() => MoneyObject, {
     nullable: true,
-    description: 'Shipping fee charged at order time (0 for pickup); null on older orders',
+    description: 'Product discounts plus the coupon (the negated sum of the adjustments); null on some older orders',
   })
-  shippingFee?: Decimal;
+  discountTotal?: Decimal | null;
 
-  @Field(() => MoneyObject, { description: 'Amount charged: subtotal + shippingFee - couponDiscount' })
-  totalAmount: Decimal;
+  @Field(() => MoneyObject, {
+    nullable: true,
+    description: 'Tax included in the line totals; null on orders placed before tax was recorded',
+  })
+  taxTotal?: Decimal | null;
 
-  @Field(() => MoneyObject, { description: 'Product discounts taken off the list prices at checkout', nullable: true })
-  discountTotal?: Decimal;
+  @Field(() => MoneyObject, {
+    nullable: true,
+    description: 'Shipping charged (0 for pickup); null on some older orders',
+  })
+  shippingTotal?: Decimal | null;
 
-  @Field(() => MoneyObject, { description: 'Final total after discounts', nullable: true })
-  finalTotal?: Decimal;
+  @Field(() => MoneyObject, { description: 'Amount charged: subtotal - discountTotal + shippingTotal' })
+  grandTotal: Decimal;
 
-  @Field(() => MoneyObject, { nullable: true, description: 'Coupon discount amount' })
-  couponDiscount?: Decimal;
+  @Field(() => [OrderAdjustment], { description: 'Product discounts (per line) and the coupon, as placed' })
+  adjustments: OrderAdjustment[];
 
   @Field(() => OrderStatusEnum)
   status: OrderStatus;

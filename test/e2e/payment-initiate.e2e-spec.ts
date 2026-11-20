@@ -40,7 +40,9 @@ describe('Payment initiation (e2e)', () => {
       data: {
         orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
-        totalAmount: 100,
+        grandTotal: 100,
+        currency: 'GHS',
+        pricingVersion: 0,
         contactEmail: 'user@example.com',
         contactPhone: `+23324410${String(orderCount).padStart(4, '0')}`,
         ...data,

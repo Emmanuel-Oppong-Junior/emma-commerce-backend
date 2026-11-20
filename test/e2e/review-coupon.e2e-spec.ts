@@ -383,7 +383,9 @@ describe('Reviews & Coupons (e2e)', () => {
         data: {
           orderNumber: await takeOrderNumber(prisma),
           userId: 'seed_user',
-          totalAmount: 200,
+          grandTotal: 200,
+          currency: 'GHS',
+          pricingVersion: 0,
           fulfillmentType: 'DELIVERY',
           shippingAddressId: address.id,
           contactEmail: 'test@example.com',

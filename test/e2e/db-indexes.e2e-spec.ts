@@ -36,14 +36,14 @@ describe('Hot-query indexes (e2e)', () => {
       UPDATE "Store" SET "nextOrderNumber" = "nextOrderNumber" + 500 WHERE "singleton"
       RETURNING "nextOrderNumber" - 500 AS "first"`;
     await prisma.$executeRawUnsafe(
-      `INSERT INTO "Order" ("id", "orderNumber", "userId", "totalAmount", "contactEmail", "contactPhone", "updatedAt")
-       SELECT 'idx_o_' || g, $2 + g - 1, $1, 10, 'index@example.com', '0240000000', now() FROM generate_series(1, 500) g`,
+      `INSERT INTO "Order" ("id", "orderNumber", "userId", "currency", "pricingVersion", "grandTotal", "contactEmail", "contactPhone", "updatedAt")
+       SELECT 'idx_o_' || g, $2 + g - 1, $1, 'GHS', 0, 10, 'index@example.com', '0240000000', now() FROM generate_series(1, 500) g`,
       userIds.userId,
       first,
     );
     await prisma.$executeRawUnsafe(`
-      INSERT INTO "OrderItem" ("id", "orderId", "productId", "variantId", "priceAtOrder", "originalPrice")
-      SELECT 'idx_i_' || g, 'idx_o_' || (g % 500 + 1), 'idx_p_' || (g % 200 + 1), 'idx_v_' || (g % 200 + 1), 10, 10
+      INSERT INTO "OrderItem" ("id", "orderId", "productId", "variantId", "productName", "unitListPrice", "unitDiscount", "lineTotal")
+      SELECT 'idx_i_' || g, 'idx_o_' || (g % 500 + 1), 'idx_p_' || (g % 200 + 1), 'idx_v_' || (g % 200 + 1), 'Index product', 10, 0, 10
       FROM generate_series(1, 5000) g`);
     await prisma.$executeRawUnsafe('ANALYZE "OrderItem"');
   };

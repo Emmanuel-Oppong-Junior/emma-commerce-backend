@@ -14,7 +14,7 @@ const mockOrder = {
   id: 'order1',
   userId: 'user1',
   status: 'PENDING',
-  totalAmount: new Prisma.Decimal(100),
+  grandTotal: new Prisma.Decimal(100),
   deleted: false,
 } as unknown as Order;
 
@@ -166,7 +166,7 @@ describe('PaymentRepository', () => {
       expect(mockPrismaIntent.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { orderId: 'order1' },
-          create: { orderId: 'order1', amount: mockOrder.totalAmount, currency: 'GHS' },
+          create: { orderId: 'order1', amount: mockOrder.grandTotal, currency: 'GHS' },
         }),
       );
       expect(mockPrismaAttempt.updateMany).toHaveBeenCalledWith({
@@ -194,7 +194,7 @@ describe('PaymentRepository', () => {
 
       expect(mockStoreRepository.findCurrency).toHaveBeenCalledWith(mockTx);
       expect(mockPrismaIntent.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({ create: { orderId: 'order1', amount: mockOrder.totalAmount, currency: 'USD' } }),
+        expect.objectContaining({ create: { orderId: 'order1', amount: mockOrder.grandTotal, currency: 'USD' } }),
       );
     });
 

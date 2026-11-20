@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
-import { OrdersRepository } from './order.repository';
+import { OrderSnapshot } from './order-totals';
+import { ORDER_INCLUDE, OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { Address, FulfillmentType, Order, OrderItem, Prisma, User } from '../generated/prisma/client';
 
@@ -40,6 +41,18 @@ const mockPrisma = {
   $transaction: jest.fn(),
 };
 
+const snapshotOf = (totals: { subtotal: number; shippingTotal: number; grandTotal: number }): OrderSnapshot => ({
+  currency: 'GHS',
+  pricingVersion: 1,
+  lines: [],
+  adjustments: [],
+  subtotal: new Prisma.Decimal(totals.subtotal),
+  discountTotal: new Prisma.Decimal(0),
+  taxTotal: new Prisma.Decimal(0),
+  shippingTotal: new Prisma.Decimal(totals.shippingTotal),
+  grandTotal: new Prisma.Decimal(totals.grandTotal),
+});
+
 describe('OrdersRepository', () => {
   let repository: OrdersRepository;
 
@@ -53,14 +66,14 @@ describe('OrdersRepository', () => {
   });
 
   describe('findById', () => {
-    it('should find an order by ID with default items include', async () => {
+    it('should find an order by ID with the default order include', async () => {
       mockPrismaOrder.findUnique.mockResolvedValue(mockOrder);
 
       const result = await repository.findById('order1');
 
       expect(result).toEqual(mockOrder);
       expect(mockPrismaOrder.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: 'order1' }, include: { items: true } }),
+        expect.objectContaining({ where: { id: 'order1' }, include: ORDER_INCLUDE }),
       );
     });
 
@@ -110,16 +123,17 @@ describe('OrdersRepository', () => {
   describe('create', () => {
     it('should create an order via transaction', async () => {
       const mockTx = {
-        order: { create: jest.fn().mockResolvedValue(mockOrder) },
+        order: {
+          create: jest.fn().mockResolvedValue(mockOrder),
+          findUniqueOrThrow: jest.fn().mockResolvedValue(mockOrder),
+        },
+        orderItem: { create: jest.fn() },
+        orderAdjustment: { createMany: jest.fn() },
         $queryRaw: jest.fn().mockResolvedValue([{ orderNumber: 10042 }]),
       };
 
       const result = await repository.create(mockTx as any, 'user1', {
-        orderItems: [] as any,
-        subtotal: new Prisma.Decimal(90),
-        discountTotal: new Prisma.Decimal(0),
-        shippingFee: new Prisma.Decimal(10),
-        totalAmount: new Prisma.Decimal(100),
+        snapshot: snapshotOf({ subtotal: 90, shippingTotal: 10, grandTotal: 100 }),
         fulfillmentType: FulfillmentType.DELIVERY,
         shippingAddressId: 'addr1',
         contactEmail: 'test@example.com',
@@ -135,7 +149,8 @@ describe('OrdersRepository', () => {
             shippingAddressId: 'addr1',
             subtotal: new Prisma.Decimal(90),
             discountTotal: new Prisma.Decimal(0),
-            shippingFee: new Prisma.Decimal(10),
+            shippingTotal: new Prisma.Decimal(10),
+            grandTotal: new Prisma.Decimal(100),
           }),
         }),
       );
@@ -147,11 +162,7 @@ describe('OrdersRepository', () => {
 
     await expect(
       repository.create(mockTx as any, 'user1', {
-        orderItems: [] as any,
-        subtotal: new Prisma.Decimal(90),
-        discountTotal: new Prisma.Decimal(0),
-        shippingFee: new Prisma.Decimal(10),
-        totalAmount: new Prisma.Decimal(100),
+        snapshot: snapshotOf({ subtotal: 90, shippingTotal: 10, grandTotal: 100 }),
         fulfillmentType: FulfillmentType.PICKUP,
         contactEmail: 'test@example.com',
         contactPhone: '+233244000000',

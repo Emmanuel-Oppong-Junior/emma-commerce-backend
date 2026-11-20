@@ -58,8 +58,8 @@ describe('Checkout pricing (e2e)', () => {
     gqlRequest(
       app,
       `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "pricing_pickup", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
-        id subtotal ${M} discountTotal ${M} shippingFee ${M} totalAmount ${M}
-        items { productId originalPrice ${M} discountAmount ${M} priceAtOrder ${M} quantity }
+        id subtotal ${M} discountTotal ${M} shippingTotal ${M} grandTotal ${M}
+        items { productId unitListPrice ${M} unitDiscount ${M} lineTotal ${M} quantity }
       } }`,
       undefined,
       userToken,
@@ -112,21 +112,21 @@ describe('Checkout pricing (e2e)', () => {
     expect(orderRes.body.errors).toBeUndefined();
     const order = orderRes.body.data.createOrder;
     expect(order).toMatchObject({
-      subtotal: ghs('1799.98'),
+      subtotal: ghs('1999.98'),
       discountTotal: ghs('200.00'),
-      shippingFee: ghs('0.00'),
-      totalAmount: ghs('1799.98'),
+      shippingTotal: ghs('0.00'),
+      grandTotal: ghs('1799.98'),
     });
     expect(order.items).toEqual([
       {
         productId: 'seed_prod1',
-        originalPrice: ghs('999.99'),
-        discountAmount: ghs('100.00'),
-        priceAtOrder: ghs('899.99'),
+        unitListPrice: ghs('999.99'),
+        unitDiscount: ghs('100.00'),
+        lineTotal: ghs('1799.98'),
         quantity: 2,
       },
     ]);
-    expect(order.totalAmount).toEqual(cart.finalTotal);
+    expect(order.grandTotal).toEqual(cart.finalTotal);
 
     await request(app.getHttpServer())
       .post('/payment/initialize')
@@ -181,9 +181,11 @@ describe('Checkout pricing (e2e)', () => {
 
     const orderRes = await createPickupOrder();
     expect(orderRes.body.errors).toBeUndefined();
-    expect(orderRes.body.data.createOrder).toMatchObject({ discountTotal: ghs('50.00'), totalAmount: ghs('150.00') });
-    const [item] = await prisma.orderItem.findMany({ where: { orderId: orderRes.body.data.createOrder.id } });
-    expect(item.discountId).toBe('pricing_cat25');
+    expect(orderRes.body.data.createOrder).toMatchObject({ discountTotal: ghs('50.00'), grandTotal: ghs('150.00') });
+    const [adjustment] = await prisma.orderAdjustment.findMany({
+      where: { orderId: orderRes.body.data.createOrder.id },
+    });
+    expect(adjustment).toMatchObject({ type: 'DISCOUNT', sourceId: 'pricing_cat25' });
   });
 
   it('no longer offers finalizeOrder', async () => {
@@ -257,7 +259,7 @@ describe('Checkout pricing (e2e)', () => {
       const res = await createPickupOrder();
 
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.data.createOrder).toMatchObject({ totalAmount: ghs('679.99') });
+      expect(res.body.data.createOrder).toMatchObject({ grandTotal: ghs('679.99') });
       expect(await stockOf('pricing_shirt_m')).toBe(4);
       expect(await stockOf('pricing_shirt_s')).toBe(20);
       expect(await stockOf('seed_var2')).toBe(phoneBefore - 1);
@@ -265,7 +267,7 @@ describe('Checkout pricing (e2e)', () => {
         where: { orderId: res.body.data.createOrder.id, productId: 'pricing_shirt' },
       });
       expect(shirtLine).toMatchObject({ variantId: 'pricing_shirt_m', sku: 'CHECKOUT-M', quantity: 1 });
-      expect(shirtLine.priceAtOrder.toFixed(2)).toBe('180.00');
+      expect(shirtLine.unitListPrice.sub(shirtLine.unitDiscount).toFixed(2)).toBe('180.00');
     });
 
     it('still sells a product with a single default variant', async () => {
@@ -274,7 +276,7 @@ describe('Checkout pricing (e2e)', () => {
       const res = await createPickupOrder();
 
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.data.createOrder).toMatchObject({ totalAmount: ghs('499.99') });
+      expect(res.body.data.createOrder).toMatchObject({ grandTotal: ghs('499.99') });
     });
   });
 });

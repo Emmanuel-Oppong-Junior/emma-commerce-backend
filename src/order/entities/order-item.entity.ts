@@ -1,6 +1,6 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { Product } from '../../products/entities/product.entity';
-import { Discount } from '../../discount/entities/discount.entity';
+import { OrderLineTax } from './order-line-tax.entity';
 import { Decimal } from '@prisma/client/runtime/client';
 import { MoneyObject } from '../../commons/money/money.object';
 import { Variant } from '../../variant/entities/variant.entity';
@@ -32,17 +32,32 @@ export class OrderItem {
   @Field(() => Int)
   quantity: number;
 
-  @Field(() => MoneyObject, { description: 'List price of one unit of the variant', nullable: true })
-  originalPrice?: Decimal;
+  @Field({ description: 'Product name when ordered (older orders: the name when they were migrated)' })
+  productName: string;
 
-  @Field(() => MoneyObject, { description: 'Discount taken off one unit at checkout', nullable: true })
-  discountAmount?: Decimal;
+  @Field(() => MoneyObject, { description: 'Catalogue price of one unit when ordered, tax included' })
+  unitListPrice: Decimal;
 
-  @Field(() => Discount, { description: 'Discount applied to the order item, if any', nullable: true })
-  appliedDiscount?: Discount;
+  @Field(() => MoneyObject, { description: 'Product discount taken off one unit' })
+  unitDiscount: Decimal;
 
-  @Field(() => MoneyObject, { description: 'Unit price charged: originalPrice - discountAmount' })
-  priceAtOrder: Decimal;
+  @Field(() => MoneyObject, {
+    nullable: true,
+    description: 'One unit after its discount, without tax; null on orders placed before tax was recorded',
+  })
+  unitNet?: Decimal | null;
+
+  @Field(() => MoneyObject, {
+    nullable: true,
+    description: 'Tax included in one discounted unit; null on orders placed before tax was recorded',
+  })
+  unitTax?: Decimal | null;
+
+  @Field(() => MoneyObject, { description: '(unitListPrice - unitDiscount) x quantity, tax included' })
+  lineTotal: Decimal;
+
+  @Field(() => [OrderLineTax], { description: 'Taxes included in the line; empty on orders placed before' })
+  taxLines: OrderLineTax[];
 
   @Field()
   createdAt: Date;

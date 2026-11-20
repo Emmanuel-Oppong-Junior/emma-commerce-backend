@@ -105,6 +105,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       {} as never,
       discounts as never,
       { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
+      { findActive: jest.fn().mockResolvedValue([]) } as never,
     );
 
     await service.createOrderFromCart('user-1', {
@@ -115,6 +116,6 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
     });
 
     const [, , details] = repository.create.mock.calls[0];
-    expect(Number(details.totalAmount)).toBe(480);
+    expect(Number(details.snapshot.grandTotal)).toBe(480);
   });
 });

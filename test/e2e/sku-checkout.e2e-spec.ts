@@ -26,8 +26,8 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
   const createOrder = (token = customerToken, couponCode?: string) =>
     gql(
       `mutation($coupon: String) { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "sku_pickup", contactEmail: "buyer@example.com", contactPhone: "+233244000000", couponCode: $coupon }) {
-        id subtotal ${M} discountTotal ${M} couponDiscount ${M} totalAmount ${M}
-        items { variantId sku optionValues quantity originalPrice ${M} discountAmount ${M} priceAtOrder ${M} variant { id } }
+        id subtotal ${M} discountTotal ${M} grandTotal ${M} adjustments { type amount ${M} }
+        items { variantId sku optionValues quantity unitListPrice ${M} unitDiscount ${M} lineTotal ${M} variant { id } }
       } }`,
       token,
       { coupon: couponCode ?? null },
@@ -137,18 +137,23 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
           sku: 'KENTE-M',
           optionValues: { size: 'M', colour: 'Gold' },
           quantity: 2,
-          originalPrice: ghs('120.00'),
-          discountAmount: ghs('12.00'),
-          priceAtOrder: ghs('108.00'),
+          unitListPrice: ghs('120.00'),
+          unitDiscount: ghs('12.00'),
+          lineTotal: ghs('216.00'),
           variant: { id: variantIds['KENTE-M'] },
         },
       ]);
       expect(placed).toMatchObject({
-        subtotal: ghs('216.00'),
-        discountTotal: ghs('24.00'),
-        couponDiscount: ghs('10.00'),
-        totalAmount: ghs('206.00'),
+        subtotal: ghs('240.00'),
+        discountTotal: ghs('34.00'),
+        grandTotal: ghs('206.00'),
       });
+      expect(placed.adjustments).toEqual(
+        expect.arrayContaining([
+          { type: 'DISCOUNT', amount: ghs('-24.00') },
+          { type: 'COUPON', amount: ghs('-10.00') },
+        ]),
+      );
       expect(await stock(variantIds['KENTE-M'])).toBe(3);
       expect(await stock(variantIds['KENTE-L'])).toBe(1);
       const deduction = await prisma.stockMovement.findFirst({

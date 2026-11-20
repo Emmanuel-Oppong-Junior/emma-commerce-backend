@@ -28,7 +28,7 @@ export class NotificationSender {
           await this.email.sendOrderConfirmationEmail(
             order.user.email,
             order.id,
-            order.totalAmount.toFixed(2),
+            order.grandTotal.toFixed(2),
             idempotencyKey,
           );
         }
@@ -104,7 +104,7 @@ export class NotificationSender {
   private async findOrder(orderId: string, jobName: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, totalAmount: true, user: { select: { email: true } } },
+      select: { id: true, grandTotal: true, user: { select: { email: true } } },
     });
     if (!order) this.logger.warn(`No email sent: order not found | job: ${jobName} | orderId: ${orderId}`, CONTEXT);
     return order;

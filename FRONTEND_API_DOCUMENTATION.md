@@ -1458,12 +1458,14 @@ All order operations require `Bearer` JWT.
   paymentMethod: OrderPaymentMethod;           // ONLINE | CASH_ON_DELIVERY
   contactEmail: string;
   contactPhone: string;
-  subtotal?: Money;                            // Sum of item prices charged, after product discounts (null on older orders)
-  shippingFee?: Money;                         // Delivery fee charged; 0 for PICKUP (null on older orders)
-  couponDiscount?: Money;                      // Coupon discount applied at checkout
-  totalAmount: Money;                          // Amount charged: subtotal + shippingFee - couponDiscount
-  discountTotal?: Money;                       // Product discounts taken off at checkout (null on older orders)
-  finalTotal?: Money;                          // Never populated (always null)
+  currency: Currency;                          // GHS
+  pricingVersion: Int;                         // 1: full price and tax snapshot; 0: placed before it (parts may be null)
+  subtotal?: Money;                            // Σ unitListPrice × quantity, before any discount, tax included
+  discountTotal?: Money;                       // Product discounts + coupon (= minus the sum of `adjustments`)
+  taxTotal?: Money;                            // Tax included in the line totals; null on pricingVersion 0
+  shippingTotal?: Money;                       // Shipping charged; 0 for PICKUP
+  grandTotal: Money;                           // Amount charged: subtotal - discountTotal + shippingTotal
+  adjustments: OrderAdjustment[];              // Product discounts (per line) and the coupon, as placed
   shippingAddressId?: string;                  // Set for DELIVERY orders
   shippingAddressSnapshot?: JSON;              // DELIVERY: { recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country } at order time; orders placed before Ghana addresses (P1-G) hold { street, city, state, zipCode, country } instead
   pickupLocationId?: string;                   // Set for PICKUP orders
@@ -1487,16 +1489,54 @@ All order operations require `Bearer` JWT.
   sku?: string;               // SKU at order time; null on lines ordered before variant checkout (P1-V.3)
   optionValues?: JSONObject;  // Option values at order time, e.g. { size: "M" }; null on lines ordered before P1-V.3
   quantity: Int;              // Breaking change (P1-V.3): was Float
-  priceAtOrder: Money;        // Unit price charged: originalPrice - discountAmount
-  originalPrice?: Money;      // List price of one unit of the variant at the time of the order
-  discountAmount?: Money;     // Discount taken off one unit at checkout (0 if none)
-  appliedDiscount?: Discount;
+  productName: string;        // Product name when ordered (older orders: the name when migrated)
+  unitListPrice: Money;       // Catalogue price of one unit when ordered, tax included
+  unitDiscount: Money;        // Product discount taken off one unit (0 if none)
+  unitNet?: Money;            // One unit after its discount, without tax; null on pricingVersion 0
+  unitTax?: Money;            // Tax included in one discounted unit; null on pricingVersion 0
+  lineTotal: Money;           // (unitListPrice - unitDiscount) × quantity = (unitNet + unitTax) × quantity
+  taxLines: OrderLineTax[];   // One per tax included in the line; empty on pricingVersion 0 and untaxed lines
   createdAt: DateTime;
   updatedAt: DateTime;
   product: Product;
   variant: Variant;           // The variant now (use sku/optionValues for what was ordered)
 }
 ```
+
+**`OrderAdjustment` Object Type** (P1-O.1):
+
+```typescript
+{
+  id: string;
+  orderItemId?: string;       // The line a product discount applies to (already in its unitDiscount); null for the coupon
+  type: OrderAdjustmentType;  // DISCOUNT | COUPON
+  sourceId?: string;          // The Discount or Coupon id
+  code?: string;              // Coupon code when ordered
+  amount: Money;              // Signed: reductions are negative, e.g. "-20.00"
+}
+```
+
+**`OrderLineTax` Object Type** (P1-O.1): the tax computed when the order was placed; never recomputed (refunds read it).
+
+```typescript
+{
+  id: string;
+  taxId?: string;             // The tax rate it came from (it may have changed or been deleted since)
+  name: string;               // e.g. "VAT"
+  rate: Decimal;              // e.g. 0.15
+  base: Money;                // The line amount without tax the rate applied to (unitNet × quantity)
+  amount: Money;
+}
+```
+
+**How the totals add up** (P1-O.1): prices are tax-inclusive, so each line's tax is inside its `lineTotal`. For a `pricingVersion` 1 order:
+- `grandTotal = Σ unitNet × quantity + Σ order-level adjustments (orderItemId null) + taxTotal + shippingTotal`
+- `grandTotal = subtotal - discountTotal + shippingTotal`, and `discountTotal = -Σ adjustments`
+- A line is taxed when its product `isTaxable` and its variant has a `basePrice` (its `price` is basePrice × (1 + sum of active rates)): `unitNet` = the discounted unit price ÷ (1 + sum of rates), half-up to the pesewa, `unitTax` = the rest, split over the active taxes in proportion to their rates. Shipping and the coupon carry no tax in this snapshot (P2-T will decide).
+
+`pricingVersion` 0 orders (placed before P1-O.1) keep what they stored: `grandTotal` is what was charged; `taxTotal`, `unitNet`, `unitTax` are null and they have no tax lines; `shippingTotal` or `discountTotal` may be null when it was not stored.
+
+**Breaking change (P1-O.1):** `Order.totalAmount` → `grandTotal`; `shippingFee` → `shippingTotal`; `couponDiscount` → the `COUPON` entry of `adjustments`; `finalTotal` removed; `subtotal` is now **before** product discounts (was after) and `discountTotal` now **includes** the coupon (was product discounts only). `OrderItem.priceAtOrder` → `lineTotal` (per line) or `unitListPrice - unitDiscount` (per unit); `originalPrice` → `unitListPrice`; `discountAmount` → `unitDiscount`; `appliedDiscount` → the line's `DISCOUNT` adjustment (`sourceId`). New: `currency`, `pricingVersion`, `taxTotal`, `adjustments`, `productName`, `unitNet`, `unitTax`, `taxLines`.
 
 **Breaking change (P1-V.3):** `OrderItem.variantId` is now non-null and always set; `variant: Variant!`, `sku` and `optionValues` are new. Lines recorded before this release have `sku`/`optionValues` null and point at the product's default variant or, for a product that already had variants then, at its archived "Legacy" variant (`isActive: false`, zero stock, SKU `LEGACY-...`).
 
@@ -1559,14 +1599,14 @@ CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 **What happens**:
 1. The cart must exist and hold 1–50 items; the account must be active.
 2. `DELIVERY`: the address must belong to the caller and have a region, recipient name and phone (addresses saved before those fields existed may lack them). The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
-3. Each line is priced from its **variant** exactly as `cartWithDiscount` shows it: the variant's current `price` (tax-inclusive) minus the best active discount for that variant (its own, its product's or its category's). `subtotal` equals the cart's `finalTotal` and `discountTotal` the cart's `discountTotal`. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
-4. A coupon, if given, is validated against `subtotal` (after discounts, before shipping) and its use is recorded.
-5. `totalAmount = max(0, subtotal + shippingFee - couponDiscount)`. This is the amount Paystack is asked for.
-6. In one transaction: the order is saved with each line's `sku` and `optionValues`; each line re-checks its variant is active and its product active and `PUBLISHED`, and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); the cart is emptied.
+3. Each line is priced from its **variant** exactly as `cartWithDiscount` shows it: the variant's current `price` (tax-inclusive) minus the best active discount for that variant (its own, its product's or its category's). The sum of the `lineTotal`s equals the cart's `finalTotal`; the product discounts equal the cart's `discountTotal`. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
+4. A coupon, if given, is validated against the lines after product discounts (before shipping) and its use is recorded.
+5. `grandTotal = max(0, Σ lineTotal + shippingTotal - coupon)`. This is the amount Paystack is asked for. The order stores the breakdown (`subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`), one `OrderAdjustment` per discounted line and for the coupon, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with `pricingVersion` 1.
+6. In one transaction: the order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant is active and its product active and `PUBLISHED`, and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); the cart is emptied.
 7. Status: `PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`.
 8. A confirmation email goes to the account's email (not `contactEmail`) after the response.
 
-No tax is added at checkout; tax is already inside each variant's `price`.
+No tax is added at checkout; tax is already inside each variant's `price`, and the order records how much (see "How the totals add up").
 
 **Possible Errors**:
 - `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
@@ -1583,7 +1623,8 @@ mutation {
     contactPhone: "+233201234567"
     couponCode: "SAVE10"
   }) {
-    id orderNumber status paymentMethod subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency }
+    id orderNumber status paymentMethod subtotal { amount currency } discountTotal { amount currency } taxTotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency }
+    adjustments { type code amount { amount currency } }
   }
 }
 ```
@@ -2148,6 +2189,9 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   attemptId: string;          // the payment the money is returned from
   returnRequestId?: string;   // set for refunds of return requests
   amount: Money;
+  taxAmount?: Money;          // P1-O.1: tax included in amount, from the order's stored tax lines in proportion
+                              // (amount x taxTotal / grandTotal, half-up, capped at the tax not yet refunded); null for
+                              // orders placed before tax was recorded and for auto-refunds of charges that never paid the order
   currency: string;
   status: RefundStatusEnum;   // PENDING | SENDING | PROCESSED | FAILED
   providerRef?: string;       // Paystack refund id
@@ -3167,15 +3211,15 @@ type Money {
 }
 ```
 
-- **Reading money:** select `{ amount currency }`, e.g. `order { totalAmount { amount currency } }`. Keep `amount` as a string or parse it with a decimal library; do not add amounts as JS numbers.
+- **Reading money:** select `{ amount currency }`, e.g. `order { grandTotal { amount currency } }`. Keep `amount` as a string or parse it with a decimal library; do not add amounts as JS numbers.
 - **Sending money (`Decimal` scalar):** a JSON string of digits with an optional leading `-` and decimal point, e.g. `"12.50"`. Exponent notation (`"1e3"`), `"NaN"`, `"Infinity"`, other text and JSON numbers (`12.5`) are rejected with `BAD_USER_INPUT`, as are money amounts with more than 2 decimal places, negative amounts and amounts of 1,000,000,000,000 or more. The client never chooses a currency: amounts are in the store currency.
 - **Decimal outputs:** `Tax.rate` (e.g. `"0.15"`), `Coupon.value` and `Discount.value` (a percent for `PERCENTAGE`, an amount for `FLAT`, so not `Money`) are `Decimal` strings without trailing zeros (`"10"`, `"12.5"`).
 - **Rounding:** one rule everywhere: half-up (half away from zero) to 2 decimal places, per line and per component (e.g. a 10% coupon on 59.98 is 6.00). This rule is pending confirmation by the store's tax adviser.
 
 | Changed fields (output, `Float` → `Money`) |
 |---|
-| `Order.subtotal`, `shippingFee`, `totalAmount`, `discountTotal`, `finalTotal`, `couponDiscount` |
-| `OrderItem.originalPrice`, `discountAmount`, `priceAtOrder` |
+| `Order.subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, `grandTotal`; `OrderAdjustment.amount` |
+| `OrderItem.unitListPrice`, `unitDiscount`, `unitNet`, `unitTax`, `lineTotal`; `OrderLineTax.base`, `amount` |
 | `Cart.total`, `discountTotal`, `finalTotal`; `CartItem.originalPrice`, `discountedPrice` |
 | `Variant.price` (`Product.price`, `basePrice`, `currentPrice`, `discountedPrice` were also converted, then removed in P1-V.3) |
 | `Payment.amount`; `RefundEntity.amount`; `ReturnRequestEntity.refundAmount` |
@@ -3579,7 +3623,7 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
 |---|---|---|
 | Scope | Product / Variant / Category | Order subtotal |
 | Applied | Shown automatically on variants (`Variant.discountedPrice`) and in `cartWithDiscount` | Entered as `couponCode` at checkout |
-| Charged at checkout | Yes (`Order.discountTotal`, per item `discountAmount`) | Yes (`Order.couponDiscount`) |
+| Charged at checkout | Yes (`DISCOUNT` adjustments, per item `unitDiscount`) | Yes (the `COUPON` adjustment) |
 | Type | `Discount` | `Coupon` |
 
 ### Discount Application
@@ -3588,7 +3632,7 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
 - Discounts are priced per **variant**. For a variant, the candidates are its own discounts, its product's discounts (a product discount applies to every variant of the product) and its product's category's discounts. The **best** one is the one that saves the most money on one unit at the variant's current price (on a GHS 50 item, GHS 8 off beats 10% off; on GHS 1,000, 30% off beats GHS 50 off). On an equal saving the first candidate is kept.
 - Unit discount: `PERCENTAGE` → `Variant.price × value / 100`, `FLAT` → `value`, rounded half-up to 2 decimal places and never more than the price. `discountedPrice = price - unit discount`; line total = `discountedPrice × quantity`.
 - `minimumPurchase`: in the cart and at checkout a discount applies only when the cart's list-price `total` (all items, before discounts) reaches its minimum; otherwise it is skipped and the next best discount applies. `Variant.discountedPrice` on product pages does not check minimums.
-- **Checkout charges the same prices**: `Variant.discountedPrice`, `cartWithDiscount` and `createOrder` use one pricing function, so `Order.subtotal` equals `cartWithDiscount.finalTotal` at the moment of checkout. An order is priced once, when it is created; nothing re-prices an existing order.
+- **Checkout charges the same prices**: `Variant.discountedPrice`, `cartWithDiscount` and `createOrder` use one pricing function, so the sum of the order's `lineTotal`s equals `cartWithDiscount.finalTotal` at the moment of checkout. An order is priced once, when it is created; nothing re-prices an existing order.
 
 ### Coupon Logic
 
@@ -3599,7 +3643,7 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
   3. Usage limit not reached (`usedCount < usageLimit`, or `usageLimit` is null).
   4. User has not already used this coupon.
   5. Subtotal ≥ `minimumOrderAmount`.
-- Discount: `PERCENTAGE` → subtotal × value / 100; `FLAT` → min(value, subtotal). Saved in `Order.couponDiscount`; `Coupon.usedCount` increments.
+- Discount: `PERCENTAGE` → subtotal × value / 100; `FLAT` → min(value, subtotal). Saved as the order's `COUPON` adjustment; `Coupon.usedCount` increments.
 - Cancelling or expiring the order gives the use back (usage record removed, `usedCount` decremented).
 
 ### Stacking Rules
@@ -4270,8 +4314,8 @@ fragment CartItemFull on CartItem {
 
 fragment OrderSummary on Order {
   id orderNumber status fulfillmentType paymentMethod
-  subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency } createdAt
-  items { id quantity variantId sku optionValues priceAtOrder { amount currency } product { id name } }
+  subtotal { amount currency } discountTotal { amount currency } taxTotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency } createdAt
+  items { id quantity variantId sku optionValues productName unitListPrice { amount currency } unitDiscount { amount currency } lineTotal { amount currency } product { id name } }
 }
 
 fragment AuthTokens on AuthEntity {
@@ -4547,9 +4591,9 @@ mutation {
     couponCode: "SAVE10"
   }) {
     id orderNumber status paymentMethod
-    subtotal { amount currency } shippingFee { amount currency } couponDiscount { amount currency } totalAmount { amount currency }
+    subtotal { amount currency } discountTotal { amount currency } taxTotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency }
     items {
-      id quantity variantId sku optionValues priceAtOrder { amount currency }
+      id quantity variantId sku optionValues productName unitListPrice { amount currency } unitDiscount { amount currency } lineTotal { amount currency }
       product { name }
     }
   }
@@ -4566,9 +4610,8 @@ mutation {
       "status": "PENDING",
       "paymentMethod": "ONLINE",
       "subtotal": { "amount": "59.98", "currency": "GHS" },
-      "shippingFee": { "amount": "15.00", "currency": "GHS" },
-      "couponDiscount": { "amount": "6.00", "currency": "GHS" },
-      "totalAmount": { "amount": "68.98", "currency": "GHS" },
+      "shippingTotal": { "amount": "15.00", "currency": "GHS" },
+      "grandTotal": { "amount": "68.98", "currency": "GHS" },
       "items": [...]
     }
   }
@@ -4627,7 +4670,7 @@ mutation {
   }) {
     id status amount { amount currency } currency
     order {
-      id status totalAmount { amount currency }
+      id status grandTotal { amount currency }
     }
   }
 }
@@ -4645,7 +4688,7 @@ mutation {
       "order": {
         "id": "clx_order_789",
         "status": "PROCESSING",
-        "totalAmount": { "amount": "68.98", "currency": "GHS" }
+        "grandTotal": { "amount": "68.98", "currency": "GHS" }
       }
     }
   }

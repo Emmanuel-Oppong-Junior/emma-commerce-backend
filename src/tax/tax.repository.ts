@@ -25,6 +25,10 @@ export class TaxRepository {
     return this.prisma.tax.findMany({ orderBy: { name: 'asc' } });
   }
 
+  async findActive(): Promise<Tax[]> {
+    return this.prisma.tax.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
+  }
+
   async getTotalActiveRate(db: Prisma.TransactionClient = this.prisma): Promise<Prisma.Decimal> {
     const taxes = await db.tax.findMany({ where: { isActive: true } });
     return taxes.reduce((sum, t) => sum.plus(t.rate), new Prisma.Decimal(0));

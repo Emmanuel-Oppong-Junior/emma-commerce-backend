@@ -18,6 +18,14 @@ export class RefundEntity {
   @Field(() => MoneyObject)
   amount: Decimal;
 
+  @Field(() => MoneyObject, {
+    nullable: true,
+    description:
+      "Tax included in the amount, from the order's stored tax lines in proportion; null for orders placed before " +
+      'tax was recorded and for refunds of charges that never paid the order',
+  })
+  taxAmount?: Decimal | null;
+
   @Field()
   currency: string;
 

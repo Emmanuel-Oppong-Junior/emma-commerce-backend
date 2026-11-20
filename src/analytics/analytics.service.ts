@@ -51,7 +51,7 @@ export class AnalyticsService {
         SELECT COALESCE(SUM(amount), 0) AS gross, COUNT(DISTINCT "orderId")::int AS "orderCount" FROM period
       ),
       items AS (
-        SELECT COALESCE(SUM(oi."priceAtOrder" * oi.quantity), 0) AS "itemSales"
+        SELECT COALESCE(SUM(oi."lineTotal"), 0) AS "itemSales"
         FROM "OrderItem" oi
         WHERE oi."orderId" IN (SELECT "orderId" FROM period)
       ),
@@ -100,7 +100,7 @@ export class AnalyticsService {
         oi."productId",
         p.name AS "productName",
         SUM(oi.quantity)::bigint AS "totalQuantitySold",
-        SUM(oi."priceAtOrder" * oi.quantity) AS "totalRevenue"
+        SUM(oi."lineTotal") AS "totalRevenue"
       FROM "OrderItem" oi
       JOIN "Product" p ON p.id = oi."productId"
       WHERE oi."orderId" IN (SELECT "orderId" FROM (${ACCEPTED_PAYMENTS}) accepted)
@@ -130,7 +130,7 @@ export class AnalyticsService {
       SELECT
         p."categoryId",
         c.name AS "categoryName",
-        SUM(oi."priceAtOrder" * oi.quantity) AS "totalRevenue",
+        SUM(oi."lineTotal") AS "totalRevenue",
         COUNT(DISTINCT oi."orderId")::bigint AS "orderCount"
       FROM "OrderItem" oi
       JOIN "Product" p ON p.id = oi."productId"

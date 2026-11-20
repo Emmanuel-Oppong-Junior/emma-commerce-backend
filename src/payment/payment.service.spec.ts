@@ -93,7 +93,7 @@ describe('PaymentService', () => {
       status: 'PENDING',
       deleted: false,
       paymentMethod: 'ONLINE',
-      totalAmount: new Prisma.Decimal(1000),
+      grandTotal: new Prisma.Decimal(1000),
       user: { email: 'test@example.com' },
       paymentIntent: null,
     };

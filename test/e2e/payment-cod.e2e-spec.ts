@@ -22,7 +22,9 @@ describe('Cash-on-delivery collection (e2e)', () => {
       data: {
         orderNumber: await takeOrderNumber(prisma),
         userId: 'seed_user',
-        totalAmount: '250.50',
+        grandTotal: '250.50',
+        currency: 'GHS',
+        pricingVersion: 0,
         status,
         paymentMethod,
         fulfillmentType,

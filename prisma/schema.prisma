@@ -389,7 +389,6 @@ model Discount {
   variants        Variant[]
   categories      Category[]
   minimumPurchase Decimal?     @db.Decimal(14, 2)
-  orderItems      OrderItem[]
   cartItems       CartItem[]
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
@@ -433,11 +432,19 @@ model Order {
   orderNumber             Int                @unique
   userId                  String
   user                    User               @relation(fields: [userId], references: [id], onDelete: Restrict)
-  discountTotal           Decimal?           @db.Decimal(14, 2)
-  totalWithOutDiscount    Decimal?           @db.Decimal(14, 2)
+  currency                Currency
+  /// 1 for orders priced and snapshotted by createOrder since P1-O.1; 0 for older orders, whose totals are copied
+  /// from what they stored (null where unknown) and which have no tax lines
+  pricingVersion          Int
+  /// Sum of unit list price x quantity, before any discount (prices include tax)
   subtotal                Decimal?           @db.Decimal(14, 2)
-  shippingFee             Decimal?           @db.Decimal(14, 2)
-  totalAmount             Decimal            @db.Decimal(14, 2)
+  /// Every discount: product discounts and the coupon (the negated sum of the adjustments)
+  discountTotal           Decimal?           @db.Decimal(14, 2)
+  /// Tax included in the line totals (the sum of the line taxes)
+  taxTotal                Decimal?           @db.Decimal(14, 2)
+  shippingTotal           Decimal?           @db.Decimal(14, 2)
+  /// The amount charged: subtotal - discountTotal + shippingTotal
+  grandTotal              Decimal            @db.Decimal(14, 2)
   status                  OrderStatus        @default(PENDING)
   fulfillmentType         FulfillmentType    @default(DELIVERY)
   shippingAddressId       String?
@@ -450,7 +457,6 @@ model Order {
   carrier                 String?
   couponId                String?
   coupon                  Coupon?            @relation(fields: [couponId], references: [id])
-  couponDiscount          Decimal?           @db.Decimal(14, 2)
   paymentMethod           PaymentMethod      @default(ONLINE)
   contactEmail            String
   contactPhone            String
@@ -459,6 +465,7 @@ model Order {
   deleted                 Boolean            @default(false)
   deletedAt               DateTime?
   items                   OrderItem[]
+  adjustments             OrderAdjustment[]
   paymentIntent           PaymentIntent?
   cashCollections         CashCollection[]
   returnRequests          ReturnRequest[]
@@ -470,29 +477,79 @@ model Order {
 }
 
 model OrderItem {
-  id             String             @id @default(cuid())
-  orderId        String
-  productId      String
-  variantId      String
+  id            String             @id @default(cuid())
+  orderId       String
+  productId     String
+  variantId     String
+  /// Product name when ordered (orders placed before P1-O.1 copy the name the product had when migrated)
+  productName   String
   /// Snapshot of the variant's SKU and option values when ordered (null on lines ordered before P1-V.3)
-  sku            String?
-  optionValues   Json?
-  quantity       Int                @default(1)
-  priceAtOrder   Decimal            @db.Decimal(14, 2)
-  order          Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product        Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
-  variant        Variant            @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  createdAt      DateTime           @default(now())
-  originalPrice  Decimal            @db.Decimal(14, 2)
-  discountAmount Decimal?           @db.Decimal(14, 2)
-  discount       Discount?          @relation(fields: [discountId], references: [id])
-  discountId     String?
-  reservations   StockReservation[]
+  sku           String?
+  optionValues  Json?
+  quantity      Int                @default(1)
+  /// Catalogue price of one unit when ordered, tax included
+  unitListPrice Decimal            @db.Decimal(14, 2)
+  /// Product discount taken off one unit
+  unitDiscount  Decimal            @db.Decimal(14, 2)
+  /// One unit after its discount, without tax; null on orders placed before P1-O.1 (tax unknown)
+  unitNet       Decimal?           @db.Decimal(14, 2)
+  /// Tax included in one discounted unit; null on orders placed before P1-O.1
+  unitTax       Decimal?           @db.Decimal(14, 2)
+  /// (unitListPrice - unitDiscount) x quantity, which is (unitNet + unitTax) x quantity
+  lineTotal     Decimal            @db.Decimal(14, 2)
+  order         Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product       Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant       Variant            @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  createdAt     DateTime           @default(now())
+  reservations  StockReservation[]
+  adjustments   OrderAdjustment[]
+  taxLines      OrderLineTax[]
 
   @@index([orderId])
   @@index([productId, orderId])
   @@index([variantId])
-  @@index([discountId])
+}
+
+/// A discount or coupon taken off an order (ADR-0005 adjustments), signed: reductions are negative. Line-level when
+/// orderItemId is set (already reflected in that line's unitDiscount), order-level otherwise.
+model OrderAdjustment {
+  id          String              @id @default(cuid())
+  orderId     String
+  orderItemId String?
+  type        OrderAdjustmentType
+  /// The Discount or Coupon id it came from (kept when the source is later deleted)
+  sourceId    String?
+  /// Coupon code or discount name when ordered
+  code        String?
+  amount      Decimal             @db.Decimal(14, 2)
+  createdAt   DateTime            @default(now())
+  order       Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem?          @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([orderItemId])
+}
+
+enum OrderAdjustmentType {
+  DISCOUNT
+  COUPON
+}
+
+/// One tax included in an order line, as the pricing at placement computed it (ADR-0006 snapshot; never recomputed).
+model OrderLineTax {
+  id          String    @id @default(cuid())
+  orderItemId String
+  /// The Tax row it came from (kept when the tax is later changed or deleted)
+  taxId       String?
+  name        String
+  rate        Decimal   @db.Decimal(9, 6)
+  /// The line's amount without tax that the rate applies to
+  base        Decimal   @db.Decimal(14, 2)
+  amount      Decimal   @db.Decimal(14, 2)
+  createdAt   DateTime  @default(now())
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([orderItemId])
 }
 
 model PaymentIntent {
@@ -541,6 +598,9 @@ model Refund {
   returnRequestId String?        @unique
   returnRequest   ReturnRequest? @relation(fields: [returnRequestId], references: [id], onDelete: Restrict)
   amount          Decimal        @db.Decimal(14, 2)
+  /// Tax included in the amount, read from the order's stored tax lines in proportion; null when the order has no
+  /// tax snapshot (placed before P1-O.1) or the refund returns a charge that never paid the order
+  taxAmount       Decimal?       @db.Decimal(14, 2)
   currency        String         @default("GHS")
   status          RefundStatus   @default(PENDING)
   providerRef     String?        @unique

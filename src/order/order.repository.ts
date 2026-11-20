@@ -13,12 +13,15 @@ import {
 } from '../generated/prisma/client';
 import { FOR_SALE, VariantForSale } from '../cart/cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrderSnapshot } from './order-totals';
 
 type OrderWithItems = Order & { items: OrderItem[] };
-export type NewOrderItem = Omit<Prisma.OrderItemUncheckedCreateWithoutOrderInput, 'optionValues' | 'quantity'> & {
-  quantity: number;
-  optionValues: Prisma.InputJsonValue;
-};
+
+/** What an order is read with everywhere: its lines with their tax lines, and its adjustments. */
+export const ORDER_INCLUDE = {
+  items: { include: { product: true, variant: true, taxLines: { orderBy: { name: 'asc' } } } },
+  adjustments: { orderBy: { createdAt: 'asc' } },
+} satisfies Prisma.OrderInclude;
 
 /**
  * Unpaid online orders older than `cutoff` with no payment attempt, or whose attempts are all pending, failed
@@ -56,14 +59,14 @@ export class OrdersRepository {
   async findById(id: string, include?: Prisma.OrderInclude): Promise<OrderWithItems | null> {
     return this.prisma.order.findUnique({
       where: { id },
-      include: include ?? { items: true },
+      include: include ?? ORDER_INCLUDE,
     }) as Promise<OrderWithItems | null>;
   }
 
   async findByUser(userId: string): Promise<OrderWithItems[]> {
     return this.prisma.order.findMany({
       where: { userId, deleted: false },
-      include: { items: { include: { product: true, variant: true } } },
+      include: ORDER_INCLUDE,
       orderBy: { createdAt: 'desc' },
     }) as unknown as Promise<OrderWithItems[]>;
   }
@@ -71,56 +74,79 @@ export class OrdersRepository {
   async findAll(): Promise<Order[]> {
     return this.prisma.order.findMany({
       where: { deleted: false },
-      include: { items: { include: { product: true, variant: true } } },
+      include: ORDER_INCLUDE,
     }) as unknown as Promise<Order[]>;
   }
 
+  /** Writes the order with its line, tax and adjustment snapshot (see snapshotOrder). */
   async create(
     tx: Prisma.TransactionClient,
     userId: string,
     orderDetails: {
-      orderItems: NewOrderItem[];
-      subtotal: Prisma.Decimal;
-      discountTotal: Prisma.Decimal;
-      shippingFee: Prisma.Decimal;
-      totalAmount: Prisma.Decimal;
+      snapshot: OrderSnapshot;
       fulfillmentType: FulfillmentType;
       shippingAddressId?: string;
       pickupLocationId?: string;
       shippingAddressSnapshot?: Record<string, unknown>;
       pickupLocationSnapshot?: Record<string, unknown>;
       couponId?: string;
-      couponDiscount?: Prisma.Decimal;
       paymentMethod?: PaymentMethod;
       initialStatus?: OrderStatus;
       contactEmail: string;
       contactPhone: string;
     },
   ): Promise<OrderWithItems> {
+    const { snapshot } = orderDetails;
     const orderNumber = await this.takeOrderNumber(tx);
-    return tx.order.create({
+    const order = await tx.order.create({
       data: {
         orderNumber,
         userId,
+        currency: snapshot.currency,
+        pricingVersion: snapshot.pricingVersion,
+        subtotal: snapshot.subtotal,
+        discountTotal: snapshot.discountTotal,
+        taxTotal: snapshot.taxTotal,
+        shippingTotal: snapshot.shippingTotal,
+        grandTotal: snapshot.grandTotal,
         fulfillmentType: orderDetails.fulfillmentType,
         shippingAddressId: orderDetails.shippingAddressId,
         pickupLocationId: orderDetails.pickupLocationId,
-        subtotal: orderDetails.subtotal,
-        discountTotal: orderDetails.discountTotal,
-        shippingFee: orderDetails.shippingFee,
-        totalAmount: orderDetails.totalAmount,
         shippingAddressSnapshot: (orderDetails.shippingAddressSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
         pickupLocationSnapshot: (orderDetails.pickupLocationSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
         couponId: orderDetails.couponId,
-        couponDiscount: orderDetails.couponDiscount,
         paymentMethod: orderDetails.paymentMethod ?? PaymentMethod.ONLINE,
         status: orderDetails.initialStatus ?? OrderStatus.PENDING,
         contactEmail: orderDetails.contactEmail,
         contactPhone: orderDetails.contactPhone,
-        items: { create: orderDetails.orderItems },
       },
-      include: { items: { include: { product: true, variant: true } } },
-    }) as unknown as OrderWithItems;
+    });
+    for (const line of snapshot.lines) {
+      await tx.orderItem.create({
+        data: {
+          orderId: order.id,
+          productId: line.productId,
+          variantId: line.variantId,
+          productName: line.productName,
+          sku: line.sku,
+          optionValues: line.optionValues as Prisma.InputJsonValue,
+          quantity: line.quantity,
+          unitListPrice: line.unitListPrice,
+          unitDiscount: line.unitDiscount,
+          unitNet: line.unitNet,
+          unitTax: line.unitTax,
+          lineTotal: line.lineTotal,
+          taxLines: { create: line.taxLines },
+          adjustments: { create: line.adjustments.map((adjustment) => ({ ...adjustment, orderId: order.id })) },
+        },
+      });
+    }
+    if (snapshot.adjustments.length > 0) {
+      await tx.orderAdjustment.createMany({
+        data: snapshot.adjustments.map((adjustment) => ({ ...adjustment, orderId: order.id })),
+      });
+    }
+    return this.findInTransaction(tx, order.id);
   }
 
   /**
@@ -150,7 +176,7 @@ export class OrdersRepository {
       return (await db.order.update({
         where: { id: orderId },
         data: { trackingNumber, carrier },
-        include: { items: { include: { product: true, variant: true } } },
+        include: ORDER_INCLUDE,
       })) as unknown as OrderWithItems;
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
@@ -192,7 +218,7 @@ export class OrdersRepository {
   private async findInTransaction(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems> {
     return tx.order.findUniqueOrThrow({
       where: { id: orderId },
-      include: { items: { include: { product: true, variant: true } } },
+      include: ORDER_INCLUDE,
     }) as unknown as OrderWithItems;
   }
 
