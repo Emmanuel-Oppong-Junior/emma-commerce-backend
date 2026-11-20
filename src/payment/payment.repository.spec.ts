@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
 import { StoreRepository } from '../store/store.repository';
 import { OutboxService } from '../outbox/outbox.service';
+import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { Order, Prisma } from '../generated/prisma/client';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
@@ -99,6 +100,8 @@ const mockTx = {
   $queryRaw: jest.fn(),
 };
 
+const mockStockLedger = { consumeOrder: jest.fn() };
+
 const mockPrisma = {
   ...mockTx,
   $transaction: jest.fn((work: (tx: typeof mockTx) => unknown) => work(mockTx)),
@@ -115,6 +118,7 @@ describe('PaymentRepository', () => {
         { provide: OrdersRepository, useValue: mockOrdersRepository },
         { provide: StoreRepository, useValue: mockStoreRepository },
         { provide: OutboxService, useValue: mockOutbox },
+        { provide: StockLedgerService, useValue: mockStockLedger },
       ],
     }).compile();
 
@@ -524,6 +528,28 @@ describe('PaymentRepository', () => {
       expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(mockTx, 'order1', 'PROCESSING', ['PENDING']);
       expect(mockPrismaRefund.create).not.toHaveBeenCalled();
       expect(result.attempt.status).toBe('COMPLETED');
+    });
+
+    it('consumes the order stock reservations in the settlement transaction, after the order moved to PROCESSING', async () => {
+      await repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }));
+
+      expect(mockStockLedger.consumeOrder).toHaveBeenCalledWith(mockTx, 'order1');
+      expect(mockOrdersRepository.transitionStatus.mock.invocationCallOrder[0]).toBeLessThan(
+        mockStockLedger.consumeOrder.mock.invocationCallOrder[0],
+      );
+    });
+
+    it.each([
+      ['settled', { kind: 'settled' }],
+      ['failed', { kind: 'failed' }],
+      [
+        'sent to review (a payment for an expired order)',
+        { kind: 'review', reason: 'ORDER_NOT_PAYABLE', attemptStatus: 'COMPLETED' },
+      ],
+    ])('consumes no stock when the attempt is %s', async (_label, outcome) => {
+      await repository.settleAttempt('pay1', success, details, () => outcome as never);
+
+      expect(mockStockLedger.consumeOrder).not.toHaveBeenCalled();
     });
 
     it('records payment.succeeded.v1 in the settlement transaction, after the order moved to PROCESSING', async () => {

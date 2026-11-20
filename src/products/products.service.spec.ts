@@ -17,7 +17,9 @@ import { Decimal } from '@prisma/client/runtime/client';
 import { ProductTypesRepository } from '../product-types/product-types.repository';
 import { VariantService } from '../variant/variant.service';
 
+const AVAILABLE_STOCK = { stockLevels: { some: { onHand: { gt: 'reserved' } } } };
 const mockProductsRepository = {
+  hasAvailableStock: () => AVAILABLE_STOCK,
   create: jest.fn(),
   update: jest.fn(),
   delete: jest.fn(),
@@ -273,7 +275,7 @@ describe('ProductsService', () => {
 
       expect(productsRepository.count).toHaveBeenCalledWith({
         variants: {
-          some: { isActive: true, price: { gte: new Decimal(10), lte: new Decimal(50) }, quantity: { gt: 0 } },
+          some: { isActive: true, price: { gte: new Decimal(10), lte: new Decimal(50) }, ...AVAILABLE_STOCK },
         },
       });
     });
@@ -281,7 +283,7 @@ describe('ProductsService', () => {
     it.each<[string, ProductFilterArgs, object]>([
       ['a minimum price', { priceMin: new Decimal(10) }, { isActive: true, price: { gte: new Decimal(10) } }],
       ['a maximum price', { priceMax: new Decimal(50) }, { isActive: true, price: { lte: new Decimal(50) } }],
-      ['in stock', { inStock: true }, { isActive: true, quantity: { gt: 0 } }],
+      ['in stock', { inStock: true }, { isActive: true, ...AVAILABLE_STOCK }],
     ])('filters on %s alone through the variants', async (_case, variantFilter, some) => {
       mockProductsRepository.findMany.mockResolvedValue([]);
       mockProductsRepository.count.mockResolvedValue(0);

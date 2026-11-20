@@ -10,9 +10,8 @@ import {
   PaymentStatus,
   Prisma,
   User,
-  Variant,
 } from '../generated/prisma/client';
-import { VariantForSale } from '../cart/cart.repository';
+import { FOR_SALE, VariantForSale } from '../cart/cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
 
 type OrderWithItems = Order & { items: OrderItem[] };
@@ -205,34 +204,21 @@ export class OrdersRepository {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
-  /** Puts `quantity` units back on the variant (cancellation, expiry); returns its new stock. */
-  async restoreVariantStock(tx: Prisma.TransactionClient, variantId: string, quantity: number): Promise<Variant> {
-    return tx.variant.update({ where: { id: variantId }, data: { quantity: { increment: quantity } } });
-  }
-
-  /** Takes `quantity` units of an on-sale variant only if that many are left; null when short or no longer on sale. */
-  async decrementVariantStock(
-    tx: Prisma.TransactionClient,
-    variantId: string,
-    quantity: number,
-  ): Promise<Variant | null> {
-    const { count } = await tx.variant.updateMany({
-      // Re-checks sellability in the transaction: the variant may have been archived or its product unpublished since
-      // the cart was priced.
-      where: {
-        id: variantId,
-        quantity: { gte: quantity },
-        isActive: true,
-        product: { isActive: true, status: 'PUBLISHED' },
-      },
-      data: { quantity: { decrement: quantity } },
-    });
-    if (count === 0) return null;
-    return tx.variant.findUniqueOrThrow({ where: { id: variantId } });
+  /**
+   * Re-checks in the order transaction that the variant is still on sale (it may have been archived or its product
+   * unpublished since the cart was priced) and share-locks it and its product until the order commits, so neither can
+   * be taken off sale meanwhile. False when it is no longer on sale.
+   */
+  async lockSellableVariant(tx: Prisma.TransactionClient, variantId: string): Promise<boolean> {
+    const rows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT v.id FROM "Variant" v JOIN "Product" p ON p.id = v."productId"
+      WHERE v.id = ${variantId} AND v."isActive" AND p."isActive" AND p.status = 'PUBLISHED'
+      FOR SHARE OF v, p`;
+    return rows.length === 1;
   }
 
   async findVariant(variantId: string): Promise<VariantForSale | null> {
-    return this.prisma.variant.findUnique({ where: { id: variantId }, include: { product: true } });
+    return this.prisma.variant.findUnique({ where: { id: variantId }, include: FOR_SALE });
   }
 
   async clearCartItems(tx: Prisma.TransactionClient, cartId: string): Promise<void> {

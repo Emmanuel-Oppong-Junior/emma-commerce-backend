@@ -5,11 +5,14 @@ import { SalesReport } from './entities/sales-report.entity';
 import { TopProduct } from './entities/top-product.entity';
 import { RevenueByCategoryEntity } from './entities/revenue-by-category.entity';
 import { DashboardSummary } from './entities/dashboard-summary.entity';
+import { DEFAULT_LOW_STOCK_THRESHOLD } from '../inventory/stock';
 
 /**
  * A payment accepted for its order: a settled online attempt or a recorded cash collection (which also writes a
  * COMPLETED cash-on-delivery attempt). Captured payments held for review are excluded; they are queued for refund.
  */
+// A variant's available stock over all locations; 0 when it has no stock level yet.
+const AVAILABLE_STOCK = Prisma.sql`COALESCE((SELECT sum(sl."onHand" - sl."reserved") FROM "StockLevel" sl WHERE sl."variantId" = v.id), 0)`;
 const ACCEPTED_ATTEMPT = Prisma.sql`pa.status = 'COMPLETED' AND pa."reviewReason" IS NULL AND pa.deleted = false`;
 
 // An attempt has no settled-at column: updatedAt is written by the settling update and only touched again by an
@@ -161,14 +164,16 @@ export class AnalyticsService {
       this.prisma.$queryRaw<[{ count: bigint }]>`
         SELECT COUNT(DISTINCT p.id)::bigint AS count
         FROM "Product" p JOIN "Variant" v ON v."productId" = p.id
-        WHERE p."isActive" AND v."isActive" AND v.quantity <= COALESCE(v."lowStockThreshold", 5)
+        WHERE p."isActive" AND v."isActive"
+          AND ${AVAILABLE_STOCK} <= COALESCE(v."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD})
       `
         // eslint-disable-next-line no-restricted-syntax -- a row count (COUNT returns bigint), not money
         .then((r) => Number(r[0].count)),
       this.prisma.$queryRaw<[{ count: bigint }]>`
         SELECT COUNT(*)::bigint AS count
         FROM "Variant" v JOIN "Product" p ON p.id = v."productId"
-        WHERE p."isActive" AND v."isActive" AND v.quantity <= COALESCE(v."lowStockThreshold", 5)
+        WHERE p."isActive" AND v."isActive"
+          AND ${AVAILABLE_STOCK} <= COALESCE(v."lowStockThreshold", ${DEFAULT_LOW_STOCK_THRESHOLD})
       `
         // eslint-disable-next-line no-restricted-syntax -- a row count (COUNT returns bigint), not money
         .then((r) => Number(r[0].count)),

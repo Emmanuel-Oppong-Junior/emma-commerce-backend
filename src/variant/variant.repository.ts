@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { AttributeDefinition, InventoryAction, Prisma, Variant } from '../generated/prisma/client';
+import { AttributeDefinition, Prisma, Variant } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type VariantWithProduct = Variant & { product: { id: string; name: string } };
@@ -61,21 +61,6 @@ export class VariantRepository {
     }
   }
 
-  async logStock(
-    db: Prisma.TransactionClient,
-    entry: {
-      productId: string;
-      variantId: string;
-      action: InventoryAction;
-      quantityChange: number;
-      quantityAfter: number;
-      reason: string;
-      actorId: string;
-    },
-  ): Promise<void> {
-    await db.inventoryLog.create({ data: entry });
-  }
-
   async findById(variantId: string): Promise<VariantWithProduct | null> {
     return this.prisma.variant.findUnique({ where: { id: variantId }, include: WITH_PRODUCT });
   }
@@ -125,13 +110,13 @@ export class VariantRepository {
   }
 
   /** How many cart lines, order lines and stock movements reference the variant. */
-  async countHistory(variantId: string): Promise<{ cartItems: number; orderItems: number; inventoryLogs: number }> {
-    const [cartItems, orderItems, inventoryLogs] = await Promise.all([
+  async countHistory(variantId: string): Promise<{ cartItems: number; orderItems: number; stockMovements: number }> {
+    const [cartItems, orderItems, stockMovements] = await Promise.all([
       this.prisma.cartItem.count({ where: { variantId } }),
       this.prisma.orderItem.count({ where: { variantId } }),
-      this.prisma.inventoryLog.count({ where: { variantId } }),
+      this.prisma.stockMovement.count({ where: { variantId } }),
     ]);
-    return { cartItems, orderItems, inventoryLogs };
+    return { cartItems, orderItems, stockMovements };
   }
 
   async countVariants(productId: string): Promise<number> {

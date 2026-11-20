@@ -649,7 +649,7 @@ input CreateVariantInput {
   productId: ID!
 
   """
-  Initial stock, logged as a RESTOCK; later changes go through restock/adjust
+  Opening stock at the default location, recorded as a RECEIPT; later changes go through restock/adjust
   """
   quantity: Int!
 
@@ -818,25 +818,6 @@ enum GhanaRegion {
   WESTERN_NORTH
 }
 
-enum InventoryActionEnum {
-  ADJUSTMENT
-  ORDER_DEDUCTION
-  RESTOCK
-  RETURN_RESTORE
-}
-
-type InventoryLogEntity {
-  action: InventoryActionEnum!
-  actorId: ID
-  createdAt: DateTime!
-  id: ID!
-  productId: ID!
-  quantityAfter: Int!
-  quantityChange: Int!
-  reason: String
-  variantId: ID!
-}
-
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
@@ -914,9 +895,9 @@ type Mutation {
   addToWishlist(productId: String!): Wishlist!
 
   """
-  Change a variant’s stock by a signed amount with a reason, never below zero (admin only)
+  Change a variant’s on-hand stock by a signed amount with a reason, never below reserved (admin only)
   """
-  adjustVariantStock(input: AdjustVariantStockInput!): InventoryLogEntity!
+  adjustVariantStock(input: AdjustVariantStockInput!): StockMovement!
 
   """Admin: cancel any order by ID and restore its stock"""
   adminCancelOrder(orderId: String!): Order!
@@ -1113,8 +1094,10 @@ type Mutation {
   """Reset password using a valid reset token"""
   resetPassword(input: ResetPasswordInput!): Boolean!
 
-  """Restock a product variant (admin only)"""
-  restockVariant(input: RestockVariantInput!): InventoryLogEntity!
+  """
+  Add stock to a variant: a RECEIPT, or a RETURN_RESTOCK with returnRequestId (admin only)
+  """
+  restockVariant(input: RestockVariantInput!): StockMovement!
   restorePayment(id: String!): Payment!
   restoreProduct(productId: String!): Product!
 
@@ -1702,9 +1685,6 @@ type Query {
   getShippingFee(addressId: ID!): Money!
   getUserPayment(userId: String!): [Payment!]!
 
-  """Get all inventory logs (admin only)"""
-  inventoryLogs: [InventoryLogEntity!]!
-
   """Get return requests for the current user"""
   myReturnRequests: [ReturnRequestEntity!]!
 
@@ -1721,9 +1701,6 @@ type Query {
 
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
-
-  """Get the inventory logs of every variant of a product (admin only)"""
-  productInventoryLogs(productId: ID!): [InventoryLogEntity!]!
 
   """Retrieves all reviews for a product"""
   productReviews(productId: String!): [Review!]!
@@ -1770,6 +1747,22 @@ type Query {
 
   """System and custom staff roles with their permissions (staff.view)"""
   staffRoles: [StaffRole!]!
+
+  """
+  Stock ledger entries, newest first, optionally of one variant or product (admin only)
+  """
+  stockMovements(
+    """Id of the last movement of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+
+    """Movements of every variant of the product"""
+    productId: ID
+    reason: StockMovementReason
+    variantId: ID
+  ): StockMovementPage!
 
   """
   The store settings: names, tax registration, currency, contact (public)
@@ -1828,9 +1821,6 @@ type Query {
 
   """Admin: a variant by ID, archived or not"""
   variant(variantId: String!): Variant!
-
-  """Get inventory logs for a variant (admin only)"""
-  variantInventoryLogs(variantId: ID!): [InventoryLogEntity!]!
 
   """
   Admin: variants of every product, or of one, archived included, by ID (max 100 per page)
@@ -1905,7 +1895,16 @@ input ResetPasswordInput {
 
 input RestockVariantInput {
   quantity: Int!
+
+  """
+  Why the stock came in; defaults to "Manual restock"
+  """
   reason: String
+
+  """
+  Goods returned under this return request: recorded as RETURN_RESTOCK instead of RECEIPT
+  """
+  returnRequestId: ID
   variantId: ID!
 }
 
@@ -2087,6 +2086,68 @@ type StaffRole {
 type StepUpResult {
   """Sensitive actions are allowed in this session until then"""
   validUntil: DateTime!
+}
+
+"""One entry of the append-only stock ledger"""
+type StockMovement {
+  """The staff member or customer who caused it"""
+  actorId: ID
+  createdAt: DateTime!
+  id: ID!
+  locationId: ID!
+  note: String
+
+  """Signed change to on-hand stock"""
+  onHandDelta: Int!
+  reason: StockMovementReason!
+  refId: ID
+
+  """What caused it: Order, ReturnRequest, InventoryLog, ..."""
+  refType: String
+
+  """Signed change to reserved stock"""
+  reservedDelta: Int!
+  variantId: ID!
+}
+
+type StockMovementPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [StockMovement!]!
+  totalCount: Int!
+}
+
+"""Why stock moved (ADR-0008)"""
+enum StockMovementReason {
+  """Manual correction with a reason (damage, loss, stock count)"""
+  ADJUSTMENT
+
+  """
+  Stock the old inventory log did not explain, recorded by the ledger migration
+  """
+  OPENING_BALANCE
+
+  """Stock received: a delivery, or the opening stock of a new variant"""
+  RECEIPT
+
+  """A hold given back because the order was cancelled or expired"""
+  RELEASE
+
+  """Units held for an order line; on hand, no longer available"""
+  RESERVE
+
+  """
+  Goods back on hand: a return restocked, or a paid order cancelled before dispatch
+  """
+  RETURN_RESTOCK
+
+  """
+  A reservation consumed: online payment captured, or a cash-on-delivery order dispatched
+  """
+  SALE
+
+  """Moved between locations (not used yet)"""
+  TRANSFER
 }
 
 """The settings of the store this deployment serves"""
@@ -2656,6 +2717,9 @@ type Variant {
   """The discount behind discountedPrice"""
   appliedDiscount: Discount
 
+  """Units that can be bought now: on hand minus reserved for open orders"""
+  available: Int!
+
   """Barcode (EAN, UPC, GTIN, ...)"""
   barcode: String
 
@@ -2677,8 +2741,15 @@ type Variant {
   isActive: Boolean!
   lengthMm: Int
 
-  """Stock level that counts as low (default 5)"""
+  """
+  Available stock at or below which an inventory.low_stock event is raised (default 5)
+  """
   lowStockThreshold: Int
+
+  """
+  Units physically in stock, including reserved ones (staff with inventory.view)
+  """
+  onHand: Int!
 
   """
   Values for the product type's variant axes, e.g. { size: "M", colour: "Red" }
@@ -2692,8 +2763,8 @@ type Variant {
   product: Product!
   productId: ID!
 
-  """Units in stock"""
-  quantity: Int!
+  """Units held for open orders (staff with inventory.view)"""
+  reserved: Int!
 
   """Stock keeping unit code"""
   sku: String
@@ -2735,7 +2806,7 @@ input VariantFieldsInput {
   optionValues: JSONObject
 
   """
-  Initial stock, logged as a RESTOCK; later changes go through restock/adjust
+  Opening stock at the default location, recorded as a RECEIPT; later changes go through restock/adjust
   """
   quantity: Int!
 

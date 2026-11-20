@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, setStock } from '../helpers/db.helper';
 import { signInUser } from '../helpers/auth.helper';
 
 describe('Cart (e2e)', () => {
@@ -94,10 +94,7 @@ describe('Cart (e2e)', () => {
 
     it('fails when the requested quantity exceeds available stock', async () => {
       // Arrange — set the variant's stock to 1 so requesting 999 fails
-      await prisma.variant.update({
-        where: { id: 'seed_var2' },
-        data: { quantity: 1 },
-      });
+      await setStock(prisma, 'seed_var2', 1);
 
       const mutation = `
         mutation {
@@ -115,10 +112,7 @@ describe('Cart (e2e)', () => {
       expect(res.body.errors[0].message).toMatch(/stock|quantity/i);
 
       // Restore stock to avoid affecting downstream tests
-      await prisma.variant.update({
-        where: { id: 'seed_var2' },
-        data: { quantity: 100 },
-      });
+      await setStock(prisma, 'seed_var2', 100);
     });
   });
 

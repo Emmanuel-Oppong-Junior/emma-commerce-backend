@@ -349,7 +349,7 @@ export class ProductsService {
       ...((priceMin !== undefined || priceMax !== undefined) && {
         price: { ...(priceMin !== undefined && { gte: priceMin }), ...(priceMax !== undefined && { lte: priceMax }) },
       }),
-      ...(inStock === true && { quantity: { gt: 0 } }),
+      ...(inStock === true && this.productsRepository.hasAvailableStock()),
     };
   }
 

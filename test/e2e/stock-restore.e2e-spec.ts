@@ -3,7 +3,13 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
+import {
+  resetDb,
+  seedMinimal,
+  seedPaymentAttempt,
+  stockOf as ledgerStockOf,
+  stockReturnsFor,
+} from '../helpers/db.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 
 describe('Stock is restored exactly once (e2e)', () => {
@@ -14,10 +20,8 @@ describe('Stock is restored exactly once (e2e)', () => {
   let addressId: string;
   const paystack = { createRefund: jest.fn(async () => ({ id: 'rf_stock', status: 'pending' })) };
 
-  const stockOf = async () =>
-    (await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' }, select: { quantity: true } })).quantity;
-  const restoreLogsFor = (orderId: string) =>
-    prisma.inventoryLog.count({ where: { action: 'RETURN_RESTORE', reason: { contains: orderId } } });
+  const stockOf = async () => (await ledgerStockOf(prisma, 'seed_var1')).available;
+  const restoreLogsFor = (orderId: string) => stockReturnsFor(prisma, orderId);
 
   const placeOrder = async (): Promise<string> => {
     await gqlRequest(

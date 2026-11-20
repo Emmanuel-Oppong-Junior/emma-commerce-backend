@@ -1,46 +1,37 @@
-import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { InventoryService } from './inventory.service';
-import { InventoryLogEntity } from './entities/inventory-log.entity';
+import { StockMovementsArgs } from './dto/stock-movements.args';
+import { StockMovement, StockMovementPage } from './entities/stock-movement.entity';
 import { RestockVariantInput } from './dto/restock.input';
 import { AdjustVariantStockInput } from './dto/adjust-stock.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { RequirePermission } from '../iam/authorization/policy.decorators';
 
-@Resolver(() => InventoryLogEntity)
+@Resolver(() => StockMovement)
 export class InventoryResolver {
   constructor(private readonly inventoryService: InventoryService) {}
 
   @RequirePermission('inventory.adjust')
-  @Mutation(() => InventoryLogEntity, { description: 'Restock a product variant (admin only)' })
+  @Mutation(() => StockMovement, {
+    description: 'Add stock to a variant: a RECEIPT, or a RETURN_RESTOCK with returnRequestId (admin only)',
+  })
   restockVariant(@ActiveUser('id') actorId: string, @Args('input') input: RestockVariantInput) {
     return this.inventoryService.restockVariant(input, actorId);
   }
 
   @RequirePermission('inventory.adjust')
-  @Mutation(() => InventoryLogEntity, {
-    description: 'Change a variant’s stock by a signed amount with a reason, never below zero (admin only)',
+  @Mutation(() => StockMovement, {
+    description: 'Change a variant’s on-hand stock by a signed amount with a reason, never below reserved (admin only)',
   })
   adjustVariantStock(@ActiveUser('id') actorId: string, @Args('input') input: AdjustVariantStockInput) {
     return this.inventoryService.adjustVariantStock(input, actorId);
   }
 
   @RequirePermission('inventory.view')
-  @Query(() => [InventoryLogEntity], { description: 'Get all inventory logs (admin only)' })
-  inventoryLogs() {
-    return this.inventoryService.getAllLogs();
-  }
-
-  @RequirePermission('inventory.view')
-  @Query(() => [InventoryLogEntity], {
-    description: 'Get the inventory logs of every variant of a product (admin only)',
+  @Query(() => StockMovementPage, {
+    description: 'Stock ledger entries, newest first, optionally of one variant or product (admin only)',
   })
-  productInventoryLogs(@Args('productId', { type: () => ID }) productId: string) {
-    return this.inventoryService.getProductLogs(productId);
-  }
-
-  @RequirePermission('inventory.view')
-  @Query(() => [InventoryLogEntity], { description: 'Get inventory logs for a variant (admin only)' })
-  variantInventoryLogs(@Args('variantId', { type: () => ID }) variantId: string) {
-    return this.inventoryService.getVariantLogs(variantId);
+  stockMovements(@Args() { variantId, productId, reason, first, after }: StockMovementsArgs) {
+    return this.inventoryService.getMovements({ variantId, productId, reason }, first, after);
   }
 }

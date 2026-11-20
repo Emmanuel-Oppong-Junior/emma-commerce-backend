@@ -16,6 +16,14 @@ export function migrationSql(name: string): string {
   return readFileSync(join(MIGRATIONS_DIR, name, 'migration.sql'), 'utf8');
 }
 
+/** The part of a migration from the line starting with `marker` to the end, e.g. its re-runnable backfill. */
+export function migrationSqlFrom(name: string, marker: string): string {
+  const sql = migrationSql(name);
+  const start = sql.indexOf(`\n${marker}`);
+  if (start < 0) throw new Error(`No "${marker}" section in migration ${name}`);
+  return sql.slice(start + 1);
+}
+
 /**
  * A scratch Postgres schema inside the test database, for running migrations against legacy data shapes that the
  * real schema no longer has. Every statement runs in its own transaction with search_path set to the scratch schema.

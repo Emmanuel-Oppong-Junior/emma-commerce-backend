@@ -7,8 +7,8 @@ import { runJobInContext } from '../jobs/job-context';
 import { reportFailedJob } from '../observability/error-reporting';
 import { AppMetrics } from '../observability/metrics';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
-import { LowStockTask } from '../inventory/tasks/low-stock.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
+import { StockReconciliationTask } from '../inventory/tasks/stock-reconciliation.task';
 import { MaintenanceJob } from './maintenance-jobs';
 
 const CONTEXT = 'MaintenanceProcessor';
@@ -21,8 +21,8 @@ const CONTEXT = 'MaintenanceProcessor';
 export class MaintenanceProcessor extends WorkerHost {
   constructor(
     private readonly expiredOrders: ExpiredOrdersTask,
-    private readonly lowStock: LowStockTask,
     private readonly payments: PaymentReconciliationTask,
+    private readonly stock: StockReconciliationTask,
     private readonly logger: LoggerService,
     private readonly metrics: AppMetrics,
   ) {
@@ -41,8 +41,9 @@ export class MaintenanceProcessor extends WorkerHost {
         return this.payments.sweep();
       case MaintenanceJob.DiffPreviousDayPayments:
         return this.payments.diffPreviousDay();
-      case MaintenanceJob.CheckLowStock:
-        return this.lowStock.checkLowStock();
+      case MaintenanceJob.ReconcileStock:
+        await this.stock.reconcile();
+        return;
       default:
         throw new Error(`Unknown maintenance job "${job.name}"`);
     }

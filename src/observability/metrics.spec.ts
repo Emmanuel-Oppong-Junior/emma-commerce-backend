@@ -171,6 +171,17 @@ describe('AppMetrics', () => {
       { value: 1, attributes: { kind: 'AMOUNT_MISMATCH' } },
     ]);
   });
+
+  it('counts stock reconciliation mismatches by kind (zero kinds skipped)', () => {
+    const { metrics, samples } = build();
+
+    metrics.recordStockMismatches({ ON_HAND: 1, RESERVED_MOVEMENTS: 0, ACTIVE_RESERVATIONS: 3 });
+
+    expect(samples.stock_reconciliation_mismatches).toEqual([
+      { value: 1, attributes: { kind: 'ON_HAND' } },
+      { value: 3, attributes: { kind: 'ACTIVE_RESERVATIONS' } },
+    ]);
+  });
 });
 
 describe('routeTemplate', () => {

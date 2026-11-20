@@ -11,10 +11,11 @@ import { WebhookEventRepository } from './webhook-event.repository';
 import { OutboxModule } from '../outbox/outbox.module';
 import { OrderModule } from '../order/order.module';
 import { StoreModule } from '../store/store.module';
+import { InventoryModule } from '../inventory/inventory.module';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 
 @Module({
-  imports: [CommonsModule, OutboxModule, OrderModule, StoreModule],
+  imports: [CommonsModule, OutboxModule, OrderModule, StoreModule, InventoryModule],
   providers: [
     PaymentResolver,
     PaymentService,

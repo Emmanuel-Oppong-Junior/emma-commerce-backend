@@ -11,6 +11,8 @@ export interface DomainEventPayloads {
   'order.status_changed.v1': { orderId: string; status: OrderStatus; trackingNumber: string | null };
   'order.shipment_updated.v1': { orderId: string; trackingNumber: string };
   'payment.succeeded.v1': { orderId: string; paymentId: string; amount: string };
+  /** Available stock of a variant at a location fell to its low-stock threshold (raised once per crossing). */
+  'inventory.low_stock.v1': { variantId: string; locationId: string; available: number; movementId: string };
 }
 
 export type DomainEventType = keyof DomainEventPayloads;
@@ -27,6 +29,7 @@ export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
   'order.status_changed.v1': JobQueue.NOTIFICATIONS,
   'order.shipment_updated.v1': JobQueue.NOTIFICATIONS,
   'payment.succeeded.v1': JobQueue.NOTIFICATIONS,
+  'inventory.low_stock.v1': JobQueue.NOTIFICATIONS,
 };
 
 export function isDomainEventType(type: string): type is DomainEventType {

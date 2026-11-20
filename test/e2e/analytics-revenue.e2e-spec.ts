@@ -14,7 +14,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest, MoneyValue } from '../helpers/graphql.helper';
 import { signInAdmin } from '../helpers/auth.helper';
-import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber, setStock } from '../helpers/db.helper';
 
 const LAPTOP = 'seed_prod1';
 const PHONE = 'seed_prod2';
@@ -104,7 +104,7 @@ describe('Analytics revenue (e2e)', () => {
         id: NOVEL,
         name: 'Novel',
         variants: {
-          create: { id: VARIANT_OF[NOVEL], sku: 'ANALYTICS-NOVEL', price: 30, basePrice: 30, quantity: 100 },
+          create: { id: VARIANT_OF[NOVEL], sku: 'ANALYTICS-NOVEL', price: 30, basePrice: 30 },
         },
         images: ['novel.jpg'],
         isActive: true,
@@ -113,6 +113,7 @@ describe('Analytics revenue (e2e)', () => {
         brandId: 'seed_brand',
       },
     });
+    await setStock(prisma, VARIANT_OF[NOVEL], 100);
 
     // Unpaid online checkout: an open attempt, no money.
     const pendingId = await createOrder({

@@ -70,6 +70,15 @@ export class NotificationSender {
         }
         return;
       }
+      case 'inventory.low_stock.v1': {
+        // No staff email template exists yet: the alert is a structured warning for log-based alerting.
+        const { payload } = data as DomainEventJobData<'inventory.low_stock.v1'>;
+        this.logger.warn(
+          `Low stock | variantId: ${payload.variantId} | locationId: ${payload.locationId} | available: ${payload.available}`,
+          CONTEXT,
+        );
+        return;
+      }
       case 'email.welcome.v1': {
         const { to, name } = data as EmailJobData['email.welcome.v1'];
         return this.email.sendWelcomeEmail(to, name, idempotencyKey);

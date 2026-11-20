@@ -43,6 +43,7 @@ export class AppMetrics {
   private readonly jobFailures: Counter;
   private readonly webhookFailures: Counter;
   private readonly reconciliationMismatches: Counter;
+  private readonly stockMismatches: Counter;
   private readonly operationNames = new Set<string>();
 
   constructor(@Inject(METER) meter: Meter) {
@@ -73,6 +74,10 @@ export class AppMetrics {
     });
     this.reconciliationMismatches = meter.createCounter('payment_reconciliation_mismatches', {
       description: 'Differences found by the daily Paystack reconciliation, by kind',
+    });
+    this.stockMismatches = meter.createCounter('stock_reconciliation_mismatches', {
+      description:
+        'Stock levels the nightly ledger reconciliation found out of line with movements or reservations, by kind',
     });
   }
 
@@ -120,6 +125,12 @@ export class AppMetrics {
   recordReconciliationMismatches(countsByKind: Record<string, number>): void {
     for (const [kind, count] of Object.entries(countsByKind)) {
       if (count > 0) this.reconciliationMismatches.add(count, { kind });
+    }
+  }
+
+  recordStockMismatches(countsByKind: Record<string, number>): void {
+    for (const [kind, count] of Object.entries(countsByKind)) {
+      if (count > 0) this.stockMismatches.add(count, { kind });
     }
   }
 

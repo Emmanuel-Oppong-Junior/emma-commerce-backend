@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
 import { signInAdmin, signInUser, signUpUser } from '../helpers/auth.helper';
 
 const M = '{ amount currency }';
@@ -32,8 +32,7 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
       token,
       { coupon: couponCode ?? null },
     );
-  const stock = async (variantId: string) =>
-    (await prisma.variant.findUniqueOrThrow({ where: { id: variantId }, select: { quantity: true } })).quantity;
+  const stock = async (variantId: string) => (await stockOf(prisma, variantId)).available;
   const clearCarts = () => prisma.cartItem.deleteMany();
 
   beforeAll(async () => {
@@ -48,7 +47,7 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
     customerToken = await signInUser(app);
 
     const created = await gql(
-      `mutation($input: CreateProductInput!) { createProduct(createProductInput: $input) { id variants { id sku optionValues price ${M} quantity } } }`,
+      `mutation($input: CreateProductInput!) { createProduct(createProductInput: $input) { id variants { id sku optionValues price ${M} available } } }`,
       adminToken,
       {
         input: {
@@ -76,18 +75,19 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
 
   it('createProduct makes each variant its own priced SKU (tax added) with its initial stock logged', async () => {
     const variants = await prisma.variant.findMany({ where: { productId: shirtId }, orderBy: { sku: 'asc' } });
-    const logs = await prisma.inventoryLog.findMany({
-      where: { productId: shirtId },
-      orderBy: { quantityChange: 'asc' },
+    const logs = await prisma.stockMovement.findMany({
+      where: { variant: { productId: shirtId } },
+      orderBy: { onHandDelta: 'asc' },
     });
+    const stocked = await Promise.all(variants.map((v) => stock(v.id)));
 
-    expect(variants.map((v) => [v.sku, v.price?.toFixed(2), v.basePrice?.toFixed(2), v.quantity])).toEqual([
+    expect(variants.map((v, i) => [v.sku, v.price?.toFixed(2), v.basePrice?.toFixed(2), stocked[i]])).toEqual([
       ['KENTE-L', '180.00', '150.00', 1],
       ['KENTE-M', '120.00', '100.00', 5],
     ]);
-    expect(logs.map((l) => [l.variantId, l.action, l.quantityChange, l.reason])).toEqual([
-      [variantIds['KENTE-L'], 'RESTOCK', 1, 'Initial stock'],
-      [variantIds['KENTE-M'], 'RESTOCK', 5, 'Initial stock'],
+    expect(logs.map((l) => [l.variantId, l.reason, l.onHandDelta, l.note])).toEqual([
+      [variantIds['KENTE-L'], 'RECEIPT', 1, 'Initial stock'],
+      [variantIds['KENTE-M'], 'RECEIPT', 5, 'Initial stock'],
     ]);
   });
 
@@ -151,17 +151,19 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
       });
       expect(await stock(variantIds['KENTE-M'])).toBe(3);
       expect(await stock(variantIds['KENTE-L'])).toBe(1);
-      const deduction = await prisma.inventoryLog.findFirst({
-        where: { action: 'ORDER_DEDUCTION', productId: shirtId },
+      const deduction = await prisma.stockMovement.findFirst({
+        where: { reason: 'RESERVE', variant: { productId: shirtId } },
       });
-      expect(deduction).toMatchObject({ variantId: variantIds['KENTE-M'], quantityChange: -2, quantityAfter: 3 });
+      expect(deduction).toMatchObject({ variantId: variantIds['KENTE-M'], reservedDelta: 2, refId: placed.id });
 
       const cancelled = await gql(`mutation { cancelOrder(orderId: "${placed.id}") { status } }`, customerToken);
 
       expect(cancelled.body.data.cancelOrder.status).toBe('CANCELLED');
       expect(await stock(variantIds['KENTE-M'])).toBe(5);
-      const restore = await prisma.inventoryLog.findFirst({ where: { action: 'RETURN_RESTORE', productId: shirtId } });
-      expect(restore).toMatchObject({ variantId: variantIds['KENTE-M'], quantityChange: 2, quantityAfter: 5 });
+      const restore = await prisma.stockMovement.findFirst({
+        where: { reason: 'RELEASE', variant: { productId: shirtId } },
+      });
+      expect(restore).toMatchObject({ variantId: variantIds['KENTE-M'], reservedDelta: -2, refId: placed.id });
     } finally {
       await prisma.discount.delete({ where: { id: discount.id } });
     }
@@ -180,9 +182,9 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
     expect(failed).toHaveLength(1);
     expect(failed[0].body.errors[0].extensions.code).toBe('BAD_REQUEST');
     expect(await stock(variantIds['KENTE-L'])).toBe(0);
-    expect(
-      await prisma.inventoryLog.count({ where: { variantId: variantIds['KENTE-L'], action: 'ORDER_DEDUCTION' } }),
-    ).toBe(1);
+    expect(await prisma.stockMovement.count({ where: { variantId: variantIds['KENTE-L'], reason: 'RESERVE' } })).toBe(
+      1,
+    );
   });
 
   it('refuses an archived variant at addToCart, and at checkout when archived after it was added', async () => {
@@ -223,7 +225,7 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
 
   it('restocks and adjusts a variant through the logged paths only (restockProduct is gone)', async () => {
     const restock = await gql(
-      `mutation { restockVariant(input: { variantId: "${variantIds['KENTE-L']}", quantity: 4, reason: "Delivery" }) { variantId action quantityAfter } }`,
+      `mutation { restockVariant(input: { variantId: "${variantIds['KENTE-L']}", quantity: 4, reason: "Delivery" }) { variantId reason onHandDelta } }`,
       adminToken,
     );
     const legacy = await gqlRequest(
@@ -235,9 +237,10 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
 
     expect(restock.body.data.restockVariant).toEqual({
       variantId: variantIds['KENTE-L'],
-      action: 'RESTOCK',
-      quantityAfter: await stock(variantIds['KENTE-L']),
+      reason: 'RECEIPT',
+      onHandDelta: 4,
     });
+    expect(await stock(variantIds['KENTE-L'])).toBe(4);
     expect(legacy.status).toBe(400);
   });
 });

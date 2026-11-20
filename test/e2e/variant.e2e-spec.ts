@@ -2,11 +2,11 @@ import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 
 const VARIANT_FIELDS =
-  'id productId sku barcode optionValues quantity isActive price { amount currency } basePrice { amount }';
+  'id productId sku barcode optionValues available isActive price { amount currency } basePrice { amount }';
 const CREATE_VARIANT = `mutation($input: CreateVariantInput!) { createVariant(input: $input) { ${VARIANT_FIELDS} } }`;
 const UPDATE_VARIANT = `mutation($input: UpdateVariantInput!) { updateVariant(input: $input) { ${VARIANT_FIELDS} } }`;
 const SHIRT = 'seed_prod2';
@@ -35,7 +35,6 @@ describe('Variants as SKUs: admin API (e2e)', () => {
   });
 
   afterEach(async () => {
-    await prisma.inventoryLog.deleteMany({ where: { productId: SHIRT } });
     await prisma.variant.deleteMany({ where: { productId: SHIRT } });
   });
 
@@ -49,15 +48,15 @@ describe('Variants as SKUs: admin API (e2e)', () => {
     expect(variant).toMatchObject({
       productId: SHIRT,
       optionValues: { size: 'm', colour: 'Red' },
-      quantity: 5,
+      available: 5,
       isActive: true,
       barcode: '600123',
       price: ghs('120.00'),
       basePrice: { amount: '120.00' },
     });
     expect(variant.sku).toMatch(/^SKU-[0-9A-F]{12}$/);
-    expect(await prisma.inventoryLog.findMany({ where: { variantId: variant.id } })).toEqual([
-      expect.objectContaining({ action: 'RESTOCK', quantityChange: 5, quantityAfter: 5, reason: 'Initial stock' }),
+    expect(await prisma.stockMovement.findMany({ where: { variantId: variant.id } })).toEqual([
+      expect.objectContaining({ reason: 'RECEIPT', onHandDelta: 5, reservedDelta: 0, note: 'Initial stock' }),
     ]);
   });
 
@@ -135,13 +134,14 @@ describe('Variants as SKUs: admin API (e2e)', () => {
     expect(res.body.data.updateVariant).toMatchObject({
       optionValues: { size: 'L' },
       price: ghs('99.50'),
-      quantity: 5,
+      available: 5,
     });
     expect(moved.status).toBe(400);
     expect(moved.body.errors[0].message).toMatch(/productId/);
     expect(restocked.status).toBe(400);
     expect(restocked.body.errors[0].message).toMatch(/quantity/);
-    expect(await prisma.variant.findUniqueOrThrow({ where: { id } })).toMatchObject({ productId: SHIRT, quantity: 5 });
+    expect(await prisma.variant.findUniqueOrThrow({ where: { id } })).toMatchObject({ productId: SHIRT });
+    expect((await stockOf(prisma, id)).available).toBe(5);
   });
 
   it('refuses to delete a variant with history (CONFLICT) and lets it be archived instead (VAR-07)', async () => {

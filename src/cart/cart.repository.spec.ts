@@ -104,13 +104,16 @@ describe('CartRepository', () => {
   });
 
   describe('findVariant', () => {
-    it('should return the variant with its product by ID', async () => {
+    it('should return the variant with its product and stock levels by ID', async () => {
       mockPrismaVariant.findUnique.mockResolvedValue(mockVariant);
 
       const result = await repository.findVariant('var1');
 
       expect(result).toEqual(mockVariant);
-      expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({ where: { id: 'var1' }, include: { product: true } });
+      expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({
+        where: { id: 'var1' },
+        include: { product: true, stockLevels: { select: { onHand: true, reserved: true } } },
+      });
     });
 
     it('should return null if variant not found', async () => {

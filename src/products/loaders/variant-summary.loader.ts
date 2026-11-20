@@ -16,19 +16,30 @@ const EMPTY: VariantSummary = { minPrice: null, maxPrice: null, totalStock: 0 };
 export class VariantSummaryLoader {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Price range and stock of each product's active variants: one grouped query per request (no N+1). */
+  /** Price range and available stock of each product's active variants: two grouped queries per request (no N+1). */
   readonly loader = new DataLoader<string, VariantSummary>(async (productIds: readonly string[]) => {
-    const groups = await this.prisma.variant.groupBy({
-      by: ['productId'],
-      where: { productId: { in: [...productIds] }, isActive: true },
-      _min: { price: true },
-      _max: { price: true },
-      _sum: { quantity: true },
-    });
+    const [groups, stock] = await Promise.all([
+      this.prisma.variant.groupBy({
+        by: ['productId'],
+        where: { productId: { in: [...productIds] }, isActive: true },
+        _min: { price: true },
+        _max: { price: true },
+      }),
+      this.prisma.$queryRaw<{ productId: string; available: number }[]>`
+        SELECT v."productId", COALESCE(sum(sl."onHand" - sl."reserved"), 0)::int AS available
+        FROM "Variant" v JOIN "StockLevel" sl ON sl."variantId" = v.id
+        WHERE v."productId" IN (${Prisma.join([...productIds])}) AND v."isActive"
+        GROUP BY v."productId"`,
+    ]);
+    const availableByProduct = new Map(stock.map((row) => [row.productId, row.available]));
     const byProduct = new Map(
       groups.map((group) => [
         group.productId,
-        { minPrice: group._min.price, maxPrice: group._max.price, totalStock: group._sum.quantity ?? 0 },
+        {
+          minPrice: group._min.price,
+          maxPrice: group._max.price,
+          totalStock: availableByProduct.get(group.productId) ?? 0,
+        },
       ]),
     );
     return productIds.map((id) => byProduct.get(id) ?? EMPTY);

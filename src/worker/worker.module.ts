@@ -7,8 +7,8 @@ import { PaymentModule } from '../payment/payment.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OutboxRelay } from '../outbox/outbox.relay';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
-import { LowStockTask } from '../inventory/tasks/low-stock.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
+import { StockReconciliationTask } from '../inventory/tasks/stock-reconciliation.task';
 import { WorkerHealthServer } from './worker-health.server';
 import { MaintenanceScheduler } from './maintenance.scheduler';
 import { MaintenanceProcessor } from './maintenance.processor';
@@ -27,8 +27,8 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
     OutboxRelay,
     WorkerHealthServer,
     ExpiredOrdersTask,
-    LowStockTask,
     PaymentReconciliationTask,
+    StockReconciliationTask,
     MaintenanceScheduler,
     MaintenanceProcessor,
     NotificationsProcessor,

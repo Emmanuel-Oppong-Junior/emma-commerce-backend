@@ -1,9 +1,16 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Cart, CartItem, Prisma, Product, Variant } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StockCounts } from '../inventory/stock';
 
 type CartWithItems = Cart & { items: CartItem[] };
-export type VariantForSale = Variant & { product: Product };
+export type VariantForSale = Variant & { product: Product; stockLevels: StockCounts[] };
+
+/** What checking a variant for sale reads: the variant, its product and its stock at every location. */
+export const FOR_SALE = {
+  product: true,
+  stockLevels: { select: { onHand: true, reserved: true } },
+} satisfies Prisma.VariantInclude;
 
 @Injectable()
 export class CartRepository {
@@ -23,7 +30,7 @@ export class CartRepository {
   }
 
   async findVariant(variantId: string): Promise<VariantForSale | null> {
-    return this.prisma.variant.findUnique({ where: { id: variantId }, include: { product: true } });
+    return this.prisma.variant.findUnique({ where: { id: variantId }, include: FOR_SALE });
   }
 
   async findCartItem(cartId: string, variantId: string): Promise<Pick<CartItem, 'id' | 'quantity'> | null> {

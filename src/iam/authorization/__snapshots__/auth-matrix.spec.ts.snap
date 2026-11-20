@@ -129,7 +129,6 @@ Query failedJobs                         permission: jobs.manage
 Query getMyPayments                      customer only
 Query getShippingFee                     authenticated
 Query getUserPayment                     permission: payment.view
-Query inventoryLogs                      permission: inventory.view
 Query myReturnRequests                   authenticated
 Query order                              authenticated
 Query orders                             permission: order.view
@@ -137,7 +136,6 @@ Query payment                            authenticated
 Query payments                           permission: payment.view
 Query pickupLocations                    permission: shipping.manage
 Query product                            public
-Query productInventoryLogs               permission: inventory.view
 Query productReviews                     authenticated
 Query products                           public
 Query productType                        public
@@ -152,6 +150,7 @@ Query shippingZones                      permission: shipping.manage
 Query staffMembers                       permission: staff.view
 Query staffPermissions                   permission: staff.view
 Query staffRoles                         permission: staff.view
+Query stockMovements                     permission: inventory.view
 Query storeSettings                      public
 Query subCategories                      authenticated
 Query subCategory                        authenticated
@@ -169,7 +168,6 @@ Query userProfile                        authenticated
 Query userReviews                        authenticated
 Query users                              permission: user.view
 Query variant                            permission: catalog.product.read
-Query variantInventoryLogs               permission: inventory.view
 Query variants                           permission: catalog.product.read
 Query viewOrder                          permission: order.view
 Query wishlist                           authenticated

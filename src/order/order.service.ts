@@ -17,7 +17,8 @@ import { abandonedOrderWhere, NewOrderItem, OrdersRepository } from './order.rep
 import { VariantForSale } from '../cart/cart.repository';
 import { notSellableReason } from '../variant/sellable';
 import { CouponsService } from '../coupons/coupons.service';
-import { InventoryService } from '../inventory/inventory.service';
+import { StockLedgerService } from '../inventory/stock-ledger.service';
+import { availableOf } from '../inventory/stock';
 import { OutboxService } from '../outbox/outbox.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
@@ -30,6 +31,8 @@ import { assertDeliverableAddress } from '../addresses/deliverable-address';
 import { toAddressSnapshot } from '../addresses/address-snapshot';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
+/** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
+export const UNPAID_ORDER_EXPIRY_HOURS = 1;
 const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
 
 interface CreateOrderParams {
@@ -49,7 +52,7 @@ export class OrdersService {
     private readonly cartService: CartService,
     private readonly auditService: AuditService,
     private readonly couponsService: CouponsService,
-    private readonly inventoryService: InventoryService,
+    private readonly stockLedger: StockLedgerService,
     private readonly outbox: OutboxService,
     private readonly shippingZonesService: ShippingZonesService,
     private readonly pickupLocationsService: PickupLocationsService,
@@ -207,6 +210,8 @@ export class OrdersService {
         },
         tx,
       );
+      // Dispatch is the sale for cash on delivery; an online order's reservations were consumed at payment.
+      if (status === OrderStatus.SHIPPED) await this.stockLedger.consumeOrder(tx, orderId, adminUserId);
       if (status === OrderStatus.SHIPPED || status === OrderStatus.DELIVERED) {
         await this.outbox.record(tx, {
           type: 'order.status_changed.v1',
@@ -250,11 +255,14 @@ export class OrdersService {
       throw new BadRequestException(`Order "${orderId}" uses cash on delivery and cannot be marked as paid online`);
     }
     assertTransition(orderId, order.status, OrderStatus.PROCESSING);
-    const paid = await this.ordersRepository.runTransaction((tx) =>
-      this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.PROCESSING, [OrderStatus.PENDING]),
-    );
-    if (!paid) throw this.changedMeanwhile(orderId);
-    return paid;
+    return this.ordersRepository.runTransaction(async (tx) => {
+      const paid = await this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.PROCESSING, [
+        OrderStatus.PENDING,
+      ]);
+      if (!paid) throw this.changedMeanwhile(orderId);
+      await this.stockLedger.consumeOrder(tx, orderId, userId);
+      return paid;
+    });
   }
 
   /**
@@ -411,9 +419,10 @@ export class OrdersService {
         `"${variant.product.name}" is priced in ${variant.product.currency ?? 'no currency'}; only ${currency} products can be checked out`,
       );
     }
-    if (variant.quantity < item.quantity) {
+    const available = availableOf(variant.stockLevels);
+    if (available < item.quantity) {
       throw new BadRequestException(
-        `Insufficient stock for "${variant.product.name}" (${variant.sku}): ${variant.quantity} available, ${item.quantity} requested`,
+        `Insufficient stock for "${variant.product.name}" (${variant.sku}): ${available} available, ${item.quantity} requested`,
       );
     }
     return variant;
@@ -441,29 +450,34 @@ export class OrdersService {
     },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
-      for (const item of orderDetails.orderItems) {
-        const variant = await this.ordersRepository.decrementVariantStock(tx, item.variantId, item.quantity);
-        if (!variant) {
-          throw new BadRequestException(
-            `Variant "${item.sku}" is out of stock or no longer on sale — please review your cart`,
-          );
-        }
-        await this.inventoryService.logInventoryChange(tx, {
-          productId: item.productId,
-          variantId: item.variantId,
-          action: 'ORDER_DEDUCTION',
-          quantityChange: -item.quantity,
-          quantityAfter: variant.quantity,
-          reason: `Order placed by user ${userId}`,
-          actorId: userId,
-        });
-      }
-
       const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
       const newOrder = await this.ordersRepository.create(tx, userId, {
         ...orderDetails,
         initialStatus: isCod ? OrderStatus.PROCESSING : OrderStatus.PENDING,
       });
+
+      // Cash on delivery holds its stock until dispatch; an online order's hold expires with the unpaid order.
+      const expiresAt = isCod ? null : new Date(Date.now() + UNPAID_ORDER_EXPIRY_HOURS * 60 * 60 * 1000);
+      for (const item of newOrder.items) {
+        const reserved =
+          (await this.ordersRepository.lockSellableVariant(tx, item.variantId)) &&
+          (await this.stockLedger.reserve(
+            tx,
+            {
+              variantId: item.variantId,
+              quantity: item.quantity,
+              orderId: newOrder.id,
+              orderItemId: item.id,
+              expiresAt,
+            },
+            userId,
+          ));
+        if (!reserved) {
+          throw new BadRequestException(
+            `Variant "${item.sku}" is out of stock or no longer on sale — please review your cart`,
+          );
+        }
+      }
 
       if (orderDetails.couponId) {
         await this.couponsService.recordUsage(tx, orderDetails.couponId, userId, newOrder.id);
@@ -494,8 +508,8 @@ export class OrdersService {
   }
 
   /**
-   * Claims the order (conditional status write, optionally narrowed by `claimGuard`) before returning stock,
-   * so stock comes back exactly once.
+   * Claims the order (conditional status write, optionally narrowed by `claimGuard`) before releasing its
+   * reservations, which are themselves released conditionally, so stock comes back exactly once.
    */
   private async cancelOrderAndRestoreStock(
     order: Order & { items: OrderItem[] },
@@ -524,17 +538,11 @@ export class OrdersService {
         );
       }
       if (order.couponId) await this.couponsService.releaseUsage(tx, order.id);
-      for (const item of order.items) {
-        const variant = await this.ordersRepository.restoreVariantStock(tx, item.variantId, item.quantity);
-        await this.inventoryService.logInventoryChange(tx, {
-          productId: item.productId,
-          variantId: item.variantId,
-          action: 'RETURN_RESTORE',
-          quantityChange: item.quantity,
-          quantityAfter: variant.quantity,
-          reason: `Order ${order.id} cancelled`,
-        });
-      }
+      await this.stockLedger.releaseOrder(tx, order.id, {
+        // The expiry job acts for nobody; a cancel without an admin is the customer's own.
+        actorId: claimGuard ? undefined : (auditAs?.userId ?? order.userId),
+        note: claimGuard ? 'Unpaid order expired' : 'Order cancelled',
+      });
       return cancelled;
     });
   }

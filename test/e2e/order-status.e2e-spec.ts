@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, stockOf as ledgerStockOf } from '../helpers/db.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 
 describe('Order status rules (e2e)', () => {
@@ -12,8 +12,7 @@ describe('Order status rules (e2e)', () => {
   let adminToken: string;
   let addressId: string;
 
-  const stockOf = async () =>
-    (await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' }, select: { quantity: true } })).quantity;
+  const stockOf = async () => (await ledgerStockOf(prisma, 'seed_var1')).available;
 
   const placeOrder = async (): Promise<string> => {
     await gqlRequest(

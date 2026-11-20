@@ -3,7 +3,7 @@ import { OrderStatus } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal } from '../helpers/db.helper';
+import { resetDb, seedMinimal, setStock, stockOf } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 
 describe('Orders (e2e)', () => {
@@ -173,7 +173,7 @@ describe('Orders (e2e)', () => {
       ).expect(200);
       const uncoveredAddressId = addrRes.body.data.createAddress.id;
       await addItemToCart(userToken);
-      const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
+      const stockBefore = await stockOf(prisma, 'seed_var1');
 
       const res = await gqlRequest(
         app,
@@ -184,8 +184,8 @@ describe('Orders (e2e)', () => {
 
       expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
       expect(res.body.errors[0].message).toContain('Tamale');
-      const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
-      expect(stockAfter.quantity).toBe(stockBefore.quantity);
+      const stockAfter = await stockOf(prisma, 'seed_var1');
+      expect(stockAfter.available).toBe(stockBefore.available);
       const cart = await gqlRequest(app, `query { cart { items { id } } }`, undefined, userToken).expect(200);
       expect(cart.body.data.cart.items).toHaveLength(1);
 
@@ -198,7 +198,7 @@ describe('Orders (e2e)', () => {
         data: { userId: me.id, street: '3 Old St', city: 'Accra', zipCode: '00233', country: 'GH' },
       });
       await addItemToCart(userToken);
-      const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
+      const stockBefore = await stockOf(prisma, 'seed_var1');
 
       const order = await gqlRequest(
         app,
@@ -218,8 +218,8 @@ describe('Orders (e2e)', () => {
       expect(order.body.errors[0].message).toBe(incomplete);
       expect(fee.body.errors[0].extensions.code).toBe('BAD_REQUEST');
       expect(fee.body.errors[0].message).toBe(incomplete);
-      const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
-      expect(stockAfter.quantity).toBe(stockBefore.quantity);
+      const stockAfter = await stockOf(prisma, 'seed_var1');
+      expect(stockAfter.available).toBe(stockBefore.available);
 
       await clearUserCart(userToken);
       await prisma.address.delete({ where: { id: legacy.id } });
@@ -264,14 +264,14 @@ describe('Orders (e2e)', () => {
         'rejects a pickup order for location %s and reserves no stock',
         async (pickupLocationId) => {
           await addItemToCart(userToken);
-          const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
+          const stockBefore = await stockOf(prisma, 'seed_var1');
 
           const res = await createPickupOrder(pickupLocationId);
 
           expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
           expect(res.body.errors[0].message).toContain(pickupLocationId);
-          const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
-          expect(stockAfter.quantity).toBe(stockBefore.quantity);
+          const stockAfter = await stockOf(prisma, 'seed_var1');
+          expect(stockAfter.available).toBe(stockBefore.available);
         },
       );
 
@@ -305,7 +305,7 @@ describe('Orders (e2e)', () => {
           id: 'e2e_prod_usd',
           name: 'Imported Camera',
           currency: 'USD',
-          variants: { create: { id: 'e2e_var_usd', sku: 'E2E-CAM-USD', price: 50, basePrice: 50, quantity: 5 } },
+          variants: { create: { id: 'e2e_var_usd', sku: 'E2E-CAM-USD', price: 50, basePrice: 50 } },
           images: [],
           isActive: true,
           status: 'PUBLISHED',
@@ -313,6 +313,7 @@ describe('Orders (e2e)', () => {
           brandId: 'seed_brand',
         },
       });
+      await setStock(prisma, 'e2e_var_usd', 5);
       await addItemToCart(userToken, 'e2e_var_usd');
 
       const res = await gqlRequest(
@@ -324,15 +325,15 @@ describe('Orders (e2e)', () => {
 
       expect(res.body.errors[0].extensions.code).toBe('BAD_REQUEST');
       expect(res.body.errors[0].message).toContain('only GHS products can be checked out');
-      const variant = await prisma.variant.findUniqueOrThrow({ where: { id: 'e2e_var_usd' } });
-      expect(variant.quantity).toBe(5);
+      const variant = await stockOf(prisma, 'e2e_var_usd');
+      expect(variant.available).toBe(5);
 
       await clearUserCart(userToken);
     });
 
     it('decrements variant stock after a successful order', async () => {
       // Arrange — record the current stock, add the product to cart, create an order
-      const productBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var2' } });
+      const productBefore = await stockOf(prisma, 'seed_var2');
       await addItemToCart(userToken, 'seed_var2', 2);
 
       const mutation = `
@@ -347,8 +348,8 @@ describe('Orders (e2e)', () => {
       await gqlRequest(app, mutation, undefined, userToken).expect(200);
 
       // Assert
-      const productAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var2' } });
-      expect(Number(productAfter.quantity)).toBe(Number(productBefore.quantity) - 2);
+      const productAfter = await stockOf(prisma, 'seed_var2');
+      expect(Number(productAfter.available)).toBe(Number(productBefore.available) - 2);
     });
 
     it('applies a valid coupon discount to the order', async () => {
@@ -503,7 +504,7 @@ describe('Orders (e2e)', () => {
       ).expect(200);
       const pendingOrderId = orderRes.body.data.createOrder.id;
 
-      const stockBefore = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
+      const stockBefore = await stockOf(prisma, 'seed_var1');
 
       const mutation = `
         mutation {
@@ -522,8 +523,8 @@ describe('Orders (e2e)', () => {
       expect(res.body.data.cancelOrder.status).toBe('CANCELLED');
 
       // Stock should be restored
-      const stockAfter = await prisma.variant.findUniqueOrThrow({ where: { id: 'seed_var1' } });
-      expect(Number(stockAfter.quantity)).toBe(Number(stockBefore.quantity) + 1);
+      const stockAfter = await stockOf(prisma, 'seed_var1');
+      expect(Number(stockAfter.available)).toBe(Number(stockBefore.available) + 1);
     });
 
     it('fails when trying to cancel a DELIVERED order', async () => {
