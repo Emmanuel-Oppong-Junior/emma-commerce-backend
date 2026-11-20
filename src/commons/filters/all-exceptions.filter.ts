@@ -11,7 +11,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
   constructor(private readonly logger: LoggerService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const { status, code, message } = classifyError(exception);
+    const { status, code, message, extensions } = classifyError(exception);
     const stack = stackForLog(exception);
     // Client errors (4xx: validation, auth, not found, conflict) are expected; only server failures are tracked.
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) reportError(exception);
@@ -25,7 +25,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         'ExceptionFilter',
       );
       throw new GraphQLError(message, {
-        extensions: { code, status },
+        extensions: { ...extensions, code, status },
       });
     }
 
@@ -44,6 +44,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       path: request.url,
       message,
+      ...extensions,
     });
   }
 }

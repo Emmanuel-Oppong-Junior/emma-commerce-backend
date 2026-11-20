@@ -12,7 +12,13 @@ export type AuditAction =
   | 'REFUND'
   | 'STOCK_ADJUSTMENT'
   | 'VIEW'
-  | 'RETRY';
+  | 'RETRY'
+  | 'ROLE_ASSIGN'
+  | 'ROLE_REMOVE'
+  | 'MFA_ENABLE'
+  | 'MFA_RECOVERY_CODE_USED'
+  | 'STEP_UP'
+  | 'EXPORT';
 
 export interface AuditEntry {
   entity: string;

@@ -6,9 +6,7 @@ import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
 import { ProductSortArgs } from './dto/product-sort.args';
 import { ProductConnection } from './entities/product-connection.entity';
-import { Role } from '../generated/prisma/client';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { DiscountService } from '../discount/discount.service';
 import { Discount } from '../discount/entities/discount.entity';
 import { PaginationArgs } from '../commons/dto/paginate.args';
@@ -22,6 +20,12 @@ import { ReviewsLoader } from './loaders/reviews.loader';
 import { Variant } from '../variant/entities/variant.entity';
 import { Review } from '../review/entities/review.entity';
 import { MoneyObject } from '../commons/money/money.object';
+import { RequirePermission, RequireStepUp, StepUpCondition } from '../iam/authorization/policy.decorators';
+
+const CHANGES_BASE_PRICE: StepUpCondition = {
+  label: 'updateProductInput.basePrice is set',
+  applies: (args) => (args.updateProductInput as { basePrice?: unknown } | undefined)?.basePrice != null,
+};
 
 // Field resolvers and nested product lists must never be loaded through the Prisma select.
 const RESOLVED_FIELDS = ['discountedPrice', 'appliedDiscount', 'variants', 'reviews', 'products'];
@@ -48,7 +52,7 @@ export class ProductsResolver {
     private readonly reviewsLoader: ReviewsLoader,
   ) {}
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Product)
   createProduct(
     @ActiveUser('id') actorId: string,
@@ -58,7 +62,8 @@ export class ProductsResolver {
     return this.productsService.create(createProductInput, actorId);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.write')
+  @RequireStepUp(CHANGES_BASE_PRICE)
   @Mutation(() => Product)
   updateProduct(
     @ActiveUser('id') actorId: string,
@@ -69,7 +74,7 @@ export class ProductsResolver {
     return this.productsService.update(productId, updateProductInput, actorId);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Product)
   permanentlyDeleteProduct(
     @ActiveUser('id') actorId: string,
@@ -78,19 +83,19 @@ export class ProductsResolver {
     return this.productsService.remove(productId, actorId);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Product)
   archiveProduct(@ActiveUser('id') actorId: string, @Args('productId', { type: () => String }) productId: string) {
     return this.productsService.archiveProduct(productId, actorId);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Product)
   restoreProduct(@ActiveUser('id') actorId: string, @Args('productId', { type: () => String }) productId: string) {
     return this.productsService.restoreProduct(productId, actorId);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Product, { name: 'addTagToProduct' })
   async addTagToProduct(
     @ActiveUser('id') actorId: string,
@@ -100,7 +105,7 @@ export class ProductsResolver {
     return this.productsService.addTagToProduct(productId, tagId, actorId);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.write')
   @Mutation(() => Product, { name: 'removeTagFromProduct' })
   async removeTagFromProduct(
     @ActiveUser('id') actorId: string,
@@ -137,7 +142,7 @@ export class ProductsResolver {
     return this.productsService.findPublishedById(productId, productSelect(requestInfo));
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.read')
   @Query(() => ProductConnection, {
     name: 'adminProducts',
     description: 'Admin: all products in any status, including DRAFT, ARCHIVED and inactive',
@@ -154,7 +159,7 @@ export class ProductsResolver {
     return this.productsService.findAll(paginationArgs, filterArgs, sortArgs, connectionSelect(requestInfo));
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.product.read')
   @Query(() => Product, {
     name: 'adminProduct',
     nullable: true,

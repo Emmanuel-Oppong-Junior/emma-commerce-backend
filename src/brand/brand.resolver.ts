@@ -5,28 +5,27 @@ import { UpdateBrandInput } from './dto/update-brand.input';
 import { Brand } from './entities/brand.entity';
 import { GraphQLResolveInfo } from 'graphql/type';
 import { extractRequestedFieldsFromQuery } from '../commons/useful-functions';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../generated/prisma/client';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { RequirePermission } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => Brand)
 export class BrandResolver {
   constructor(private readonly brandService: BrandService) {}
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.taxonomy.write')
   @Mutation(() => Brand)
   async createBrand(@Args('input') input: CreateBrandInput) {
     return this.brandService.createBrand(input);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.taxonomy.write')
   @Mutation(() => Brand)
   async updateBrand(@Args('id') id: string, @Args('input') input: UpdateBrandInput) {
     return this.brandService.updateBrand(id, input);
   }
 
-  @Roles(Role.SUPER_ADMIN, Role.ADMIN)
+  @RequirePermission('catalog.taxonomy.write')
   @Mutation(() => Brand)
   async deleteBrand(@Args('id') id: string) {
     return this.brandService.deleteBrand(id);

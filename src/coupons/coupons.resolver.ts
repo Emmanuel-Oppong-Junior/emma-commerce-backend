@@ -5,21 +5,24 @@ import { CouponValidation } from './entities/coupon-validation.entity';
 import { CreateCouponInput } from './dto/create-coupon.input';
 import { UpdateCouponInput } from './dto/update-coupon.input';
 import { ValidateCouponInput } from './dto/validate-coupon.input';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import { RequirePermission, RequireStepUp } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => Coupon)
 export class CouponsResolver {
   constructor(private readonly couponsService: CouponsService) {}
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Coupon, { description: 'Create a new coupon (admin only)' })
   createCoupon(@ActiveUser('id') actorId: string, @Args('input') input: CreateCouponInput) {
     return this.couponsService.createCoupon(input, actorId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Coupon, { description: 'Update a coupon (admin only)' })
   updateCoupon(
     @ActiveUser('id') actorId: string,
@@ -29,25 +32,26 @@ export class CouponsResolver {
     return this.couponsService.updateCoupon(id, input, actorId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('promotion.manage')
+  @RequireStepUp()
   @Mutation(() => Coupon, { description: 'Delete a coupon (admin only)' })
   deleteCoupon(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
     return this.couponsService.deleteCoupon(id, actorId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('promotion.manage')
   @Query(() => [Coupon], { description: 'Get all coupons (admin only)' })
   coupons() {
     return this.couponsService.findAll();
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('promotion.manage')
   @Query(() => Coupon, { description: 'Get a coupon by ID (admin only)' })
   coupon(@Args('id', { type: () => ID }) id: string) {
     return this.couponsService.findOne(id);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Mutation(() => CouponValidation, { description: 'Validate a coupon code before applying to order' })
   async validateCoupon(
     @ActiveUser('id') userId: string,

@@ -1,18 +1,30 @@
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { AddressesService } from './addresses.service';
 import { Address } from './entities/address.entity';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateAddressInput } from './dto/create-address.input';
 import { UpdateAddressInput } from './dto/update-address.input';
 import { ForbiddenException } from '@nestjs/common';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import {
+  ActiveAccess,
+  RequirePermission,
+  RequireStepUp,
+  StepUpCondition,
+} from '../iam/authorization/policy.decorators';
+import { hasPermission, StaffAccess } from '../iam/authorization/staff-access';
+
+const EXPORTS_ALL: StepUpCondition = {
+  label: 'userId is omitted (exports every address)',
+  applies: (args) => !args.userId,
+};
 
 @Resolver(() => Address)
 export class AddressesResolver {
   constructor(private readonly addressService: AddressesService) {}
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Query(() => Address, {
     name: 'address',
     description: 'Retrieves a specific address by ID for the current user',
@@ -21,7 +33,7 @@ export class AddressesResolver {
     return this.addressService.getAddress(userId, addressId);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Query(() => [Address], {
     name: 'userAddresses',
     description: 'Retrieves all addresses for the current user',
@@ -31,27 +43,29 @@ export class AddressesResolver {
   }
 
   /**
-   * [MED-4] Restricted to ADMIN and SUPER_ADMIN only.
-   * - SUPER_ADMIN: may omit `userId` to retrieve all addresses.
-   * - ADMIN: must provide `userId` to retrieve a specific user's addresses.
+   * [MED-4] Staff only. Omitting `userId` exports every customer address, so it needs customer.data.export.
    * Regular users should use `userAddresses` instead.
    */
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('user.view')
+  @RequireStepUp(EXPORTS_ALL)
   @Query(() => [Address], {
     name: 'addresses',
-    description: 'Admin: retrieves addresses. SUPER_ADMIN may omit userId to get all; ADMIN must supply userId.',
+    description:
+      'Staff (user.view): retrieves the addresses of one user. Omitting userId lists every address and needs customer.data.export (the Owner).',
   })
   async getAllAddresses(
-    @ActiveUser('role') role: Role,
+    @ActiveUser('id') actorId: string,
+    @ActiveAccess() access: StaffAccess,
     @Args('userId', { type: () => String, nullable: true }) userId?: string,
   ) {
-    if (role === Role.ADMIN && !userId) {
-      throw new ForbiddenException('ADMIN must supply a userId to retrieve addresses');
+    if (userId) return this.addressService.getAllAddresses(userId);
+    if (!hasPermission(access, 'customer.data.export')) {
+      throw new ForbiddenException('Supply a userId: listing every address needs the customer.data.export permission');
     }
-    return this.addressService.getAllAddresses(userId);
+    return this.addressService.exportAllAddresses(actorId);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Mutation(() => Address, {
     name: 'createAddress',
     description: 'Creates a new address for the user',
@@ -60,7 +74,7 @@ export class AddressesResolver {
     return this.addressService.createAddress(userId, input);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Mutation(() => Address, {
     name: 'updateAddress',
     description: 'Updates an existing address for the user',
@@ -73,7 +87,7 @@ export class AddressesResolver {
     return this.addressService.updateAddress(userId, addressId, input);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Mutation(() => Address, {
     name: 'deleteAddress',
     description: 'Deletes an address for the user',

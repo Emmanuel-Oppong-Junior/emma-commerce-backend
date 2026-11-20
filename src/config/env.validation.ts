@@ -11,6 +11,7 @@ const PRODUCTION_SECRET_KEYS = [
   'CLOUDINARY_API_SECRET',
   'REDIS_PASSWORD',
   'RESEND_API_KEY',
+  'MFA_ENCRYPTION_KEY',
 ] as const;
 
 const JWT_SECRET_KEYS = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'JWT_RESET_SECRET'] as const;
@@ -20,6 +21,9 @@ const JWT_SECRET_KEYS = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'JWT_RESET_SECRET']
 const PLACEHOLDER_SECRET_PATTERN =
   /change[-_]?me|replace[-_]?me|placeholder|^your[-_]|^(secret|password|test|example)$|(^|[-_])x{3,}($|[-_])|^(.)\4*$/i;
 
+// A hex key that is one short unit repeated (abab..., 0123456789abcdef...) was typed or copied, not generated.
+const REPEATED_UNIT_PATTERN = /^(.{1,16})\1+$/;
+
 const requiredInProduction = (schema: Joi.StringSchema) =>
   schema.when('NODE_ENV', { is: 'production', then: Joi.required(), otherwise: Joi.optional() });
 
@@ -27,7 +31,10 @@ function rejectUnsafeProductionSecrets(env: Record<string, unknown>, helpers: Jo
   if (env.NODE_ENV !== 'production') return env;
 
   const placeholderKeys = PRODUCTION_SECRET_KEYS.filter(
-    (key) => typeof env[key] === 'string' && PLACEHOLDER_SECRET_PATTERN.test(env[key] as string),
+    (key) =>
+      typeof env[key] === 'string' &&
+      (PLACEHOLDER_SECRET_PATTERN.test(env[key] as string) ||
+        (key === 'MFA_ENCRYPTION_KEY' && REPEATED_UNIT_PATTERN.test(env[key] as string))),
   );
   if (placeholderKeys.length > 0) {
     return helpers.message({
@@ -98,6 +105,12 @@ export const envValidationSchema = Joi.object({
   // Password reset JWT
   JWT_RESET_SECRET: Joi.string().min(32).required(),
   JWT_RESET_TOKEN_TTL: Joi.number().default(900),
+
+  // AES-256-GCM key for TOTP secrets at rest: 32 random bytes as hex (`openssl rand -hex 32`).
+  MFA_ENCRYPTION_KEY: Joi.string()
+    .pattern(/^[0-9a-fA-F]{64}$/)
+    .required()
+    .messages({ 'string.pattern.base': 'MFA_ENCRYPTION_KEY must be 64 hexadecimal characters (32 bytes)' }),
 
   // Logging
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug').default('info'),

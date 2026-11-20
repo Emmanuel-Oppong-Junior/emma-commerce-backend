@@ -17,6 +17,8 @@ import { trackForgotPasswordByEmail } from './forgot-password-email.tracker';
 import { VerifyEmailInput } from './dto/verify-email.input';
 import { EmailVerificationService } from '../../users/email-verification.service';
 import { ActiveUser } from './decorators/active-user.decorator';
+import { CompleteMfaSignInInput } from '../mfa/mfa.entities';
+import { MFA_THROTTLE } from '../mfa/mfa.resolver';
 
 @Auth(AuthType.None)
 @Resolver(() => AuthEntity)
@@ -42,6 +44,15 @@ export class AuthenticationResolver {
   })
   signIn(@Args('input', { type: () => SignInInput }) input: SignInInput) {
     return this.authService.signIn(input);
+  }
+
+  @Throttle(MFA_THROTTLE)
+  @Mutation(() => AuthEntity, {
+    description:
+      'Finish a sign-in that failed with extensions.reason MFA_REQUIRED, using its extensions.mfaChallenge and an authenticator or recovery code',
+  })
+  completeMfaSignIn(@Args('input', { type: () => CompleteMfaSignInInput }) input: CompleteMfaSignInInput) {
+    return this.authService.completeMfaSignIn(input.challenge, input.code);
   }
 
   @SkipThrottle() //already gated by refresh token validity, no need for additional throttling

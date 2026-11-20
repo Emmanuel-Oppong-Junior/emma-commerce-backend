@@ -195,6 +195,16 @@ input ChangeUserPasswordInput {
   oldPassword: String!
 }
 
+input CompleteMfaSignInInput {
+  """
+  extensions.mfaChallenge from the MFA_REQUIRED signIn error (valid 5 minutes)
+  """
+  challenge: String!
+
+  """A 6-digit authenticator code or an unused recovery code"""
+  code: String!
+}
+
 type Coupon {
   code: String!
   createdAt: DateTime!
@@ -454,6 +464,20 @@ input CreateShippingZoneInput {
   name: String!
 }
 
+input CreateStaffRoleInput {
+  """
+  Unique key: upper case letters, digits and underscores, 2-40 characters (e.g. STOCK_TAKER)
+  """
+  key: String!
+
+  """Require holders to enrol two-factor authentication"""
+  mfaRequired: Boolean! = false
+  name: String!
+
+  """Permission keys from staffPermissions; you must hold each of them"""
+  permissions: [String!]!
+}
+
 input CreateSubCategoryInput {
   """The ID of the parent category"""
   categoryId: String!
@@ -700,6 +724,25 @@ enum JobQueue {
   WEBHOOKS
 }
 
+"""
+A started two-factor enrolment; confirm it with a code from the authenticator app
+"""
+type MfaEnrollment {
+  """otpauth:// URI to show as a QR code (SHA1, 6 digits, 30 seconds)"""
+  otpauthUri: String!
+
+  """
+  The TOTP secret in base32, for typing into an app that cannot scan the QR code
+  """
+  secret: String!
+}
+
+"""Single-use recovery codes, returned only once"""
+type MfaRecoveryCodes {
+  """Each code works once in place of an authenticator code"""
+  recoveryCodes: [String!]!
+}
+
 input ModifyDiscountItemsInput {
   """Category IDs to add or remove"""
   categories: [ID!] = []
@@ -758,6 +801,11 @@ type Mutation {
   """Archive (soft delete) a user"""
   archiveUser(id: String!): User!
 
+  """
+  Give a user a staff role, replacing their current one (staff.manage). You may only assign a role whose permissions you all hold; only an Owner assigns or changes an Owner; the last Owner cannot be demoted. Audited.
+  """
+  assignStaffRole(roleKey: String!, userId: ID!): StaffMember!
+
   """Cancels the authenticated user's own order and restores stock"""
   cancelOrder(orderId: String!): Order!
 
@@ -769,6 +817,16 @@ type Mutation {
 
   """Clears the user’s wishlist"""
   clearWishlist: Wishlist!
+
+  """
+  Finish a sign-in that failed with extensions.reason MFA_REQUIRED, using its extensions.mfaChallenge and an authenticator or recovery code
+  """
+  completeMfaSignIn(input: CompleteMfaSignInInput!): AuthEntity!
+
+  """
+  Finish enrolment with the first code from the authenticator app. Turns two-factor authentication on and returns 10 single-use recovery codes, shown only this once. Counts as a step-up for this session. Audited.
+  """
+  confirmMfaEnrollment(code: String!): MfaRecoveryCodes!
 
   """Creates a new address for the user"""
   createAddress(input: CreateAddressInput!): Address!
@@ -796,6 +854,11 @@ type Mutation {
 
   """Create a shipping zone (admin only)"""
   createShippingZone(input: CreateShippingZoneInput!): ShippingZoneEntity!
+
+  """
+  Create a custom staff role from permissions you hold (staff.manage). Audited.
+  """
+  createStaffRole(input: CreateStaffRoleInput!): StaffRole!
 
   """Creates a new subcategory (admin only)"""
   createSubCategory(
@@ -886,6 +949,11 @@ type Mutation {
   """Add products to a tag"""
   removeProductsFromTag(tagId: String!, updateDiscountInput: RemoveProductsFromTagDto!): Tag!
 
+  """
+  Take away a user's staff role so they become a customer (staff.manage). Only an Owner removes an Owner; the last Owner cannot be removed. Audited.
+  """
+  removeStaffRole(userId: ID!): User!
+
   """Deletes a subcategory by ID (admin only)"""
   removeSubCategory(
     """The ID of the subcategory to delete"""
@@ -933,6 +1001,16 @@ type Mutation {
   signUp(input: SignUpInput!): AuthEntity!
   softDeletePayment(id: String!): Payment!
 
+  """
+  Start two-factor enrolment: returns a new TOTP secret and otpauth URI (replacing an unconfirmed one). CONFLICT if already enabled.
+  """
+  startMfaEnrollment: MfaEnrollment!
+
+  """
+  Verify this session with an authenticator or recovery code. Sensitive actions (role changes, refunds, price changes, exports) are then allowed for 10 minutes. Audited.
+  """
+  stepUp(code: String!): StepUpResult!
+
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
   updateBrand(id: String!, input: UpdateBrandInput!): Brand!
@@ -976,6 +1054,11 @@ type Mutation {
   """Update a shipping zone (admin only)"""
   updateShippingZone(id: ID!, input: UpdateShippingZoneInput!): ShippingZoneEntity!
 
+  """
+  Change a custom staff role (staff.manage); system roles are immutable. Applies to its holders on their next request. Audited.
+  """
+  updateStaffRole(input: UpdateStaffRoleInput!, key: String!): StaffRole!
+
   """Change the store settings (super admin only)"""
   updateStoreSettings(input: UpdateStoreSettingsInput!): StoreSettings!
 
@@ -995,7 +1078,7 @@ type Mutation {
   updateTax(id: ID!, input: UpdateTaxInput!): TaxEntity!
 
   """
-  Update an existing user (super admin accounts cannot be modified; admin accounts only by a super admin)
+  Update an existing user (user.manage). Staff accounts also need staff.manage and every permission they hold; Owner accounts only by an Owner.
   """
   updateUser(id: String!, updateUserInput: UpdateUserInput!): User!
 
@@ -1370,7 +1453,7 @@ type Query {
   address(addressId: String!): Address!
 
   """
-  Admin: retrieves addresses. SUPER_ADMIN may omit userId to get all; ADMIN must supply userId.
+  Staff (user.view): retrieves the addresses of one user. Omitting userId lists every address and needs customer.data.export (the Owner).
   """
   addresses(userId: String): [Address!]!
 
@@ -1482,6 +1565,15 @@ type Query {
 
   """Get all shipping zones (admin only)"""
   shippingZones: [ShippingZoneEntity!]!
+
+  """Every staff member and their role (staff.view)"""
+  staffMembers: [StaffMember!]!
+
+  """The permission catalogue (staff.view)"""
+  staffPermissions: [StaffPermission!]!
+
+  """System and custom staff roles with their permissions (staff.view)"""
+  staffRoles: [StaffRole!]!
 
   """
   The store settings: names, tax registration, currency, contact (public)
@@ -1758,6 +1850,51 @@ input SocialLoginInput {
 enum SortOrder {
   ASC
   DESC
+}
+
+"""A user's staff role in the store"""
+type StaffMember {
+  role: StaffRole!
+
+  """When the current role was assigned"""
+  updatedAt: DateTime!
+  user: User!
+}
+
+"""A permission from the code catalogue"""
+type StaffPermission {
+  description: String!
+
+  """Permission key, e.g. order.refund"""
+  key: String!
+}
+
+"""A staff role: a named set of permissions (staff only)"""
+type StaffRole {
+  createdAt: DateTime!
+  id: ID!
+
+  """System roles are seeded and cannot be changed"""
+  isSystem: Boolean!
+
+  """Stable key, e.g. OWNER, MANAGER or a custom key"""
+  key: String!
+
+  """
+  Holders must enrol two-factor authentication before using staff operations
+  """
+  mfaRequired: Boolean!
+  name: String!
+
+  """Effective permissions; the Owner always holds every permission"""
+  permissions: [String!]!
+  updatedAt: DateTime!
+}
+
+"""A successful step-up verification"""
+type StepUpResult {
+  """Sensitive actions are allowed in this session until then"""
+  validUntil: DateTime!
 }
 
 enum StockStatus {
@@ -2069,6 +2206,14 @@ input UpdateShippingZoneInput {
   name: String
 }
 
+input UpdateStaffRoleInput {
+  mfaRequired: Boolean
+  name: String
+
+  """Replaces the permission list; you must hold each of them"""
+  permissions: [String!]
+}
+
 """
 Store settings to change; omitted fields keep their value, null clears an optional one
 """
@@ -2171,6 +2316,11 @@ type User {
   """Date of last login"""
   lastLoginAt: DateTime
 
+  """
+  Whether two-factor authentication is on (the user themself or user.view)
+  """
+  mfaEnabled: Boolean!
+
   """User’s full name"""
   name: String
 
@@ -2182,14 +2332,26 @@ type User {
   """
   pendingEmail: String
 
+  """
+  Effective permissions from the staff role; empty for customers (the user themself or user.view)
+  """
+  permissions: [String!]!
+
   """Phone number"""
   phoneNumber: String
 
   """Profile picture URL"""
   profilePicture: String
 
-  """Role of the user"""
-  role: String!
+  """
+  Legacy role: SUPER_ADMIN for an Owner, ADMIN for any other staff role, USER for customers
+  """
+  role: String! @deprecated(reason: "Use staffRole and permissions; role is kept in step for old clients only")
+
+  """
+  Staff role in the store; null for customers (the user themself or user.view)
+  """
+  staffRole: StaffRole
 
   """Date of last update"""
   updatedAt: DateTime!

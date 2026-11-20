@@ -6,6 +6,8 @@ export interface ClassifiedError {
   status: number;
   code: string;
   message: string;
+  /** Extra GraphQL extensions an HttpException carries as `{ extensions }` in its response (e.g. `reason`). */
+  extensions?: Record<string, unknown>;
 }
 
 const CODE_BY_STATUS: Record<number, string> = {
@@ -81,6 +83,12 @@ function classifyPrisma(error: Prisma.PrismaClientKnownRequestError): Classified
   }
 }
 
+function httpExtensions(exception: HttpException): Record<string, unknown> | undefined {
+  const response = exception.getResponse();
+  const extensions = isRecord(response) ? response.extensions : undefined;
+  return isRecord(extensions) ? extensions : undefined;
+}
+
 function httpMessage(exception: HttpException): string {
   const response = exception.getResponse();
   if (typeof response === 'string') return response;
@@ -115,5 +123,11 @@ export function classifyError(exception: unknown): ClassifiedError {
   if (!(exception instanceof HttpException)) return INTERNAL;
   const status = exception.getStatus();
   if (status >= HttpStatus.INTERNAL_SERVER_ERROR) return { ...INTERNAL, status };
-  return { status, code: errorCodeForStatus(status), message: httpMessage(exception) };
+  const extensions = httpExtensions(exception);
+  return {
+    status,
+    code: errorCodeForStatus(status),
+    message: httpMessage(exception),
+    ...(extensions && { extensions }),
+  };
 }

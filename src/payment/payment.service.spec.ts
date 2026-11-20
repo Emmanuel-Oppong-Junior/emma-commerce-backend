@@ -13,7 +13,6 @@ import {
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentStatus, Prisma } from '../generated/prisma/client';
 import { LoggerService } from '../commons/logger.service';
-import { Role } from '../users/enums/role.enum';
 import { AuditService } from '../commons/audit.service';
 import { PaystackClient } from './paystack.client';
 import { StoreService } from '../store/store.service';
@@ -424,7 +423,7 @@ describe('PaymentService', () => {
       mockPaymentRepository.findById.mockResolvedValue(payment);
       mockPaymentRepository.findOrderById.mockResolvedValue({ id: 'order1', userId: 'user1' });
 
-      const result = await service.getPayment(paymentId, 'user1', Role.USER);
+      const result = await service.getPayment(paymentId, 'user1', false);
 
       expect(paymentRepository.findById).toHaveBeenCalledWith(paymentId);
       expect(result).toEqual(payment);
@@ -433,7 +432,7 @@ describe('PaymentService', () => {
     it('should allow admin to retrieve any payment', async () => {
       mockPaymentRepository.findById.mockResolvedValue(payment);
 
-      const result = await service.getPayment(paymentId, 'admin1', Role.ADMIN);
+      const result = await service.getPayment(paymentId, 'admin1', true);
 
       expect(result).toEqual(payment);
       expect(paymentRepository.findOrderById).not.toHaveBeenCalled();
@@ -443,13 +442,13 @@ describe('PaymentService', () => {
       mockPaymentRepository.findById.mockResolvedValue(payment);
       mockPaymentRepository.findOrderById.mockResolvedValue({ id: 'order1', userId: 'other-user' });
 
-      await expect(service.getPayment(paymentId, 'user1', Role.USER)).rejects.toThrow(UnauthorizedException);
+      await expect(service.getPayment(paymentId, 'user1', false)).rejects.toThrow(UnauthorizedException);
     });
 
     it('should throw NotFoundException if payment not found', async () => {
       mockPaymentRepository.findById.mockResolvedValue(null);
 
-      await expect(service.getPayment(paymentId, 'user1', Role.USER)).rejects.toThrow(NotFoundException);
+      await expect(service.getPayment(paymentId, 'user1', false)).rejects.toThrow(NotFoundException);
     });
   });
 

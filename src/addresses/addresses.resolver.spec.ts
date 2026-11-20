@@ -7,7 +7,7 @@ import { ActiveUser } from '../iam/authentication/decorators/active-user.decorat
 import { UpdateAddressInput } from './dto/update-address.input';
 import { GhanaRegion } from './enums/ghana-region.enum';
 import { ForbiddenException } from '@nestjs/common';
-import { Role } from '../users/enums/role.enum';
+import { MANAGER_ACCESS, OWNER_ACCESS } from '../../test/helpers/staff.helper';
 
 describe('AddressesResolver', () => {
   let resolver: AddressesResolver;
@@ -17,6 +17,7 @@ describe('AddressesResolver', () => {
     getAddress: jest.fn(),
     getUserAddresses: jest.fn(),
     getAllAddresses: jest.fn(),
+    exportAllAddresses: jest.fn(),
     createAddress: jest.fn(),
     updateAddress: jest.fn(),
     deleteAddress: jest.fn(),
@@ -97,15 +98,18 @@ describe('AddressesResolver', () => {
     it('should retrieve all addresses for super admin when userId is omitted', async () => {
       mockAddressesService.getAllAddresses.mockResolvedValue([mockAddress]);
 
-      const result = await resolver.getAllAddresses(Role.SUPER_ADMIN);
+      mockAddressesService.exportAllAddresses.mockResolvedValue([mockAddress]);
 
-      expect(addressesService.getAllAddresses).toHaveBeenCalledWith(undefined);
+      const result = await resolver.getAllAddresses('owner1', OWNER_ACCESS);
+
+      expect(addressesService.exportAllAddresses).toHaveBeenCalledWith('owner1');
       expect(result).toEqual([mockAddress]);
     });
 
     it('should reject an admin who omits userId', async () => {
-      await expect(resolver.getAllAddresses(Role.ADMIN)).rejects.toThrow(ForbiddenException);
+      await expect(resolver.getAllAddresses('admin1', MANAGER_ACCESS)).rejects.toThrow(ForbiddenException);
       expect(addressesService.getAllAddresses).not.toHaveBeenCalled();
+      expect(addressesService.exportAllAddresses).not.toHaveBeenCalled();
     });
   });
 
@@ -156,7 +160,7 @@ describe('AddressesResolver', () => {
     it('should allow ADMIN role to access getAllAddresses for a given user', async () => {
       mockAddressesService.getAllAddresses.mockResolvedValue([mockAddress]);
 
-      const result = await resolver.getAllAddresses(Role.ADMIN, 'user1');
+      const result = await resolver.getAllAddresses('admin1', MANAGER_ACCESS, 'user1');
 
       expect(addressesService.getAllAddresses).toHaveBeenCalledWith('user1');
       expect(result).toEqual([mockAddress]);

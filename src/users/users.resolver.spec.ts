@@ -11,7 +11,8 @@ import { Reflector } from '@nestjs/core';
 import { ChangeUserPasswordInput } from './dto/change-user-password.input';
 import { AddressesLoader } from './loaders/addresses.loader';
 import { OrdersLoader } from './loaders/orders.loader';
-import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';
+import { PERMISSIONS_KEY } from '../iam/authorization/policy.decorators';
+import { MANAGER_ACCESS, OWNER_ACCESS } from '../../test/helpers/staff.helper';
 
 const mockUsersService = {
   adminCreateUser: jest.fn(),
@@ -57,13 +58,13 @@ describe('UsersResolver', () => {
   });
 
   describe('createUser', () => {
-    it('is restricted to SUPER_ADMIN, since it is the only way to grant the ADMIN role', () => {
-      const roles = new Reflector().getAllAndOverride<Role[]>(ROLES_KEY, [
+    it('needs staff.manage (the Owner), since it can grant the ADMIN role', () => {
+      const permissions = new Reflector().getAllAndOverride<string[]>(PERMISSIONS_KEY, [
         UsersResolver.prototype.createUser,
         UsersResolver,
       ]);
 
-      expect(roles).toEqual([Role.SUPER_ADMIN]);
+      expect(permissions).toEqual(['staff.manage']);
     });
 
     it('should create a user with credentials', async () => {
@@ -80,9 +81,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.adminCreateUser.mockResolvedValue(createdUser);
 
-      const result = await resolver.createUser(input, 'super1');
+      const result = await resolver.createUser(input, 'super1', OWNER_ACCESS);
 
-      expect(usersService.adminCreateUser).toHaveBeenCalledWith(input, 'super1');
+      expect(usersService.adminCreateUser).toHaveBeenCalledWith(input, { id: 'super1', access: OWNER_ACCESS });
       expect(result).toEqual(createdUser);
     });
   });
@@ -204,9 +205,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.adminUpdateUser.mockResolvedValue(updatedUser);
 
-      const result = await resolver.updateUser(id, input, Role.ADMIN, 'admin1');
+      const result = await resolver.updateUser(id, input, 'admin1', MANAGER_ACCESS);
 
-      expect(usersService.adminUpdateUser).toHaveBeenCalledWith(id, input, Role.ADMIN, 'admin1');
+      expect(usersService.adminUpdateUser).toHaveBeenCalledWith(id, input, { id: 'admin1', access: MANAGER_ACCESS });
       expect(result).toEqual(updatedUser);
     });
   });
@@ -223,9 +224,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.remove.mockResolvedValue(removedUser);
 
-      const result = await resolver.removeUser(id, Role.ADMIN, 'admin1');
+      const result = await resolver.removeUser(id, 'admin1', MANAGER_ACCESS);
 
-      expect(usersService.remove).toHaveBeenCalledWith(id, Role.ADMIN, 'admin1');
+      expect(usersService.remove).toHaveBeenCalledWith(id, { id: 'admin1', access: MANAGER_ACCESS });
       expect(result).toEqual(removedUser);
     });
   });
@@ -242,9 +243,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.archiveUser.mockResolvedValue(archivedUser);
 
-      const result = await resolver.archiveUser(id, Role.ADMIN, 'admin1');
+      const result = await resolver.archiveUser(id, 'admin1', MANAGER_ACCESS);
 
-      expect(usersService.archiveUser).toHaveBeenCalledWith(id, Role.ADMIN, 'admin1');
+      expect(usersService.archiveUser).toHaveBeenCalledWith(id, { id: 'admin1', access: MANAGER_ACCESS });
       expect(result).toEqual(archivedUser);
     });
   });
@@ -261,9 +262,9 @@ describe('UsersResolver', () => {
 
       mockUsersService.deArchiveUser.mockResolvedValue(restoredUser);
 
-      const result = await resolver.deArchiveUser(id, Role.ADMIN, 'admin1');
+      const result = await resolver.deArchiveUser(id, 'admin1', MANAGER_ACCESS);
 
-      expect(usersService.deArchiveUser).toHaveBeenCalledWith(id, Role.ADMIN, 'admin1');
+      expect(usersService.deArchiveUser).toHaveBeenCalledWith(id, { id: 'admin1', access: MANAGER_ACCESS });
       expect(result).toEqual(restoredUser);
     });
   });

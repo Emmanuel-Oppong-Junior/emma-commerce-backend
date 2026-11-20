@@ -31,6 +31,8 @@
    - [Shipping Zones & Pickup Locations](#221-shipping-zones--pickup-locations)
    - [Store settings](#222-store-settings)
    - [Background jobs](#223-background-jobs)
+   - [Staff roles and permissions](#224-staff-roles-and-permissions)
+   - [Two-factor authentication and step-up](#225-two-factor-authentication-and-step-up)
 3. [REST API Reference](#3-rest-api-reference)
 4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
@@ -104,6 +106,7 @@ feature/
 - A session can be refreshed for at most **30 days** after sign-in; then the user must sign in again.
 - Password reset tokens: 15-minute TTL signed with separate secret (`JWT_RESET_SECRET`).
 - **Account lockout**: 5 consecutive failed logins trigger a 15-minute lockout (tracked in `User.failedLoginAttempts` and `User.lockedUntil`).
+- **Two-factor authentication (TOTP)**: any user may enrol; Owners and Managers must. Accounts with it complete `signIn` (and social sign-in) with `completeMfaSignIn`. Sensitive staff actions need a verification in the last 10 minutes (`stepUp`). See [2.25](#225-two-factor-authentication-and-step-up).
 
 ### Payment Integration
 
@@ -115,7 +118,7 @@ feature/
 
 ### File Storage (Cloudinary)
 
-Images are uploaded via REST endpoints for ADMIN/SUPER_ADMIN only (`POST /upload/single-image`, `POST /upload/multiple-images`). Images are resized to **500×500** pixels (contain mode, white background) before upload. Folder: `ecommerce`.
+Images are uploaded via REST endpoints for staff holding `catalog.media.upload` only (`POST /upload/single-image`, `POST /upload/multiple-images`). Images are resized to **500×500** pixels (contain mode, white background) before upload. Folder: `ecommerce`.
 
 ### Observability
 
@@ -138,7 +141,7 @@ PostgreSQL via Prisma. Full-text search is enabled (`fullTextSearchPostgres` pre
 
 **Auth.** Every operation requires `Authorization: Bearer <accessToken>` unless marked **Auth Required: No** (public). A missing, invalid or expired token, or a deactivated account, gives `UNAUTHENTICATED`. The account (and its role) is re-read from the database on every request.
 
-**Roles** are checked by exact membership, not hierarchy: an operation listed as `ADMIN` only (e.g. `getUserPayment`, `updateSubCategory`) refuses a `SUPER_ADMIN` with `FORBIDDEN`. "Any signed-in user" means `USER`, `ADMIN` or `SUPER_ADMIN`.
+**Permissions.** Staff operations need a permission (e.g. `order.refund`), granted by the user's staff role (see [2.24](#224-staff-roles-and-permissions)). Customers have no staff role and no permissions. The labels in this reference still say `ADMIN` and `SUPER_ADMIN`: `ADMIN` means the **Manager** role (every legacy ADMIN account became a Manager) and `SUPER_ADMIN` the **Owner** role; the exact permission of every operation is in the table in [2.24](#224-staff-roles-and-permissions). The Owner holds every permission, so nothing locks an Owner out any more (the former `ADMIN`-only operations `getUserPayment`, `softDeletePayment`, `restorePayment`, `updateSubCategory` and `removeSubCategory` now accept the Owner too). A few self-service operations (`cancelOrder`, `verifyPayment`, `getMyPayments`, `createReview`, `updateReview`, `deleteReview`) are for customers only and refuse any staff account with `FORBIDDEN`. Permissions are re-read with the account on every request, so a role change applies on the caller's next request. A missing permission is `FORBIDDEN`.
 
 **Query limits** (checked before execution; a violation is a `GRAPHQL_VALIDATION_FAILED` error, HTTP 400):
 
@@ -160,6 +163,7 @@ Introspection does not count towards the limits and is disabled in production.
 | `forgotPassword` | 3 / hour per IP and 3 / hour per email address |
 | `resetPassword` | 3 / hour |
 | `resendVerificationEmail` | 5 / hour (plus one email per minute per account) |
+| `completeMfaSignIn`, `startMfaEnrollment`, `confirmMfaEnrollment`, `stepUp` | 5 / minute |
 | `POST /payment/initialize` | 5 / minute |
 | `POST /upload/*` | 10 / minute |
 | `refreshToken`, `signOut` | exempt from all limits |
@@ -240,6 +244,7 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 **Possible Errors**:
 - `UNAUTHENTICATED` — Invalid email or password.
 - `UNAUTHENTICATED` — Account locked (includes remaining lock time in seconds in message).
+- `UNAUTHENTICATED` with `extensions.reason: "MFA_REQUIRED"` and `extensions.mfaChallenge` — the password was right but the account has two-factor authentication: no tokens are issued; finish with `completeMfaSignIn` (see [2.25](#225-two-factor-authentication-and-step-up)). `signInWithGoogle` / `signInWithFacebook` behave the same for such accounts. Accounts without two-factor authentication are unaffected.
 
 ---
 
@@ -425,11 +430,11 @@ All auth mutations are `@Auth(AuthType.None)` — **no token required** unless n
 
 ### 2.2 Users
 
-Resolver default: `SUPER_ADMIN` only, overridden per operation below. Super admin accounts are never listed by `users` and can never be created, changed, archived or deleted through the API. An `ADMIN` may manage `USER` accounts only; acting on any `ADMIN` account (including their own via `updateUser`/`removeUser`) is `FORBIDDEN`, only a `SUPER_ADMIN` may.
+Customer accounts are managed with `user.manage` (Manager, Owner). Acting on a **staff** account (any user with a staff role) with `updateUser`, `removeUser`, `archiveUser` or `deArchiveUser` also needs `staff.manage` and every permission that account holds; an Owner account can only be changed by an Owner, and the last active Owner can never be archived, deleted or demoted. In practice a Manager manages customers only and the Owner manages staff. Owner accounts (legacy `SUPER_ADMIN`) are never listed by `users` and cannot be created with `createUser`; make an Owner with `assignStaffRole`.
 
 ---
 
-#### `createUser` (SUPER_ADMIN only)
+#### `createUser` (`staff.manage`: Owner)
 - **Type**: Mutation
 - **Args**: `createUserInput: CreateUserInput!`
 - **Response**: `User!`
@@ -445,7 +450,8 @@ Resolver default: `SUPER_ADMIN` only, overridden per operation below. Super admi
   phoneNumber?: string;    // Optional. Ghana number, stored as +233XXXXXXXXX (formats in 2.20 Addresses).
   profilePicture?: string; // Valid URL.
   isActive: boolean;       // Default true.
-  role: Role;              // Default USER. USER or ADMIN; SUPER_ADMIN is refused.
+  role: Role;              // Default USER. USER or ADMIN; SUPER_ADMIN is refused. ADMIN gives the account the
+                           // Manager staff role (same escalation rules as assignStaffRole).
 }
 ```
 
@@ -627,7 +633,10 @@ query {
   facebookId?: string;     // Not populated today (always null).
   isActive: boolean;
   profilePicture?: string;
-  role: string;            // "USER" | "ADMIN" | "SUPER_ADMIN"
+  role: string;            // DEPRECATED legacy role, kept in step: "SUPER_ADMIN" for an Owner, "ADMIN" for any
+                           // other staff role, "USER" for customers. Use staffRole / permissions.
+  staffRole?: StaffRole;   // Owner or user.view only. The staff role, null for customers.
+  permissions: string[];   // Owner or user.view only. Effective permissions, [] for customers.
   createdAt: DateTime;
   updatedAt: DateTime;
   lastLoginAt?: DateTime;
@@ -636,7 +645,7 @@ query {
 }
 ```
 
-Reading an "owner or admin only" field of another user as a `USER` gives `FORBIDDEN` for that field.
+"Owner or admin only" means the user themself or staff holding `user.view`. Reading such a field of another user without it gives `FORBIDDEN` for that field.
 
 ---
 
@@ -2744,6 +2753,180 @@ enum JobQueue { NOTIFICATIONS, WEBHOOKS, MAINTENANCE }
 
 ---
 
+### 2.24 Staff roles and permissions
+
+Authorization is permission-based (ADR-0013). **Permissions** are fixed in code; **roles** are data: a named set of permissions. Each staff member has exactly one role in the store (a *membership*); customers have none. System roles are seeded and cannot be changed:
+
+| Role (key) | Permissions | Two-factor required |
+|---|---|---|
+| Owner (`OWNER`) | Every permission, including any added later | Yes |
+| Manager (`MANAGER`) | Everything the legacy `ADMIN` could do: every permission except `staff.manage`, `store.settings.manage`, `jobs.manage`, `customer.data.export` | Yes |
+| Inventory clerk (`INVENTORY_CLERK`) | `catalog.product.read`, `catalog.product.write`, `catalog.taxonomy.write`, `catalog.media.upload`, `inventory.view`, `inventory.adjust` | No (may opt in) |
+| Cashier (`CASHIER`) | `catalog.product.read`, `order.view`, `payment.view`, `payment.record` | No (may opt in) |
+| Support (`SUPPORT`) | `order.view`, `return.manage`, `payment.view`, `user.view`, `review.moderate` | No (may opt in) |
+
+Pharmacist and Rider roles come with their verticals. The Owner can create **custom roles** from the catalogue (`createStaffRole`).
+
+**Rules** (all enforced server-side, every change audited):
+- Managing staff needs `staff.manage` (by default only the Owner).
+- No escalation: you may only assign a role, or create/change a custom role, whose permissions you all hold, and only touch staff whose permissions you all hold.
+- Only an Owner can assign the Owner role or change, demote, archive or delete an Owner.
+- The last active Owner cannot be removed, demoted, archived or deleted (`FORBIDDEN`, "The store must keep at least one active Owner").
+- Changes apply on the affected user's next request; no sign-out is needed.
+- Role and permission changes are step-up actions (see [2.25](#225-two-factor-authentication-and-step-up)), and holders of `mfaRequired` roles must enrol two-factor authentication before any staff operation.
+
+**Permission catalogue** (also returned by `staffPermissions`):
+
+| Permission | Allows |
+|---|---|
+| `catalog.product.read` | `adminProducts`, `adminProduct` |
+| `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
+| `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories and tags; `addProductsToTag`, `removeProductsFromTag` |
+| `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
+| `inventory.view` | `inventoryLogs`, `productInventoryLogs`, `variantInventoryLogs` |
+| `inventory.adjust` | `restockProduct`, `restockVariant`, `adjustProductStock`, `adjustVariantStock` |
+| `order.view` | `getOrders`, `viewOrder` |
+| `order.manage` | `updateOrderStatus`, `updateShipping`, `adminCancelOrder`, `deleteOrder` |
+| `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund` |
+| `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
+| `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment` |
+| `payment.record` | `recordCodPayment` |
+| `payment.manage` | `softDeletePayment`, `restorePayment` |
+| `promotion.manage` | every discount and coupon query and mutation except `validateCoupon` |
+| `tax.manage` | `taxes`, `tax`, `createTax`, `updateTax`, `deleteTax` |
+| `shipping.manage` | admin shipping zone and pickup location queries and mutations |
+| `review.moderate` | `adminDeleteReview` |
+| `user.view` | `users`, `userById`, `userByEmail`, `userByProviderId`, `addresses(userId)`, other users' protected `User` fields |
+| `user.manage` | `updateUser`, `removeUser`, `archiveUser`, `deArchiveUser` (customer accounts; staff accounts also need `staff.manage`) |
+| `customer.data.export` | `addresses` without `userId` (every customer address) |
+| `staff.view` | `staffRoles`, `staffPermissions`, `staffMembers` |
+| `staff.manage` | `createUser`, `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, managing staff accounts |
+| `report.view` | `salesReport`, `topProducts`, `revenueByCategory`, `dashboardSummary` |
+| `store.settings.manage` | `updateStoreSettings` |
+| `jobs.manage` | `failedJobs`, `retryFailedJob` |
+
+Every other operation is public or open to any signed-in user, as its section says.
+
+```typescript
+{                          // StaffRole
+  id: string;
+  key: string;             // "OWNER", "MANAGER", ... or a custom key
+  name: string;
+  permissions: string[];   // Effective; the Owner always lists every permission
+  isSystem: boolean;       // System roles cannot be changed
+  mfaRequired: boolean;    // Holders must enrol two-factor authentication
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+{ key: string; description: string }              // StaffPermission
+{ user: User; role: StaffRole; updatedAt: DateTime } // StaffMember (updatedAt: when the role was assigned)
+```
+
+#### `staffRoles` / `staffPermissions` / `staffMembers` (`staff.view`)
+- **Type**: Query
+- **Response**: `[StaffRole!]!` (system roles first) / `[StaffPermission!]!` / `[StaffMember!]!`
+- **Possible Errors**: `FORBIDDEN`, `UNAUTHENTICATED`.
+
+#### `assignStaffRole` (`staff.manage`)
+- **Type**: Mutation
+- **Args**: `userId: ID!`, `roleKey: String!`
+- **Response**: `StaffMember!`
+- **Description**: Gives the user the role, replacing any role they had. Also sets the legacy `User.role` (`SUPER_ADMIN` for Owner, otherwise `ADMIN`).
+- **Side effects**: audit entry (entity `StoreMembership`, entity id = the user id, action `ROLE_ASSIGN`, `details: { from, to }`).
+- **Possible Errors**: `NOT_FOUND` (unknown user or role key), `FORBIDDEN` (escalation rules, last Owner), `UNAUTHENTICATED`.
+
+#### `removeStaffRole` (`staff.manage`)
+- **Type**: Mutation
+- **Args**: `userId: ID!`
+- **Response**: `User!` (now a customer, `role: "USER"`)
+- **Side effects**: audit entry (entity `StoreMembership`, action `ROLE_REMOVE`, `details: { from }`).
+- **Possible Errors**: `NOT_FOUND` ("This user has no staff role"), `FORBIDDEN`, `UNAUTHENTICATED`.
+
+#### `createStaffRole` (`staff.manage`)
+- **Type**: Mutation
+- **Args**: `input: CreateStaffRoleInput!`
+- **Response**: `StaffRole!`
+
+```typescript
+{
+  key: string;             // Required. ^[A-Z][A-Z0-9_]{1,39}$, unique
+  name: string;            // Required. 2-60 chars
+  permissions: string[];   // Required, non-empty, unique; each from staffPermissions and held by you
+  mfaRequired?: boolean;   // Default false
+}
+```
+
+- **Side effects**: audit entry (entity `StaffRole`, action `CREATE`).
+- **Possible Errors**: `BAD_REQUEST` ("Unknown permissions: …"), `CONFLICT` (key taken), `FORBIDDEN` (a permission you do not hold), `BAD_USER_INPUT`.
+
+#### `updateStaffRole` (`staff.manage`)
+- **Type**: Mutation
+- **Args**: `key: String!`, `input: UpdateStaffRoleInput!` (`name?`, `permissions?` replaces the list, `mfaRequired?`)
+- **Response**: `StaffRole!`
+- **Description**: Changes a custom role; holders get the new permissions on their next request. You must hold every permission of the role before and after the change.
+- **Side effects**: audit entry (entity `StaffRole`, action `UPDATE`, before and after).
+- **Possible Errors**: `NOT_FOUND`, `FORBIDDEN` ("System roles cannot be changed", or a permission you do not hold), `BAD_REQUEST` (unknown permission).
+
+---
+
+### 2.25 Two-factor authentication and step-up
+
+Time-based one-time passwords (RFC 6238: SHA1, 6 digits, 30-second steps, any authenticator app). Any signed-in user may enrol. Roles with `mfaRequired` (Owner and Manager) **must** enrol: until they do, every permission-guarded operation returns `FORBIDDEN` with `reason: "MFA_ENROLLMENT_REQUIRED"`; the enrolment mutations, their profile and other customer-level operations keep working. Codes are accepted one step either side of now, and each code works only once (a replay within its step is refused). The TOTP secret is stored encrypted; recovery codes are stored hashed.
+
+**Enrolment flow**
+1. `startMfaEnrollment` → `{ secret, otpauthUri }`. Draw `otpauthUri` as a QR code; show `secret` for manual entry.
+2. The user scans it and types the current code: `confirmMfaEnrollment(code)` → `{ recoveryCodes }` (10 codes). Show them once and ask the user to store them; they are never returned again. Two-factor authentication is on from now, and this session counts as freshly verified.
+
+**Sign-in flow** (password, Google or Facebook)
+1. `signIn` fails with `UNAUTHENTICATED`, `reason: "MFA_REQUIRED"`, `extensions.mfaChallenge` (valid 5 minutes, not usable as an access token).
+2. `completeMfaSignIn(input: { challenge, code })` with a 6-digit code or a recovery code (case, spaces and dashes ignored; each works once) → `AuthEntity`. The new session counts as freshly verified.
+
+**Step-up.** These operations additionally need a two-factor verification **of the current session** in the last 10 minutes (`stepUp`, `completeMfaSignIn` or `confirmMfaEnrollment`), otherwise `FORBIDDEN` with `reason: "STEP_UP_REQUIRED"`. The operation is not performed; call `stepUp(code)` and retry. All are audited.
+
+| Kind | Operations |
+|---|---|
+| Role and permission changes | `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, `createUser` with `role: ADMIN` |
+| Refunds | `approveReturn`, `processRefund`, `processPendingRefund` |
+| Price changes | `updateProduct` when `basePrice` is sent, `updateVariant` when `price` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax` |
+| Data exports | `addresses` without `userId` |
+
+A refreshed access token keeps its session, so a verification survives `refreshToken`; a new sign-in starts a new session. Tokens issued before this release have no session id: sign in again before stepping up.
+
+```typescript
+{ secret: string; otpauthUri: string }   // MfaEnrollment
+{ recoveryCodes: string[] }              // MfaRecoveryCodes
+{ validUntil: DateTime }                 // StepUpResult
+User.mfaEnabled: boolean                 // The user themself or user.view
+```
+
+#### `startMfaEnrollment`
+- **Type**: Mutation · **Auth**: any signed-in user · **Rate Limit**: 5/minute
+- **Response**: `MfaEnrollment!`. Starting again before confirming replaces the secret.
+- **Possible Errors**: `CONFLICT` (already enabled), `UNAUTHENTICATED`.
+
+#### `confirmMfaEnrollment`
+- **Type**: Mutation · **Auth**: any signed-in user · **Rate Limit**: 5/minute
+- **Args**: `code: String!` (current 6-digit code)
+- **Response**: `MfaRecoveryCodes!`
+- **Side effects**: audit entry (entity `User`, action `MFA_ENABLE`).
+- **Possible Errors**: `BAD_REQUEST` ("Invalid two-factor code", or "Start enrolment with startMfaEnrollment first"), `CONFLICT` (already enabled).
+
+#### `completeMfaSignIn`
+- **Type**: Mutation · **Auth Required**: No · **Rate Limit**: 5/minute
+- **Args**: `input: CompleteMfaSignInInput!` = `{ challenge: string; code: string }` (code 6-32 chars)
+- **Response**: `AuthEntity!`
+- **Side effects**: using a recovery code writes an audit entry (action `MFA_RECOVERY_CODE_USED`).
+- **Possible Errors**: `UNAUTHENTICATED` ("Invalid or expired challenge" → start again with `signIn`; "Invalid two-factor code" → ask again), `BAD_USER_INPUT`.
+
+#### `stepUp`
+- **Type**: Mutation · **Auth**: any signed-in user · **Rate Limit**: 5/minute
+- **Args**: `code: String!` (6-digit code or recovery code)
+- **Response**: `StepUpResult!`
+- **Side effects**: audit entry (entity `User`, action `STEP_UP`, `details.method` `totp` or `recovery`).
+- **Possible Errors**: `BAD_REQUEST` ("Invalid two-factor code", "Enrol two-factor authentication first"), `UNAUTHENTICATED` (token without a session id: sign in again).
+
+---
+
 ## 3. REST API Reference
 
 These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ "statusCode": 400, "timestamp": "…", "path": "/payment/initialize", "message": "…" }`.
@@ -3422,6 +3605,16 @@ GraphQL errors follow the standard Apollo format:
 | Schema errors: unknown field or argument, wrong type, missing required value (HTTP 400) | `GRAPHQL_VALIDATION_FAILED` / `BAD_USER_INPUT` (Apollo) |
 | Any 5xx, and unexpected errors (incl. a null returned for a non-null field) | `INTERNAL_SERVER_ERROR` (message "Internal server error"; `extensions.status` carries e.g. 503 for a provider outage) |
 
+**`extensions.reason`** narrows some `FORBIDDEN` / `UNAUTHENTICATED` errors so the frontend can react (details in [2.25](#225-two-factor-authentication-and-step-up)):
+
+| `code` | `reason` | Meaning | What to do |
+|---|---|---|---|
+| `UNAUTHENTICATED` | `MFA_REQUIRED` | Password or social sign-in succeeded; second factor needed. `extensions.mfaChallenge` holds the challenge (5 minutes) | Ask for a code, call `completeMfaSignIn` |
+| `FORBIDDEN` | `MFA_ENROLLMENT_REQUIRED` | The staff role requires two-factor authentication and the user has not enrolled | Run the enrolment flow, then retry |
+| `FORBIDDEN` | `STEP_UP_REQUIRED` | Sensitive action without a two-factor verification in the last 10 minutes | Ask for a code, call `stepUp`, retry |
+
+REST endpoints return the same `reason` field in their JSON error body.
+
 **Query cost:** each field costs 1; a list costs its page size (`first`, or 10 when not given) times the cost of its fields. A page of 50 products with variants and reviews costs about 2,800.
 
 ### Production vs. Development
@@ -3772,6 +3965,7 @@ Backend configuration, validated at startup (`src/config/env.validation.ts`); li
 | `JWT_ACCESS_TOKEN_TTL` | ❌ | `3600` | Access token TTL in seconds |
 | `JWT_REFRESH_TOKEN_TTL` | ❌ | `86400` | Refresh token TTL in seconds |
 | `JWT_RESET_TOKEN_TTL` | ❌ | `900` | Reset token TTL in seconds |
+| `MFA_ENCRYPTION_KEY` | ✅ | — | AES-256-GCM key for TOTP secrets at rest and recovery-code hashing: 64 hex characters (`openssl rand -hex 32`). A key made of a repeated pattern is rejected in production. Changing it invalidates every enrolment. |
 
 ### OAuth
 

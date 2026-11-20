@@ -158,7 +158,7 @@ async function createSuperAdmin() {
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  await prisma.user.upsert({
+  const owner = await prisma.user.upsert({
     where: { email },
     update: {},
     create: {
@@ -168,6 +168,16 @@ async function createSuperAdmin() {
       role: 'SUPER_ADMIN',
       isActive: true,
     },
+  });
+  // Permissions come from the membership (ADR-0013); the Owner must enrol two-factor authentication at first staff use.
+  const [store, ownerRole] = await Promise.all([
+    prisma.store.findUniqueOrThrow({ where: { singleton: true } }),
+    prisma.staffRole.findUniqueOrThrow({ where: { key: 'OWNER' } }),
+  ]);
+  await prisma.storeMembership.upsert({
+    where: { userId_storeId: { userId: owner.id, storeId: store.id } },
+    update: {},
+    create: { userId: owner.id, storeId: store.id, roleId: ownerRole.id },
   });
 }
 

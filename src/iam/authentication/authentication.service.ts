@@ -10,10 +10,16 @@ import { SignUpInput } from './dto/sign-up.input';
 import { SignInInput } from './dto/sign-in.input';
 import { RefreshTokenInput } from './dto/refresh-token.input';
 import { UsersRepository } from '../../users/users.repository';
-import { createHash, randomUUID } from 'crypto';
+import { createHash, createHmac, randomUUID } from 'crypto';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { LoggerService } from '../../commons/logger.service';
 import { EmailVerificationService } from '../../users/email-verification.service';
+import { MfaService } from '../mfa/mfa.service';
+import { StepUpStore } from '../mfa/step-up.store';
+import { mfaRequired } from '../authorization/policy-errors';
+
+const MFA_CHALLENGE_TTL_SECONDS = 300;
+const MFA_CHALLENGE_PURPOSE = 'mfa-challenge';
 
 @Injectable()
 export class AuthenticationService {
@@ -25,6 +31,8 @@ export class AuthenticationService {
     private readonly notificationsService: NotificationsService,
     private readonly logger: LoggerService,
     private readonly emailVerificationService: EmailVerificationService,
+    private readonly mfaService: MfaService,
+    private readonly stepUpStore: StepUpStore,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
@@ -89,7 +97,7 @@ export class AuthenticationService {
    * @throws UnauthorizedException - If the token is invalid, already used, the session is too old, or the user is inactive.
    */
   async refreshToken(refreshTokenInput: RefreshTokenInput) {
-    const { sub: userId, sessionStart } = await this.verifyRefreshToken(refreshTokenInput.refreshToken);
+    const { sub: userId, sessionStart, sessionId } = await this.verifyRefreshToken(refreshTokenInput.refreshToken);
     const sessionSecondsLeft = sessionStart + this.jwtConfiguration.sessionMaxTtl - Math.floor(Date.now() / 1000);
     if (sessionSecondsLeft <= 0) throw new UnauthorizedException('Session has expired, please sign in again');
 
@@ -99,8 +107,8 @@ export class AuthenticationService {
 
     const refreshTtl = Math.min(this.jwtConfiguration.refreshTokenTtl, sessionSecondsLeft);
     const [accessToken, newRefreshToken] = await Promise.all([
-      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!),
-      this.signToken(user.id, refreshTtl, this.jwtConfiguration.refreshSecret!, { sessionStart }),
+      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!, { sid: sessionId }),
+      this.signToken(user.id, refreshTtl, this.jwtConfiguration.refreshSecret!, { sessionStart, sid: sessionId }),
     ]);
 
     const outcome = await this.usersRepository.rotateRefreshToken(
@@ -121,15 +129,24 @@ export class AuthenticationService {
     return { accessToken, refreshToken: newRefreshToken };
   }
 
-  private async verifyRefreshToken(token: string): Promise<{ sub: string; sessionStart: number }> {
+  private async verifyRefreshToken(token: string): Promise<{ sub: string; sessionStart: number; sessionId: string }> {
     try {
-      const payload = await this.jwtServices.verifyAsync<{ sub: string; iat: number; sessionStart?: number }>(token, {
+      const payload = await this.jwtServices.verifyAsync<{
+        sub: string;
+        iat: number;
+        sessionStart?: number;
+        sid?: string;
+      }>(token, {
         audience: this.jwtConfiguration.audience,
         issuer: this.jwtConfiguration.issuer,
         secret: this.jwtConfiguration.refreshSecret,
       });
-      // Tokens issued before sessionStart existed fall back to their own issue time.
-      return { sub: payload.sub, sessionStart: payload.sessionStart ?? payload.iat };
+      // Tokens issued before sessionStart / sid existed fall back to their own issue time and a new session id.
+      return {
+        sub: payload.sub,
+        sessionStart: payload.sessionStart ?? payload.iat,
+        sessionId: payload.sid ?? randomUUID(),
+      };
     } catch {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
@@ -202,19 +219,69 @@ export class AuthenticationService {
   }
 
   /**
-   * Starts a new session: generates an access + refresh token pair for a user.
-   * Persists the refresh token hash and purges expired tokens for that user.
+   * Starts a new session after the first factor (password, social login): generates an access + refresh token pair,
+   * or, when the user has two-factor authentication, fails with MFA_REQUIRED carrying a challenge for
+   * completeMfaSignIn, so no sign-in path skips the second factor.
    */
   async generateTokens(user: User) {
+    if (user.mfaEnabledAt) throw mfaRequired(await this.signMfaChallenge(user.id));
+    return this.issueTokens(user, false);
+  }
+
+  /**
+   * Completes a sign-in that returned MFA_REQUIRED with an authenticator or recovery code. The new session counts as
+   * freshly verified for step-up.
+   * @throws UnauthorizedException - If the challenge is invalid or expired, or the code does not match.
+   */
+  async completeMfaSignIn(challenge: string, code: string) {
+    const userId = await this.verifyMfaChallenge(challenge);
+    const user = await this.userService.findOne(userId);
+    if (!user || !user.isActive || !user.mfaEnabledAt) throw new UnauthorizedException('Invalid or expired challenge');
+    if (!(await this.mfaService.verifySecondFactor(user.id, code))) {
+      throw new UnauthorizedException('Invalid two-factor code');
+    }
+    return this.issueTokens(user, true);
+  }
+
+  /** Persists the refresh token hash, purges expired tokens and gives the session an id (`sid`) for step-up. */
+  private async issueTokens(user: User, secondFactorVerified: boolean) {
     const sessionStart = Math.floor(Date.now() / 1000);
+    const sid = randomUUID();
     const [accessToken, refreshToken] = await Promise.all([
-      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!),
+      this.signToken(user.id, this.jwtConfiguration.accessTokenTtl, this.jwtConfiguration.secret!, { sid }),
       this.signToken(user.id, this.jwtConfiguration.refreshTokenTtl, this.jwtConfiguration.refreshSecret!, {
         sessionStart,
+        sid,
       }),
     ]);
     await Promise.all([this.saveRefreshToken(user.id, refreshToken), this.userService.updateLastLogin(user.id)]);
+    if (secondFactorVerified) await this.stepUpStore.markVerified(user.id, sid, Date.now());
     return { accessToken, refreshToken };
+  }
+
+  // Signed with a key derived from JWT_SECRET, so a challenge can never pass as an access token.
+  private mfaChallengeSecret(): string {
+    return createHmac('sha256', this.jwtConfiguration.secret!).update(MFA_CHALLENGE_PURPOSE).digest('hex');
+  }
+
+  private signMfaChallenge(userId: string): Promise<string> {
+    return this.signToken(userId, MFA_CHALLENGE_TTL_SECONDS, this.mfaChallengeSecret(), {
+      purpose: MFA_CHALLENGE_PURPOSE,
+    });
+  }
+
+  private async verifyMfaChallenge(challenge: string): Promise<string> {
+    try {
+      const payload = await this.jwtServices.verifyAsync<{ sub: string; purpose?: string }>(challenge, {
+        audience: this.jwtConfiguration.audience,
+        issuer: this.jwtConfiguration.issuer,
+        secret: this.mfaChallengeSecret(),
+      });
+      if (payload.purpose !== MFA_CHALLENGE_PURPOSE) throw new Error('not an MFA challenge');
+      return payload.sub;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired challenge');
+    }
   }
 
   private async saveRefreshToken(userId: string, token: string): Promise<void> {

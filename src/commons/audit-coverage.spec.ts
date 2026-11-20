@@ -1,8 +1,7 @@
 import { RESOLVER_NAME_METADATA, RESOLVER_TYPE_METADATA } from '@nestjs/graphql';
-import { Role } from '../generated/prisma/client';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROLES_KEY } from '../iam/authentication/decorators/roles.decorator';
+import { PERMISSIONS_KEY } from '../iam/authorization/policy.decorators';
 
 const SRC_DIR = join(__dirname, '..');
 
@@ -56,6 +55,10 @@ const AUDITED: Record<string, string> = {
   updateStoreSettings: 'store.service.spec',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
   retryFailedJob: 'failed-jobs.service.spec',
+  assignStaffRole: 'staff.service.spec (audit trail)',
+  removeStaffRole: 'staff.service.spec (audit trail)',
+  createStaffRole: 'staff.service.spec (audit trail)',
+  updateStaffRole: 'staff.service.spec (audit trail)',
 };
 
 // Privileged mutations deliberately left unaudited, with the reason. Adding to this list is a reviewed decision.
@@ -95,12 +98,12 @@ async function loadResolverClasses(): Promise<ClassRef[]> {
 
 function privilegedMutations(resolvers: ClassRef[]): string[] {
   return resolvers.flatMap((cls) => {
-    const classRoles: Role[] | undefined = Reflect.getMetadata(ROLES_KEY, cls);
+    const classPermissions: string[] | undefined = Reflect.getMetadata(PERMISSIONS_KEY, cls);
     return Object.getOwnPropertyNames(cls.prototype).flatMap((key) => {
       const method = (cls.prototype as Record<string, unknown>)[key];
       if (typeof method !== 'function' || Reflect.getMetadata(RESOLVER_TYPE_METADATA, method) !== 'Mutation') return [];
-      const roles: Role[] | undefined = Reflect.getMetadata(ROLES_KEY, method) ?? classRoles;
-      if (!roles?.length || roles.includes(Role.USER)) return [];
+      const permissions: string[] | undefined = Reflect.getMetadata(PERMISSIONS_KEY, method) ?? classPermissions;
+      if (!permissions?.length) return [];
       return [Reflect.getMetadata(RESOLVER_NAME_METADATA, method) ?? key];
     });
   });

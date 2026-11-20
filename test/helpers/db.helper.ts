@@ -1,6 +1,40 @@
 import { PaymentProvider, PaymentStatus, Role } from '../../src/generated/prisma/client';
 import { genSalt, hash } from 'bcrypt';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parseMfaKey, sealSecret } from '../../src/iam/mfa/mfa-crypto';
+import { TEST_TOTP_SEED } from './staff.helper';
+
+const STAFF_ROLES_MIGRATION = join(__dirname, '../../prisma/migrations/20261120100000_staff_roles/migration.sql');
+
+/** The staff_roles migration's backfill statement (SUPER_ADMIN -> Owner, ADMIN -> Manager), exactly as deployed. */
+export function staffMembershipBackfillSql(): string {
+  const sql = readFileSync(STAFF_ROLES_MIGRATION, 'utf8');
+  const start = sql.indexOf('-- Backfill');
+  if (start < 0) throw new Error(`No "-- Backfill" section in ${STAFF_ROLES_MIGRATION}`);
+  return sql.slice(start);
+}
+
+/**
+ * Makes ADMIN / SUPER_ADMIN users created directly in the database usable as staff, as they would be in production:
+ * the migration backfill gives them their membership (permissions come from memberships, not User.role), and those
+ * whose role requires two-factor authentication are enrolled with TEST_TOTP_SEED (see signInWithPassword).
+ */
+export async function prepareStaffAccounts(prisma: PrismaService): Promise<void> {
+  await prisma.$executeRawUnsafe(staffMembershipBackfillSql());
+  const key = parseMfaKey(process.env.MFA_ENCRYPTION_KEY ?? '');
+  const unenrolled = await prisma.user.findMany({
+    where: { mfaEnabledAt: null, storeMemberships: { some: { role: { mfaRequired: true } } } },
+    select: { id: true },
+  });
+  for (const { id } of unenrolled) {
+    await prisma.user.update({
+      where: { id },
+      data: { mfaSecret: sealSecret(key, TEST_TOTP_SEED, id), mfaEnabledAt: new Date(), mfaLastUsedStep: null },
+    });
+  }
+}
 
 /**
  * Deletes all rows from every table in dependency order (children first, parents last).
@@ -51,8 +85,10 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.shippingZone.deleteMany();
   await prisma.pickupLocation.deleteMany();
 
-  // Users last (referenced by many tables above)
+  // Users last (referenced by many tables above); their staff memberships cascade
   await prisma.user.deleteMany();
+  // Custom staff roles a test created; the seeded system roles stay
+  await prisma.staffRole.deleteMany({ where: { isSystem: false } });
 }
 
 /**
@@ -168,6 +204,8 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
       },
     ],
   });
+
+  await prepareStaffAccounts(prisma);
 
   // Brand
   const brand = await prisma.brand.create({

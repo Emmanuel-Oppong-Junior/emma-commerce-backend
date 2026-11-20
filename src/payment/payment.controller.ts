@@ -16,6 +16,7 @@ export class PaymentController {
     private readonly paymentWebhookService: PaymentWebhookService,
   ) {}
 
+  @Auth(AuthType.Bearer)
   @Throttle({ payment: { limit: 5, ttl: 60000 } })
   @Post('/initialize')
   async initializeTransaction(@Body() createPaymentDto: CreatePaymentDto, @ActiveUser('id') userId: string) {

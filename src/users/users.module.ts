@@ -11,6 +11,10 @@ import { UsersLoader } from './loaders/users.loader';
 import { PrismaModule } from '../prisma/prisma.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailVerificationService } from './email-verification.service';
+import { StaffRepository } from './staff/staff.repository';
+import { StaffService } from './staff/staff.service';
+import { StaffResolver, UserStaffFieldsResolver } from './staff/staff.resolver';
+import { StaffRolesLoader } from './staff/staff-roles.loader';
 
 @Module({
   imports: [CommonsModule, PrismaModule, NotificationsModule],
@@ -23,6 +27,11 @@ import { EmailVerificationService } from './email-verification.service';
     AddressesLoader,
     OrdersLoader,
     UsersLoader,
+    StaffRepository,
+    StaffService,
+    StaffResolver,
+    UserStaffFieldsResolver,
+    StaffRolesLoader,
   ],
   exports: [UsersService, UsersRepository, UsersLoader, EmailVerificationService],
 })

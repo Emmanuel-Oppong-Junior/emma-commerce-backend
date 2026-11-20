@@ -1,7 +1,5 @@
 import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { Order } from './entities/order.entity';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
-import { Role } from '../users/enums/role.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateOrderInput } from './dto/create-order.input';
 import { UpdateOrderStatusInput } from './dto/update-order-status.input';
@@ -11,6 +9,9 @@ import { UsersLoader } from '../users/loaders/users.loader';
 import { User } from '../users/entities/user.entity';
 import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
 import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
+import { Auth } from '../iam/authentication/decorators/auth.decorator';
+import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import { RequirePermission, CustomerOnly } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => Order)
 export class OrdersResolver {
@@ -19,7 +20,7 @@ export class OrdersResolver {
     private readonly usersLoader: UsersLoader,
   ) {}
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Query(() => Order, {
     name: 'order',
     description: 'Retrieves a specific order by ID for the current user',
@@ -28,7 +29,7 @@ export class OrdersResolver {
     return this.ordersService.getOrder(userId, orderId);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Query(() => [Order], {
     name: 'userOrders',
     description: 'Retrieves all orders for the current user',
@@ -37,7 +38,7 @@ export class OrdersResolver {
     return this.ordersService.getUserOrders(userId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('order.view')
   @Query(() => [Order], {
     name: 'orders',
     description: 'Retrieves all orders (admin only)',
@@ -46,7 +47,7 @@ export class OrdersResolver {
     return this.ordersService.getOrders();
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('order.view')
   @Query(() => Order, {
     name: 'viewOrder',
     description: 'Retrieves a specific order by ID (admin only)',
@@ -55,7 +56,7 @@ export class OrdersResolver {
     return this.ordersService.viewOrder(orderId);
   }
 
-  @Roles(Role.USER, Role.ADMIN, Role.SUPER_ADMIN)
+  @Auth(AuthType.Bearer)
   @Mutation(() => Order, {
     name: 'createOrder',
     description: 'Creates an order from the cart',
@@ -72,7 +73,7 @@ export class OrdersResolver {
     });
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('order.manage')
   @Mutation(() => Order, {
     name: 'updateShipping',
     description: 'Update tracking number and carrier for an order (admin only)',
@@ -81,7 +82,7 @@ export class OrdersResolver {
     return this.ordersService.updateShipping(input.orderId, input.trackingNumber, input.carrier, adminId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('order.manage')
   @Mutation(() => Order, {
     name: 'updateOrderStatus',
     description: 'Updates the status of an order',
@@ -90,7 +91,7 @@ export class OrdersResolver {
     return this.ordersService.updateOrderStatus(input.orderId, input.status, adminId);
   }
 
-  @Roles(Role.USER)
+  @CustomerOnly()
   @Mutation(() => Order, {
     name: 'cancelOrder',
     description: "Cancels the authenticated user's own order and restores stock",
@@ -99,7 +100,7 @@ export class OrdersResolver {
     return this.ordersService.cancelOrder(userId, orderId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('order.manage')
   @Mutation(() => Order, {
     name: 'adminCancelOrder',
     description: 'Admin: cancel any order by ID and restore its stock',
@@ -108,7 +109,7 @@ export class OrdersResolver {
     return this.ordersService.adminCancelOrder(orderId, adminId);
   }
 
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @RequirePermission('order.manage')
   @Mutation(() => Order, {
     name: 'deleteOrder',
     description: 'Soft-deletes an order and restores stock (admin only)',

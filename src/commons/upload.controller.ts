@@ -1,13 +1,12 @@
 import { BadRequestException, Controller, Post, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import { Role } from '../generated/prisma/client';
 import { CloudinaryService } from './cloudinary.service';
 import { memoryStorage } from 'multer';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
-import { Roles } from '../iam/authentication/decorators/roles.decorator';
 import { assertAllowedImage, MAX_IMAGE_FILE_SIZE_BYTES } from './image-upload-validation';
+import { RequirePermission } from '../iam/authorization/policy.decorators';
 
 const multerOptions = {
   storage: memoryStorage(),
@@ -15,7 +14,7 @@ const multerOptions = {
 };
 
 @Auth(AuthType.Bearer)
-@Roles(Role.ADMIN, Role.SUPER_ADMIN)
+@RequirePermission('catalog.media.upload')
 @Controller('upload')
 export class UploadController {
   constructor(private readonly cloudinaryService: CloudinaryService) {}

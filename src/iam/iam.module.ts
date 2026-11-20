@@ -12,9 +12,13 @@ import { FacebookAuthenticationService } from './authentication/social/facebook-
 import { APP_GUARD } from '@nestjs/core';
 import { AccessTokenGuard } from './authentication/guards/access-token.guard';
 import { AuthenticationGuard } from './authentication/guards/authentication.guard';
-import { RolesGuard } from './authentication/guards/roles.guard';
+import { AuthorizationGuard } from './authorization/authorization.guard';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CommonsModule } from '../commons/commons.module';
+import { MfaService } from './mfa/mfa.service';
+import { MfaRepository } from './mfa/mfa.repository';
+import { MfaResolver } from './mfa/mfa.resolver';
+import { StepUpStore } from './mfa/step-up.store';
 
 @Module({
   imports: [
@@ -31,13 +35,17 @@ import { CommonsModule } from '../commons/commons.module';
     GoogleAuthenticationService,
     FacebookAuthenticationService,
     AccessTokenGuard,
+    MfaService,
+    MfaRepository,
+    MfaResolver,
+    StepUpStore,
     {
       provide: APP_GUARD,
       useClass: AuthenticationGuard,
     },
     {
       provide: APP_GUARD,
-      useClass: RolesGuard,
+      useClass: AuthorizationGuard,
     },
   ],
   controllers: [],

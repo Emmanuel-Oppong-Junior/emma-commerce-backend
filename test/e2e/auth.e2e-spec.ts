@@ -14,7 +14,7 @@ import { NotificationsService } from '../../src/notifications/notifications.serv
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
-import { signInAdmin, signUpUser } from '../helpers/auth.helper';
+import { signInAdmin, signInWithPassword, signUpUser } from '../helpers/auth.helper';
 import { genSalt, hash } from 'bcrypt';
 
 describe('Authentication (e2e)', () => {
@@ -170,17 +170,7 @@ describe('Authentication (e2e)', () => {
   describe('refreshToken', () => {
     it('returns a new access + refresh token pair with a valid refresh token', async () => {
       // Arrange — sign in to obtain a token pair
-      const signInMutation = `
-        mutation {
-          signIn(input: { email: "admin@example.com", password: "Admin@123" }) {
-            accessToken
-            refreshToken
-          }
-        }
-      `;
-      const signInRes = await gqlRequest(app, signInMutation).expect(200);
-      expect(signInRes.body.errors).toBeUndefined();
-      const { refreshToken } = signInRes.body.data.signIn as { accessToken: string; refreshToken: string };
+      const { refreshToken } = await signInWithPassword(app, 'admin@example.com', 'Admin@123');
       const mutation = `
         mutation Refresh($input: RefreshTokenInput!) {
           refreshToken(input: $input) {
@@ -221,16 +211,7 @@ describe('Authentication (e2e)', () => {
 
     it('fails with a revoked refresh token (used token is rejected)', async () => {
       // Arrange — sign in and immediately rotate the token once (revoking the original)
-      const signInMutation = `
-        mutation {
-          signIn(input: { email: "super_admin@example.com", password: "SuperAdmin@123" }) {
-            accessToken
-            refreshToken
-          }
-        }
-      `;
-      const signInRes = await gqlRequest(app, signInMutation).expect(200);
-      const { accessToken, refreshToken } = signInRes.body.data.signIn;
+      const { accessToken, refreshToken } = await signInWithPassword(app, 'super_admin@example.com', 'SuperAdmin@123');
 
       // Revoke by signing out
       const signOutMutation = `
