@@ -2,32 +2,24 @@ import { CacheModuleAsyncOptions } from '@nestjs/cache-manager';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { createKeyv } from '@keyv/redis';
 
-/**
- * Async cache configuration.
- * Uses Redis when REDIS_HOST is set; falls back to in-memory cache for local dev.
- */
+const DEFAULT_TTL_MS = 5 * 60 * 1000;
+
+/** The cache lives in Redis in every environment, so all instances share it (ADR-0011). */
 export const cacheConfig: CacheModuleAsyncOptions = {
   isGlobal: true,
   imports: [ConfigModule],
-  useFactory: async (configService: ConfigService) => {
-    const redisHost = configService.get<string>('REDIS_HOST');
-    const redisPort = configService.get<number>('REDIS_PORT') ?? 6379;
-    const redisPassword = configService.get<string>('REDIS_PASSWORD');
-
-    if (redisHost) {
-      const redisUrl = redisPassword
-        ? `redis://:${redisPassword}@${redisHost}:${redisPort}`
-        : `redis://${redisHost}:${redisPort}`;
-      return {
-        stores: [createKeyv(redisUrl)],
-        ttl: 60 * 5 * 1000, // 5 minutes default
-      };
-    }
-
-    // In-memory fallback (development)
-    return {
-      ttl: 60 * 5 * 1000,
-    };
-  },
+  useFactory: (configService: ConfigService) => ({
+    stores: [
+      createKeyv({
+        socket: {
+          host: configService.getOrThrow<string>('REDIS_HOST'),
+          port: configService.getOrThrow<number>('REDIS_PORT'),
+        },
+        password: configService.get<string>('REDIS_PASSWORD'),
+        database: configService.getOrThrow<number>('REDIS_DB'),
+      }),
+    ],
+    ttl: DEFAULT_TTL_MS,
+  }),
   inject: [ConfigService],
 };

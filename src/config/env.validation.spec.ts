@@ -19,6 +19,7 @@ const baseEnv = {
   CLOUDINARY_CLOUD_NAME: 'emma-cloud',
   CLOUDINARY_API_KEY: '123456789012345',
   CLOUDINARY_API_SECRET: 'Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2',
+  REDIS_HOST: 'localhost',
 };
 
 const productionEnv = {
@@ -40,10 +41,26 @@ describe('envValidationSchema', () => {
       expect(messageOf({ ...baseEnv, NODE_ENV: 'prod' })).toContain('"NODE_ENV" must be one of');
     });
 
-    it.each(['development', 'test'])('accepts %s without Redis or ALLOWED_ORIGINS', (nodeEnv) => {
+    it.each(['development', 'test'])('accepts %s without ALLOWED_ORIGINS', (nodeEnv) => {
       const { error, value } = validate({ ...baseEnv, NODE_ENV: nodeEnv });
       expect(error).toBeUndefined();
       expect(value.NODE_ENV).toBe(nodeEnv);
+    });
+  });
+
+  describe('Redis', () => {
+    it.each(['development', 'test', 'production'])('requires REDIS_HOST when NODE_ENV=%s', (nodeEnv) => {
+      const env = { ...productionEnv, NODE_ENV: nodeEnv, REDIS_HOST: undefined };
+      expect(messageOf(env)).toContain('"REDIS_HOST" is required');
+    });
+
+    it('defaults REDIS_PORT to 6379 and REDIS_DB to 0', () => {
+      const { value } = validate({ ...baseEnv, NODE_ENV: 'test' });
+      expect(value).toMatchObject({ REDIS_PORT: 6379, REDIS_DB: 0 });
+    });
+
+    it.each(['16', '-1', '1.5', 'one'])('rejects REDIS_DB=%s', (db) => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'test', REDIS_DB: db })).toContain('"REDIS_DB"');
     });
   });
 

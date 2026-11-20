@@ -129,7 +129,7 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 
 ### Platform behaviour
 
-- **Caching:** `CacheModule` is global; uses Redis when `REDIS_HOST` is set, otherwise in-memory (5 min default TTL).
+- **Redis is required** in every environment (`REDIS_HOST`; startup fails without it). It backs the global `CacheModule` (5 min default TTL), the throttler storage (`RedisThrottlerStorage`, one Lua script, so limits hold across instances) and the shared ioredis client (`REDIS_CLIENT` from `src/redis/redis.module.ts`, closed on shutdown). `/health/ready` probes it with `PING`.
 - **Production safeguards:** GraphQL introspection is off when `NODE_ENV=production`; `ALLOWED_ORIGINS` is required at startup in production; helmet sets CSP and HSTS.
 - **Prisma enums/models** also cover fulfillment (`FulfillmentType`, pickup locations, shipping zones), taxes, coupons/usage, return requests and inventory logs.
 
@@ -142,16 +142,17 @@ Required:  NODE_ENV (development | test | production; no default),
            DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, JWT_RESET_SECRET (each >= 32 chars),
            JWT_TOKEN_AUDIENCE, JWT_TOKEN_ISSUER,
            GOOGLE_CLIENT_ID/SECRET, FACEBOOK_APP_ID/SECRET,
-           PAYSTACK_SECRET_KEY, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET
-Production: ALLOWED_ORIGINS and REDIS_HOST are also required; placeholder secrets
+           PAYSTACK_SECRET_KEY, CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET,
+           REDIS_HOST (every environment)
+Production: ALLOWED_ORIGINS is also required; placeholder secrets
            (change-me, your-..., xxx, ...) and a JWT secret reused across the three are rejected
 Optional:  PORT, ALLOWED_ORIGINS, LOG_LEVEL, PAYSTACK_CALLBACK_URL,
            JWT_ACCESS_TOKEN_TTL, JWT_REFRESH_TOKEN_TTL, JWT_RESET_TOKEN_TTL,
-           REDIS_HOST/PORT/PASSWORD, RESEND_API_KEY, RESEND_FROM_EMAIL,
+           REDIS_PORT (6379), REDIS_PASSWORD, REDIS_DB (0-15, default 0), RESEND_API_KEY, RESEND_FROM_EMAIL,
            OTEL_ENABLED ('true' | 'false'), OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT (http(s) URI)
 Seeding:   SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD
 ```
 
 ### Testing
 
-Unit tests are colocated as `*.spec.ts` under `src/`. E2E tests live in `test/e2e/` (`*.e2e-spec.ts`) with shared helpers in `test/helpers/` and `test/setup.ts`; they use a separate database configured in `.env.test` (not committed — create it from `.env.test.example`; `test/setup.ts` refuses to run unless the database name ends in `_test`).
+Unit tests are colocated as `*.spec.ts` under `src/`. E2E tests live in `test/e2e/` (`*.e2e-spec.ts`) with shared helpers in `test/helpers/` and `test/setup.ts`; they use a separate database and Redis configured in `.env.test` (not committed — create it from `.env.test.example` or with `node scripts/write-test-env.js <DATABASE_URL> [redis://host:port/db]`; `test/setup.ts` refuses to run unless the database name ends in `_test`).

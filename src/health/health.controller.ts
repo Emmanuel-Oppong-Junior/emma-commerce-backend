@@ -36,7 +36,6 @@ export class HealthController {
     return this.health.check(this.readinessChecks());
   }
 
-  // The Redis indicator reports up without probing when REDIS_HOST is unset (in-memory cache).
   private readinessChecks(): HealthIndicatorFunction[] {
     return [() => this.prismaHealth.pingCheck('database', this.prisma), () => this.redisHealth.isHealthy('redis')];
   }

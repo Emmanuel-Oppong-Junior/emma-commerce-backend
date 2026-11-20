@@ -79,10 +79,12 @@ export const envValidationSchema = Joi.object({
   CLOUDINARY_API_KEY: Joi.string().required(),
   CLOUDINARY_API_SECRET: Joi.string().required(),
 
-  // Redis (required in production; elsewhere the cache falls back to in-memory when absent)
-  REDIS_HOST: requiredInProduction(Joi.string()),
-  REDIS_PORT: Joi.number().default(6379),
+  // Redis backs the cache, the throttler and the job queues in every environment.
+  REDIS_HOST: Joi.string().required(),
+  REDIS_PORT: Joi.number().port().default(6379),
   REDIS_PASSWORD: Joi.string().optional(),
+  // Logical database index, so test runs and local stacks sharing one Redis server stay apart.
+  REDIS_DB: Joi.number().integer().min(0).max(15).default(0),
 
   // Email (Resend)
   RESEND_API_KEY: Joi.string().optional(),

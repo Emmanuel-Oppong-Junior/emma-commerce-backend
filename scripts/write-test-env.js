@@ -4,9 +4,16 @@ const path = require('node:path');
 
 const target = path.resolve(__dirname, '..', '.env.test');
 const databaseUrl = process.argv[2];
+const redisUrl = process.argv[3] ?? 'redis://localhost:6379/0';
 
 if (!databaseUrl) {
-  console.error('Usage: node scripts/write-test-env.js <DATABASE_URL ending in _test>');
+  console.error('Usage: node scripts/write-test-env.js <DATABASE_URL ending in _test> [redis://host:port/db]');
+  process.exit(1);
+}
+const redis = new URL(redisUrl);
+const redisDb = redis.pathname.replace('/', '') || '0';
+if (redis.protocol !== 'redis:' || !redis.hostname || !/^([0-9]|1[0-5])$/.test(redisDb)) {
+  console.error(`Expected a Redis URL like redis://localhost:6379/0, got "${redisUrl}"`);
   process.exit(1);
 }
 if (existsSync(target)) {
@@ -31,6 +38,9 @@ const values = {
   CLOUDINARY_CLOUD_NAME: 'test-cloud',
   CLOUDINARY_API_KEY: 'test-cloudinary-key',
   CLOUDINARY_API_SECRET: 'test-cloudinary-secret',
+  REDIS_HOST: redis.hostname,
+  REDIS_PORT: redis.port || '6379',
+  REDIS_DB: redisDb,
   LOG_LEVEL: 'warn',
 };
 

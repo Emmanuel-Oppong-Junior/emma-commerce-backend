@@ -79,7 +79,7 @@ feature/
 | Hashing | bcrypt |
 | Payments | Paystack |
 | File Storage | Cloudinary (images resized to 500×500 before upload via sharp) |
-| Caching | Redis (optional, falls back to in-memory) |
+| Caching | Redis (required in every environment; also backs rate limiting and the job queues) |
 | Email | Resend |
 | Logging | Winston (via custom `LoggerService`) |
 | Tracing | OpenTelemetry (OTLP/HTTP exporter, opt-in via `OTEL_ENABLED=true`) |
@@ -2833,7 +2833,7 @@ The amount is always the order total at the first initialization; any other fiel
 ### `GET /health`
 
 **Auth Required**: No
-**Description**: Full dependency report (`@nestjs/terminus` format): database, Redis and Cloudinary. `200` when all are up, `503` if any is down. Redis reports up without probing when `REDIS_HOST` is not set.
+**Description**: Full dependency report (`@nestjs/terminus` format): database, Redis and Cloudinary. `200` when all are up, `503` if any is down. Redis is probed with `PING`.
 
 ---
 
@@ -3759,9 +3759,10 @@ Backend configuration, validated at startup (`src/config/env.validation.ts`); li
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `REDIS_HOST` | Production only | — | Redis host. Outside production, falls back to an in-memory cache if absent. |
+| `REDIS_HOST` | ✅ | — | Redis host, required in every environment (cache, rate limits, job queues). Startup fails without it or when Redis is unreachable. |
 | `REDIS_PORT` | ❌ | `6379` | Redis port |
 | `REDIS_PASSWORD` | ❌ | — | Redis password |
+| `REDIS_DB` | ❌ | `0` | Redis logical database (0–15), to keep stacks sharing one server apart |
 
 ### Email (Resend)
 

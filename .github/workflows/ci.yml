@@ -57,6 +57,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://e2e:e2e@localhost:5432/emma_commerce_test
     steps:
@@ -68,7 +77,7 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       # Test-only values with random JWT secrets per run; no repository secrets involved.
-      - run: node scripts/write-test-env.js "$DATABASE_URL"
+      - run: node scripts/write-test-env.js "$DATABASE_URL" redis://localhost:6379/0
       - run: npx prisma migrate deploy
       - name: Migrations match schema.prisma (no drift)
         run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
@@ -135,17 +144,27 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t emma-backend:ci .
       - run: docker run --rm --entrypoint npx emma-backend:ci prisma --version
-      # PrismaService connects on boot, so the app needs a reachable database even for liveness.
+      # PrismaService and the Redis client connect on boot, so the app needs both even for liveness.
       # Dummy, non-secret values that satisfy env validation outside production.
       - name: Start container
         run: >-
           docker run -d --name emma-smoke --network host
           -e NODE_ENV=development
           -e DATABASE_URL=postgresql://smoke:smoke@localhost:5432/emma_smoke
+          -e REDIS_HOST=localhost
           -e JWT_SECRET=ci-smoke-access-secret-0123456789abcdef
           -e JWT_REFRESH_SECRET=ci-smoke-refresh-secret-0123456789abcdef
           -e JWT_RESET_SECRET=ci-smoke-reset-secret-0123456789abcdef

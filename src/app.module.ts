@@ -1,9 +1,12 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerOptions } from '@nestjs/throttler';
 import { GqlThrottlerGuard } from './commons/guards/gql-throttler.guard';
 import { CacheModule } from '@nestjs/cache-manager';
 import { cacheConfig } from './config/cache.config';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT, RedisModule } from './redis/redis.module';
+import { RedisThrottlerStorage } from './commons/throttler/redis-throttler.storage';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -49,6 +52,49 @@ import { PickupLocationsModule } from './pickup-locations/pickup-locations.modul
 import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
 import { StoreModule } from './store/store.module';
 
+const THROTTLERS: ThrottlerOptions[] = [
+  {
+    name: 'global',
+    ttl: 60000, // 1 minute
+    limit: 120, // 120 requests per minute globally
+  },
+  {
+    name: 'auth',
+    ttl: 60000, // 1 minute
+    limit: 5,
+  },
+  {
+    name: 'passwordReset',
+    ttl: 3600000, // 1 hour
+    limit: 3,
+  },
+  {
+    name: 'forgotPassword',
+    ttl: 3600000, // 1 hour
+    limit: 3,
+  },
+  {
+    name: 'forgotPasswordEmail',
+    ttl: 3600000, // 1 hour, per email address
+    limit: 3,
+  },
+  {
+    name: 'verificationEmail',
+    ttl: 3600000, // 1 hour
+    limit: 5,
+  },
+  {
+    name: 'payment',
+    ttl: 60000, // 1 minute
+    limit: 5, // 5 payment initiations per minute per user
+  },
+  {
+    name: 'upload',
+    ttl: 60000, // 1 minute
+    limit: 10, // 10 uploads per minute per user
+  },
+];
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -59,48 +105,11 @@ import { StoreModule } from './store/store.module';
       validationOptions: { libraryOptions: { abortEarly: false } },
     }),
     CacheModule.registerAsync(cacheConfig),
-    ThrottlerModule.forRoot([
-      {
-        name: 'global',
-        ttl: 60000, // 1 minute
-        limit: 120, // 120 requests per minute globally
-      },
-      {
-        name: 'auth',
-        ttl: 60000, // 1 minute
-        limit: 5,
-      },
-      {
-        name: 'passwordReset',
-        ttl: 3600000, // 1 hour
-        limit: 3,
-      },
-      {
-        name: 'forgotPassword',
-        ttl: 3600000, // 1 hour
-        limit: 3,
-      },
-      {
-        name: 'forgotPasswordEmail',
-        ttl: 3600000, // 1 hour, per email address
-        limit: 3,
-      },
-      {
-        name: 'verificationEmail',
-        ttl: 3600000, // 1 hour
-        limit: 5,
-      },
-      {
-        name: 'payment',
-        ttl: 60000, // 1 minute
-        limit: 5, // 5 payment initiations per minute per user
-      },
-      {
-        name: 'upload',
-        ttl: 60000, // 1 minute
-        limit: 10, // 10 uploads per minute per user
-      },
-    ]),
+    RedisModule,
+    ThrottlerModule.forRootAsync({
+      inject: [REDIS_CLIENT],
+      useFactory: (redis: Redis) => ({ storage: new RedisThrottlerStorage(redis), throttlers: THROTTLERS }),
+    }),
     PrismaModule,
     UsersModule,
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
