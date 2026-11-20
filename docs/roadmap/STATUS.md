@@ -6,10 +6,11 @@
 
 ## Active task
 - **Task:** P1-G — Ghana addresses (G.1 Address model, G.2 phone E.164 + uniqueness) (M9, M13; audit ADR-01, ADR-04, USR-05)
-- **Branch:** not created yet · **State:** planning, waiting on Emmanuel's design answers (API shape, phone scope, required fields)
+- **Branch:** `feat/p1-g-ghana-addresses` (agent, worktree, DB `emma_wt_addr_test`) · **State:** in progress
+- **Decisions (Emmanuel 2026-11-20):** replace in place in one `[breaking-api]` release (`state` → required `region` enum of the 16 regions, `zipCode` optional); phones Ghana-only with our own parser, stored `+233XXXXXXXXX`, no new dependency; recipient name + phone + region required on new addresses (old rows keep nulls; checkout asks to complete them)
 - **Steps:**
-  - [ ] Agree the plan ← **Next step**
-  - [ ] G.1 Address model + migration + validation + API
+  - [x] Agree the plan (decisions above)
+  - [ ] G.1 Address model + migration + validation + API ← **Next step** (agent)
   - [ ] G.2 Phone normalisation + uniqueness
   - [ ] Review, combined gates, merge, push, CI
 - **Uncommitted work:** none
@@ -123,6 +124,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-20 | P1-G (Emmanuel): Address API replaced in place under `[breaking-api]` (`region` enum replaces `state`, `zipCode` optional); Ghana-only phone parser → E.164 `+233`; recipient name, phone and region required on new addresses | STATUS |
 | 2026-11-19 | P1-S defaults taken by the agent, kept: store currency not editable via API; TIN accepts hyphens (Ghana Card PIN `GHA-123456789-0`); order number taken in the order transaction (serialises order creation); one Store row enforced in the DB | STATUS |
 | 2026-11-18 | ADRs 0001–0006, 0008–0016 **Accepted** as recommended (Emmanuel): silo deployment per client, pool-ready, no marketplace without legal sign-off; product types + validated JSONB attributes + capability columns; SKU is the only sellable unit; `Decimal(14,2)` + `Money` type, GraphQL `Money` replaces `Float` (one breaking frontend change in Phase 1); full pricing engine; component tax engine (build waits for tax adviser); inventory ledger with reservations, locations, lots, serials; BullMQ + outbox + separate worker, Redis required in prod; Postgres search behind a port; GraphQL + integration-only REST; permission RBAC with MFA for staff; full order/payment/fulfilment state machines; notification service (email, SMS, WhatsApp, in-app); hosting region per client, EU default, pharmacy in Ghana | ADRs, STATUS |
 | 2026-11-18 | Upgrades (Claude, within Emmanuel's "all latest, TS 5.9"): Jest 30 brought forward into the NestJS step (Nest 12 is ESM-only); graphql stays 16 and @nestjs/schematics 11 (peer limits); sharp 0.35 via a typed `require` shim rather than staying on 0.34.5 (HIGH advisories); keyv held at 5. Flaky `db-indexes` test fixed by seeding analyzed rows, assertion unchanged (Emmanuel) | STATUS |
