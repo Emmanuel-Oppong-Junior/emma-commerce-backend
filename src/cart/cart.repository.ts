@@ -26,7 +26,8 @@ export class CartRepository {
   }
 
   async countVariants(productId: string): Promise<number> {
-    return this.prisma.variant.count({ where: { productId } });
+    // A default variant (no options) mirrors the product; only variants with options can't be sold yet.
+    return this.prisma.variant.count({ where: { productId, optionsKey: { not: '' } } });
   }
 
   async findCartItem(cartId: string, productId: string): Promise<Pick<CartItem, 'id' | 'quantity'> | null> {

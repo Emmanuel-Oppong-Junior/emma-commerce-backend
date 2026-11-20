@@ -128,7 +128,7 @@ describe('CartRepository', () => {
       const result = await repository.countVariants('prod1');
 
       expect(result).toBe(2);
-      expect(mockPrismaVariant.count).toHaveBeenCalledWith({ where: { productId: 'prod1' } });
+      expect(mockPrismaVariant.count).toHaveBeenCalledWith({ where: { productId: 'prod1', optionsKey: { not: '' } } });
     });
   });
 

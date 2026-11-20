@@ -231,7 +231,7 @@ export class OrdersRepository {
 
   async findNamesOfProductsWithVariants(tx: Prisma.TransactionClient, productIds: string[]): Promise<string[]> {
     const products = await tx.product.findMany({
-      where: { id: { in: productIds }, variants: { some: {} } },
+      where: { id: { in: productIds }, variants: { some: { optionsKey: { not: '' } } } },
       select: { name: true },
     });
     return products.map((product) => product.name);

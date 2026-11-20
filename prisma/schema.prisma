@@ -186,14 +186,15 @@ model Variant {
   id                String         @id @default(cuid())
   size              String?
   color             String?
-  sku               String?        @unique
+  sku               String         @unique
   barcode           String?        @unique
   /// Values for the product type's variant axes (ADR-0002), checked by product-types/domain/attribute-validation.ts
   optionValues      Json           @default("{}")
   /// Canonical form of optionValues (attribute-validation.ts), unique per product among active variants
   optionsKey        String         @default("")
   quantity          Int            @default(0)
-  price             Decimal        @db.Decimal(14, 2)
+  /// Null only for a legacy product migrated without a price (its variant is archived until priced)
+  price             Decimal?       @db.Decimal(14, 2)
   /// Admin-entered price before tax; price is basePrice with tax added when the product is taxable
   basePrice         Decimal?       @db.Decimal(14, 2)
   isActive          Boolean        @default(true)
@@ -214,6 +215,7 @@ model Variant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([productId, optionsKey], where: raw("\"isActive\""))
   @@index([productId])
   @@index([discountId])
 }

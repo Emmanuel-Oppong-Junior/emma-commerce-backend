@@ -376,7 +376,7 @@ describe('OrdersRepository', () => {
 
       expect(result).toEqual(['Linen Shirt']);
       expect(mockTx.product.findMany).toHaveBeenCalledWith({
-        where: { id: { in: ['p1', 'p2'] }, variants: { some: {} } },
+        where: { id: { in: ['p1', 'p2'] }, variants: { some: { optionsKey: { not: '' } } } },
         select: { name: true },
       });
     });

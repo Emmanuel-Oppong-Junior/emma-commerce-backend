@@ -23,8 +23,12 @@ export class Variant {
   @Field()
   quantity: number;
 
-  @Field(() => MoneyObject)
-  price: Decimal;
+  @Field(() => MoneyObject, {
+    nullable: true,
+    description:
+      'Selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant',
+  })
+  price: Decimal | null;
 
   @Field(() => MoneyObject, { nullable: true, description: 'Price before tax, as entered by an admin' })
   basePrice?: Decimal | null;

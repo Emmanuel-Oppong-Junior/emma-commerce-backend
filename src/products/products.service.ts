@@ -20,6 +20,7 @@ import {
   describeProblems,
 } from '../product-types/domain/attribute-validation';
 import { VariantOptions } from './products.repository';
+import { VariantService } from '../variant/variant.service';
 
 export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
 
@@ -46,6 +47,7 @@ export class ProductsService {
     private readonly taxService: TaxService,
     private readonly auditService: AuditService,
     private readonly productTypesRepository: ProductTypesRepository,
+    private readonly variantService: VariantService,
   ) {}
 
   /**
@@ -59,9 +61,19 @@ export class ProductsService {
     const productType = await this.findProductType(productTypeId ?? GENERAL_PRODUCT_TYPE_ID);
     const attributes = this.checkAttributes(productType, rawAttributes);
     const price = await this.computePrice(basePrice, isTaxable);
+    // Every product sells through a variant (ADR-0003): this one starts with a default variant without options.
+    const defaultVariant = await this.variantService.prepare({ isTaxable: isTaxable ?? false, productType }, [
+      {
+        basePrice,
+        quantity: rest.quantity,
+        sku: rest.sku,
+        barcode: rest.barcode,
+        lowStockThreshold: rest.lowStockAlert,
+      },
+    ]);
     return this.auditService.record(
-      (tx) =>
-        this.productsRepository.create(
+      async (tx) => {
+        const product = await this.productsRepository.create(
           {
             ...rest,
             productType: { connect: { id: productType.id } },
@@ -72,7 +84,10 @@ export class ProductsService {
           },
           { category: true, subcategory: true },
           tx,
-        ),
+        );
+        await this.variantService.insertPrepared(tx, product.id, defaultVariant, actorId);
+        return product;
+      },
       (product) => ({
         entity: 'Product',
         entityId: product.id,

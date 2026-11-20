@@ -201,7 +201,16 @@ describe('Checkout pricing (e2e)', () => {
           images: [],
           isActive: true,
           status: 'PUBLISHED',
-          variants: { create: { size: 'M', price: 180, quantity: 5 } },
+          variants: {
+            create: {
+              size: 'M',
+              optionValues: { size: 'M' },
+              optionsKey: 'size=m',
+              price: 180,
+              quantity: 5,
+              sku: 'CHECKOUT-M',
+            },
+          },
         },
       });
     });

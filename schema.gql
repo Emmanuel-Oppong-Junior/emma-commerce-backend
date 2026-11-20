@@ -2726,7 +2726,11 @@ type Variant {
   Values for the product type's variant axes, e.g. { size: "M", colour: "Red" }
   """
   optionValues: JSONObject!
-  price: Money!
+
+  """
+  Selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
+  """
+  price: Money
   product: Product!
   productId: ID!
   quantity: Float!

@@ -73,6 +73,7 @@ npx prisma generate     # Regenerate Prisma Client (into src/generated/prisma, g
 npx prisma db seed      # Seed the database (command in prisma.config.ts; needs SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD)
 npm run schema:generate # Rewrite schema.gql from the resolvers (no DB or env needed)
 npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code  # Drift check (exit 2 = drift)
+psql "$DATABASE_URL" -f scripts/reports/variant-migration-report.sql  # What the P1-V.2 variant migration could not map (read-only)
 ```
 
 ## Non-negotiables

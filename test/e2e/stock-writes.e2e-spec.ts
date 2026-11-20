@@ -25,7 +25,9 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
     await seedMinimal(prisma);
     adminToken = await signInAdmin(app);
     variantId = (
-      await prisma.variant.create({ data: { productId: 'seed_prod1', size: 'M', quantity: 10, price: 999.99 } })
+      await prisma.variant.create({
+        data: { productId: 'seed_prod1', size: 'M', quantity: 10, price: 999.99, sku: 'STOCK-M' },
+      })
     ).id;
   });
 

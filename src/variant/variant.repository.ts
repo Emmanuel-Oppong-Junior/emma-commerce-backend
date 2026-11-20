@@ -11,6 +11,9 @@ export type ProductForVariants = {
   productType: { key: string; attributes: AttributeDefinition[] };
 };
 
+/** Variant create data; the SKU is generated when omitted. */
+export type NewVariant = Omit<Prisma.VariantUncheckedCreateInput, 'sku'> & { sku?: string };
+
 const WITH_PRODUCT = { product: { select: { id: true, name: true } } } satisfies Prisma.VariantInclude;
 
 /** A unique-looking SKU for a variant created without one, e.g. "SKU-3F9A0C12B7E4". */
@@ -50,10 +53,7 @@ export class VariantRepository {
     });
   }
 
-  async create(
-    data: Prisma.VariantUncheckedCreateInput,
-    db: Prisma.TransactionClient = this.prisma,
-  ): Promise<VariantWithProduct> {
+  async create(data: NewVariant, db: Prisma.TransactionClient = this.prisma): Promise<VariantWithProduct> {
     try {
       return await db.variant.create({ data: { ...data, sku: data.sku ?? generateSku() }, include: WITH_PRODUCT });
     } catch (e) {

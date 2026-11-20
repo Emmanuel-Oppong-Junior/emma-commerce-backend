@@ -15,6 +15,7 @@ import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 import { Decimal } from '@prisma/client/runtime/client';
 import { ProductTypesRepository } from '../product-types/product-types.repository';
+import { VariantService } from '../variant/variant.service';
 
 const mockProductsRepository = {
   create: jest.fn(),
@@ -39,6 +40,8 @@ const mockTaxService = {
 const mockAuditService = createAuditServiceMock();
 const generalType = { id: 'product_type_general', key: 'general', attributes: [] };
 const mockProductTypesRepository = { findById: jest.fn() };
+const preparedDefault = [{ data: { optionsKey: '' }, quantity: 100 }];
+const mockVariantService = { prepare: jest.fn(), insertPrepared: jest.fn() };
 
 describe('ProductsService', () => {
   let service: ProductsService;
@@ -52,6 +55,7 @@ describe('ProductsService', () => {
         { provide: TaxService, useValue: mockTaxService },
         { provide: AuditService, useValue: mockAuditService },
         { provide: ProductTypesRepository, useValue: mockProductTypesRepository },
+        { provide: VariantService, useValue: mockVariantService },
       ],
     }).compile();
 
@@ -59,6 +63,7 @@ describe('ProductsService', () => {
     productsRepository = module.get<ProductsRepository>(ProductsRepository) as jest.Mocked<ProductsRepository>;
     jest.clearAllMocks();
     mockProductTypesRepository.findById.mockResolvedValue(generalType);
+    mockVariantService.prepare.mockResolvedValue(preparedDefault);
   });
 
   describe('create', () => {
@@ -98,6 +103,26 @@ describe('ProductsService', () => {
       );
       expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
       expect(result).toEqual(product);
+    });
+
+    it('creates the default variant from the price, stock and codes in the same transaction', async () => {
+      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
+      mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
+      mockProductsRepository.findFirst.mockResolvedValue(null);
+      mockProductsRepository.create.mockResolvedValue({ id: 'prod1' });
+
+      await service.create(input, 'admin1');
+
+      expect(mockVariantService.prepare).toHaveBeenCalledWith({ isTaxable: false, productType: generalType }, [
+        {
+          basePrice: input.basePrice,
+          quantity: 100,
+          sku: 'TSHIRT001',
+          barcode: undefined,
+          lowStockThreshold: undefined,
+        },
+      ]);
+      expect(mockVariantService.insertPrepared).toHaveBeenCalledWith(AUDIT_TX, 'prod1', preparedDefault, 'admin1');
     });
 
     it('should set price to basePrice plus the total active tax rate when taxable', async () => {

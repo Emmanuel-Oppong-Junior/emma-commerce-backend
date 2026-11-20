@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma, Variant } from '../generated/prisma/client';
 import { CreateVariantInput, VariantFieldsInput } from './dto/create-variant.input';
 import { UpdateVariantInput } from './dto/update-variant.input';
-import { ProductForVariants, VariantRepository, VariantWithProduct } from './variant.repository';
+import { NewVariant, ProductForVariants, VariantRepository, VariantWithProduct } from './variant.repository';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 import { TaxService } from '../tax/tax.service';
 import { sellingPrice } from '../tax/tax-inclusive-price';
@@ -22,7 +22,7 @@ const AUDITED_VARIANT_FIELDS = [
 
 /** A variant ready to insert: options validated, price computed, SKU and barcode checked. */
 export interface PreparedVariant {
-  data: Omit<Prisma.VariantUncheckedCreateInput, 'productId'>;
+  data: Omit<NewVariant, 'productId'>;
   quantity: number;
 }
 
@@ -62,10 +62,11 @@ export class VariantService {
 
   /**
    * Validates variants for `product` (option values against its type, unique combinations, free SKUs and barcodes)
-   * and prices them. Throws before anything is written.
+   * and prices them. Throws before anything is written. Without `product.id` (a product being created) there are no
+   * existing variants to compare with.
    */
   async prepare(
-    product: Pick<ProductForVariants, 'id' | 'isTaxable' | 'productType'>,
+    product: Pick<ProductForVariants, 'isTaxable' | 'productType'> & { id?: string },
     inputs: (VariantFieldsInput & { discountId?: string })[],
   ): Promise<PreparedVariant[]> {
     const rate = product.isTaxable ? await this.taxService.getTotalActiveRate() : new Prisma.Decimal(0);
@@ -101,8 +102,8 @@ export class VariantService {
         },
       });
     }
-    for (const key of seenKeys) {
-      const clash = await this.variantRepository.findActiveWithOptions(product.id, key);
+    for (const key of product.id ? seenKeys : []) {
+      const clash = await this.variantRepository.findActiveWithOptions(product.id!, key);
       if (clash)
         throw new ConflictException(`The product already has an active variant (${clash.id}) with these options`);
     }

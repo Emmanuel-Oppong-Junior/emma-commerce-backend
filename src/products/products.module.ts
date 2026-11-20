@@ -12,6 +12,7 @@ import { ProductsRepository } from './products.repository';
 import { TaxModule } from '../tax/tax.module';
 import { CommonsModule } from '../commons/commons.module';
 import { ProductTypesModule } from '../product-types/product-types.module';
+import { VariantModule } from '../variant/variant.module';
 import {
   BrandProductsResolver,
   CategoryProductsResolver,
@@ -31,7 +32,7 @@ import {
     ReviewsLoader,
     ProductsLoader,
   ],
-  imports: [TagModule, DiscountModule, PrismaModule, TaxModule, CommonsModule, ProductTypesModule],
+  imports: [TagModule, DiscountModule, PrismaModule, TaxModule, CommonsModule, ProductTypesModule, VariantModule],
   exports: [ProductsLoader],
 })
 export class ProductsModule {}

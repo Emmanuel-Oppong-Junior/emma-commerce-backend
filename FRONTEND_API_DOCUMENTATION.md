@@ -1144,6 +1144,8 @@ A **variant is the SKU** (ADR-0003): the unit that is priced, stocked and sold. 
 
 **Breaking changes (P1-V.4):** `size` and `color` are gone (use `optionValues`, e.g. `{ "size": "M", "colour": "Red" }` on an Apparel product); `price` is no longer an input (send `basePrice`; `price` is computed from it, with tax added when the product is taxable); `quantity` is an `Int`; `productVariants` is removed (use `variants(productId:)`); `variant` and `variants` are admin reads (`catalog.product.read`) and `variants` is paginated; `updateVariant` no longer takes `productId` (a variant never moves to another product); `deleteVariant` refuses a variant with history.
 
+**Default variants and the migration (P1-V.2):** every product has at least one variant. `createProduct` creates a **default variant** (no option values) from its `basePrice`, `quantity`, `sku` and `barcode`; existing products were given one by migration, and existing size/color variants became Apparel option values. `Variant.price` is now nullable: it is `null` only for the archived default variant of a product migrated without a price. Archived "Legacy" variants (`isActive: false`, zero stock, SKU `LEGACY-...`) hold order and cart lines recorded before a product had variants. Products whose variants have option values still cannot be bought until variant checkout (P1-V.3); a product with only its default variant sells as before.
+
 All variant operations need a staff permission. Customers see the active variants of published products through `Product.variants`.
 
 **`Variant` Object Type**:
@@ -1157,7 +1159,7 @@ All variant operations need a staff permission. Customers see the active variant
   barcode?: string;           // unique
   optionValues: JSONObject;   // e.g. { size: "M", colour: "Red" }; {} when the type has no axes
   quantity: Int;              // stock
-  price: Money;               // selling price: basePrice, plus tax when the product is taxable
+  price?: Money;              // selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
   basePrice?: Money;          // price before tax, as entered
   isActive: boolean;          // false = archived
   weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
