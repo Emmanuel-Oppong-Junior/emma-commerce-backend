@@ -23,7 +23,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | Phase | Done | Status |
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
-| 1 — Foundations | 11 / 33 | 🔄 in progress |
+| 1 — Foundations | 15 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **57 / 154** | |
+| **All** | **61 / 154** | |
 
 ---
 
@@ -238,12 +238,12 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-P.1** Upgrade to Prisma 7 + `prisma.config.ts` + driver adapter (`@prisma/adapter-pg`), Node 24; run concurrency integration tests (`848cf59`)
 - [x] **P1-P.2** Re-baseline migrations (no real data) + order numbers from 10001 + CI check rejecting edits to applied migrations (`c181408`, `c6e712a`)
 
-### P1-J — Worker, outbox, Redis (ADR-0009/0011)  🔄 in progress
+### P1-J — Worker, outbox, Redis (ADR-0009/0011)  ✅ complete
 > Accept: Each job runs once across 2 instances; failed jobs visible · Run: J.1 → J.2 → (J.3 ∥ J.4) · L · 🟥
-- [ ] 🔄 **P1-J.1** Redis required; Redis-backed throttler, cache, locks
-- [ ] 🔄 **P1-J.2** `OutboxEvent` + relay + BullMQ + `ROLE=worker` process
-- [ ] 🔄 **P1-J.3** Move crons (expiry, reconciliation, low-stock) to repeatable jobs
-- [ ] 🔄 **P1-J.4** Move emails and webhook processing onto queues with retries + DLQ
+- [x] **P1-J.1** Redis required; Redis-backed throttler, cache, locks (`7213213`; locks stay on Postgres advisory locks)
+- [x] **P1-J.2** `OutboxEvent` + relay + BullMQ + `ROLE=worker` process (`1a342e1`)
+- [x] **P1-J.3** Move crons (expiry, reconciliation, low-stock) to repeatable jobs (`ba08366`)
+- [x] **P1-J.4** Move emails and webhook processing onto queues with retries + DLQ (`02dcbbc`)
 
 ### P1-R — RBAC (ADR-0013)
 > Accept: Matrix test in CI · Run: R.1 → R.2; R.3 ∥ · L · 🟥
