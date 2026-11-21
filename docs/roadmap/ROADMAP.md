@@ -24,7 +24,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
-| 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
+| 2 — Pricing & tax engine | 3 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **76 / 154** | |
+| **All** | **79 / 154** | |
 
 ---
 
@@ -303,10 +303,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 ## Phase 2 — Pricing & tax engine (ADR-0005, 0006)
 **Goal:** one pure pricing function; the quote shown equals the amount charged; Ghana tax handled correctly. **Exit:** property tests on the engine; tax adviser sign-off on rounding/base/shipping (SUMMARY decision 6); price history audited.
 
-### P2-A — Engine core
+### P2-A — Engine core  ✅ complete
 > Run: → · L · 🟥
-- [ ] **P2-A.1** `price(cart, ctx) → Quote` pure module with line/order adjustments + allocation
-- [ ] **P2-A.2** createOrder uses quote inside tx; quote hash shown to client and checked
+- [x] **P2-A.1** `price(cart, ctx) → Quote` pure module with line/order adjustments + allocation [a6dff54]
+- [x] **P2-A.2** createOrder uses quote inside tx; quote hash shown to client and checked [148e522]
 
 ### P2-B — Promotions
 > Run: B.1 → B.2 → (B.3 ∥ B.4 ∥ B.5 ∥ B.6) · L · 🟥 B.1–B.3 / 🟧 B.4–B.6
@@ -325,9 +325,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P2-T.4** Invoice/receipt PDF with tax breakdown; credit notes
 - [ ] **P2-T.5** GRA E-VAT integration (after adviser confirms obligation)
 
-### P2-H — Price history
+### P2-H — Price history  ✅ complete
 > Run: ∥ · S · 🟧
-- [ ] **P2-H.1** `PriceChange` audit on every price write; admin view
+- [x] **P2-H.1** `PriceChange` audit on every price write; admin view [274b332]
 
 ### P2-W — B2B
 > Run: ∥ · M · ⬜

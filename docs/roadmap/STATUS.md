@@ -2,10 +2,17 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: Phase 1 has only P1-K.2–K.4 left (blocked on hosting); Phase 2 needs Emmanuel's go-ahead.
+None. Next: P2-B promotions (see **Up next**).
+
+**Last completed: P2-A Pricing engine core + P2-H Price history (2026-11-21)** (ADR-0005; DISC-04, DISC-06, CART-07, CPN-06; ORD-08, ORD-10, CPN-03 partly): A.1 `a6dff54`, A.2 `148e522` `[breaking-api]` (fast-forward), H.1 `274b332` merged into dev (no conflicts).
+  - A.1: pure `src/pricing/price.ts` `price(cart, context) → Quote` (no I/O; `now` is input) replaces `src/discount/pricing.ts` and the P1-O.1 `order-totals.ts`; used by placement, the display loader and coupon rules. Rules unchanged (`PRICING_VERSION` 1) except: coupon capped at the discounted subtotal (a >100% percentage coupon no longer eats shipping) and equal-saving discount ties go to the oldest. `quoteHash` (`src/pricing/quote-hash.ts`) = SHA-256 over every value that sets the charge, order-independent. Seeded property test (5 × 300 carts).
+  - A.2: new `checkoutQuote(input)` (writes nothing); `createOrder` requires `quoteHash` (`String!`) and, in one transaction, locks the cart, share-locks variants/products in id order, reads prices/discounts/coupon/tax/shipping/currency, re-prices and refuses a changed quote with CONFLICT `QUOTE_CHANGED`. Double submit → one order. `cartWithDiscount` and `Cart.total/discountTotal/finalTotal`, `CartItem.discountedPrice/appliedDiscount` removed. An unusable coupon stays BAD_REQUEST; a missing hash in variables gives 500 (global `status400ForVariableCoercionErrors: false`). `eslint.config.mjs`: `src/pricing` added to the no-`Number()` money paths.
+  - H.1: migration `20261125050000_price_history`: append-only `PriceChange` (variant, field PRICE/BASE_PRICE, old/new, currency, source ADMIN_EDIT/VARIANT_CREATED/TAX_RATE_CHANGE/MIGRATION, reason, actor; trigger refuses UPDATE/direct DELETE) written in the same transaction on variant create/edit, isTaxable reprice and tax-rate reprice (bulk reprices now skip unchanged prices); re-runnable MIGRATION backfill. `priceChanges` query and `Variant.priceHistory` under `catalog.product.read` (Owner, Manager, InventoryClerk, Cashier); optional `priceChangeReason` on price-changing inputs and `deleteTax`.
+  - Gates on the merged tree (dev): prisma generate/validate, typecheck, eslint on src+test, build, unit **2345/2345**, repro 21/21, e2e **533/534** in one run (the flaky `failed-jobs` retry test; 4/4 on rerun), audit 0 critical, `schema.gql` fresh, drift 0 via `scripts/e2e/run.sh emma_merge_test 10`.
+  - Follow-ups: missing required GraphQL variables → 500 (`status400ForVariableCoercionErrors`); unused `CartItem.discountedPrice`/`discountId` columns; `createProduct` with `categoryId`/`subcategoryId`/`brandId` → INTERNAL_SERVER_ERROR (scalar ids mixed with `connect`); query cost counts Page `nodes` twice (`priceChanges(first: 100)` refused; `stockMovements` too); `ProductsService.update` reads `isTaxable` outside its transaction; reservations still in cart order (ORD-10); >100% percentage coupons can still be created (CPN-03); P2-H worktree has a `node_modules` junction to the main checkout (remove the junction before deleting that worktree).
 
 **Last completed: P1-O Order snapshots, tax lines, state machines (2026-11-21)** (ADR-0014, ADR-0006 snapshot only; ORD-04, ORD-14, PAY-10, TAX-03; RET-05 partly): O.1 `f03848a` `[breaking-api]`, O.2 `0c523a0` `[breaking-api]`, fast-forwarded onto dev.
   - O.1: migrations `20261123000000_order_totals` (re-runnable backfill) + `_contract`: Order `currency`, `pricingVersion` (legacy 0, new 1), Decimal `subtotal` (gross), `discountTotal` (line + coupon), `taxTotal`, `shippingTotal`, `grandTotal`; line snapshots (`productName`, `unitListPrice`, `unitDiscount`, `unitNet`, `unitTax`, `lineTotal`); `OrderAdjustment` (DISCOUNT/COUPON, ≤ 0) and `OrderLineTax` rows. Tax-inclusive prices split per active tax with `Money.allocate`; coupon and shipping untaxed for now (P2-T). Legacy orders: no tax lines, `productName` from the current product name. `Refund.taxAmount` = stored line tax pro rata, capped; null for pricingVersion 0. Seeded property test (5 × 400 orders). Report: `scripts/reports/order-totals-migration-report.sql`.
@@ -118,7 +125,9 @@ None. Next: Phase 1 has only P1-K.2–K.4 left (blocked on hosting); Phase 2 nee
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
+| 1 | P2-B promotions (B.1 → B.2 → B.3–B.6) | → sequential | — |
+| 2 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
+| 3 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -169,6 +178,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-21 | Phase 2 started. P2-A: required `quoteHash`, CONFLICT `QUOTE_CHANGED` on mismatch. P2-B: min spend after item discounts; refunds keep promotion uses | STATUS (P2-A) |
 | 2026-11-21 | P1-O: snapshot current tax as `OrderLineTax` (no engine), legacy pricingVersion 0; payment machine on `PaymentIntent`, ABANDONED → CANCELLED; shipment created on first fulfilment step, forward skips allowed before dispatch; COD orders start CONFIRMED, delivered only via `recordCodPayment`; `order.fulfil` for Owner/Manager/InventoryClerk/Cashier | STATUS (P1-O) |
 | 2026-11-20 | P1-N: one default location; consume on online payment success or COD SHIPPED; paid cancel before dispatch restocks once automatically; late payment on a cancelled order → review + refund; legacy open-order lines as CONSUMED reservations; low stock as an outbox event; reconciliation flags only | STATUS (P1-N) |
 | 2026-11-20 | P1-V: options unique among active variants only; duplicates keep the oldest; Legacy variant for any product that already had variants; report in `AuditLog`; type reads public, writes `catalog.taxonomy.write`; wishlist product-level; only active PUBLISHED products sellable; SKU generated when omitted | STATUS (P1-V) |
