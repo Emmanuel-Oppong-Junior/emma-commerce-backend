@@ -16,18 +16,18 @@ datasource db {
 }
 
 model User {
-  id                        String            @id @default(cuid())
+  id                        String                @id @default(cuid())
   name                      String?
-  email                     String            @unique
+  email                     String                @unique
   password                  String?
-  phoneNumber               String?           @unique
-  role                      Role              @default(USER)
-  isActive                  Boolean           @default(true)
-  createdAt                 DateTime          @default(now())
-  updatedAt                 DateTime          @updatedAt
+  phoneNumber               String?               @unique
+  role                      Role                  @default(USER)
+  isActive                  Boolean               @default(true)
+  createdAt                 DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
   lastLoginAt               DateTime?
   profilePicture            String?
-  failedLoginAttempts       Int               @default(0)
+  failedLoginAttempts       Int                   @default(0)
   lockedUntil               DateTime?
   addresses                 Address[]
   reviews                   Review[]
@@ -41,9 +41,10 @@ model User {
   passwordResetTokenExp     DateTime?
   emailVerifiedAt           DateTime?
   pendingEmail              String?
-  emailVerificationToken    String?           @unique
+  emailVerificationToken    String?               @unique
   emailVerificationTokenExp DateTime?
   redemptions               Redemption[]
+  customerGroups            CustomerGroupMember[]
   returnRequests            ReturnRequest[]
   storeMemberships          StoreMembership[]
   /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
@@ -1059,39 +1060,43 @@ enum PromotionType {
 /// conditions hold. With requiresCoupon, only an order that enters one of its coupon codes gets it. Targets: variants
 /// for SKU, products for PRODUCT, categories for CATEGORY, brands for BRAND, none for CART.
 model Promotion {
-  id               String         @id @default(cuid())
+  id               String          @id @default(cuid())
   name             String
   description      String?
   scope            PromotionScope
   type             PromotionType
-  value            Decimal        @db.Decimal(14, 2)
+  value            Decimal         @db.Decimal(14, 2)
   /// The order's merchandise must be worth at least this much (the engine says which subtotal)
-  minimumSpend     Decimal?       @db.Decimal(14, 2)
+  minimumSpend     Decimal?        @db.Decimal(14, 2)
   /// At least this many targeted units (any unit for CART) must be in the cart
   minimumQuantity  Int?
   startsAt         DateTime
   /// Open-ended when null
   endsAt           DateTime?
-  isActive         Boolean        @default(false)
+  isActive         Boolean         @default(false)
   /// Breaks ties between equal savings: the lowest number wins, then the oldest promotion
-  priority         Int            @default(0)
+  priority         Int             @default(0)
   /// Within a group, per level (item or cart), only the promotion saving the most applies
-  stackingGroup    String         @default("default")
+  stackingGroup    String          @default("default")
   /// When it applies, no other promotion does
-  exclusive        Boolean        @default(false)
-  requiresCoupon   Boolean        @default(false)
+  exclusive        Boolean         @default(false)
+  requiresCoupon   Boolean         @default(false)
   /// Orders that may use it, across all customers; null for no limit
   usageLimit       Int?
   /// Reserved redemptions: taken when an order is placed, given back on cancel or expiry before payment
-  usedCount        Int            @default(0)
+  usedCount        Int             @default(0)
   /// Orders each customer may use it on; null for no limit
   perCustomerLimit Int?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  /// Only for a customer without an earlier order that reached CONFIRMED (or later) or PAYMENT_REVIEW
+  firstOrderOnly   Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
   variants         Variant[]
   products         Product[]
   categories       Category[]
   brands           Brand[]
+  /// Only for members of one of these groups; empty for everyone
+  customerGroups   CustomerGroup[]
   couponCodes      CouponCode[]
   redemptions      Redemption[]
 
@@ -1144,4 +1149,28 @@ model Redemption {
   @@index([couponCodeId])
   @@index([customerId])
   @@index([orderId])
+}
+
+/// A named set of customers (P2-B.3). Generic: promotions may be limited to groups, and B2B price lists (P2-W) will
+/// reuse them.
+model CustomerGroup {
+  id          String                @id @default(cuid())
+  name        String                @unique @db.VarChar(100)
+  description String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  members     CustomerGroupMember[]
+  promotions  Promotion[]
+}
+
+/// A customer's membership of a group.
+model CustomerGroupMember {
+  groupId   String
+  userId    String
+  createdAt DateTime      @default(now())
+  group     CustomerGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@index([userId])
 }

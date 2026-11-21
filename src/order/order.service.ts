@@ -678,7 +678,8 @@ export class OrdersService {
   /**
    * Claims the order (conditional status write with its history event, optionally narrowed by `guard`) before
    * releasing its reservations, which are themselves released conditionally, so stock comes back exactly once. The
-   * promotion uses are given back and an open payment intent is cancelled in the same transaction.
+   * promotion uses are given back (unless the order was paid) and an open payment intent is cancelled in the same
+   * transaction.
    */
   private async closeOrderAndRestoreStock(
     order: Order & { items: OrderItem[] },
@@ -710,7 +711,11 @@ export class OrdersService {
           tx,
         );
       }
-      await this.promotionsService.releaseRedemptions(tx, order.id);
+      // A paid order keeps its promotion uses, even when refunded (Emmanuel, 2026-11-21); only an unpaid one gives
+      // them back.
+      if (!(await this.ordersRepository.hasCapturedPayment(order.id, tx))) {
+        await this.promotionsService.releaseRedemptions(tx, order.id);
+      }
       await this.stockLedger.releaseOrder(tx, order.id, {
         actorId: close.actorId,
         note: close.to === OrderStatus.EXPIRED ? 'Unpaid order expired' : 'Order cancelled',

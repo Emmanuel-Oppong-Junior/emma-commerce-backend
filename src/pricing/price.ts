@@ -38,6 +38,10 @@ export interface PricingPromotion {
   usageLimit: number | null;
   usedCount: number;
   perCustomerLimit: number | null;
+  /** Only for a customer without a prior order (PricingCustomer.hasPriorOrder). */
+  firstOrderOnly: boolean;
+  /** Only for members of one of these customer groups; empty for everyone. */
+  customerGroupIds: readonly string[];
   createdAt: Date;
   /** What it targets, of its scope's kind: variant ids (SKU), product, category or brand ids; none for CART. */
   targetIds: readonly string[];
@@ -57,7 +61,14 @@ export interface PricingCouponCode {
 export interface PricingCustomer {
   /** The customer's RESERVED redemptions, by promotion id. */
   redemptions: Readonly<Record<string, number>>;
+  /** The customer groups the customer belongs to. */
+  groupIds: readonly string[];
+  /** The customer has an earlier order that reached CONFIRMED (or later) or PAYMENT_REVIEW. */
+  hasPriorOrder: boolean;
 }
+
+/** A visitor: no redemptions, no groups, no orders (product pages). */
+export const ANONYMOUS_CUSTOMER: PricingCustomer = { redemptions: {}, groupIds: [], hasPriorOrder: false };
 
 export interface PricingTaxRate {
   id: string;
@@ -155,7 +166,8 @@ export class CouponNotApplicableError extends Error {}
 /**
  * Prices a cart (ADR-0005 §3). Pure: the same cart and context always give the same quote and hash, whatever order
  * the lines, promotions or taxes come in. A promotion is a candidate when it is active, in its schedule, within its
- * usage limits for the customer, and unlocked by the coupon code if it requires one. The rules (PRICING_VERSION 2):
+ * usage limits, open to the customer (first order only: no prior order; customer groups: a member of one), and
+ * unlocked by the coupon code if it requires one. The rules (PRICING_VERSION 2):
  * - item level (SKU, PRODUCT, CATEGORY, BRAND): a candidate applies to the lines it targets when the list-price
  *   subtotal reaches its minimum spend and the targeted units its minimum quantity. On each line, every stacking group
  *   contributes the promotion saving the most on one unit at the list price; the groups' winners then apply one after
@@ -281,6 +293,18 @@ function customerHasUsesLeft(promotion: PricingPromotion, customer: PricingCusto
   return promotion.perCustomerLimit === null || (customer.redemptions[promotion.id] ?? 0) < promotion.perCustomerLimit;
 }
 
+/** Why the promotion is not open to the customer (first order only, customer groups), or null when it is. */
+function audienceRejection(promotion: PricingPromotion, customer: PricingCustomer): string | null {
+  if (promotion.firstOrderOnly && customer.hasPriorOrder) return 'This coupon is only for a first order';
+  if (
+    promotion.customerGroupIds.length > 0 &&
+    !promotion.customerGroupIds.some((groupId) => customer.groupIds.includes(groupId))
+  ) {
+    return 'This coupon is not available for your account';
+  }
+  return null;
+}
+
 function isCandidate(
   promotion: PricingPromotion,
   couponCode: PricingCouponCode | undefined,
@@ -290,6 +314,7 @@ function isCandidate(
     isLive(promotion, context.now) &&
     hasUsesLeft(promotion) &&
     customerHasUsesLeft(promotion, context.customer) &&
+    audienceRejection(promotion, context.customer) === null &&
     (!promotion.requiresCoupon || couponCode?.promotionId === promotion.id)
   );
 }
@@ -337,7 +362,7 @@ function minimumsRejection(promotion: PricingPromotion, spend: Decimal, quantity
 
 /**
  * Why the coupon code cannot be used by this customer, whatever the cart, or null when it can: the code and its
- * promotion must be active and in date, with uses left overall and for the customer.
+ * promotion must be active and in date, with uses left overall and for the customer, and open to the customer.
  */
 export function couponCodeRejection(
   couponCode: PricingCouponCode,
@@ -352,7 +377,7 @@ export function couponCodeRejection(
     return 'This coupon has reached its usage limit';
   }
   if (!customerHasUsesLeft(promotion, customer)) return 'You have already used this coupon';
-  return null;
+  return audienceRejection(promotion, customer);
 }
 
 function couponPromotionOf(couponCode: PricingCouponCode, context: PricingContext): PricingPromotion {
@@ -400,18 +425,25 @@ export function stackedUnitPromotions(unitListPrice: Decimal, candidates: readon
 }
 
 /**
- * The item promotions a product page shows on one unit of the variant: the automatic (no coupon) ones that are live
- * with uses left, combined as at checkout (an exclusive one that saves anything alone, otherwise the stacked groups).
- * Minimum spend and quantity are not checked (there is no cart).
+ * The item promotions a product page shows `customer` on one unit of the variant: the automatic ones (no coupon, not
+ * first-order only: a page cannot tell a first order) that are live with uses left and open to the customer, combined
+ * as at checkout (an exclusive one that saves anything alone, otherwise the stacked groups). Minimum spend and quantity
+ * are not checked (there is no cart).
  */
 export function displayUnitPromotions(
   line: Pick<PricingLine, TargetKey | 'unitListPrice'>,
   promotions: readonly PricingPromotion[],
   now: Date,
+  customer: PricingCustomer = ANONYMOUS_CUSTOMER,
 ): UnitPromotions {
   const shown = promotions.filter(
     (promotion) =>
-      !promotion.requiresCoupon && isLive(promotion, now) && hasUsesLeft(promotion) && targets(promotion, line),
+      !promotion.requiresCoupon &&
+      !promotion.firstOrderOnly &&
+      isLive(promotion, now) &&
+      hasUsesLeft(promotion) &&
+      audienceRejection(promotion, customer) === null &&
+      targets(promotion, line),
   );
   const exclusive = best(
     shown.filter((promotion) => promotion.exclusive),

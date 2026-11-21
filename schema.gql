@@ -418,6 +418,13 @@ input CreateCouponCodeInput {
   usageLimit: Int
 }
 
+input CreateCustomerGroupInput {
+  description: String
+
+  """Unique, max 100"""
+  name: String!
+}
+
 input CreateOrderInput {
   """Contact email for order notifications"""
   contactEmail: String!
@@ -560,11 +567,16 @@ input CreateProductTypeInput {
 
 """A new promotion; it starts inactive unless isActive is true"""
 input CreatePromotionInput {
+  """Only for members of one of these customer groups; [] for all"""
+  customerGroupIds: [ID!]! = []
   description: String
 
   """Null for open-ended"""
   endsAt: DateTime
   exclusive: Boolean! = false
+
+  """Only for a customer without an earlier confirmed or paid order"""
+  firstOrderOnly: Boolean! = false
   isActive: Boolean! = false
 
   """Least number of targeted units (any unit for CART)"""
@@ -738,6 +750,47 @@ enum Currency {
   USD
 }
 
+"""
+A named set of customers; promotions may be limited to groups (staff view)
+"""
+type CustomerGroup {
+  createdAt: DateTime!
+  description: String
+  id: ID!
+  memberCount: Int!
+
+  """The members, by user id"""
+  members(
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+  ): CustomerGroupMemberPage!
+  name: String!
+  updatedAt: DateTime!
+}
+
+"""A customer in a group (staff view): the user id only"""
+type CustomerGroupMember {
+  """When the customer was added"""
+  createdAt: DateTime!
+  userId: ID!
+}
+
+type CustomerGroupMemberPage {
+  """Pass the last node userId as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [CustomerGroupMember!]!
+  totalCount: Int!
+}
+
+input CustomerGroupMembersInput {
+  groupId: ID!
+
+  """1-500 user ids"""
+  userIds: [ID!]!
+}
+
 type DashboardSummary {
   """Payments accepted today (salesReport.grossRevenue for today)"""
   grossRevenueToday: Money!
@@ -886,6 +939,9 @@ type Mutation {
   """
   addAttributeDefinition(input: AttributeDefinitionInput!, productTypeId: ID!): ProductType!
 
+  """Admin: add customers to a group (members already in it are kept)"""
+  addCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
+
   """Add products to a tag"""
   addProductsToTag(tagId: String!, updateDiscountInput: AddProductsToTagDto!): Tag!
   addTagToProduct(productId: String!, tagId: String!): Product!
@@ -951,6 +1007,9 @@ type Mutation {
   """Admin: add a coupon code that unlocks a promotion"""
   createCouponCode(input: CreateCouponCodeInput!): CouponCode!
 
+  """Admin: create a customer group"""
+  createCustomerGroup(input: CreateCustomerGroupInput!): CustomerGroup!
+
   """
   Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it
   """
@@ -1007,6 +1066,11 @@ type Mutation {
 
   """Admin: delete a coupon code no order has used (deactivate a used one)"""
   deleteCouponCode(id: ID!): CouponCode!
+
+  """
+  Admin: delete a customer group and its memberships (not while a promotion is limited to it)
+  """
+  deleteCustomerGroup(id: ID!): CustomerGroup!
 
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
@@ -1075,6 +1139,9 @@ type Mutation {
     """The ID of the category to delete"""
     id: String!
   ): Category!
+
+  """Admin: remove customers from a group"""
+  removeCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
 
   """Removes a specific item from the user’s cart"""
   removeFromCart(cartItemId: String!): Cart!
@@ -1167,6 +1234,9 @@ type Mutation {
 
   """Admin: change a coupon code"""
   updateCouponCode(id: ID!, input: UpdateCouponCodeInput!): CouponCode!
+
+  """Admin: rename or describe a customer group"""
+  updateCustomerGroup(id: ID!, input: UpdateCustomerGroupInput!): CustomerGroup!
 
   """
   Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.
@@ -1768,6 +1838,9 @@ A promotion with its rules, targets, limits and coupon codes (staff view)
 type Promotion {
   couponCodes: [CouponCode!]!
   createdAt: DateTime!
+
+  """Only for members of one of these customer groups; empty for everyone"""
+  customerGroupIds: [ID!]!
   description: String
 
   """Null for open-ended"""
@@ -1775,6 +1848,9 @@ type Promotion {
 
   """When it applies, no other promotion does"""
   exclusive: Boolean!
+
+  """Only for a customer without an earlier confirmed or paid order"""
+  firstOrderOnly: Boolean!
   id: ID!
   isActive: Boolean!
 
@@ -1911,6 +1987,12 @@ type Query {
   Prices the current user's cart for checkout with the chosen fulfilment and coupon: the full breakdown and the quoteHash createOrder needs. Writes nothing
   """
   checkoutQuote(input: CheckoutQuoteInput!): CheckoutQuote!
+
+  """Admin: one customer group"""
+  customerGroup(id: ID!): CustomerGroup!
+
+  """Admin: customer groups by name"""
+  customerGroups: [CustomerGroup!]!
 
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
@@ -2780,6 +2862,12 @@ input UpdateCouponCodeInput {
   usageLimit: Int
 }
 
+"""Omitted fields stay as they are; null clears the description"""
+input UpdateCustomerGroupInput {
+  description: String
+  name: String
+}
+
 input UpdatePickupLocationInput {
   address: String
   city: String
@@ -2879,9 +2967,12 @@ input UpdateProductTypeInput {
 Changes to a promotion: omitted fields stay as they are, null clears an optional one. targetIds, when given, replaces every target (an empty list clears them); it is required when the scope changes.
 """
 input UpdatePromotionInput {
+  """Replaces the customer groups; [] opens it to everyone"""
+  customerGroupIds: [ID!]
   description: String
   endsAt: DateTime
   exclusive: Boolean
+  firstOrderOnly: Boolean
   isActive: Boolean
   minimumQuantity: Int
   minimumSpend: Decimal

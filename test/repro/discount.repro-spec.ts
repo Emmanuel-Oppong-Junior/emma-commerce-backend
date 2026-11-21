@@ -32,6 +32,8 @@ function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number, target
     products: targets.variantIds ? [] : [{ id: 'product-1' }],
     categories: [],
     brands: [],
+    customerGroups: [],
+    firstOrderOnly: false,
   };
 }
 
@@ -44,6 +46,8 @@ function promotionsFinding(discounts: ReturnType<typeof discount>[]) {
   const repository = {
     findCandidates: jest.fn().mockResolvedValue(discounts),
     countReservedByPromotion: jest.fn().mockResolvedValue({}),
+    findCustomerGroupIds: jest.fn().mockResolvedValue([]),
+    hasPriorOrder: jest.fn().mockResolvedValue(false),
   };
   return new PromotionsService(repository as never, {} as never);
 }

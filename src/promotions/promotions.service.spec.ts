@@ -31,6 +31,7 @@ const stored = (overrides: Record<string, unknown> = {}) => ({
   products: [{ id: 'prod1' }],
   categories: [],
   brands: [],
+  customerGroups: [],
   couponCodes: [],
   ...overrides,
 });
@@ -85,6 +86,9 @@ describe('PromotionsService', () => {
       missingTargets: jest.fn().mockResolvedValue([]),
       findCandidates: jest.fn().mockResolvedValue([]),
       countReservedByPromotion: jest.fn().mockResolvedValue({}),
+      findCustomerGroupIds: jest.fn().mockResolvedValue([]),
+      hasPriorOrder: jest.fn().mockResolvedValue(false),
+      missingCustomerGroups: jest.fn().mockResolvedValue([]),
       findCouponCode: jest.fn().mockResolvedValue(code()),
       findCouponCodeById: jest.fn().mockResolvedValue(code()),
       createCouponCode: jest.fn().mockImplementation(async (data) => code(data)),
@@ -291,7 +295,7 @@ describe('PromotionsService', () => {
       expect(repository.countReservedByPromotion).toHaveBeenCalledWith('user1', ['promo1'], tx);
       expect(facts.promotions).toEqual([expect.objectContaining({ id: 'promo1', targetIds: ['prod1'] })]);
       expect(facts.couponCode).toEqual(expect.objectContaining({ id: 'code1', promotionId: 'promo1' }));
-      expect(facts.customer).toEqual({ redemptions: { promo1: 2 } });
+      expect(facts.customer).toEqual({ redemptions: { promo1: 2 }, groupIds: [], hasPriorOrder: false });
     });
   });
 

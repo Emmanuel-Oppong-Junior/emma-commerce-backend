@@ -122,6 +122,12 @@ export class Promotion {
   @Field(() => Int, { nullable: true, description: 'Orders each customer may use it on' })
   perCustomerLimit: number | null;
 
+  @Field({ description: 'Only for a customer without an earlier confirmed or paid order' })
+  firstOrderOnly: boolean;
+
+  @Field(() => [ID], { description: 'Only for members of one of these customer groups; empty for everyone' })
+  customerGroupIds: string[];
+
   @Field(() => [CouponCode])
   couponCodes: CouponCode[];
 

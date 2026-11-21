@@ -1955,6 +1955,8 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   usageLimit?: number;        // Orders that may use it, across all customers
   usedCount: number;          // Orders holding a use (taken at placement, given back on cancel/expiry before payment)
   perCustomerLimit?: number;  // Orders each customer may use it on
+  firstOrderOnly: boolean;    // P2-B.3: only for a customer without an earlier confirmed or paid order (see 10)
+  customerGroupIds: ID[];     // P2-B.3: only for members of one of these customer groups; [] = everyone
   couponCodes: CouponCode[];
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -1988,15 +1990,17 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   requiresCoupon?: boolean;    // Default false
   usageLimit?: number;         // >= 1
   perCustomerLimit?: number;   // >= 1
+  firstOrderOnly?: boolean;    // Default false
+  customerGroupIds?: ID[];     // Default [] (everyone); must exist
 }
 ```
 
-**Possible Errors**: `BAD_REQUEST` (PERCENT above 100, FIXED_PRICE on CART, targets on CART, unknown targets, `endsAt` not after `startsAt`).
+**Possible Errors**: `BAD_REQUEST` (unknown customer groups, PERCENT above 100, FIXED_PRICE on CART, targets on CART, unknown targets, `endsAt` not after `startsAt`).
 
 #### `updatePromotion`
 
 - **Args**: `id: ID!`, `input: UpdatePromotionInput!` (every field optional) → `Promotion!`
-- Omitted fields stay; `null` clears an optional one (`description`, `minimumSpend`, `minimumQuantity`, `endsAt`, `usageLimit`, `perCustomerLimit`). `targetIds` replaces every target (`[]` clears them) and is required when `scope` changes. The result is checked as a whole against the stored promotion (a `value` of 150 on a PERCENT promotion is refused).
+- Omitted fields stay; `null` clears an optional one (`description`, `minimumSpend`, `minimumQuantity`, `endsAt`, `usageLimit`, `perCustomerLimit`). `targetIds` replaces every target (`[]` clears them) and is required when `scope` changes; `customerGroupIds` replaces the groups (`[]` opens it to everyone). The result is checked as a whole against the stored promotion (a `value` of 150 on a PERCENT promotion is refused).
 
 #### `deletePromotion`
 
@@ -2035,7 +2039,24 @@ Codes are unique ignoring case (`CONFLICT` for a taken code). A code an order ha
 
 It checks the code for the caller whatever the cart (active, started, not expired, uses left overall and for the caller). Use `checkoutQuote` with `couponCode` for its exact effect on the cart.
 
-**Possible Errors**: `NOT_FOUND` (unknown code); `BAD_REQUEST` with the reason ("This coupon is no longer active", "This coupon is not active yet", "This coupon has expired", "This coupon has reached its usage limit", "You have already used this coupon").
+**Possible Errors**: `NOT_FOUND` (unknown code); `BAD_REQUEST` with the reason ("This coupon is no longer active", "This coupon is not active yet", "This coupon has expired", "This coupon has reached its usage limit", "You have already used this coupon", "This coupon is only for a first order", "This coupon is not available for your account").
+
+#### Customer groups (P2-B.3, `customer.group.manage`)
+
+A customer group is a named set of customers. A promotion with `customerGroupIds` applies only to members (B2B price lists will reuse the groups). Changes are audit-logged (members by user id only).
+
+```typescript
+CustomerGroup { id; name /* unique */; description?; memberCount: number; members(first = 50 /* 1-100 */, after?: ID /* last userId */): CustomerGroupMemberPage; createdAt; updatedAt }
+CustomerGroupMemberPage { nodes: { userId: ID; createdAt: DateTime }[]; totalCount; hasNextPage }
+CreateCustomerGroupInput { name: string /* max 100 */; description?: string }
+UpdateCustomerGroupInput { name?: string; description?: string | null }
+CustomerGroupMembersInput { groupId: ID; userIds: ID[] /* 1-500 */ }
+```
+
+- `customerGroups` (by name), `customerGroup(id)`.
+- `createCustomerGroup(input)`, `updateCustomerGroup(id, input)` (`CONFLICT` for a taken name).
+- `deleteCustomerGroup(id)`: deletes the group and its memberships; `CONFLICT` while a promotion is limited to it (deleting it would open the promotion to everyone).
+- `addCustomerGroupMembers(input)` (members already in the group are kept; `BAD_REQUEST` for unknown user ids), `removeCustomerGroupMembers(input)`; both return the group.
 
 ---
 
@@ -2879,7 +2900,8 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment` |
 | `payment.record` | `recordCodPayment` |
 | `payment.manage` | `softDeletePayment`, `restorePayment` |
-| `promotion.manage` | every discount and coupon query and mutation except `validateCoupon` |
+| `promotion.manage` | `promotions`, `promotion`, `createPromotion`, `updatePromotion`, `deletePromotion`, `createCouponCode`, `updateCouponCode`, `deleteCouponCode`, `redemptions` (P2-B.1) |
+| `customer.group.manage` | `customerGroups`, `customerGroup` (with `members`), `createCustomerGroup`, `updateCustomerGroup`, `deleteCustomerGroup`, `addCustomerGroupMembers`, `removeCustomerGroupMembers` (P2-B.3; held by Owner and Manager) |
 | `tax.manage` | `taxes`, `tax`, `createTax`, `updateTax`, `deleteTax` |
 | `shipping.manage` | admin shipping zone and pickup location queries and mutations |
 | `review.moderate` | `adminDeleteReview` |
@@ -3658,7 +3680,10 @@ One pricing engine (`src/pricing/price.ts`, ADR-0005) prices `Variant.discounted
 
 ### Which promotions are candidates
 
-A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or no `endsAt`), it has uses left (`usedCount < usageLimit`) and the customer has uses left (their reserved uses `< perCustomerLimit`), and, when it `requiresCoupon`, the order entered one of its codes.
+A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or no `endsAt`), it has uses left (`usedCount < usageLimit`) and the customer has uses left (their reserved uses `< perCustomerLimit`), it is open to the customer (`firstOrderOnly`: no earlier order counts; `customerGroupIds`: a member of one of them), and, when it `requiresCoupon`, the order entered one of its codes.
+
+- **First order** (P2-B.3): an earlier order counts when it reached `CONFIRMED` or a later status (`IN_FULFILMENT`, `COMPLETED`), or `PAYMENT_REVIEW` (the payment was received), at any point of its history, even if it was cancelled or refunded afterwards. An online order cancelled or expired before payment does not count. A cash-on-delivery order is `CONFIRMED` when placed, so it counts at once.
+- **Product pages** (`Variant.discountedPrice`) show only promotions open to everyone: not coupon, first-order or group promotions. Those appear in `checkoutQuote` for the customers they apply to.
 
 ### What a promotion takes off
 
@@ -3683,7 +3708,7 @@ A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or
 ### Limits and redemptions
 
 - Placing an order records one `RESERVED` redemption per promotion it applies and takes one use of each (and of the coupon code) inside the order transaction, with a conditional update: when none is left, `createOrder` fails with `CONFLICT` and `reason: PROMOTION_LIMIT_REACHED` (or `PROMOTION_CUSTOMER_LIMIT_REACHED` for the caller's own limit) and nothing is recorded. Get a new quote.
-- Cancelling or expiring an order gives its uses back (redemptions `RELEASED`, counts decremented), once.
+- Cancelling or expiring an order **before payment** gives its uses back (redemptions `RELEASED`, counts decremented), once. A paid order keeps its uses when it is cancelled and refunded (P2-B.3).
 
 ---
 

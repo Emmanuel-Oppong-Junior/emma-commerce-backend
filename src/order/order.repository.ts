@@ -377,8 +377,8 @@ export class OrdersRepository {
     return this.prisma.$transaction(fn);
   }
 
-  async hasCapturedPayment(orderId: string): Promise<boolean> {
-    const completed = await this.prisma.paymentAttempt.count({
+  async hasCapturedPayment(orderId: string, db: Prisma.TransactionClient = this.prisma): Promise<boolean> {
+    const completed = await db.paymentAttempt.count({
       where: { intent: { orderId }, status: PaymentStatus.CAPTURED },
     });
     return completed > 0;

@@ -1,7 +1,13 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CouponCode, Prisma, Promotion, PromotionScope } from '../generated/prisma/client';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
-import { couponCodeRejection, PricingCouponCode, PricingCustomer, PricingPromotion } from '../pricing/price';
+import {
+  ANONYMOUS_CUSTOMER,
+  couponCodeRejection,
+  PricingCouponCode,
+  PricingCustomer,
+  PricingPromotion,
+} from '../pricing/price';
 import { CreatePromotionInput, UpdatePromotionInput } from './dto/promotion.input';
 import { CreateCouponCodeInput, UpdateCouponCodeInput } from './dto/coupon-code.input';
 import { promotionDefinitionError } from './promotion-definition';
@@ -38,6 +44,7 @@ const AUDITED_PROMOTION_FIELDS = [
   'requiresCoupon',
   'usageLimit',
   'perCustomerLimit',
+  'firstOrderOnly',
 ] as const satisfies readonly (keyof Promotion)[];
 
 const AUDITED_COUPON_CODE_FIELDS = [
@@ -58,6 +65,7 @@ const REQUIRED_PROMOTION_FIELDS = [
   'stackingGroup',
   'exclusive',
   'requiresCoupon',
+  'firstOrderOnly',
 ] as const satisfies readonly (keyof UpdatePromotionInput)[];
 
 /** The targets of the promotion's scope (variant, product, category or brand ids); none for CART. */
@@ -86,6 +94,8 @@ export function toPricingPromotion(promotion: PromotionWithTargets): PricingProm
     usageLimit: promotion.usageLimit,
     usedCount: promotion.usedCount,
     perCustomerLimit: promotion.perCustomerLimit,
+    firstOrderOnly: promotion.firstOrderOnly,
+    customerGroupIds: promotion.customerGroups.map(({ id }) => id),
     createdAt: promotion.createdAt,
     targetIds: targetIdsOf(promotion),
   };
@@ -93,7 +103,11 @@ export function toPricingPromotion(promotion: PromotionWithTargets): PricingProm
 
 function toEntity(promotion: PromotionWithRelations): PromotionEntity {
   // The relation arrays ride along unused: GraphQL serialises only the entity's fields.
-  return { ...promotion, targetIds: targetIdsOf(promotion) };
+  return {
+    ...promotion,
+    targetIds: targetIdsOf(promotion),
+    customerGroupIds: promotion.customerGroups.map(({ id }) => id),
+  };
 }
 
 function toPricingCouponCode(couponCode: CouponCode): PricingCouponCode {
@@ -138,19 +152,30 @@ export class PromotionsService {
   }
 
   async create(input: CreatePromotionInput, actorId: string): Promise<PromotionEntity> {
-    const { targetIds: requestedTargets, ...fields } = input;
+    const { targetIds: requestedTargets, customerGroupIds: requestedGroups, ...fields } = input;
     const targetIds = [...new Set(requestedTargets)];
+    const customerGroupIds = [...new Set(requestedGroups)];
     const startsAt = input.startsAt ?? new Date();
     this.assertDefinition({ ...input, targetIds, startsAt, endsAt: input.endsAt ?? null });
     await this.assertTargetsExist(input.scope, targetIds);
+    await this.assertCustomerGroupsExist(customerGroupIds);
     const created = await this.auditService.record(
-      (tx) => this.repository.create({ ...fields, startsAt, ...targetWrites(input.scope, targetIds, 'connect') }, tx),
+      (tx) =>
+        this.repository.create(
+          {
+            ...fields,
+            startsAt,
+            ...targetWrites(input.scope, targetIds, 'connect'),
+            ...(customerGroupIds.length > 0 && { customerGroups: { connect: customerGroupIds.map((id) => ({ id })) } }),
+          },
+          tx,
+        ),
       (promotion) => ({
         entity: 'Promotion',
         entityId: promotion.id,
         action: 'CREATE',
         userId: actorId,
-        details: { after: fieldValues(promotion, AUDITED_PROMOTION_FIELDS), targetIds },
+        details: { after: fieldValues(promotion, AUDITED_PROMOTION_FIELDS), targetIds, customerGroupIds },
       }),
     );
     return toEntity(created);
@@ -164,7 +189,8 @@ export class PromotionsService {
     const cleared = REQUIRED_PROMOTION_FIELDS.filter((field) => input[field] === null);
     if (cleared.length > 0) throw new BadRequestException(`${cleared.join(', ')} cannot be null`);
 
-    const { targetIds: requestedTargets, ...fields } = input;
+    const { targetIds: requestedTargets, customerGroupIds: requestedGroups, ...fields } = input;
+    const customerGroupIds = requestedGroups && [...new Set(requestedGroups)];
     const scope = input.scope ?? existing.scope;
     const scopeChanged = scope !== existing.scope;
     const existingTargets = targetIdsOf(existing);
@@ -182,12 +208,17 @@ export class PromotionsService {
       endsAt: input.endsAt === undefined ? existing.endsAt : input.endsAt,
     });
     if (requestedTargets !== undefined) await this.assertTargetsExist(scope, targetIds);
+    if (customerGroupIds) await this.assertCustomerGroupsExist(customerGroupIds);
 
     const updated = await this.auditService.record(
       (tx) =>
         this.repository.update(
           id,
-          { ...fields, ...(replaceTargets && targetWrites(scope, targetIds, 'set')) } as Prisma.PromotionUpdateInput,
+          {
+            ...fields,
+            ...(replaceTargets && targetWrites(scope, targetIds, 'set')),
+            ...(customerGroupIds && { customerGroups: { set: customerGroupIds.map((id) => ({ id })) } }),
+          } as Prisma.PromotionUpdateInput,
           tx,
         ),
       (after) => ({
@@ -198,6 +229,7 @@ export class PromotionsService {
         details: {
           changes: fieldChanges(existing, after, AUDITED_PROMOTION_FIELDS),
           ...(replaceTargets && { targetIds }),
+          ...(customerGroupIds && { customerGroupIds }),
         },
       }),
     );
@@ -339,7 +371,7 @@ export class PromotionsService {
           promotions.map((promotion) => promotion.id),
           db,
         )
-      : { redemptions: {} };
+      : ANONYMOUS_CUSTOMER;
     return { promotions, couponCode: couponCode && toPricingCouponCode(couponCode), customer };
   }
 
@@ -392,7 +424,11 @@ export class PromotionsService {
     promotionIds: string[],
     db?: Prisma.TransactionClient,
   ): Promise<PricingCustomer> {
-    return { redemptions: await this.repository.countReservedByPromotion(customerId, promotionIds, db) };
+    return {
+      redemptions: await this.repository.countReservedByPromotion(customerId, promotionIds, db),
+      groupIds: await this.repository.findCustomerGroupIds(customerId, db),
+      hasPriorOrder: await this.repository.hasPriorOrder(customerId, db),
+    };
   }
 
   private assertDefinition(definition: Parameters<typeof promotionDefinitionError>[0]): void {
@@ -403,6 +439,11 @@ export class PromotionsService {
   private async assertTargetsExist(scope: PromotionScope, targetIds: string[]): Promise<void> {
     const missing = await this.repository.missingTargets(scope, targetIds);
     if (missing.length > 0) throw new BadRequestException(`Unknown ${scope} target ids: ${missing.join(', ')}`);
+  }
+
+  private async assertCustomerGroupsExist(ids: string[]): Promise<void> {
+    const missing = await this.repository.missingCustomerGroups(ids);
+    if (missing.length > 0) throw new BadRequestException(`Unknown customer group ids: ${missing.join(', ')}`);
   }
 
   private async findOrThrow(id: string): Promise<PromotionWithRelations> {

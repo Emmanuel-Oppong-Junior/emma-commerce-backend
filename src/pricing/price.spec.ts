@@ -58,6 +58,8 @@ const promotion = (
   usageLimit: null,
   usedCount: 0,
   perCustomerLimit: null,
+  firstOrderOnly: false,
+  customerGroupIds: [],
   createdAt: YESTERDAY,
   targetIds: ['p1'],
   ...overrides,
@@ -97,7 +99,7 @@ const context = (overrides: Partial<PricingContext> = {}): PricingContext => ({
   now: NOW,
   promotions: [],
   taxRates: [],
-  customer: { redemptions: {} },
+  customer: { redemptions: {}, groupIds: [], hasPriorOrder: false },
   ...overrides,
 });
 
@@ -506,6 +508,91 @@ describe('price', () => {
     });
   });
 
+  describe('limits and audience as engine inputs (P2-B.3)', () => {
+    const customer = (overrides: Partial<PricingContext['customer']> = {}) => ({
+      redemptions: {},
+      groupIds: [],
+      hasPriorOrder: false,
+      ...overrides,
+    });
+    const appliedIds = (quote: Quote) =>
+      [...quote.lines.flatMap((l) => l.adjustments), ...quote.adjustments].map((a) => a.sourceId);
+
+    it('skips an automatic promotion with no uses left overall or for the customer', () => {
+      const promotions = [
+        pct('used-up', 30, { usageLimit: 5, usedCount: 5 }),
+        pct('mine-used', 20, { perCustomerLimit: 2 }),
+        pct('open', 10, { stackingGroup: 'other' }),
+      ];
+
+      const quote = price(
+        cart([line()]),
+        context({ promotions, customer: customer({ redemptions: { 'mine-used': 2 } }) }),
+      );
+
+      expect(appliedIds(quote)).toEqual(['open']);
+    });
+
+    it('gives a first-order promotion only to a customer without a prior order', () => {
+      const promotions = [pct('welcome', 15, { firstOrderOnly: true })];
+
+      expect(appliedIds(price(cart([line()]), context({ promotions, customer: customer() })))).toEqual(['welcome']);
+      expect(
+        appliedIds(price(cart([line()]), context({ promotions, customer: customer({ hasPriorOrder: true }) }))),
+      ).toEqual([]);
+    });
+
+    it('gives a group promotion only to members of one of its groups', () => {
+      const promotions = [pct('vip', 25, { customerGroupIds: ['vip', 'staff'] })];
+      const priced = (groupIds: string[]) =>
+        appliedIds(price(cart([line()]), context({ promotions, customer: customer({ groupIds }) })));
+
+      expect(priced(['staff'])).toEqual(['vip']);
+      expect(priced(['wholesale'])).toEqual([]);
+      expect(priced([])).toEqual([]);
+    });
+
+    it.each([
+      [
+        'a first-order code for a returning customer',
+        { firstOrderOnly: true },
+        { hasPriorOrder: true },
+        'only for a first order',
+      ],
+      [
+        'a group code for a non-member',
+        { customerGroupIds: ['vip'] },
+        { groupIds: ['other'] },
+        'not available for your account',
+      ],
+    ])('refuses %s with the reason', (_case, promotionOverrides, customerOverrides, message) => {
+      const run = () =>
+        price(
+          cart([line()], { coupon: coupon(promotionOverrides) }),
+          context({ customer: customer(customerOverrides) }),
+        );
+
+      expect(run).toThrow(CouponNotApplicableError);
+      expect(run).toThrow(message);
+    });
+
+    it('shows a product page only promotions open to the visitor', () => {
+      const unit = { variantId: 'v1', productId: 'p1', categoryId: 'c1', brandId: null, unitListPrice: d(100) };
+      const promotions = [
+        pct('welcome', 50, { firstOrderOnly: true }),
+        pct('vip', 40, { customerGroupIds: ['vip'] }),
+        pct('all', 5),
+      ];
+
+      expect(displayUnitPromotions(unit, promotions, NOW).applied.map((a) => a.promotion.id)).toEqual(['all']);
+      expect(
+        displayUnitPromotions(unit, promotions, NOW, customer({ groupIds: ['vip'], hasPriorOrder: true })).applied.map(
+          (a) => a.promotion.id,
+        ),
+      ).toEqual(['vip']);
+    });
+  });
+
   describe('tax', () => {
     it('splits a tax-inclusive price into its net and the tax in it, one tax line per active tax', () => {
       const quote = price(cart([line({ taxable: true, quantity: 2 })]), context({ taxRates: GHANA }));
@@ -679,7 +766,10 @@ describe('price', () => {
       const run = () =>
         price(
           cart([line({ unitListPrice: d(110) })], { coupon: refused, couponCode: code }),
-          context({ promotions: [pct('d10', 10)], customer: { redemptions: { cpn1: 1 } } }),
+          context({
+            promotions: [pct('d10', 10)],
+            customer: { redemptions: { cpn1: 1 }, groupIds: [], hasPriorOrder: false },
+          }),
         );
 
       expect(run).toThrow(CouponNotApplicableError);

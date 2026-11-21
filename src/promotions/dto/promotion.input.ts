@@ -109,6 +109,16 @@ export class CreatePromotionInput {
   @IsInt()
   @Min(1)
   perCustomerLimit?: number | null;
+
+  @Field({ defaultValue: false, description: 'Only for a customer without an earlier confirmed or paid order' })
+  @IsBoolean()
+  firstOrderOnly: boolean = false;
+
+  @Field(() => [ID], { defaultValue: [], description: 'Only for members of one of these customer groups; [] for all' })
+  @IsArray()
+  @ArrayMaxSize(MAX_TARGETS)
+  @IsString({ each: true })
+  customerGroupIds: string[] = [];
 }
 
 @InputType({
@@ -212,4 +222,16 @@ export class UpdatePromotionInput {
   @IsInt()
   @Min(1)
   perCustomerLimit?: number | null;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsBoolean()
+  firstOrderOnly?: boolean;
+
+  @Field(() => [ID], { nullable: true, description: 'Replaces the customer groups; [] opens it to everyone' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TARGETS)
+  @IsString({ each: true })
+  customerGroupIds?: string[];
 }

@@ -54,6 +54,8 @@ const candidate = (
   usageLimit: null,
   usedCount: 0,
   perCustomerLimit: null,
+  firstOrderOnly: false,
+  customerGroupIds: [],
   createdAt: new Date(0),
   targetIds: [],
   ...targets,
@@ -62,7 +64,7 @@ const candidate = (
 const pricingFacts = (promotions: PricingPromotion[], couponCode?: PricingCouponCode) => ({
   promotions,
   couponCode,
-  customer: { redemptions: {} },
+  customer: { redemptions: {}, groupIds: [], hasPriorOrder: false },
 });
 /** A coupon code unlocking a CART promotion, as a legacy coupon became. */
 const couponFacts = (
@@ -1492,6 +1494,19 @@ describe('OrdersService', () => {
       await ordersService.cancelOrder(mockUserId, 'order1');
 
       expect(mockPromotionsService.releaseRedemptions).toHaveBeenCalledWith(stubTx, 'order1');
+    });
+
+    it('keeps the promotion uses of a paid order it cancels (a refund does not give them back)', async () => {
+      const stubTx = { id: 'tx' };
+      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.CONFIRMED });
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CANCELLED });
+      mockOrdersRepository.hasCapturedPayment.mockResolvedValue(true);
+
+      await ordersService.adminCancelOrder('order1', 'admin1');
+
+      expect(mockOrdersRepository.hasCapturedPayment).toHaveBeenCalledWith('order1', stubTx);
+      expect(mockPromotionsService.releaseRedemptions).not.toHaveBeenCalled();
     });
 
     it('releases no promotion use when the cancel lost the race to another request', async () => {

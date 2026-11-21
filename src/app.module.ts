@@ -35,6 +35,7 @@ import { GraphqlLoggingInterceptor } from './commons/interceptors/graphql-loggin
 import { formatError } from './commons/error-formatters/grapqhl-error.formatter';
 import { LoggerService } from './commons/logger.service';
 import { PromotionsModule } from './promotions/promotions.module';
+import { CustomerGroupsModule } from './customer-groups/customer-groups.module';
 import { BrandModule } from './brand/brand.module';
 import { HealthModule } from './health/health.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -148,6 +149,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     ReviewModule,
     PaymentModule,
     PromotionsModule,
+    CustomerGroupsModule,
     BrandModule,
     HealthModule,
     NotificationsModule,

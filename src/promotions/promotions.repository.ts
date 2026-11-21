@@ -1,5 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { CouponCode, Prisma, PromotionScope, Redemption, RedemptionStatus } from '../generated/prisma/client';
+import {
+  CouponCode,
+  OrderStatus,
+  Prisma,
+  PromotionScope,
+  Redemption,
+  RedemptionStatus,
+} from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const TARGETS_INCLUDE = {
@@ -7,6 +14,7 @@ const TARGETS_INCLUDE = {
   products: { select: { id: true } },
   categories: { select: { id: true } },
   brands: { select: { id: true } },
+  customerGroups: { select: { id: true } },
 } satisfies Prisma.PromotionInclude;
 
 export const PROMOTION_INCLUDE = {
@@ -29,6 +37,14 @@ export const TARGET_RELATION: Record<PromotionScope, TargetRelation | null> = {
 };
 
 const TARGET_RELATIONS: TargetRelation[] = ['variants', 'products', 'categories', 'brands'];
+
+/** The order statuses that make an order count against first-order promotions (the customer paid or was accepted). */
+const COUNTED_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.CONFIRMED,
+  OrderStatus.IN_FULFILMENT,
+  OrderStatus.COMPLETED,
+  OrderStatus.PAYMENT_REVIEW,
+];
 
 /** The ids a cart's lines can be targeted by. */
 export interface CartTargets {
@@ -150,8 +166,43 @@ export class PromotionsRepository {
         products: { where: { id: { in: targets.productIds } }, select: { id: true } },
         categories: { where: { id: { in: targets.categoryIds } }, select: { id: true } },
         brands: { where: { id: { in: targets.brandIds } }, select: { id: true } },
+        customerGroups: { select: { id: true } },
       },
     });
+  }
+
+  async findCustomerGroupIds(customerId: string, db: Prisma.TransactionClient = this.prisma): Promise<string[]> {
+    const memberships = await db.customerGroupMember.findMany({
+      where: { userId: customerId },
+      select: { groupId: true },
+    });
+    return memberships.map(({ groupId }) => groupId);
+  }
+
+  /**
+   * Whether the customer has an order, other than `exceptOrderId`, that reached CONFIRMED or later or PAYMENT_REVIEW,
+   * now or at any point of its history (so cancelling or refunding a paid order does not make the next one a first).
+   * Legacy orders migrated without their history count by their status.
+   */
+  async hasPriorOrder(customerId: string, db: Prisma.TransactionClient = this.prisma): Promise<boolean> {
+    const order = await db.order.findFirst({
+      where: {
+        userId: customerId,
+        OR: [
+          { status: { in: COUNTED_ORDER_STATUSES } },
+          { statusEvents: { some: { to: { in: COUNTED_ORDER_STATUSES } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    return order !== null;
+  }
+
+  async missingCustomerGroups(ids: readonly string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
+    const found = await this.prisma.customerGroup.findMany({ where: { id: { in: [...ids] } }, select: { id: true } });
+    const existing = new Set(found.map((row) => row.id));
+    return ids.filter((id) => !existing.has(id));
   }
 
   /** The customer's RESERVED redemptions of each of the promotions. */
@@ -262,9 +313,5 @@ export class PromotionsRepository {
       }),
       this.prisma.redemption.count({ where }),
     ]);
-  }
-
-  async runTransaction<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(fn);
   }
 }
