@@ -21,7 +21,8 @@ const mockAuditService = { log: jest.fn() };
 const mockTaxService = { findActive: jest.fn() };
 const mockStockLedger = { reserve: jest.fn(), consumeOrder: jest.fn(), releaseOrder: jest.fn() };
 const mockOutbox = { record: jest.fn() };
-const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
+const zoneWithFee = (fee: string | number) => ({ id: 'zone1', fee: new Decimal(fee) });
+const mockShippingZonesService = { getZoneForCity: jest.fn().mockResolvedValue(zoneWithFee('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
 const mockPromotionsService = {
@@ -61,6 +62,7 @@ const candidate = (
   rewardTargetIds: [],
   tierValueType: null,
   tiers: [],
+  shippingZoneIds: [],
   perCustomerLimit: null,
   firstOrderOnly: false,
   customerGroupIds: [],
@@ -277,7 +279,7 @@ describe('OrdersService', () => {
     mockOrdersRepository.create.mockResolvedValue(mockOrder);
     mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CONFIRMED });
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
-    mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
+    mockShippingZonesService.getZoneForCity.mockResolvedValue(zoneWithFee('5'));
     mockPromotionsService.findForPricing.mockResolvedValue(pricingFacts([]));
   });
 
@@ -374,7 +376,7 @@ describe('OrdersService', () => {
 
       await placeOrder(deliveryParams);
 
-      expect(mockShippingZonesService.getFeeForCity).toHaveBeenLastCalledWith('Accra', {});
+      expect(mockShippingZonesService.getZoneForCity).toHaveBeenLastCalledWith('Accra', {});
       expect(mockOrdersRepository.create).toHaveBeenCalledWith(
         expect.anything(),
         mockUserId,
@@ -720,7 +722,7 @@ describe('OrdersService', () => {
       mockOrdersRepository.findAddressForUser.mockResolvedValue({ ...mockAddress, city: 'Tamale' });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
-      mockShippingZonesService.getFeeForCity.mockRejectedValue(
+      mockShippingZonesService.getZoneForCity.mockRejectedValue(
         new BadRequestException('Delivery is not available to city "Tamale": no active shipping zone covers it'),
       );
 
@@ -742,7 +744,7 @@ describe('OrdersService', () => {
       await expect(placeOrder(deliveryParams)).rejects.toThrow(
         new BadRequestException('Complete the delivery address (region, recipient name and phone) before checkout'),
       );
-      expect(mockShippingZonesService.getFeeForCity).not.toHaveBeenCalled();
+      expect(mockShippingZonesService.getZoneForCity).not.toHaveBeenCalled();
       expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
@@ -794,7 +796,7 @@ describe('OrdersService', () => {
 
       await placeOrder(pickupParams);
 
-      expect(mockShippingZonesService.getFeeForCity).not.toHaveBeenCalled();
+      expect(mockShippingZonesService.getZoneForCity).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).toHaveBeenCalledWith(
         expect.anything(),
         mockUserId,
@@ -1075,7 +1077,7 @@ describe('OrdersService', () => {
             price: new Decimal('11'),
           })),
       ],
-      ['the shipping fee', () => mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal(6))],
+      ['the shipping fee', () => mockShippingZonesService.getZoneForCity.mockResolvedValue(zoneWithFee(6))],
       [
         'a tax rate',
         () => mockTaxService.findActive.mockResolvedValue([{ id: 'vat', name: 'VAT', rate: new Decimal('0.1') }]),

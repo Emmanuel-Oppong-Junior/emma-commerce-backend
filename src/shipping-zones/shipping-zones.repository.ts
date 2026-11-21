@@ -32,6 +32,10 @@ export class ShippingZonesRepository {
     return this.prisma.shippingZone.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
   }
 
+  async countPromotions(zoneId: string): Promise<number> {
+    return this.prisma.promotion.count({ where: { shippingZones: { some: { id: zoneId } } } });
+  }
+
   /** Expects an already-normalised city. The orderBy keeps the result stable if legacy rows overlap. */
   async findByCity(city: string, db: Prisma.TransactionClient = this.prisma): Promise<ShippingZone | null> {
     return db.shippingZone.findFirst({

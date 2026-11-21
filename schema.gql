@@ -248,11 +248,13 @@ input ChangeUserPasswordInput {
 The cart priced for checkout. createOrder charges exactly grandTotal when it is sent quoteHash and nothing changed
 """
 type CheckoutQuote {
-  """The coupon, if it takes anything off"""
+  """The cart promotions (the coupon among them) that take anything off"""
   adjustments: [QuoteOrderAdjustment!]!
   currency: Currency!
 
-  """Item discounts plus the coupon"""
+  """
+  Item and cart promotions (merchandise only; shipping ones are in shippingTotal)
+  """
   discountTotal: Money!
 
   """
@@ -271,7 +273,12 @@ type CheckoutQuote {
   """
   quoteHash: String!
 
-  """Shipping (0 for pickup)"""
+  """
+  The free-shipping promotions that take anything off the delivery fee (already in shippingTotal)
+  """
+  shippingAdjustments: [QuoteAdjustment!]!
+
+  """The delivery fee after free-shipping promotions (0 for pickup)"""
   shippingTotal: Money!
 
   """Sum of unit list price x quantity, before any discount, tax included"""
@@ -611,6 +618,11 @@ input CreatePromotionInput {
   """
   rewardTargetIds: [ID!]! = []
   scope: PromotionScope!
+
+  """
+  FREE_SHIPPING: only for deliveries to these shipping zones; [] for every zone
+  """
+  shippingZoneIds: [ID!]! = []
   stackingGroup: String! = "default"
 
   """Defaults to now"""
@@ -1427,13 +1439,27 @@ type OrderAdjustment {
   id: ID!
 
   """
-  The line it applies to (a product discount, already in its unitDiscount); null for the coupon
+  The line it applies to (a product discount, already in its unitDiscount); null for a cart or shipping promotion
   """
   orderItemId: ID
 
   """The discount or coupon it came from"""
   sourceId: ID
+
+  """MERCHANDISE (a line or the cart) or SHIPPING (the fee)"""
+  target: OrderAdjustmentTarget!
   type: OrderAdjustmentType!
+}
+
+"""What an order adjustment reduces"""
+enum OrderAdjustmentTarget {
+  """A line (orderItemId set) or the cart; counted in discountTotal"""
+  MERCHANDISE
+
+  """
+  The delivery fee (a free-shipping promotion); already taken off shippingTotal
+  """
+  SHIPPING
 }
 
 enum OrderAdjustmentType {
@@ -1920,6 +1946,11 @@ type Promotion {
   scope: PromotionScope!
 
   """
+  FREE_SHIPPING: only for deliveries to these shipping zones; empty for every zone
+  """
+  shippingZoneIds: [ID!]!
+
+  """
   Promotions of one group (per level: item or cart) do not combine; the best saving applies
   """
   stackingGroup: String!
@@ -2018,6 +2049,11 @@ enum PromotionType {
   each targeted unit costs value, never more than its price (not for CART)
   """
   FIXED_PRICE
+
+  """
+  the delivery fee is waived (no value) or value comes off it, never below zero; CART scope, optionally per zone
+  """
+  FREE_SHIPPING
 
   """value is a percentage, 0 to 100"""
   PERCENT
@@ -2306,7 +2342,7 @@ type Query {
 }
 
 """
-An item discount taken off a quote line (already in the line's unitDiscount)
+A promotion taken off a quote line (already in the line's unitDiscount) or off the delivery fee (shippingAdjustments)
 """
 type QuoteAdjustment {
   """Signed amount: reductions are negative"""
@@ -3095,6 +3131,9 @@ input UpdatePromotionInput {
   requiresCoupon: Boolean
   rewardTargetIds: [ID!]
   scope: PromotionScope
+
+  """Replaces the shipping zones; [] opens it to every zone"""
+  shippingZoneIds: [ID!]
   stackingGroup: String
   startsAt: DateTime
   targetIds: [ID!]

@@ -111,6 +111,7 @@ export function toPricingPromotion(promotion: PromotionWithTargets): PricingProm
     rewardTargetIds: rewardTargetIdsOf(promotion),
     tierValueType: promotion.tierValueType,
     tiers: promotion.tiers.map(toTier),
+    shippingZoneIds: promotion.shippingZones.map(({ id }) => id),
     perCustomerLimit: promotion.perCustomerLimit,
     firstOrderOnly: promotion.firstOrderOnly,
     customerGroupIds: promotion.customerGroups.map(({ id }) => id),
@@ -145,6 +146,7 @@ function toEntity(promotion: PromotionWithRelations): PromotionEntity {
     rewardTargetIds: rewardTargetIdsOf(promotion),
     customerGroupIds: promotion.customerGroups.map(({ id }) => id),
     tiers: promotion.tiers.map(toTier),
+    shippingZoneIds: promotion.shippingZones.map(({ id }) => id),
   };
 }
 
@@ -195,11 +197,13 @@ export class PromotionsService {
       rewardTargetIds: requestedRewards,
       customerGroupIds: requestedGroups,
       tiers: requestedTiers,
+      shippingZoneIds: requestedZones,
       ...fields
     } = input;
     const targetIds = [...new Set(requestedTargets)];
     const rewardTargetIds = [...new Set(requestedRewards)];
     const customerGroupIds = [...new Set(requestedGroups)];
+    const shippingZoneIds = [...new Set(requestedZones)];
     const tiers = (requestedTiers ?? []).map(toTier);
     const startsAt = input.startsAt ?? new Date();
     this.assertDefinition({
@@ -216,9 +220,11 @@ export class PromotionsService {
       rewardTargetIds,
       tierValueType: input.tierValueType ?? null,
       tiers,
+      shippingZoneIds,
     });
     await this.assertTargetsExist(input.scope, [...targetIds, ...rewardTargetIds]);
     await this.assertCustomerGroupsExist(customerGroupIds);
+    await this.assertShippingZonesExist(shippingZoneIds);
     const created = await this.auditService.record(
       (tx) =>
         this.repository.create(
@@ -229,6 +235,7 @@ export class PromotionsService {
             ...rewardTargetWrites(input.scope, rewardTargetIds, 'connect'),
             ...(customerGroupIds.length > 0 && { customerGroups: { connect: customerGroupIds.map((id) => ({ id })) } }),
             ...(tiers.length > 0 && { tiers: { create: tiers } }),
+            ...(shippingZoneIds.length > 0 && { shippingZones: { connect: shippingZoneIds.map((id) => ({ id })) } }),
           },
           tx,
         ),
@@ -241,6 +248,7 @@ export class PromotionsService {
           after: fieldValues(promotion, AUDITED_PROMOTION_FIELDS),
           targetIds,
           customerGroupIds,
+          ...(shippingZoneIds.length > 0 && { shippingZoneIds }),
           ...(rewardTargetIds.length > 0 && { rewardTargetIds }),
           ...(tiers.length > 0 && { tiers: tiers.map(auditTier) }),
         },
@@ -262,9 +270,11 @@ export class PromotionsService {
       rewardTargetIds: requestedRewards,
       customerGroupIds: requestedGroups,
       tiers: requestedTiers,
+      shippingZoneIds: requestedZones,
       ...fields
     } = input;
     const customerGroupIds = requestedGroups && [...new Set(requestedGroups)];
+    const shippingZoneIds = requestedZones && [...new Set(requestedZones)];
     const scope = input.scope ?? existing.scope;
     const scopeChanged = scope !== existing.scope;
     const existingTargets = targetIdsOf(existing);
@@ -297,11 +307,13 @@ export class PromotionsService {
       rewardTargetIds,
       tierValueType: kept(input.tierValueType, existing.tierValueType),
       tiers,
+      shippingZoneIds: shippingZoneIds ?? existing.shippingZones.map(({ id }) => id),
     });
     if (requestedTargets !== undefined || requestedRewards !== undefined) {
       await this.assertTargetsExist(scope, [...targetIds, ...rewardTargetIds]);
     }
     if (customerGroupIds) await this.assertCustomerGroupsExist(customerGroupIds);
+    if (shippingZoneIds) await this.assertShippingZonesExist(shippingZoneIds);
 
     const updated = await this.auditService.record(
       (tx) =>
@@ -313,6 +325,7 @@ export class PromotionsService {
             ...(replaceRewards && rewardTargetWrites(scope, rewardTargetIds, 'set')),
             ...(customerGroupIds && { customerGroups: { set: customerGroupIds.map((id) => ({ id })) } }),
             ...(requestedTiers && { tiers: { deleteMany: {}, create: tiers } }),
+            ...(shippingZoneIds && { shippingZones: { set: shippingZoneIds.map((id) => ({ id })) } }),
           } as Prisma.PromotionUpdateInput,
           tx,
         ),
@@ -327,6 +340,7 @@ export class PromotionsService {
           ...(replaceRewards && { rewardTargetIds }),
           ...(customerGroupIds && { customerGroupIds }),
           ...(requestedTiers && { tiers: tiers.map(auditTier) }),
+          ...(shippingZoneIds && { shippingZoneIds }),
         },
       }),
     );
@@ -550,6 +564,11 @@ export class PromotionsService {
   private async assertCustomerGroupsExist(ids: string[]): Promise<void> {
     const missing = await this.repository.missingCustomerGroups(ids);
     if (missing.length > 0) throw new BadRequestException(`Unknown customer group ids: ${missing.join(', ')}`);
+  }
+
+  private async assertShippingZonesExist(ids: string[]): Promise<void> {
+    const missing = await this.repository.missingShippingZones(ids);
+    if (missing.length > 0) throw new BadRequestException(`Unknown shipping zone ids: ${missing.join(', ')}`);
   }
 
   private async findOrThrow(id: string): Promise<PromotionWithRelations> {

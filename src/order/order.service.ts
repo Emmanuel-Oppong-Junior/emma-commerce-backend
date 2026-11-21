@@ -69,6 +69,8 @@ export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments'> {
 
 interface Fulfilment {
   shippingFee: Prisma.Decimal;
+  /** The delivery zone; null for pickup. */
+  shippingZoneId: string | null;
   shippingAddressId?: string;
   pickupLocationId?: string;
   shippingAddressSnapshot?: Record<string, unknown>;
@@ -90,9 +92,13 @@ function quoteChanged(): ConflictException {
   });
 }
 
-/** The promotions the quote takes something off with, at item or cart level. */
-function appliedPromotionIds(quote: Pick<Quote, 'lines' | 'adjustments'>): string[] {
-  const adjustments = [...quote.lines.flatMap((line) => line.adjustments), ...quote.adjustments];
+/** The promotions the quote takes something off with, at item, cart or shipping level. */
+function appliedPromotionIds(quote: Pick<Quote, 'lines' | 'adjustments' | 'shippingAdjustments'>): string[] {
+  const adjustments = [
+    ...quote.lines.flatMap((line) => line.adjustments),
+    ...quote.adjustments,
+    ...quote.shippingAdjustments,
+  ];
   return [...new Set(adjustments.map((adjustment) => adjustment.sourceId))];
 }
 
@@ -183,7 +189,7 @@ export class OrdersService {
     const { snapshot, couponCode } = await this.buildOrderDetails(
       cart.items,
       userId,
-      fulfilment.shippingFee,
+      fulfilment,
       params.couponCode,
       tx,
     );
@@ -198,8 +204,10 @@ export class OrdersService {
     if (!shippingAddressId) throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
     const address = await this.ensureValidShippingAddress(userId, shippingAddressId, tx);
     assertDeliverableAddress(address);
+    const zone = await this.shippingZonesService.getZoneForCity(address.city, tx);
     return {
-      shippingFee: await this.shippingZonesService.getFeeForCity(address.city, tx),
+      shippingFee: zone.fee,
+      shippingZoneId: zone.id,
       shippingAddressId,
       shippingAddressSnapshot: toAddressSnapshot(address),
     };
@@ -210,6 +218,7 @@ export class OrdersService {
     const location = await this.pickupLocationsService.findActiveById(pickupLocationId, tx);
     return {
       shippingFee: new Prisma.Decimal(0),
+      shippingZoneId: null,
       pickupLocationId,
       pickupLocationSnapshot: {
         name: location.name,
@@ -511,7 +520,7 @@ export class OrdersService {
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
-    shippingFee: Prisma.Decimal,
+    shipping: Pick<Fulfilment, 'shippingFee' | 'shippingZoneId'>,
     couponCode: string | undefined,
     tx: Prisma.TransactionClient | undefined,
   ): Promise<{ snapshot: OrderSnapshot; couponCode?: { id: string; promotionId: string } }> {
@@ -547,7 +556,8 @@ export class OrdersService {
             taxable: variant.product.isTaxable && variant.basePrice !== null,
           })),
           couponCode: promotions.couponCode,
-          shippingFee,
+          shippingFee: shipping.shippingFee,
+          shippingZoneId: shipping.shippingZoneId,
         },
         {
           currency,

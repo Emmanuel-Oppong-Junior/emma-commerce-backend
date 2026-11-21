@@ -3,6 +3,7 @@ import {
   Address,
   FulfillmentType,
   Order,
+  OrderAdjustmentTarget,
   OrderItem,
   OrderStatus,
   PaymentIntentStatus,
@@ -166,11 +167,16 @@ export class OrdersRepository {
         },
       });
     }
-    if (snapshot.adjustments.length > 0) {
+    const orderAdjustments = [
+      ...snapshot.adjustments.map((adjustment) => ({ ...adjustment, target: OrderAdjustmentTarget.MERCHANDISE })),
+      ...snapshot.shippingAdjustments.map((adjustment) => ({ ...adjustment, target: OrderAdjustmentTarget.SHIPPING })),
+    ];
+    if (orderAdjustments.length > 0) {
       await tx.orderAdjustment.createMany({
-        data: snapshot.adjustments.map(({ type, sourceId, code, amount }) => ({
+        data: orderAdjustments.map(({ type, target, sourceId, code, amount }) => ({
           orderId: order.id,
           type,
+          target,
           sourceId,
           code,
           amount,

@@ -25,6 +25,12 @@ function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number, target
     requiresCoupon: false,
     usageLimit: null,
     usedCount: 0,
+    unitCap: null,
+    unitsUsed: 0,
+    buyQuantity: null,
+    getQuantity: null,
+    maxApplications: null,
+    tierValueType: null,
     perCustomerLimit: null,
     createdAt: new Date(0),
     ...IN_DATE,
@@ -33,6 +39,12 @@ function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number, target
     categories: [],
     brands: [],
     customerGroups: [],
+    rewardVariants: [],
+    rewardProducts: [],
+    rewardCategories: [],
+    rewardBrands: [],
+    tiers: [],
+    shippingZones: [],
     firstOrderOnly: false,
   };
 }
@@ -70,7 +82,11 @@ async function priceOneUnit(unitPrice: number, discounts: ReturnType<typeof onPr
     taxable: false,
   };
   const quote = price(
-    { lines: [{ ...line, unitListPrice: new Prisma.Decimal(unitPrice) }], shippingFee: new Prisma.Decimal(0) },
+    {
+      lines: [{ ...line, unitListPrice: new Prisma.Decimal(unitPrice) }],
+      shippingFee: new Prisma.Decimal(0),
+      shippingZoneId: null,
+    },
     { currency: 'GHS', now, promotions, taxRates: [], customer },
   );
   const [priced] = quote.lines;
@@ -147,7 +163,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       {} as never,
       { reserve: jest.fn().mockResolvedValue(true) } as never,
       { record: jest.fn() } as never,
-      { getFeeForCity: jest.fn().mockResolvedValue(new Prisma.Decimal(30)) } as never,
+      { getZoneForCity: jest.fn().mockResolvedValue({ id: 'zone-1', fee: new Prisma.Decimal(30) }) } as never,
       {} as never,
       {} as never,
       promotions,

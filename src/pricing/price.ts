@@ -37,6 +37,8 @@ export interface PricingPromotion {
   tierValueType: PromotionType | null;
   /** TIERED: by minimumQuantity of targeted units (item scopes) or minimumSpend (CART). */
   tiers: readonly PricingTier[];
+  /** FREE_SHIPPING: only for deliveries to these zones; empty for every zone. */
+  shippingZoneIds: readonly string[];
   minimumSpend: Decimal | null;
   minimumQuantity: number | null;
   startsAt: Date;
@@ -103,6 +105,8 @@ export interface PricingCart {
   couponCode?: PricingCouponCode;
   /** The fee of the chosen fulfilment: the delivery zone's fee, or 0 for pickup. */
   shippingFee: Decimal;
+  /** The delivery zone; null for pickup. */
+  shippingZoneId: string | null;
 }
 
 /** Everything else the price depends on, read at one moment. */
@@ -166,7 +170,8 @@ export type UnhashedQuote = Omit<Quote, 'quoteHash'>;
 /**
  * Every amount is exact to the pesewa and
  *   grandTotal = Σ unitNet × quantity + Σ order adjustments + taxTotal + shippingTotal
- *              = subtotal - discountTotal + shippingTotal.
+ *              = subtotal - discountTotal + shippingTotal,
+ *   shippingTotal = the fee + Σ shipping adjustments.
  */
 export interface Quote {
   currency: Currency;
@@ -175,12 +180,17 @@ export interface Quote {
   lines: QuoteLine[];
   /** The cart promotions that take something off. */
   adjustments: QuoteOrderAdjustment[];
+  /** The free-shipping promotions that take something off the delivery fee (already in shippingTotal). */
+  shippingAdjustments: QuoteAdjustment[];
   /** Σ unitListPrice × quantity. */
   subtotal: Decimal;
-  /** Item discounts plus order adjustments, as a positive amount. */
+  /** Item discounts plus order adjustments (merchandise only, not shipping), as a positive amount. */
   discountTotal: Decimal;
   taxTotal: Decimal;
+  /** The delivery fee after free-shipping promotions. */
   shippingTotal: Decimal;
+  /** The delivery zone priced (null for pickup): zone-limited free shipping depends on it. */
+  shippingZoneId: string | null;
   /** The amount to charge. */
   grandTotal: Decimal;
   /** SHA-256 of every value that determines the charge (see quote-hash.ts). */
@@ -210,8 +220,13 @@ export class CouponNotApplicableError extends Error {}
  *   save Y) applies as the highest tier that subtotal reaches. Every stacking group
  *   contributes the promotion saving the most on that subtotal; the winners apply one after the other on what is left,
  *   each allocated to the lines by largest remainder;
+ * - shipping level (FREE_SHIPPING, CART scope): a candidate applies when the delivery zone is one of its zones (or it
+ *   has none) and the subtotal after item and cart promotions reaches its minimum spend; it waives the fee (no value)
+ *   or takes value off it, never below zero. One winner per stacking group, applied in priority order on what is left
+ *   of the fee. Pickup has no fee, so it saves nothing there;
  * - exclusive: when exclusive candidates save anything, only the one saving the most on the whole cart applies, alone
- *   (an item one on the units it offers, a cart one on the list-price subtotal), and no other promotion does;
+ *   (an item one on the units it offers, a cart one on the list-price subtotal, a shipping one on the fee), and no
+ *   other promotion does;
  * - every tie between equal savings goes to the lowest priority number, then the oldest promotion (createdAt, id);
  * - a taxable price includes the active taxes: per unit, the net is the discounted price over (1 + Σ rates), rounded
  *   half-up, the tax is the rest, split over the rates by largest remainder; cart promotions and shipping are untaxed.
@@ -244,14 +259,23 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
         reachesMinimums(promotion, grossSubtotal.amount, targetedQuantity(promotion, cart.lines)),
     )
     .flatMap((promotion) => offersOf(promotion, cart.lines));
+  const fee = money(cart.shippingFee);
+  if (fee.isNegative() || !fee.equals(fee.roundHalfUp())) {
+    throw new RangeError(`Shipping must be whole pesewas and not negative, got ${fee.amount.toString()}`);
+  }
+  const coversZone = (promotion: PricingPromotion) =>
+    promotion.shippingZoneIds.length === 0 ||
+    (cart.shippingZoneId !== null && promotion.shippingZoneIds.includes(cart.shippingZoneId));
   const exclusive = bestExclusive(
     cart.lines,
     itemOffers,
     candidates.filter(
       (promotion) =>
-        promotion.scope === PromotionScope.CART && reachesMinimums(promotion, grossSubtotal.amount, cartQuantity),
+        (isCartLevel(promotion) || (isShippingLevel(promotion) && coversZone(promotion))) &&
+        reachesMinimums(promotion, grossSubtotal.amount, cartQuantity),
     ),
     grossSubtotal.amount,
+    fee.amount,
   );
   const allowed = (promotion: PricingPromotion) => (exclusive ? promotion === exclusive : !promotion.exclusive);
 
@@ -264,15 +288,13 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   );
 
   const merchandise = lines.reduce((sum, line) => sum.add(money(line.lineTotal)), zero);
-  if (couponPromotion?.scope === PromotionScope.CART) {
+  if (couponPromotion && isCartLevel(couponPromotion)) {
     const rejection = minimumsRejection(couponPromotion, merchandise.amount, cartQuantity);
     if (rejection) throw new CouponNotApplicableError(rejection);
   }
   const cartCandidates = candidates.filter(
     (promotion) =>
-      promotion.scope === PromotionScope.CART &&
-      allowed(promotion) &&
-      reachesMinimums(promotion, merchandise.amount, cartQuantity),
+      isCartLevel(promotion) && allowed(promotion) && reachesMinimums(promotion, merchandise.amount, cartQuantity),
   );
   const adjustments: QuoteOrderAdjustment[] = [];
   const remaining = lines.map((line) => money(line.lineTotal));
@@ -291,10 +313,31 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
     });
   }
 
-  const shipping = money(cart.shippingFee);
-  if (shipping.isNegative() || !shipping.equals(shipping.roundHalfUp())) {
-    throw new RangeError(`Shipping must be whole pesewas and not negative, got ${shipping.amount.toString()}`);
+  const afterCart = remaining.reduce((sum, amount) => sum.add(amount), zero);
+  if (couponPromotion && isShippingLevel(couponPromotion)) {
+    const rejection = minimumsRejection(couponPromotion, afterCart.amount, cartQuantity);
+    if (rejection) throw new CouponNotApplicableError(rejection);
+    // A pickup order has no zone and no fee: the code does nothing there, which is not an error.
+    if (cart.shippingZoneId !== null && !coversZone(couponPromotion)) {
+      throw new CouponNotApplicableError('This coupon does not cover delivery to your area');
+    }
   }
+  const shippingCandidates = candidates.filter(
+    (promotion) =>
+      isShippingLevel(promotion) &&
+      allowed(promotion) &&
+      coversZone(promotion) &&
+      reachesMinimums(promotion, afterCart.amount, cartQuantity),
+  );
+  const shippingAdjustments: QuoteAdjustment[] = [];
+  let shipping = fee;
+  for (const promotion of groupWinners(shippingCandidates, (each) => feeSaving(fee.amount, each))) {
+    const saving = feeSaving(shipping.amount, promotion);
+    if (!saving.gt(0)) continue;
+    shippingAdjustments.push(adjustmentFrom(promotion, saving, cart.couponCode));
+    shipping = shipping.subtract(money(saving));
+  }
+
   const itemDiscounts = lines.reduce((sum, line) => sum.add(money(line.unitDiscount).times(line.quantity)), zero);
   const orderDiscounts = adjustments.reduce((sum, adjustment) => sum.subtract(money(adjustment.amount)), zero);
   const discountTotal = itemDiscounts.add(orderDiscounts);
@@ -305,10 +348,12 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
     pricingVersion: PRICING_VERSION,
     lines,
     adjustments,
+    shippingAdjustments,
     subtotal: grossSubtotal.amount,
     discountTotal: discountTotal.amount,
     taxTotal: taxTotal.amount,
     shippingTotal: shipping.amount,
+    shippingZoneId: cart.shippingZoneId,
     grandTotal: grossSubtotal.subtract(discountTotal).add(shipping).amount,
   };
 }
@@ -677,28 +722,45 @@ export function displayUnitPromotions(
 
 /**
  * The exclusive candidate saving the most on the whole cart on its own (an item one on the units it offers, a cart
- * one on the list-price subtotal), when one saves anything.
+ * one on the list-price subtotal, a shipping one on the fee), when one saves anything.
  */
 function bestExclusive(
   lines: readonly PricingLine[],
   itemOffers: readonly LineOffer[],
-  cartCandidates: readonly PricingPromotion[],
+  orderCandidates: readonly PricingPromotion[],
   grossSubtotal: Decimal,
+  fee: Decimal,
 ): PricingPromotion | undefined {
   const aloneSaving = (promotion: PricingPromotion) =>
-    promotion.scope === PromotionScope.CART
-      ? cartSaving(grossSubtotal, cartRule(promotion, grossSubtotal))
-      : itemOffers
-          .filter((offer) => offer.promotion === promotion)
-          .reduce(
-            (sum, offer) => sum.add(unitSaving(lines[offer.lineIndex].unitListPrice, offer.rule).mul(offer.units)),
-            new Decimal(0),
-          );
+    isShippingLevel(promotion)
+      ? feeSaving(fee, promotion)
+      : isCartLevel(promotion)
+        ? cartSaving(grossSubtotal, cartRule(promotion, grossSubtotal))
+        : itemOffers
+            .filter((offer) => offer.promotion === promotion)
+            .reduce(
+              (sum, offer) => sum.add(unitSaving(lines[offer.lineIndex].unitListPrice, offer.rule).mul(offer.units)),
+              new Decimal(0),
+            );
   const itemCandidates = [...new Set(itemOffers.map((offer) => offer.promotion))];
   return best(
-    [...itemCandidates, ...cartCandidates].filter((promotion) => promotion.exclusive),
+    [...itemCandidates, ...orderCandidates].filter((promotion) => promotion.exclusive),
     aloneSaving,
   );
+}
+
+/** A cart promotion reducing the merchandise (not a free-shipping one). */
+function isCartLevel(promotion: PricingPromotion): boolean {
+  return promotion.scope === PromotionScope.CART && promotion.type !== PromotionType.FREE_SHIPPING;
+}
+
+function isShippingLevel(promotion: PricingPromotion): boolean {
+  return promotion.type === PromotionType.FREE_SHIPPING;
+}
+
+/** What a free-shipping promotion takes off a fee: all of it (no value) or value, never more than the fee. */
+function feeSaving(fee: Decimal, promotion: PricingPromotion): Decimal {
+  return promotion.value === null ? fee : Decimal.min(fee, Decimal.max(0, promotion.value));
 }
 
 /**

@@ -59,7 +59,14 @@ export class ShippingZonesService {
     );
   }
 
+  /**
+   * Deletes a zone. A zone a free-shipping promotion is limited to cannot be deleted: dropping it would open that
+   * promotion to every zone.
+   */
   async delete(id: string, actorId: string): Promise<ShippingZone> {
+    if ((await this.repository.countPromotions(id)) > 0) {
+      throw new ConflictException(`Shipping zone "${id}" limits promotions; take it off them before deleting it`);
+    }
     return this.auditService.record(
       (tx) => this.repository.delete(id, tx),
       (deleted) => ({
@@ -91,11 +98,19 @@ export class ShippingZonesService {
    * Throws BadRequestException when no active zone covers it: delivery there is not offered.
    */
   async getFeeForCity(city: string, db?: Prisma.TransactionClient): Promise<Decimal> {
+    return (await this.getZoneForCity(city, db)).fee;
+  }
+
+  /**
+   * The active zone covering the city (its id and fee).
+   * Throws BadRequestException when no active zone covers it: delivery there is not offered.
+   */
+  async getZoneForCity(city: string, db?: Prisma.TransactionClient): Promise<ShippingZone> {
     const zone = await this.repository.findByCity(normaliseCity(city), db);
     if (!zone) {
       throw new BadRequestException(`Delivery is not available to city "${city}": no active shipping zone covers it`);
     }
-    return zone.fee;
+    return zone;
   }
 
   /**

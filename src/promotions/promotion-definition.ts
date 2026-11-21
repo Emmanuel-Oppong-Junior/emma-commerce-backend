@@ -22,6 +22,7 @@ export interface PromotionDefinition {
   rewardTargetIds: readonly string[];
   tierValueType: PromotionType | null;
   tiers: readonly PromotionTierDefinition[];
+  shippingZoneIds: readonly string[];
 }
 
 const SIMPLE_TYPES: readonly PromotionType[] = [
@@ -36,8 +37,15 @@ export function promotionDefinitionError(definition: PromotionDefinition): strin
   const cart = scope === PromotionScope.CART;
   if (type === PromotionType.TIERED) {
     if (value !== null) return 'A TIERED promotion takes no value: its tiers carry the values';
-  } else if (value === null) {
+  } else if (value === null && type !== PromotionType.FREE_SHIPPING) {
     return `A ${type} promotion needs a value`;
+  }
+  if (type === PromotionType.FREE_SHIPPING) {
+    if (!cart) return 'A FREE_SHIPPING promotion has CART scope: it reduces the delivery fee of the whole order';
+    if (value?.lte(0))
+      return "A FREE_SHIPPING promotion's value (amount off the fee) must be above 0; omit it to waive the fee";
+  } else if (definition.shippingZoneIds.length > 0) {
+    return 'shippingZoneIds apply to FREE_SHIPPING promotions only';
   }
   if ((type === PromotionType.PERCENT || type === PromotionType.BXGY) && value?.gt(100)) {
     return `A ${type} promotion's value must be at most 100 (a percentage), got ${value.toString()}`;

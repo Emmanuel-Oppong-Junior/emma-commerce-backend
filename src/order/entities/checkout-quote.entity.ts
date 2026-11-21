@@ -25,7 +25,10 @@ export class QuoteTaxLine {
   amount: Decimal;
 }
 
-@ObjectType({ description: "An item discount taken off a quote line (already in the line's unitDiscount)" })
+@ObjectType({
+  description:
+    "A promotion taken off a quote line (already in the line's unitDiscount) or off the delivery fee (shippingAdjustments)",
+})
 export class QuoteAdjustment {
   @Field(() => OrderAdjustmentTypeEnum)
   type: OrderAdjustmentType;
@@ -137,19 +140,28 @@ export class CheckoutQuote {
   @Field(() => [QuoteLine], { description: 'In cart order' })
   lines: QuoteLine[];
 
-  @Field(() => [QuoteOrderAdjustment], { description: 'The coupon, if it takes anything off' })
+  @Field(() => [QuoteOrderAdjustment], {
+    description: 'The cart promotions (the coupon among them) that take anything off',
+  })
   adjustments: QuoteOrderAdjustment[];
+
+  @Field(() => [QuoteAdjustment], {
+    description: 'The free-shipping promotions that take anything off the delivery fee (already in shippingTotal)',
+  })
+  shippingAdjustments: QuoteAdjustment[];
 
   @Field(() => MoneyObject, { description: 'Sum of unit list price x quantity, before any discount, tax included' })
   subtotal: Decimal;
 
-  @Field(() => MoneyObject, { description: 'Item discounts plus the coupon' })
+  @Field(() => MoneyObject, {
+    description: 'Item and cart promotions (merchandise only; shipping ones are in shippingTotal)',
+  })
   discountTotal: Decimal;
 
   @Field(() => MoneyObject, { description: 'Tax included in the line totals' })
   taxTotal: Decimal;
 
-  @Field(() => MoneyObject, { description: 'Shipping (0 for pickup)' })
+  @Field(() => MoneyObject, { description: 'The delivery fee after free-shipping promotions (0 for pickup)' })
   shippingTotal: Decimal;
 
   @Field(() => MoneyObject, {

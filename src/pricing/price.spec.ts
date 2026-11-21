@@ -65,6 +65,7 @@ const promotion = (
   rewardTargetIds: [],
   tierValueType: null,
   tiers: [],
+  shippingZoneIds: [],
   perCustomerLimit: null,
   firstOrderOnly: false,
   customerGroupIds: [],
@@ -145,6 +146,7 @@ interface TestCart extends PricingCart {
 const cart = (lines: PricingLine[], overrides: Partial<TestCart> = {}): TestCart => ({
   lines,
   shippingFee: d(0),
+  shippingZoneId: null,
   ...overrides,
 });
 
@@ -1022,6 +1024,123 @@ describe('price', () => {
     });
   });
 
+  describe('free shipping (P2-B.6)', () => {
+    const freeShipping = (id: string, value: Decimal.Value | null, overrides: Partial<PricingPromotion> = {}) =>
+      promotion(id, 'FREE_SHIPPING', 0, {
+        scope: 'CART',
+        targetIds: [],
+        value: value === null ? null : d(value),
+        ...overrides,
+      });
+    const delivery = (zone: string | null, fee: Decimal.Value, overrides: Partial<TestCart> = {}) =>
+      cart([line({ unitListPrice: d(120) })], { shippingFee: d(fee), shippingZoneId: zone, ...overrides });
+    const shippingSummary = (quote: Quote) => ({
+      shippingTotal: money(quote.shippingTotal),
+      adjustments: quote.shippingAdjustments.map((a) => [a.type, a.sourceId, money(a.amount)]),
+    });
+
+    it('waives the fee as its own adjustment, leaving the merchandise discounts alone', () => {
+      const quote = price(delivery('z1', 25), context({ promotions: [freeShipping('free', null)] }));
+
+      expect(shippingSummary(quote)).toEqual({ shippingTotal: '0.00', adjustments: [['DISCOUNT', 'free', '-25.00']] });
+      expect(quote.discountTotal).toEqual(d(0));
+      expect(money(quote.grandTotal)).toBe('120.00');
+      expectBalanced(quote);
+    });
+
+    it('takes a fixed amount off the fee, never below zero', () => {
+      expect(shippingSummary(price(delivery('z1', 25), context({ promotions: [freeShipping('ten', 10)] })))).toEqual({
+        shippingTotal: '15.00',
+        adjustments: [['DISCOUNT', 'ten', '-10.00']],
+      });
+      expect(price(delivery('z1', 25), context({ promotions: [freeShipping('forty', 40)] })).shippingTotal).toEqual(
+        d(0),
+      );
+    });
+
+    it('applies only in its zones, and saves nothing on a pickup order', () => {
+      const accraOnly = freeShipping('accra', null, { shippingZoneIds: ['accra'] });
+      const anywhere = freeShipping('anywhere', null);
+
+      expect(price(delivery('kumasi', 25), context({ promotions: [accraOnly] })).shippingTotal).toEqual(d(25));
+      expect(price(delivery('accra', 25), context({ promotions: [accraOnly] })).shippingTotal).toEqual(d(0));
+      expect(price(delivery(null, 0), context({ promotions: [accraOnly, anywhere] })).shippingAdjustments).toEqual([]);
+    });
+
+    it('measures its minimum spend after item and cart promotions, before tax is taken out', () => {
+      const over100 = freeShipping('over100', null, { minimumSpend: d(100) });
+
+      const plain = price(
+        delivery('z1', 25, { lines: [line({ unitListPrice: d(120), taxable: true })] }),
+        context({ promotions: [over100], taxRates: GHANA }),
+      );
+      const afterCart = price(
+        delivery('z1', 25, { coupon: coupon({ value: d(30) }) }),
+        context({ promotions: [over100] }),
+      );
+      const afterItem = price(delivery('z1', 25), context({ promotions: [over100, flat('item', 25)] }));
+
+      expect(plain.shippingTotal).toEqual(d(0));
+      expect(afterCart.shippingTotal).toEqual(d(25));
+      expect(afterItem.shippingTotal).toEqual(d(25));
+    });
+
+    it('stacks across groups on what is left of the fee, and keeps one winner per group', () => {
+      const amount = freeShipping('amount', 10, { stackingGroup: 'a', priority: 0 });
+      const waive = freeShipping('waive', null, { stackingGroup: 'b', priority: 1 });
+      const sameGroup = [freeShipping('small', 5), freeShipping('big', 20)];
+
+      expect(shippingSummary(price(delivery('z1', 25), context({ promotions: [waive, amount] })))).toEqual({
+        shippingTotal: '0.00',
+        adjustments: [
+          ['DISCOUNT', 'amount', '-10.00'],
+          ['DISCOUNT', 'waive', '-15.00'],
+        ],
+      });
+      expect(shippingSummary(price(delivery('z1', 25), context({ promotions: sameGroup })))).toEqual({
+        shippingTotal: '5.00',
+        adjustments: [['DISCOUNT', 'big', '-20.00']],
+      });
+    });
+
+    it('lets an exclusive free shipping that saves the most apply alone, and lose to a bigger exclusive saving', () => {
+      const exclusiveShipping = freeShipping('ship', null, { exclusive: true });
+      const smallItem = pct('item10', 10, { exclusive: true });
+
+      const shippingWins = price(
+        delivery('z1', 25),
+        context({ promotions: [exclusiveShipping, smallItem, flat('other', 1)] }),
+      );
+      const itemWins = price(delivery('z1', 5), context({ promotions: [exclusiveShipping, smallItem] }));
+
+      expect(shippingWins.shippingAdjustments.map((a) => a.sourceId)).toEqual(['ship']);
+      expect(shippingWins.discountTotal).toEqual(d(0));
+      expect(itemWins.shippingAdjustments).toEqual([]);
+      expect(itemWins.lines[0].adjustments.map((a) => a.sourceId)).toEqual(['item10']);
+    });
+
+    it('unlocks free shipping with a coupon code, refuses it outside its zones, and lets it do nothing on pickup', () => {
+      const shippingCoupon = freeShipping('cpn1', null, { requiresCoupon: true, shippingZoneIds: ['accra'] });
+
+      const unlocked = price(delivery('accra', 25, { coupon: shippingCoupon }), context());
+      const pickup = price(delivery(null, 0, { coupon: shippingCoupon }), context());
+      const elsewhere = () => price(delivery('kumasi', 25, { coupon: shippingCoupon }), context());
+
+      expect(unlocked.shippingAdjustments).toEqual([
+        { type: 'COUPON', sourceId: 'cpn1', code: 'SAVE', amount: d('-25.00') },
+      ]);
+      expect(pickup.shippingAdjustments).toEqual([]);
+      expect(elsewhere).toThrow(CouponNotApplicableError);
+      expect(elsewhere).toThrow('does not cover delivery to your area');
+    });
+
+    it('puts the delivery zone in the quote hash', () => {
+      expect(price(delivery('accra', 25), context()).quoteHash).not.toBe(
+        price(delivery('tema', 25), context()).quoteHash,
+      );
+    });
+  });
+
   describe('tax', () => {
     it('splits a tax-inclusive price into its net and the tax in it, one tax line per active tax', () => {
       const quote = price(cart([line({ taxable: true, quantity: 2 })]), context({ taxRates: GHANA }));
@@ -1449,79 +1568,103 @@ describe('price', () => {
       },
     );
 
-    it.each(seeds)('holds with BXGY, volume tiers and spend tiers mixed with the other types, from seed %i', (seed) => {
-      const next = sequence(seed * 104_729);
-      const pesewas = (max: number) => d(next(max)).div(100);
+    it.each(seeds)(
+      'holds with BXGY, volume and spend tiers and free shipping mixed with the other types, from seed %i',
+      (seed) => {
+        const next = sequence(seed * 104_729);
+        const pesewas = (max: number) => d(next(max)).div(100);
 
-      for (let run = 0; run < 300; run += 1) {
-        const lines = Array.from({ length: 1 + next(6) }, (_, index) =>
-          line({
-            variantId: `v${index}`,
-            productId: `p${next(3)}`,
-            categoryId: `c${next(2)}`,
-            quantity: 1 + next(6),
-            unitListPrice: pesewas(50_000),
-            taxable: next(3) !== 0,
-          }),
-        );
-        const common = () => ({
-          stackingGroup: `g${next(3)}`,
-          exclusive: next(6) === 0,
-          priority: next(3),
-          createdAt: new Date(2026, 0, 1 + next(3)),
-          ...(next(4) === 0 && { unitCap: 1 + next(8), unitsUsed: next(3) }),
-        });
-        const promotions = Array.from({ length: 1 + next(6) }, (_, index): PricingPromotion => {
-          const kind = next(4);
-          if (kind === 0) {
-            return bxgy(`b${index}`, 1 + next(3), 1 + next(2), 1 + next(100), {
-              scope: 'CATEGORY',
-              targetIds: [`c${next(2)}`],
-              rewardTargetIds: next(2) === 0 ? [`c${next(2)}`] : [],
-              maxApplications: next(3) === 0 ? 1 + next(2) : null,
-              ...common(),
-            });
-          }
-          if (kind === 1) {
-            const low = 1 + next(4);
-            return tiered(
-              `t${index}`,
-              (['PERCENT', 'AMOUNT_OFF', 'FIXED_PRICE'] as const)[next(3)],
-              [
-                [low, 1 + next(40)],
-                [low + 1 + next(4), 41 + next(59)],
-              ],
-              { scope: 'PRODUCT', targetIds: [`p${next(3)}`], ...common() },
-            );
-          }
-          if (kind === 2) {
-            const cartCommon = { ...common(), unitCap: null, unitsUsed: 0 };
-            return tiered(
-              `s${index}`,
-              next(2) === 0 ? 'PERCENT' : 'AMOUNT_OFF',
-              [
-                [pesewas(100_000), 1 + next(30)],
-                [d(1000).add(pesewas(100_000)), 31 + next(60)],
-              ],
-              { ...cartCommon, scope: 'CART', targetIds: [] },
-            );
-          }
-          return pct(`p${index}`, next(101), { scope: 'SKU', targetIds: [`v${next(6)}`], ...common() });
-        });
-        const shippingFee = pesewas(5_000);
+        for (let run = 0; run < 300; run += 1) {
+          const lines = Array.from({ length: 1 + next(6) }, (_, index) =>
+            line({
+              variantId: `v${index}`,
+              productId: `p${next(3)}`,
+              categoryId: `c${next(2)}`,
+              quantity: 1 + next(6),
+              unitListPrice: pesewas(50_000),
+              taxable: next(3) !== 0,
+            }),
+          );
+          const common = () => ({
+            stackingGroup: `g${next(3)}`,
+            exclusive: next(6) === 0,
+            priority: next(3),
+            createdAt: new Date(2026, 0, 1 + next(3)),
+            ...(next(4) === 0 && { unitCap: 1 + next(8), unitsUsed: next(3) }),
+          });
+          const promotions = Array.from({ length: 1 + next(6) }, (_, index): PricingPromotion => {
+            const kind = next(5);
+            if (kind === 0) {
+              return bxgy(`b${index}`, 1 + next(3), 1 + next(2), 1 + next(100), {
+                scope: 'CATEGORY',
+                targetIds: [`c${next(2)}`],
+                rewardTargetIds: next(2) === 0 ? [`c${next(2)}`] : [],
+                maxApplications: next(3) === 0 ? 1 + next(2) : null,
+                ...common(),
+              });
+            }
+            if (kind === 1) {
+              const low = 1 + next(4);
+              return tiered(
+                `t${index}`,
+                (['PERCENT', 'AMOUNT_OFF', 'FIXED_PRICE'] as const)[next(3)],
+                [
+                  [low, 1 + next(40)],
+                  [low + 1 + next(4), 41 + next(59)],
+                ],
+                { scope: 'PRODUCT', targetIds: [`p${next(3)}`], ...common() },
+              );
+            }
+            if (kind === 2) {
+              const cartCommon = { ...common(), unitCap: null, unitsUsed: 0 };
+              return tiered(
+                `s${index}`,
+                next(2) === 0 ? 'PERCENT' : 'AMOUNT_OFF',
+                [
+                  [pesewas(100_000), 1 + next(30)],
+                  [d(1000).add(pesewas(100_000)), 31 + next(60)],
+                ],
+                { ...cartCommon, scope: 'CART', targetIds: [] },
+              );
+            }
+            if (kind === 3) {
+              return promotion(`f${index}`, 'FREE_SHIPPING', 0, {
+                ...common(),
+                unitCap: null,
+                unitsUsed: 0,
+                scope: 'CART',
+                targetIds: [],
+                value: next(2) === 0 ? null : pesewas(4_000),
+                shippingZoneIds: next(2) === 0 ? [] : [`z${next(2)}`],
+                minimumSpend: next(3) === 0 ? pesewas(200_000) : null,
+              });
+            }
+            return pct(`p${index}`, next(101), { scope: 'SKU', targetIds: [`v${next(6)}`], ...common() });
+          });
+          const pickup = next(4) === 0;
+          const shipping = {
+            shippingFee: pickup ? d(0) : pesewas(5_000),
+            shippingZoneId: pickup ? null : `z${next(2)}`,
+          };
 
-        const quote = price(cart(lines, { shippingFee }), context({ promotions, taxRates: GHANA }));
-        const again = price(
-          cart(shuffled(lines, next), { shippingFee }),
-          context({ promotions: shuffled(promotions, next), taxRates: shuffled(GHANA, next) }),
-        );
+          const quote = price(cart(lines, shipping), context({ promotions, taxRates: GHANA }));
+          const again = price(
+            cart(shuffled(lines, next), shipping),
+            context({ promotions: shuffled(promotions, next), taxRates: shuffled(GHANA, next) }),
+          );
 
-        expectBalanced(quote);
-        expect(again.quoteHash).toBe(quote.quoteHash);
-        expectCartCovered(quote, lines);
-        expectWithinUnitCaps(quote, promotions);
-        for (const l of quote.lines) expect(l.unitDiscount.lte(l.unitListPrice)).toBe(true);
-      }
-    });
+          expectBalanced(quote);
+          expectSame(
+            sum([shipping.shippingFee, ...quote.shippingAdjustments.map((a) => a.amount)]),
+            quote.shippingTotal,
+          );
+          expect(quote.shippingTotal.isNegative()).toBe(false);
+          expect(again.quoteHash).toBe(quote.quoteHash);
+          expectCartCovered(quote, lines);
+          expectWithinUnitCaps(quote, promotions);
+          for (const l of quote.lines) expect(l.unitDiscount.lte(l.unitListPrice)).toBe(true);
+        }
+      },
+    );
   });
 });

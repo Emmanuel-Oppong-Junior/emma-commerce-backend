@@ -18,7 +18,10 @@ const greaterAccra = {
 
 describe('ShippingZonesService', () => {
   let repository: jest.Mocked<
-    Pick<ShippingZonesRepository, 'create' | 'update' | 'delete' | 'findByCity' | 'findCoveringAnyCity' | 'findById'>
+    Pick<
+      ShippingZonesRepository,
+      'create' | 'update' | 'delete' | 'countPromotions' | 'findByCity' | 'findCoveringAnyCity' | 'findById'
+    >
   >;
   let audit: ReturnType<typeof createAuditServiceMock>;
   let addressesService: jest.Mocked<Pick<AddressesService, 'getAddress'>>;
@@ -29,6 +32,7 @@ describe('ShippingZonesService', () => {
       create: jest.fn().mockImplementation(async (data) => ({ ...greaterAccra, ...data })),
       update: jest.fn().mockImplementation(async (id, data) => ({ ...greaterAccra, id, ...data })),
       delete: jest.fn().mockResolvedValue(greaterAccra),
+      countPromotions: jest.fn().mockResolvedValue(0),
       findByCity: jest.fn(),
       findCoveringAnyCity: jest.fn().mockResolvedValue([]),
       findById: jest.fn(),
@@ -36,6 +40,13 @@ describe('ShippingZonesService', () => {
     addressesService = { getAddress: jest.fn() };
     audit = createAuditServiceMock();
     service = new ShippingZonesService(repository as never, addressesService as never, audit as never);
+  });
+
+  it('refuses to delete a zone a free-shipping promotion is limited to (it would open it to every zone)', async () => {
+    repository.countPromotions.mockResolvedValue(1);
+
+    await expect(service.delete('zone-accra', 'admin1')).rejects.toThrow(ConflictException);
+    expect(repository.delete).not.toHaveBeenCalled();
   });
 
   describe('getFeeForCity', () => {

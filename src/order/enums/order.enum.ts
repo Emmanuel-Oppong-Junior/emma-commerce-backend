@@ -56,3 +56,17 @@ export enum OrderAdjustmentTypeEnum {
 }
 
 registerEnumType(OrderAdjustmentTypeEnum, { name: 'OrderAdjustmentType' });
+
+export enum OrderAdjustmentTargetEnum {
+  MERCHANDISE = 'MERCHANDISE',
+  SHIPPING = 'SHIPPING',
+}
+
+registerEnumType(OrderAdjustmentTargetEnum, {
+  name: 'OrderAdjustmentTarget',
+  description: 'What an order adjustment reduces',
+  valuesMap: {
+    MERCHANDISE: { description: 'A line (orderItemId set) or the cart; counted in discountTotal' },
+    SHIPPING: { description: 'The delivery fee (a free-shipping promotion); already taken off shippingTotal' },
+  },
+});

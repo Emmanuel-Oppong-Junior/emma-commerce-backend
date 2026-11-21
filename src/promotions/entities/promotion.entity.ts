@@ -31,6 +31,10 @@ registerEnumType(PromotionType, {
       description:
         'the highest tier reached applies as tierValueType: by targeted units across lines (item scopes) or by spend (CART)',
     },
+    FREE_SHIPPING: {
+      description:
+        'the delivery fee is waived (no value) or value comes off it, never below zero; CART scope, optionally per zone',
+    },
   },
 });
 
@@ -181,6 +185,11 @@ export class Promotion {
 
   @Field(() => [ID], { description: 'Only for members of one of these customer groups; empty for everyone' })
   customerGroupIds: string[];
+
+  @Field(() => [ID], {
+    description: 'FREE_SHIPPING: only for deliveries to these shipping zones; empty for every zone',
+  })
+  shippingZoneIds: string[];
 
   @Field(() => [CouponCode])
   couponCodes: CouponCode[];

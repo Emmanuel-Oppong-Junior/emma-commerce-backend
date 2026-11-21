@@ -11,8 +11,10 @@ const taxLine = (value: QuoteTaxLine) => [value.name, value.rate.toString(), amo
 /**
  * SHA-256 (hex) over a canonical serialisation of everything that determines the charge: the currency, the pricing
  * version, each line's variant, quantity, prices, adjustments with their sources and tax lines, the order adjustments
- * (each line carries its share of them), shipping and the totals. Lines are sorted, so the cart's line order does not
- * matter. Ids that do not change the amount (product, category, tax row) are left out.
+ * (each line carries its share of them), the shipping adjustments, the delivery zone, shipping and the totals. Lines
+ * are sorted, so the cart's line order does not matter (a split cart line is several lines). Ids that do not change
+ * the amount (product, category, tax row) are left out; the zone stays in, since zone-limited free shipping depends on
+ * it.
  */
 export function quoteHash(quote: UnhashedQuote): string {
   const lines = quote.lines.map((_, index) => JSON.stringify(serialiseLine(quote, index))).sort();
@@ -21,6 +23,8 @@ export function quoteHash(quote: UnhashedQuote): string {
     pricingVersion: quote.pricingVersion,
     lines,
     adjustments: quote.adjustments.map(adjustment),
+    shippingAdjustments: quote.shippingAdjustments.map(adjustment),
+    shippingZoneId: quote.shippingZoneId,
     totals: [quote.subtotal, quote.discountTotal, quote.taxTotal, quote.shippingTotal, quote.grandTotal].map(amount),
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');

@@ -494,18 +494,20 @@ model OrderItem {
 /// is set (already reflected in that line's unitDiscount), order-level otherwise. DISCOUNT for an automatic promotion,
 /// COUPON for one a coupon code unlocked.
 model OrderAdjustment {
-  id          String              @id @default(cuid())
+  id          String                @id @default(cuid())
   orderId     String
   orderItemId String?
   type        OrderAdjustmentType
+  /// What it reduces: the merchandise (a line or the cart) or the delivery fee (a free-shipping promotion, P2-B.6)
+  target      OrderAdjustmentTarget @default(MERCHANDISE)
   /// The Promotion id it came from (kept when the promotion is later deleted)
   sourceId    String?
   /// The coupon code that unlocked it, when ordered
   code        String?
-  amount      Decimal             @db.Decimal(14, 2)
-  createdAt   DateTime            @default(now())
-  order       Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  orderItem   OrderItem?          @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  amount      Decimal               @db.Decimal(14, 2)
+  createdAt   DateTime              @default(now())
+  order       Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem?            @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([orderItemId])
@@ -514,6 +516,13 @@ model OrderAdjustment {
 enum OrderAdjustmentType {
   DISCOUNT
   COUPON
+}
+
+enum OrderAdjustmentTarget {
+  /// A line (orderItemId set) or the cart: counted in discountTotal
+  MERCHANDISE
+  /// The delivery fee: already taken off shippingTotal
+  SHIPPING
 }
 
 /// One tax included in an order line, as the pricing at placement computed it (ADR-0006 snapshot; never recomputed).
@@ -833,13 +842,15 @@ model PickupLocation {
 }
 
 model ShippingZone {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  cities    String[]
-  fee       Decimal  @db.Decimal(14, 2)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String      @id @default(cuid())
+  name       String      @unique
+  cities     String[]
+  fee        Decimal     @db.Decimal(14, 2)
+  isActive   Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  /// Free-shipping promotions limited to this zone
+  promotions Promotion[]
 
   @@index([isActive])
 }
@@ -1062,6 +1073,8 @@ enum PromotionType {
   BXGY
   /// tiers by targeted quantity (item scopes) or by spend (CART); the best reached tier applies as tierValueType
   TIERED
+  /// the delivery fee: waived (no value) or value off it, never below zero; CART scope, optionally limited to zones
+  FREE_SHIPPING
 }
 
 /// One tier of a TIERED promotion: minimumQuantity (item scopes) or minimumSpend (CART), and its value.
@@ -1086,7 +1099,7 @@ model Promotion {
   description      String?
   scope            PromotionScope
   type             PromotionType
-  /// Null only for TIERED (its tiers carry the values)
+  /// Null for TIERED (its tiers carry the values) and for a FREE_SHIPPING promotion that waives the whole fee
   value            Decimal?        @db.Decimal(14, 2)
   /// BXGY: units of the targets to buy per application
   buyQuantity      Int?
@@ -1137,6 +1150,8 @@ model Promotion {
   rewardBrands     Brand[]         @relation("PromotionRewardBrands")
   /// Only for members of one of these groups; empty for everyone
   customerGroups   CustomerGroup[]
+  /// FREE_SHIPPING: only for deliveries to these zones; empty for every zone
+  shippingZones    ShippingZone[]
   couponCodes      CouponCode[]
   redemptions      Redemption[]
 

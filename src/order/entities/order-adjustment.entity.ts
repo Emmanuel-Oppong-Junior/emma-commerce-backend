@@ -1,8 +1,8 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { Decimal } from '@prisma/client/runtime/client';
 import { MoneyObject } from '../../commons/money/money.object';
-import { OrderAdjustmentTypeEnum } from '../enums/order.enum';
-import { OrderAdjustmentType } from '../../generated/prisma/client';
+import { OrderAdjustmentTargetEnum, OrderAdjustmentTypeEnum } from '../enums/order.enum';
+import { OrderAdjustmentTarget, OrderAdjustmentType } from '../../generated/prisma/client';
 
 @ObjectType({ description: 'A discount or coupon taken off the order when it was placed' })
 export class OrderAdjustment {
@@ -11,12 +11,16 @@ export class OrderAdjustment {
 
   @Field(() => ID, {
     nullable: true,
-    description: 'The line it applies to (a product discount, already in its unitDiscount); null for the coupon',
+    description:
+      'The line it applies to (a product discount, already in its unitDiscount); null for a cart or shipping promotion',
   })
   orderItemId?: string | null;
 
   @Field(() => OrderAdjustmentTypeEnum)
   type: OrderAdjustmentType;
+
+  @Field(() => OrderAdjustmentTargetEnum, { description: 'MERCHANDISE (a line or the cart) or SHIPPING (the fee)' })
+  target: OrderAdjustmentTarget;
 
   @Field(() => ID, { nullable: true, description: 'The discount or coupon it came from' })
   sourceId?: string | null;

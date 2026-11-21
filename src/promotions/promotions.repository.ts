@@ -19,6 +19,7 @@ const TARGETS_INCLUDE = {
   rewardCategories: { select: { id: true } },
   rewardBrands: { select: { id: true } },
   customerGroups: { select: { id: true } },
+  shippingZones: { select: { id: true } },
   tiers: { orderBy: [{ minimumQuantity: 'asc' }, { minimumSpend: 'asc' }] },
 } satisfies Prisma.PromotionInclude;
 
@@ -207,6 +208,7 @@ export class PromotionsRepository {
         rewardCategories: { select: { id: true } },
         rewardBrands: { select: { id: true } },
         customerGroups: { select: { id: true } },
+        shippingZones: { select: { id: true } },
         tiers: true,
       },
     });
@@ -237,6 +239,13 @@ export class PromotionsRepository {
       select: { id: true },
     });
     return order !== null;
+  }
+
+  async missingShippingZones(ids: readonly string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
+    const found = await this.prisma.shippingZone.findMany({ where: { id: { in: [...ids] } }, select: { id: true } });
+    const existing = new Set(found.map((row) => row.id));
+    return ids.filter((id) => !existing.has(id));
   }
 
   async missingCustomerGroups(ids: readonly string[]): Promise<string[]> {

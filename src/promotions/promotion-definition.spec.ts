@@ -16,6 +16,7 @@ const definition = (overrides: Partial<PromotionDefinition> = {}): PromotionDefi
   rewardTargetIds: [],
   tierValueType: null,
   tiers: [],
+  shippingZoneIds: [],
   ...overrides,
 });
 const bxgy = (overrides: Partial<PromotionDefinition> = {}) =>
@@ -46,6 +47,8 @@ const spend = (overrides: Partial<PromotionDefinition> = {}) =>
     tiers: [spendTier(500, 50), spendTier(1000, 120)],
     ...overrides,
   });
+const freeShipping = (overrides: Partial<PromotionDefinition> = {}) =>
+  definition({ scope: 'CART', type: 'FREE_SHIPPING', value: null, targetIds: [], ...overrides });
 
 describe('promotionDefinitionError', () => {
   it.each([
@@ -66,6 +69,8 @@ describe('promotionDefinitionError', () => {
       volume({ tierValueType: 'FIXED_PRICE', tiers: [quantityTier(2, 90), quantityTier(5, 80)] }),
     ],
     ['spend X save Y', spend()],
+    ['free shipping waiving the fee in two zones', freeShipping({ shippingZoneIds: ['z1', 'z2'] })],
+    ['10 off the delivery fee', freeShipping({ value: new Decimal(10) })],
   ])('accepts %s', (_case, valid) => {
     expect(promotionDefinitionError(valid)).toBeNull();
   });
@@ -97,6 +102,10 @@ describe('promotionDefinitionError', () => {
     ['a spend threshold on an item tier', volume({ tiers: [spendTier(100, 5)] }), 'minimumQuantity'],
     ['a quantity threshold on a cart tier', spend({ tiers: [quantityTier(3, 5)] }), 'minimumSpend'],
     ['fixed-price cart tiers', spend({ tierValueType: 'FIXED_PRICE' }), 'FIXED_PRICE'],
+    ['free shipping on an item scope', freeShipping({ scope: 'PRODUCT', targetIds: ['p1'] }), 'CART scope'],
+    ['free shipping worth 0', freeShipping({ value: new Decimal(0) }), 'above 0'],
+    ['free shipping with a unit cap', freeShipping({ unitCap: 3 }), 'unitCap'],
+    ['shipping zones on a percentage', definition({ shippingZoneIds: ['z1'] }), 'FREE_SHIPPING promotions only'],
   ])('refuses %s', (_case, invalid, message) => {
     expect(promotionDefinitionError(invalid)).toContain(message);
   });

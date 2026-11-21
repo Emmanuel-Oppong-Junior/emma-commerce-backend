@@ -1528,7 +1528,8 @@ All order operations require `Bearer` JWT.
 ```typescript
 {
   id: string;
-  orderItemId?: string;       // The line an item promotion applies to (already in its unitDiscount); null for a cart promotion
+  orderItemId?: string;       // The line an item promotion applies to (already in its unitDiscount); null for a cart or shipping promotion
+  target: OrderAdjustmentTarget; // P2-B.6: MERCHANDISE (a line or the cart; in discountTotal) | SHIPPING (the delivery fee; already in shippingTotal)
   type: OrderAdjustmentType;  // DISCOUNT (automatic promotion) | COUPON (unlocked by a coupon code)
   sourceId?: string;          // The Promotion id (orders placed before P2-B.1: the discount or coupon id, which the promotion kept)
   code?: string;              // The coupon code that unlocked it
@@ -1646,10 +1647,11 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   pricingVersion: number;            // The pricing rules used (3 since P2-B.4: flash sales); the order stores it
   lines: QuoteLine[];                // In cart order. P2-B.4: a cart line whose units pay different prices (a flash sale reduced only some) has two or more lines with the same cartItemId, the reduced units first
   adjustments: QuoteOrderAdjustment[]; // The cart promotions that take something off
+  shippingAdjustments: QuoteAdjustment[]; // P2-B.6: the free-shipping promotions taken off the delivery fee (already in shippingTotal)
   subtotal: Money;                   // Σ unitListPrice × quantity, before any discount, tax included
-  discountTotal: Money;              // Item promotions + cart promotions
+  discountTotal: Money;              // Item promotions + cart promotions (merchandise only; shipping savings are in shippingTotal)
   taxTotal: Money;                   // Tax included in the line totals
-  shippingTotal: Money;              // 0 for pickup
+  shippingTotal: Money;              // The delivery fee after free-shipping promotions (P2-B.6); 0 for pickup
   grandTotal: Money;                 // What createOrder charges: subtotal - discountTotal + shippingTotal
 }
 
@@ -1719,7 +1721,7 @@ query {
 3. The cart's variants are share-locked, then the prices, promotions, coupon code, the caller's redemptions, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-promotions-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus its item promotions. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
 4. A coupon code, if given, must be usable (code and promotion active, started, not expired, uses left overall and for the caller, its minimums reached); it unlocks its promotion. Cart promotions come off the lines after item promotions, before shipping, never more than them.
 5. The resulting quote's hash must equal `quoteHash`; otherwise `CONFLICT` / `QUOTE_CHANGED` and nothing is written.
-6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (3).
+6. `grandTotal = Σ lineTotal - cart promotions + shippingTotal` (the fee after free-shipping promotions, P2-B.6), the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (3).
 7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); each applied promotion (and the coupon code) has one use taken with a conditional update and a `RESERVED` redemption recorded (none left: `CONFLICT`, see below); the cart is emptied.
 8. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
 9. A confirmation email goes to the account's email (not `contactEmail`) after the response.
@@ -1941,7 +1943,7 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   name: string;
   description?: string;
   scope: PromotionScope;      // SKU | PRODUCT | CATEGORY | BRAND | CART
-  type: PromotionType;        // PERCENT | AMOUNT_OFF | FIXED_PRICE | BXGY | TIERED (P2-B.5)
+  type: PromotionType;        // PERCENT | AMOUNT_OFF | FIXED_PRICE | BXGY | TIERED (P2-B.5) | FREE_SHIPPING (P2-B.6)
   value?: Decimal;            // PERCENT: 0-100; AMOUNT_OFF: amount off each targeted unit (off the cart for CART); FIXED_PRICE: the unit price (never raises a price; not for CART); BXGY: percent off each reward unit (100 = free). Breaking change (P2-B.5): nullable, null for TIERED
   targetIds: ID[];            // Variant ids (SKU), product, category or brand ids; [] for CART. BXGY: the buy targets
   buyQuantity?: number;       // P2-B.5 BXGY: targeted units to buy per application
@@ -1950,6 +1952,7 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   rewardTargetIds: ID[];      // P2-B.5 BXGY: reward targets, of the scope's kind; [] = the targets themselves
   tierValueType?: PromotionType; // P2-B.5 TIERED: PERCENT | AMOUNT_OFF | FIXED_PRICE (not for CART), how each tier's value reduces the price
   tiers: PromotionTier[];     // P2-B.5 TIERED: { minimumQuantity?: number (item scopes); minimumSpend?: Money (CART); value: Decimal }, ascending
+  shippingZoneIds: ID[];      // P2-B.6 FREE_SHIPPING: only for deliveries to these zones; [] = every zone
   minimumSpend?: Money;       // Least merchandise total (see 10. Promotions System for which subtotal)
   minimumQuantity?: number;   // Least number of targeted units in the cart (any unit for CART)
   startsAt: DateTime;
@@ -1986,7 +1989,7 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   description?: string;
   scope: PromotionScope;       // Required
   type: PromotionType;         // Required
-  value?: Decimal;             // >= 0, 2 dp; PERCENT and BXGY at most 100 (BXGY above 0). Required except for TIERED, which takes none
+  value?: Decimal;             // >= 0, 2 dp; PERCENT and BXGY at most 100 (BXGY above 0). Required except for TIERED (none) and FREE_SHIPPING (none = waive the fee; else the amount off it, above 0)
   targetIds?: ID[];            // Default []; must exist for the scope; none for CART
   buyQuantity?: number;        // P2-B.5 BXGY only, required there, >= 1
   getQuantity?: number;        // P2-B.5 BXGY only, required there, >= 1
@@ -2008,6 +2011,7 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   perCustomerLimit?: number;   // >= 1
   firstOrderOnly?: boolean;    // Default false
   customerGroupIds?: ID[];     // Default [] (everyone); must exist
+  shippingZoneIds?: ID[];      // P2-B.6 FREE_SHIPPING only; default [] (every zone); must exist
 }
 ```
 
@@ -3742,6 +3746,17 @@ All three are **mix and match**: they count the targeted units of every line tog
 - **TIERED, CART (spend X save Y)**: the tier is the highest `minimumSpend` reached by the subtotal after item promotions (as for a minimum spend); it comes off the cart as `PERCENT` or `AMOUNT_OFF` and is allocated to the lines.
 - Product pages (`discountedPrice`) never show BXGY or tiered promotions: they depend on the cart.
 - **Breaking change (P2-B.5):** `Promotion.value` and `CouponCodeValidation.value` are nullable (null for TIERED).
+
+### Free shipping (P2-B.6)
+
+- Type `FREE_SHIPPING`, scope `CART`: with no `value` it waives the delivery fee; with a `value` it takes that amount off the fee (never below zero). `shippingZoneIds` limits it to deliveries to those zones (`[]` = every zone).
+- It is the **shipping level**, applied after item and cart promotions, with its own stacking: one winner per `stackingGroup`, applied in `priority` order on what is left of the fee. An `exclusive` free shipping competes with the other exclusives on what it saves (the fee).
+- `minimumSpend` is measured on the subtotal after item **and** cart promotions (before shipping; prices include tax); `minimumQuantity` on the cart's units.
+- Pickup orders have no fee: it does nothing there (not an error), even for a zone-limited coupon code.
+- A coupon code unlocks it like any promotion (`requiresCoupon`). A zone-limited code used for a delivery outside its zones fails with `BAD_REQUEST` "This coupon does not cover delivery to your area".
+- The saving appears in `checkoutQuote.shippingAdjustments` and becomes an `OrderAdjustment` with `target: SHIPPING` (no `orderItemId`); `shippingTotal` (quote and order) is the fee after it, and `grandTotal = subtotal - discountTotal + shippingTotal`. `discountTotal` stays merchandise only. Refunds and returns keep reading the stored values.
+- A shipping zone a free-shipping promotion is limited to cannot be deleted (`CONFLICT`): take it off the promotion first.
+- The quote hash covers the delivery zone (`createOrder` with another address in another zone gets `QUOTE_CHANGED`).
 
 ---
 

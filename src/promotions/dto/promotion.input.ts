@@ -204,6 +204,15 @@ export class CreatePromotionInput {
   @ArrayMaxSize(MAX_TARGETS)
   @IsString({ each: true })
   customerGroupIds: string[] = [];
+
+  @Field(() => [ID], {
+    defaultValue: [],
+    description: 'FREE_SHIPPING: only for deliveries to these shipping zones; [] for every zone',
+  })
+  @IsArray()
+  @ArrayMaxSize(MAX_TARGETS)
+  @IsString({ each: true })
+  shippingZoneIds: string[] = [];
 }
 
 @InputType({
@@ -364,4 +373,11 @@ export class UpdatePromotionInput {
   @ArrayMaxSize(MAX_TARGETS)
   @IsString({ each: true })
   customerGroupIds?: string[];
+
+  @Field(() => [ID], { nullable: true, description: 'Replaces the shipping zones; [] opens it to every zone' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TARGETS)
+  @IsString({ each: true })
+  shippingZoneIds?: string[];
 }
