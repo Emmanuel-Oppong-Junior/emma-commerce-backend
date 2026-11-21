@@ -329,9 +329,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > Run: ∥ · S · 🟧
 - [x] **P2-H.1** `PriceChange` audit on every price write; admin view [274b332]
 
-### P2-W — B2B
+### P2-W — B2B  🔄 in progress
 > Run: ∥ · M · ⬜
-- [ ] **P2-W.1** Price lists per customer group, quantity tiers, MOQ
+- [ ] 🔄 **P2-W.1** Price lists per customer group, quantity tiers, MOQ
 
 ## Phase 3 — Payments & Ghana payment methods (ADR-0007)
 

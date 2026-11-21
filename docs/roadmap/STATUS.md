@@ -5,7 +5,9 @@
 **Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel; 9/15: P2-A, P2-H, P2-B done); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Up next: P2-T is blocked on the tax adviser and P1-K.2–K.4 on hosting; next unblocked work needs Emmanuel's pick (see Up next).
+**P2-W.1 — B2B price lists per customer group, quantity tiers, MOQ** (ADR-0005 §7) · branch `feat/p2-w-price-lists` from `9b65df0` · agent in a worktree · DB `emma_wt_pricelist_test`, Redis DB 13 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-21): promotions stack on a price-list price only when that list allows it (switch, default off); several matching lists → lowest price after tiers (ties → lowest priority number), never above the normal price; below the MOQ the normal price applies (no refusal); members see their prices on product pages too (optional sign-in on public product queries), as well as cart and checkoutQuote.
+  - [ ] W.1 ← **Next step** (agent) · [ ] merge, push
 
 **Last completed: P2-B.4–B.6 Flash sales, BXGY/tiered/spend-X-save-Y, free-shipping promotions (2026-11-21)** (ADR-0005 §2–§3; no audit finding closed): B.4 `e4b5180`, B.5 `61df1ce` `[breaking-api]`, B.6 `0335bac`, fast-forwarded onto dev. P2-B ✅.
   - B.4: migration `20261128000000_flash_sales` (`Promotion.unitCap`/`unitsUsed`, `Redemption.units`; re-runnable backfill). Partial cap: units left go to the units saving most; the line is split into a promo part and a normal part (several order items per variant, each with one unit price; stock reserved per item). Placement takes units with a conditional increment; CONFLICT `PROMOTION_UNITS_SOLD_OUT`; released once on cancel/expiry before payment, kept on refund. `unitsUsed` counts units at every item promotion's price. No `isFlashSale` flag (window + cap). `PRICING_VERSION` 3.
@@ -191,6 +193,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-21 | P2-W.1: promotions on price-list prices per list (default off); lowest price wins; normal price below MOQ; prices on product pages via optional sign-in | STATUS (P2-W) |
 | 2026-11-21 | P2-B.4–B.6: flash cap partial by units; BXGY/tiers mix and match, cheapest units rewarded; free shipping waives or caps the fee, optional zones | STATUS (P2-B) |
 | 2026-11-21 | P2-B: segments = generic `CustomerGroup`; run B.1–B.3 first, B.4–B.6 next | STATUS (P2-B) |
 | 2026-11-21 | Phase 2 started. P2-A: required `quoteHash`, CONFLICT `QUOTE_CHANGED` on mismatch. P2-B: min spend after item discounts; refunds keep promotion uses | STATUS (P2-A) |
