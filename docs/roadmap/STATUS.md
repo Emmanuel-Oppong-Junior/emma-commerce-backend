@@ -2,10 +2,12 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Phase 2's remaining tasks (P2-T.1–T.5) are blocked on the Ghanaian tax adviser; P1-K.2–K.4 on hosting. Next: Emmanuel picks (Phase 3 can start without them).
+**P3-A.1–A.2 — Payment provider port + store-level encrypted provider config** (ADR-0007) · branch `feat/p3-a-provider-port` from `21b0fb2` · agent in a worktree · DB `emma_wt_provider_test`, Redis DB 13 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-21): Phase 3 started. Provider secrets stored in the DB, AES-256-GCM with a new required `PAYMENT_CONFIG_ENCRYPTION_KEY`; `PAYSTACK_SECRET_KEY` becomes optional, used only while the store has no DB config. Payment settings: new permission `payment.settings.manage`, Owner only, step-up, audited; secrets write-only (last 4 + mode shown). The store enables methods (card/MoMo via a provider, COD on/off) and picks the provider per method; disabled methods are refused.
+  - [ ] A.1 ← **Next step** (agent) · [ ] A.2 · [ ] merge, push
 
 **Last completed: P2-W.1 B2B price lists (2026-11-21)** (ADR-0005 §7): `08335d4`, fast-forwarded onto dev. P2-W ✅.
   - Migration `20261129000000_price_lists` (expand only): `PriceList` (currency, active window, priority, `allowPromotions` default false, ↔ `CustomerGroup`), `PriceListEntry` (variant, MOQ price, `minQuantity`), `PriceListTier` (breaks above the MOQ); `OrderItem.priceListId` (no FK, snapshot); grants new `pricelist.manage` to Owner and Manager. Admin API (`priceLists`, `priceList`, `create/update/deletePriceList`, `setPriceListEntries`, `removePriceListEntries`) with step-up, audited with before/after prices (AuditLog, not `PriceChange`).
@@ -199,6 +201,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-21 | Phase 3 started. P3-A: provider secrets in the DB (encrypted, env fallback), Owner-only `payment.settings.manage`, methods switchable per store with a provider per method | STATUS (P3-A) |
 | 2026-11-21 | P2-W.1: promotions on price-list prices per list (default off); lowest price wins; normal price below MOQ; prices on product pages via optional sign-in | STATUS (P2-W) |
 | 2026-11-21 | P2-B.4–B.6: flash cap partial by units; BXGY/tiers mix and match, cheapest units rewarded; free shipping waives or caps the fee, optional zones | STATUS (P2-B) |
 | 2026-11-21 | P2-B: segments = generic `CustomerGroup`; run B.1–B.3 first, B.4–B.6 next | STATUS (P2-B) |
