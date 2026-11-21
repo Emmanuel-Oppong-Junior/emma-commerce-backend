@@ -589,6 +589,9 @@ input CreateTaxInput {
   """Name of the tax (e.g., "VAT", "NHIS Levy")"""
   name: String!
 
+  """Why prices change, kept in the price history (max 500 characters)"""
+  priceChangeReason: String
+
   """Tax rate as a decimal between 0 and 1 (e.g., 0.15 for 15%)"""
   rate: Decimal!
 }
@@ -1021,7 +1024,12 @@ type Mutation {
   deleteTag(tagId: String!): Tag!
 
   """Delete a tax (admin only)"""
-  deleteTax(id: ID!): TaxEntity!
+  deleteTax(
+    id: ID!
+
+    """Why prices change, kept in the price history (max 500 characters)"""
+    priceChangeReason: String
+  ): TaxEntity!
 
   """
   Deletes a variant no cart, order or stock movement refers to (CONFLICT otherwise: archive it)
@@ -1486,6 +1494,53 @@ type PickupLocationEntity {
   updatedAt: DateTime!
 }
 
+"""One entry of the append-only price history of a variant"""
+type PriceChange {
+  """The staff member who made the change"""
+  actorId: ID
+  createdAt: DateTime!
+  field: PriceChangeField!
+  id: ID!
+  newValue: Money!
+
+  """Null for the first price of the field"""
+  oldValue: Money
+  reason: String
+  source: PriceChangeSource!
+  variantId: ID!
+}
+
+"""Which variant price changed"""
+enum PriceChangeField {
+  """The price before tax, as entered by an admin"""
+  BASE_PRICE
+
+  """The selling price (basePrice plus tax when the product is taxable)"""
+  PRICE
+}
+
+type PriceChangePage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [PriceChange!]!
+  totalCount: Int!
+}
+
+"""What changed the price"""
+enum PriceChangeSource {
+  """A staff member edited the variant's price or the product's taxability"""
+  ADMIN_EDIT
+
+  """The price a variant had when price history started"""
+  MIGRATION
+
+  """A tax rate was created, changed or deleted, repricing taxable variants"""
+  TAX_RATE_CHANGE
+
+  """The first price of a new variant"""
+  VARIANT_CREATED
+}
+
 """Lowest and highest selling price of a product's active variants"""
 type PriceRange {
   max: Money!
@@ -1791,6 +1846,27 @@ type Query {
 
   """Get all pickup locations (admin only)"""
   pickupLocations: [PickupLocationEntity!]!
+
+  """
+  Admin: price changes, newest first, optionally of one variant or product and within [from, to)
+  """
+  priceChanges(
+    """Id of the last price change of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+
+    """Changes at or after this instant"""
+    from: DateTime
+
+    """Price changes of every variant of the product"""
+    productId: ID
+
+    """Changes before this instant"""
+    to: DateTime
+    variantId: ID
+  ): PriceChangePage!
 
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
@@ -2569,6 +2645,9 @@ input UpdateProductInput {
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String
 
+  """Why prices change, kept in the price history (max 500 characters)"""
+  priceChangeReason: String
+
   """ID of the product type (defaults to General)"""
   productTypeId: String
 
@@ -2684,6 +2763,9 @@ input UpdateSubCategoryInput {
 input UpdateTaxInput {
   isActive: Boolean
   name: String
+
+  """Why prices change, kept in the price history (max 500 characters)"""
+  priceChangeReason: String
   rate: Decimal
 }
 
@@ -2731,6 +2813,9 @@ input UpdateVariantInput {
   Values for the product type's variant axes, e.g. { "size": "M", "colour": "Red" }; omit for none
   """
   optionValues: JSONObject
+
+  """Why prices change, kept in the price history (max 500 characters)"""
+  priceChangeReason: String
 
   """Unique SKU code; generated when omitted"""
   sku: String
@@ -2904,6 +2989,17 @@ type Variant {
   Selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
   """
   price: Money
+
+  """
+  Price changes of this variant, newest first (staff with catalog.product.read)
+  """
+  priceHistory(
+    """Id of the last price change of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+  ): PriceChangePage!
   product: Product!
   productId: ID!
 

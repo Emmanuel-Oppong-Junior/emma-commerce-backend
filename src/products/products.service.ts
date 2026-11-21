@@ -5,7 +5,7 @@ import { ProductFilterArgs } from './dto/product-filter.args';
 import { ProductSortArgs } from './dto/product-sort.args';
 import { ProductSortField } from './enums/product-sort-field.enum';
 import { SortOrder } from '../commons/enums/sort-order.enum';
-import { Prisma, Product } from '../generated/prisma/client';
+import { PriceChangeSource, Prisma, Product } from '../generated/prisma/client';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
 import { ProductsRepository } from './products.repository';
@@ -89,7 +89,7 @@ export class ProductsService {
     if (!existing) throw new NotFoundException('Product not found');
     await this.validateProductInput({ ...updateProductInput, id });
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type and attributes are validated by retype
-    const { productTypeId, attributes, ...rest } = updateProductInput;
+    const { productTypeId, attributes, priceChangeReason, ...rest } = updateProductInput;
     const updateData: Prisma.ProductUpdateInput = { ...rest };
     const retyped = await this.retype(existing, updateProductInput, updateData);
     const reprice = rest.isTaxable !== undefined && rest.isTaxable !== existing.isTaxable;
@@ -98,7 +98,12 @@ export class ProductsService {
       async (tx) => {
         for (const variant of retyped) await this.productsRepository.updateVariantOptions(variant, tx);
         if (rate !== undefined)
-          await this.productsRepository.repriceVariants(id, rest.isTaxable ? rate : new Prisma.Decimal(0), tx);
+          await this.productsRepository.repriceVariants(
+            id,
+            rest.isTaxable ? rate : new Prisma.Decimal(0),
+            { source: PriceChangeSource.ADMIN_EDIT, actorId, reason: priceChangeReason ?? null },
+            tx,
+          );
         return this.productsRepository.update(id, updateData, { category: true, subcategory: true }, tx);
       },
       (updated) => ({

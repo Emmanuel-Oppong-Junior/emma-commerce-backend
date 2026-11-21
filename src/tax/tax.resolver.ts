@@ -3,6 +3,7 @@ import { TaxService } from './tax.service';
 import { TaxEntity } from './entities/tax-rate.entity';
 import { CreateTaxInput } from './dto/create-tax-rate.input';
 import { UpdateTaxInput } from './dto/update-tax-rate.input';
+import { DeleteTaxArgs } from './dto/delete-tax.args';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { RequirePermission, RequireStepUp } from '../iam/authorization/policy.decorators';
 
@@ -31,8 +32,8 @@ export class TaxResolver {
   @RequirePermission('tax.manage')
   @RequireStepUp()
   @Mutation(() => TaxEntity, { description: 'Delete a tax (admin only)' })
-  deleteTax(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
-    return this.taxService.delete(id, actorId);
+  deleteTax(@ActiveUser('id') actorId: string, @Args() { id, priceChangeReason }: DeleteTaxArgs) {
+    return this.taxService.delete(id, actorId, priceChangeReason);
   }
 
   @RequirePermission('tax.manage')

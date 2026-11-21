@@ -1,6 +1,7 @@
 import { CreateVariantInput } from './create-variant.input';
 import { Field, InputType, OmitType, PartialType } from '@nestjs/graphql';
 import { IsBoolean, IsNotEmpty, IsOptional } from 'class-validator';
+import { PriceChangeReasonField } from '../../price-history/dto/price-change-reason.field';
 
 // Stock moves only through restockVariant/adjustVariantStock, so an edit form can't overwrite live stock. A variant
 // never moves to another product (VAR-07): its order history belongs to that product.
@@ -14,4 +15,7 @@ export class UpdateVariantInput extends PartialType(OmitType(CreateVariantInput,
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @PriceChangeReasonField()
+  priceChangeReason?: string;
 }

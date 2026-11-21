@@ -1,6 +1,8 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, Tax } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PriceChangeOrigin } from '../price-history/price-change';
+import { insertRepricedChanges } from '../price-history/price-history.repository';
 
 @Injectable()
 export class TaxRepository {
@@ -35,16 +37,31 @@ export class TaxRepository {
   }
 
   /**
-   * Sets price = basePrice × (1 + totalRate) on every variant of a taxable product; the rounding matches
-   * `taxInclusivePrice`. Variants without a basePrice keep their price (it is never reverse-computed).
+   * Sets price = basePrice × (1 + totalRate) on every variant of a taxable product, rounded like `taxInclusivePrice`,
+   * and records a PriceChange for each price that moved. Variants without a basePrice keep their price (it is never
+   * reverse-computed).
    */
-  async repriceTaxableVariants(totalRate: Prisma.Decimal, db: Prisma.TransactionClient = this.prisma): Promise<void> {
+  async repriceTaxableVariants(
+    totalRate: Prisma.Decimal,
+    origin: PriceChangeOrigin,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<void> {
     // Bound as a Decimal and cast to numeric so the multiply and ROUND stay exact decimal arithmetic, never float8.
+    // FOR UPDATE makes the old price the committed one when another transaction changed it first.
     await db.$executeRaw`
-      UPDATE "Variant" v
-      SET "price" = ROUND(v."basePrice" * ${totalRate.plus(1)}::numeric, 2), "updatedAt" = now()
-      FROM "Product" p
-      WHERE p.id = v."productId" AND p."isTaxable" = true AND v."basePrice" IS NOT NULL
+      WITH target AS (
+        SELECT v."id", v."price" AS "oldPrice", ROUND(v."basePrice" * ${totalRate.plus(1)}::numeric, 2) AS "newPrice"
+        FROM "Variant" v
+        JOIN "Product" p ON p.id = v."productId"
+        WHERE p."isTaxable" = true AND v."basePrice" IS NOT NULL
+        FOR UPDATE OF v
+      ), repriced AS (
+        UPDATE "Variant" v SET "price" = t."newPrice", "updatedAt" = now()
+        FROM target t
+        WHERE v."id" = t."id" AND t."oldPrice" IS DISTINCT FROM t."newPrice"
+        RETURNING v."id", t."oldPrice", t."newPrice"
+      )
+      ${insertRepricedChanges(origin)}
     `;
   }
 

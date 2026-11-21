@@ -4,6 +4,7 @@ import { Prisma } from '../generated/prisma/client';
 import { VariantService } from './variant.service';
 import { CreateVariantInput } from './dto/create-variant.input';
 import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
+import { PriceHistoryService } from '../price-history/price-history.service';
 
 const at = new Date('2026-11-20T00:00:00.000Z');
 const apparelAxes = [
@@ -58,6 +59,15 @@ const existingVariant = {
   product: { id: 'prod-shirt', name: 'Shirt' },
 };
 
+/** Prices as the database returns them: Decimals, like the variant rows Prisma gives back. */
+function storedPrices<T extends { price?: unknown; basePrice?: unknown }>(data: T): T {
+  return {
+    ...data,
+    ...(data.price !== undefined && { price: new Decimal(data.price as string) }),
+    ...(data.basePrice !== undefined && { basePrice: new Decimal(data.basePrice as string) }),
+  };
+}
+
 function input(overrides: Partial<CreateVariantInput> = {}): CreateVariantInput {
   return {
     productId: 'prod-shirt',
@@ -73,6 +83,7 @@ describe('VariantService', () => {
   let audit: ReturnType<typeof createAuditServiceMock>;
   let tax: { getTotalActiveRate: jest.Mock };
   let stockLedger: { receive: jest.Mock };
+  let priceHistory: { append: jest.Mock };
   let service: VariantService;
 
   beforeEach(() => {
@@ -81,10 +92,13 @@ describe('VariantService', () => {
       findActiveWithOptions: jest.fn().mockResolvedValue(null),
       findBySkuOrBarcode: jest.fn().mockResolvedValue(null),
       discountExists: jest.fn().mockResolvedValue(true),
-      create: jest.fn().mockImplementation(async (data) => ({ id: 'var-new', product: shirt, ...data })),
+      create: jest.fn().mockImplementation(async (data) => storedPrices({ id: 'var-new', product: shirt, ...data })),
       findById: jest.fn().mockResolvedValue(existingVariant),
       findPage: jest.fn(),
-      update: jest.fn().mockImplementation(async (id, data) => ({ ...existingVariant, id, ...withoutUndefined(data) })),
+      update: jest
+        .fn()
+        .mockImplementation(async (id, data) => storedPrices({ ...existingVariant, id, ...withoutUndefined(data) })),
+      lockPrices: jest.fn().mockResolvedValue({ price: existingVariant.price, basePrice: existingVariant.basePrice }),
       countHistory: jest.fn().mockResolvedValue({ cartItems: 0, orderItems: 0, stockMovements: 0 }),
       countVariants: jest.fn().mockResolvedValue(2),
       delete: jest.fn().mockResolvedValue(existingVariant),
@@ -92,7 +106,14 @@ describe('VariantService', () => {
     audit = createAuditServiceMock();
     tax = { getTotalActiveRate: jest.fn().mockResolvedValue(new Prisma.Decimal('0.2')) };
     stockLedger = { receive: jest.fn() };
-    service = new VariantService(repository as never, audit as never, tax as never, stockLedger as never);
+    priceHistory = { append: jest.fn().mockResolvedValue(undefined) };
+    service = new VariantService(
+      repository as never,
+      audit as never,
+      tax as never,
+      stockLedger as never,
+      new PriceHistoryService(priceHistory as never),
+    );
   });
 
   describe('createVariant', () => {
@@ -133,6 +154,23 @@ describe('VariantService', () => {
       expect(audit.log).toHaveBeenCalledWith(
         expect.objectContaining({ entity: 'Variant', entityId: 'var-new', action: 'CREATE' }),
         AUDIT_TX,
+      );
+    });
+
+    it('records its first base price and selling price in the price history, in the same transaction', async () => {
+      repository.findProductForVariants.mockResolvedValue({ ...shirt, isTaxable: true });
+
+      await service.createVariant(input({ basePrice: new Decimal('50') }), 'admin-1');
+
+      expect(priceHistory.append).toHaveBeenCalledTimes(1);
+      expect(priceHistory.append).toHaveBeenCalledWith(
+        AUDIT_TX,
+        'var-new',
+        [
+          { field: 'BASE_PRICE', oldValue: null, newValue: new Decimal('50.00') },
+          { field: 'PRICE', oldValue: null, newValue: new Decimal('60.00') },
+        ],
+        { source: 'VARIANT_CREATED', actorId: 'admin-1', reason: null },
       );
     });
 
@@ -219,6 +257,55 @@ describe('VariantService', () => {
         expect.objectContaining({ basePrice: '50.00', price: '60.00' }),
         AUDIT_TX,
       );
+    });
+
+    it('records each changed price field once, with the actor and reason, from the row-locked old prices', async () => {
+      repository.findProductForVariants.mockResolvedValue({ ...shirt, isTaxable: true });
+
+      await service.updateVariant(
+        'var-m-red',
+        { id: 'var-m-red', basePrice: new Decimal('50'), priceChangeReason: 'Supplier price drop' },
+        'admin-1',
+      );
+
+      expect(repository.lockPrices).toHaveBeenCalledWith('var-m-red', AUDIT_TX);
+      expect(priceHistory.append).toHaveBeenCalledTimes(1);
+      expect(priceHistory.append).toHaveBeenCalledWith(
+        AUDIT_TX,
+        'var-m-red',
+        [
+          { field: 'BASE_PRICE', oldValue: new Decimal('100.00'), newValue: new Decimal('50.00') },
+          { field: 'PRICE', oldValue: new Decimal('100.00'), newValue: new Decimal('60.00') },
+        ],
+        { source: 'ADMIN_EDIT', actorId: 'admin-1', reason: 'Supplier price drop' },
+      );
+    });
+
+    it('records only the selling price when the base price stays and the tax moves it', async () => {
+      repository.findProductForVariants.mockResolvedValue({ ...shirt, isTaxable: true });
+
+      await service.updateVariant('var-m-red', { id: 'var-m-red', basePrice: new Decimal('100') }, 'admin-1');
+
+      expect(priceHistory.append).toHaveBeenCalledWith(
+        AUDIT_TX,
+        'var-m-red',
+        [{ field: 'PRICE', oldValue: new Decimal('100.00'), newValue: new Decimal('120.00') }],
+        { source: 'ADMIN_EDIT', actorId: 'admin-1', reason: null },
+      );
+    });
+
+    it('records no price change when the prices stay the same', async () => {
+      await service.updateVariant('var-m-red', { id: 'var-m-red', basePrice: new Decimal('100.00') }, 'admin-1');
+
+      expect(repository.update).toHaveBeenCalled();
+      expect(priceHistory.append).not.toHaveBeenCalled();
+    });
+
+    it('neither locks nor records prices for an edit without a base price', async () => {
+      await service.updateVariant('var-m-red', { id: 'var-m-red', sku: 'SHIRT-M-RED-2' }, 'admin-1');
+
+      expect(repository.lockPrices).not.toHaveBeenCalled();
+      expect(priceHistory.append).not.toHaveBeenCalled();
     });
 
     it('refuses to reactivate an archived variant whose combination is taken again', async () => {

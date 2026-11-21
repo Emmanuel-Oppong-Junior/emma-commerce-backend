@@ -1,6 +1,7 @@
 import { CreateProductInput } from './create-product.input';
 import { Field, InputType, OmitType, PartialType } from '@nestjs/graphql';
 import { IsBoolean, IsOptional } from 'class-validator';
+import { PriceChangeReasonField } from '../../price-history/dto/price-change-reason.field';
 
 // Variants are managed with createVariant/updateVariant/deleteVariant, and their stock through restock/adjust.
 // The flags are redeclared without the create defaults: an omitted flag must leave the product as it is.
@@ -20,4 +21,7 @@ export class UpdateProductInput extends PartialType(
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @PriceChangeReasonField()
+  priceChangeReason?: string;
 }

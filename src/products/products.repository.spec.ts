@@ -317,10 +317,12 @@ describe('ProductsRepository', () => {
   });
 
   describe('repriceVariants', () => {
+    const origin = { source: 'ADMIN_EDIT' as const, actorId: 'admin1', reason: 'Now taxable' };
+
     it('sets each priced variant of the product to its base price times (1 + rate), as exact rounded decimals', async () => {
       const executeRaw = jest.fn().mockResolvedValue(2);
 
-      await repository.repriceVariants('prod1', new Prisma.Decimal('0.15'), {
+      await repository.repriceVariants('prod1', new Prisma.Decimal('0.15'), origin, {
         $executeRaw: executeRaw,
       } as unknown as Prisma.TransactionClient);
 
@@ -330,14 +332,28 @@ describe('ProductsRepository', () => {
       expect(multiplier).toBeInstanceOf(Prisma.Decimal);
       expect(productId).toBe('prod1');
       const query = sql.join('?').replace(/\s+/g, ' ');
-      expect(query).toContain('UPDATE "Variant" SET "price" = ROUND("basePrice" * ?::numeric, 2)');
-      expect(query).toContain('WHERE "productId" = ? AND "basePrice" IS NOT NULL');
+      expect(query).toContain('ROUND("basePrice" * ?::numeric, 2) AS "newPrice"');
+      expect(query).toContain('WHERE "productId" = ? AND "basePrice" IS NOT NULL FOR UPDATE');
+      expect(query).toContain('UPDATE "Variant" v SET "price" = t."newPrice"');
+    });
+
+    it('updates only the prices that move and records each one with the origin, in the same statement', async () => {
+      const executeRaw = jest.fn().mockResolvedValue(2);
+
+      await repository.repriceVariants('prod1', new Prisma.Decimal('0.15'), origin, {
+        $executeRaw: executeRaw,
+      } as unknown as Prisma.TransactionClient);
+
+      const [sql, , , record] = executeRaw.mock.calls[0] as [TemplateStringsArray, unknown, unknown, Prisma.Sql];
+      expect(sql.join('?').replace(/\s+/g, ' ')).toContain('t."oldPrice" IS DISTINCT FROM t."newPrice"');
+      expect(record.sql.replace(/\s+/g, ' ')).toContain('INSERT INTO "PriceChange"');
+      expect(record.values).toEqual(['ADMIN_EDIT', 'Now taxable', 'admin1']);
     });
 
     it('removes tax with a zero rate', async () => {
       const executeRaw = jest.fn().mockResolvedValue(2);
 
-      await repository.repriceVariants('prod1', new Prisma.Decimal(0), {
+      await repository.repriceVariants('prod1', new Prisma.Decimal(0), origin, {
         $executeRaw: executeRaw,
       } as unknown as Prisma.TransactionClient);
 

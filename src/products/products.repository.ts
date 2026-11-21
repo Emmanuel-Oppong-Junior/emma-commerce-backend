@@ -1,6 +1,8 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Category, Prisma, Product, SubCategory, Tag } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PriceChangeOrigin } from '../price-history/price-change';
+import { insertRepricedChanges } from '../price-history/price-history.repository';
 
 export interface VariantOptions {
   id: string;
@@ -128,15 +130,30 @@ export class ProductsRepository {
     });
   }
 
-  /** Sets each variant's price to basePrice × (1 + totalRate), rounded like taxInclusivePrice; 0 removes tax. */
+  /**
+   * Sets each variant's price to basePrice × (1 + totalRate), rounded like taxInclusivePrice (0 removes tax), and
+   * records a PriceChange for each price that moved.
+   */
   async repriceVariants(
     productId: string,
     totalRate: Prisma.Decimal,
+    origin: PriceChangeOrigin,
     db: Prisma.TransactionClient = this.prisma,
   ): Promise<void> {
+    // FOR UPDATE makes the old price the committed one when another transaction changed it first.
     await db.$executeRaw`
-      UPDATE "Variant" SET "price" = ROUND("basePrice" * ${totalRate.plus(1)}::numeric, 2), "updatedAt" = now()
-      WHERE "productId" = ${productId} AND "basePrice" IS NOT NULL
+      WITH target AS (
+        SELECT "id", "price" AS "oldPrice", ROUND("basePrice" * ${totalRate.plus(1)}::numeric, 2) AS "newPrice"
+        FROM "Variant"
+        WHERE "productId" = ${productId} AND "basePrice" IS NOT NULL
+        FOR UPDATE
+      ), repriced AS (
+        UPDATE "Variant" v SET "price" = t."newPrice", "updatedAt" = now()
+        FROM target t
+        WHERE v."id" = t."id" AND t."oldPrice" IS DISTINCT FROM t."newPrice"
+        RETURNING v."id", t."oldPrice", t."newPrice"
+      )
+      ${insertRepricedChanges(origin)}
     `;
   }
 
