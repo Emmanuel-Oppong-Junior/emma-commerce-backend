@@ -25,7 +25,18 @@ export interface PricingPromotion {
   description: string | null;
   scope: PromotionScope;
   type: PromotionType;
-  value: Decimal;
+  /** The reduction (BXGY: the percentage off each reward unit); null only for TIERED, whose tiers carry it. */
+  value: Decimal | null;
+  /** BXGY: units of the targets to buy, and reward units got, per application; at most maxApplications of them. */
+  buyQuantity: number | null;
+  getQuantity: number | null;
+  maxApplications: number | null;
+  /** BXGY: the reward units' targets, of the scope's kind; empty for the targets themselves. */
+  rewardTargetIds: readonly string[];
+  /** TIERED: how the reached tier's value reduces the price (PERCENT, AMOUNT_OFF or FIXED_PRICE). */
+  tierValueType: PromotionType | null;
+  /** TIERED: by minimumQuantity of targeted units (item scopes) or minimumSpend (CART). */
+  tiers: readonly PricingTier[];
   minimumSpend: Decimal | null;
   minimumQuantity: number | null;
   startsAt: Date;
@@ -49,6 +60,12 @@ export interface PricingPromotion {
   createdAt: Date;
   /** What it targets, of its scope's kind: variant ids (SKU), product, category or brand ids; none for CART. */
   targetIds: readonly string[];
+}
+
+export interface PricingTier {
+  minimumQuantity: number | null;
+  minimumSpend: Decimal | null;
+  value: Decimal;
 }
 
 /** The coupon code entered at checkout; it unlocks its promotion. */
@@ -181,12 +198,16 @@ export class CouponNotApplicableError extends Error {}
  * - item level (SKU, PRODUCT, CATEGORY, BRAND): a candidate offers to reduce the units of the lines it targets when
  *   the list-price subtotal reaches its minimum spend and the targeted units its minimum quantity. Under a unit cap
  *   (a flash sale) it offers only the units left, those it saves the most on at the list price first (then by
- *   variant); the rest of a line pays the normal price, so the line is split. On each unit, every stacking group
+ *   variant); the rest of a line pays the normal price, so the line is split. TIERED counts the targeted units of all
+ *   lines together and offers every one of them its reached tier; BXGY counts buy and reward units across lines and
+ *   offers the cheapest reward units value percent off, once per buyQuantity other buy units (rewardOffers). These
+ *   lines are split too. On each unit, every stacking group
  *   contributes the offer saving the most on it at the list price; the groups' winners then apply one after the other
  *   (lowest priority number first, then the oldest), each on what the unit still costs, so a unit never goes below
  *   zero;
  * - cart level (CART): a candidate applies when the subtotal after item promotions (before shipping and tax is added;
- *   prices include tax) reaches its minimum spend and the cart's units its minimum quantity. Every stacking group
+ *   prices include tax) reaches its minimum spend and the cart's units its minimum quantity; a TIERED one (spend X,
+ *   save Y) applies as the highest tier that subtotal reaches. Every stacking group
  *   contributes the promotion saving the most on that subtotal; the winners apply one after the other on what is left,
  *   each allocated to the lines by largest remainder;
  * - exclusive: when exclusive candidates save anything, only the one saving the most on the whole cart applies, alone
@@ -255,9 +276,12 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   );
   const adjustments: QuoteOrderAdjustment[] = [];
   const remaining = lines.map((line) => money(line.lineTotal));
-  for (const promotion of groupWinners(cartCandidates, (each) => cartSaving(merchandise.amount, ownRule(each)))) {
+  const cartRules = new Map(cartCandidates.map((each) => [each, cartRule(each, merchandise.amount)]));
+  const savingOn = (subtotal: Decimal, promotion: PricingPromotion) =>
+    cartSaving(subtotal, cartRules.get(promotion) ?? null);
+  for (const promotion of groupWinners(cartCandidates, (each) => savingOn(merchandise.amount, each))) {
     const left = remaining.reduce((sum, amount) => sum.add(amount), zero);
-    const saving = cartSaving(left.amount, ownRule(promotion));
+    const saving = savingOn(left.amount, promotion);
     if (!saving.gt(0)) continue;
     const shares = allocateToLines(money(saving), lines, remaining);
     shares.forEach((share, index) => (remaining[index] = remaining[index].subtract(share)));
@@ -442,20 +466,108 @@ interface LineOffer extends UnitOffer {
   units: number;
 }
 
+const SIMPLE_TYPES: readonly PromotionType[] = [
+  PromotionType.PERCENT,
+  PromotionType.AMOUNT_OFF,
+  PromotionType.FIXED_PRICE,
+];
+
+/** The rule of a PERCENT, AMOUNT_OFF or FIXED_PRICE promotion. */
 function ownRule(promotion: PricingPromotion): Rule {
+  if (!SIMPLE_TYPES.includes(promotion.type) || promotion.value === null) {
+    throw new Error(`Promotion "${promotion.id}" (${promotion.type}) has no single rule`);
+  }
   return { type: promotion.type, value: promotion.value };
 }
 
+/** The tier with the highest threshold that `reached` reaches (tiers never lose value going up), as a rule. */
+function tierRule(promotion: PricingPromotion, reached: (tier: PricingTier) => boolean): Rule | null {
+  const tier = [...promotion.tiers]
+    .filter(reached)
+    .sort(
+      (a, b) => (a.minimumQuantity ?? 0) - (b.minimumQuantity ?? 0) || compareDecimals(a.minimumSpend, b.minimumSpend),
+    )
+    .pop();
+  return tier && promotion.tierValueType ? { type: promotion.tierValueType, value: tier.value } : null;
+}
+
+/** What a cart promotion applies as on a cart whose merchandise is worth `spend`: its own rule or its reached tier. */
+function cartRule(promotion: PricingPromotion, spend: Decimal): Rule | null {
+  return promotion.type === PromotionType.TIERED
+    ? tierRule(promotion, (tier) => tier.minimumSpend !== null && spend.gte(tier.minimumSpend))
+    : ownRule(promotion);
+}
+
 /**
- * The units an item promotion offers to reduce, at list prices: every unit of the lines it targets, or, under a unit
- * cap, only the units left, those it saves the most on first (then by variant).
+ * The units an item promotion offers to reduce, at list prices: every unit of the lines it targets (TIERED: at the
+ * tier the targeted units reach together), the BXGY reward units, or, under a unit cap, only the units left, those it
+ * saves the most on first (then by variant; BXGY caps whole applications).
  */
 function offersOf(promotion: PricingPromotion, lines: readonly PricingLine[]): LineOffer[] {
-  const rule = ownRule(promotion);
+  if (promotion.type === PromotionType.BXGY) return rewardOffers(promotion, lines);
+  const quantity = targetedQuantity(promotion, lines);
+  const rule =
+    promotion.type === PromotionType.TIERED
+      ? tierRule(promotion, (tier) => tier.minimumQuantity !== null && quantity >= tier.minimumQuantity)
+      : ownRule(promotion);
+  if (!rule) return [];
   const offers = lines.flatMap((line, lineIndex) =>
     targets(promotion, line) ? [{ promotion, rule, lineIndex, units: line.quantity }] : [],
   );
   return promotion.unitCap === null ? offers : withinCap(offers, unitsLeft(promotion), lines);
+}
+
+/**
+ * BXGY, mix and match: every unit of the buy targets counts towards buyQuantity and every unit of the reward targets
+ * can be a reward, across lines. It applies as many times as it can (at most maxApplications, and within the units
+ * left under a cap), each time rewarding the cheapest reward units not yet rewarded with value percent off, while
+ * enough other buy units are left to pay for them: a unit is never both bought and rewarded.
+ */
+function rewardOffers(promotion: PricingPromotion, lines: readonly PricingLine[]): LineOffer[] {
+  const buy = promotion.buyQuantity!;
+  const get = promotion.getQuantity!;
+  const rewardIds = promotion.rewardTargetIds.length > 0 ? promotion.rewardTargetIds : promotion.targetIds;
+  const isReward = (line: PricingLine) => {
+    const id = targetOf(promotion.scope, line);
+    return id !== null && rewardIds.includes(id);
+  };
+  const cheapestFirst = lines
+    .map((line, lineIndex) => ({ line, lineIndex }))
+    .filter(({ line }) => isReward(line))
+    .sort((a, b) => a.line.unitListPrice.comparedTo(b.line.unitListPrice) || compareLines(a.line, b.line));
+  const rewardUnits = cheapestFirst.reduce((sum, { line }) => sum + line.quantity, 0);
+  const rewardsFor = (applications: number) => {
+    const rewarded = new Map<number, number>();
+    let wanted = applications * get;
+    for (const { line, lineIndex } of cheapestFirst) {
+      const units = Math.min(line.quantity, wanted);
+      if (units > 0) rewarded.set(lineIndex, units);
+      wanted -= units;
+    }
+    return rewarded;
+  };
+  const affordable = (applications: number) => {
+    const rewarded = rewardsFor(applications);
+    const buyUnits = lines.reduce(
+      (sum, line, index) => sum + (targets(promotion, line) ? line.quantity - (rewarded.get(index) ?? 0) : 0),
+      0,
+    );
+    return buyUnits >= applications * buy;
+  };
+  // More applications only take more reward units and need more buy units, so the affordable ones are 0..n.
+  let low = 0;
+  let high = Math.min(
+    Math.floor(rewardUnits / get),
+    promotion.maxApplications ?? Infinity,
+    Math.floor(unitsLeft(promotion) / get),
+  );
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (affordable(middle)) low = middle;
+    else high = middle - 1;
+  }
+  const rule: Rule = { type: PromotionType.PERCENT, value: promotion.value! };
+  return [...rewardsFor(low)].map(([lineIndex, units]) => ({ promotion, rule, lineIndex, units }));
 }
 
 function withinCap(offers: readonly LineOffer[], cap: number, lines: readonly PricingLine[]): LineOffer[] {
@@ -544,6 +656,7 @@ export function displayUnitPromotions(
 ): UnitPromotions {
   const shown = promotions.filter(
     (promotion) =>
+      SIMPLE_TYPES.includes(promotion.type) &&
       !promotion.requiresCoupon &&
       !promotion.firstOrderOnly &&
       isLive(promotion, now) &&
@@ -574,7 +687,7 @@ function bestExclusive(
 ): PricingPromotion | undefined {
   const aloneSaving = (promotion: PricingPromotion) =>
     promotion.scope === PromotionScope.CART
-      ? cartSaving(grossSubtotal, ownRule(promotion))
+      ? cartSaving(grossSubtotal, cartRule(promotion, grossSubtotal))
       : itemOffers
           .filter((offer) => offer.promotion === promotion)
           .reduce(
@@ -633,8 +746,12 @@ function unitSaving(unitPrice: Decimal, rule: Rule): Decimal {
   return Decimal.min(unitPrice, Decimal.max(0, roundHalfUp(raw)));
 }
 
-/** What a cart rule takes off `subtotal`: a percentage rounded half-up or an amount, never more than it. */
-function cartSaving(subtotal: Decimal, rule: Rule): Decimal {
+/**
+ * What a cart rule takes off `subtotal`: a percentage rounded half-up or an amount, never more than it; nothing
+ * without a rule (a tiered promotion no tier of which is reached).
+ */
+function cartSaving(subtotal: Decimal, rule: Rule | null): Decimal {
+  if (!rule) return new Decimal(0);
   const raw = rule.type === PromotionType.PERCENT ? subtotal.mul(rule.value).div(100) : rule.value;
   return Decimal.min(subtotal, Decimal.max(0, roundHalfUp(raw)));
 }
@@ -752,6 +869,12 @@ function compareLines(a: ComparableLine, b: ComparableLine): number {
 
 function negate(amount: Decimal): Decimal {
   return amount.isZero() ? new Decimal(0) : amount.neg();
+}
+
+/** Null (no threshold) first. */
+function compareDecimals(a: Decimal | null, b: Decimal | null): number {
+  if (a === null || b === null) return (a === null ? 0 : 1) - (b === null ? 0 : 1);
+  return a.comparedTo(b);
 }
 
 function compareStrings(a: string, b: string): number {

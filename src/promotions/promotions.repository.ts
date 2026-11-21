@@ -14,7 +14,12 @@ const TARGETS_INCLUDE = {
   products: { select: { id: true } },
   categories: { select: { id: true } },
   brands: { select: { id: true } },
+  rewardVariants: { select: { id: true } },
+  rewardProducts: { select: { id: true } },
+  rewardCategories: { select: { id: true } },
+  rewardBrands: { select: { id: true } },
   customerGroups: { select: { id: true } },
+  tiers: { orderBy: [{ minimumQuantity: 'asc' }, { minimumSpend: 'asc' }] },
 } satisfies Prisma.PromotionInclude;
 
 export const PROMOTION_INCLUDE = {
@@ -37,6 +42,19 @@ export const TARGET_RELATION: Record<PromotionScope, TargetRelation | null> = {
 };
 
 const TARGET_RELATIONS: TargetRelation[] = ['variants', 'products', 'categories', 'brands'];
+
+type RewardRelation = 'rewardVariants' | 'rewardProducts' | 'rewardCategories' | 'rewardBrands';
+
+/** The relation holding a BXGY promotion's reward targets, of its scope's kind; CART has none. */
+export const REWARD_RELATION: Record<PromotionScope, RewardRelation | null> = {
+  SKU: 'rewardVariants',
+  PRODUCT: 'rewardProducts',
+  CATEGORY: 'rewardCategories',
+  BRAND: 'rewardBrands',
+  CART: null,
+};
+
+const REWARD_RELATIONS: RewardRelation[] = ['rewardVariants', 'rewardProducts', 'rewardCategories', 'rewardBrands'];
 
 /** The order statuses that make an order count against first-order promotions (the customer paid or was accepted). */
 const COUNTED_ORDER_STATUSES: OrderStatus[] = [
@@ -63,9 +81,26 @@ export interface RedemptionFilter {
 
 /** The relation writes that make `targetIds` the promotion's only targets, for its scope. */
 export function targetWrites(scope: PromotionScope, targetIds: readonly string[], operation: 'connect' | 'set') {
-  const relation = TARGET_RELATION[scope];
-  const writes: Partial<Record<TargetRelation, { connect?: { id: string }[]; set?: { id: string }[] }>> = {};
-  for (const each of TARGET_RELATIONS) {
+  return relationWrites(TARGET_RELATIONS, TARGET_RELATION[scope], targetIds, operation);
+}
+
+/** The relation writes that make `rewardTargetIds` the promotion's only BXGY reward targets, for its scope. */
+export function rewardTargetWrites(
+  scope: PromotionScope,
+  rewardTargetIds: readonly string[],
+  operation: 'connect' | 'set',
+) {
+  return relationWrites(REWARD_RELATIONS, REWARD_RELATION[scope], rewardTargetIds, operation);
+}
+
+function relationWrites<R extends string>(
+  relations: readonly R[],
+  relation: R | null,
+  targetIds: readonly string[],
+  operation: 'connect' | 'set',
+) {
+  const writes: Partial<Record<R, { connect?: { id: string }[]; set?: { id: string }[] }>> = {};
+  for (const each of relations) {
     const ids = each === relation ? targetIds.map((id) => ({ id })) : [];
     if (operation === 'set') writes[each] = { set: ids };
     else if (ids.length > 0) writes[each] = { connect: ids };
@@ -166,7 +201,13 @@ export class PromotionsRepository {
         products: { where: { id: { in: targets.productIds } }, select: { id: true } },
         categories: { where: { id: { in: targets.categoryIds } }, select: { id: true } },
         brands: { where: { id: { in: targets.brandIds } }, select: { id: true } },
+        // Unfiltered: no reward targets means "the targets themselves", so filtering to the cart would change that.
+        rewardVariants: { select: { id: true } },
+        rewardProducts: { select: { id: true } },
+        rewardCategories: { select: { id: true } },
+        rewardBrands: { select: { id: true } },
         customerGroups: { select: { id: true } },
+        tiers: true,
       },
     });
   }

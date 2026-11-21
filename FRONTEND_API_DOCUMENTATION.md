@@ -1941,9 +1941,15 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   name: string;
   description?: string;
   scope: PromotionScope;      // SKU | PRODUCT | CATEGORY | BRAND | CART
-  type: PromotionType;        // PERCENT | AMOUNT_OFF | FIXED_PRICE
-  value: Decimal;             // PERCENT: 0-100; AMOUNT_OFF: amount off each targeted unit (off the cart for CART); FIXED_PRICE: the unit price (never raises a price; not for CART)
-  targetIds: ID[];            // Variant ids (SKU), product, category or brand ids; [] for CART
+  type: PromotionType;        // PERCENT | AMOUNT_OFF | FIXED_PRICE | BXGY | TIERED (P2-B.5)
+  value?: Decimal;            // PERCENT: 0-100; AMOUNT_OFF: amount off each targeted unit (off the cart for CART); FIXED_PRICE: the unit price (never raises a price; not for CART); BXGY: percent off each reward unit (100 = free). Breaking change (P2-B.5): nullable, null for TIERED
+  targetIds: ID[];            // Variant ids (SKU), product, category or brand ids; [] for CART. BXGY: the buy targets
+  buyQuantity?: number;       // P2-B.5 BXGY: targeted units to buy per application
+  getQuantity?: number;       // P2-B.5 BXGY: reward units per application
+  maxApplications?: number;   // P2-B.5 BXGY: most applications per order; null = no limit
+  rewardTargetIds: ID[];      // P2-B.5 BXGY: reward targets, of the scope's kind; [] = the targets themselves
+  tierValueType?: PromotionType; // P2-B.5 TIERED: PERCENT | AMOUNT_OFF | FIXED_PRICE (not for CART), how each tier's value reduces the price
+  tiers: PromotionTier[];     // P2-B.5 TIERED: { minimumQuantity?: number (item scopes); minimumSpend?: Money (CART); value: Decimal }, ascending
   minimumSpend?: Money;       // Least merchandise total (see 10. Promotions System for which subtotal)
   minimumQuantity?: number;   // Least number of targeted units in the cart (any unit for CART)
   startsAt: DateTime;
@@ -1980,8 +1986,14 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   description?: string;
   scope: PromotionScope;       // Required
   type: PromotionType;         // Required
-  value: Decimal;              // Required, >= 0, 2 dp; PERCENT at most 100
+  value?: Decimal;             // >= 0, 2 dp; PERCENT and BXGY at most 100 (BXGY above 0). Required except for TIERED, which takes none
   targetIds?: ID[];            // Default []; must exist for the scope; none for CART
+  buyQuantity?: number;        // P2-B.5 BXGY only, required there, >= 1
+  getQuantity?: number;        // P2-B.5 BXGY only, required there, >= 1
+  maxApplications?: number;    // P2-B.5 BXGY only, >= 1
+  rewardTargetIds?: ID[];      // P2-B.5 BXGY only; default [] (the targets themselves); must exist for the scope
+  tierValueType?: PromotionType; // P2-B.5 TIERED only, required there: PERCENT | AMOUNT_OFF | FIXED_PRICE (not for CART)
+  tiers?: PromotionTierInput[]; // P2-B.5 TIERED only, 1-20: { minimumQuantity?: Int (item scopes), minimumSpend?: Decimal (CART), value: Decimal }, strictly ascending thresholds, a higher tier never worth less; PERCENT values in (0, 100], AMOUNT_OFF above 0
   minimumSpend?: Decimal;
   minimumQuantity?: number;    // >= 1
   startsAt?: DateTime;         // Default now
@@ -1999,12 +2011,12 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
 }
 ```
 
-**Possible Errors**: `BAD_REQUEST` (unknown customer groups, PERCENT above 100, FIXED_PRICE on CART, targets on CART, unknown targets, `endsAt` not after `startsAt`, a `unitCap` on CART).
+**Possible Errors**: `BAD_REQUEST` (unknown customer groups, PERCENT above 100, FIXED_PRICE on CART, targets on CART, unknown targets, `endsAt` not after `startsAt`, a `unitCap` on CART; P2-B.5: a missing value, BXGY without quantities or on CART, BXGY or tier fields on another type, invalid tiers).
 
 #### `updatePromotion`
 
 - **Args**: `id: ID!`, `input: UpdatePromotionInput!` (every field optional) → `Promotion!`
-- Omitted fields stay; `null` clears an optional one (`description`, `minimumSpend`, `minimumQuantity`, `endsAt`, `usageLimit`, `unitCap`, `perCustomerLimit`). `targetIds` replaces every target (`[]` clears them) and is required when `scope` changes; `customerGroupIds` replaces the groups (`[]` opens it to everyone). The result is checked as a whole against the stored promotion (a `value` of 150 on a PERCENT promotion is refused).
+- Omitted fields stay; `null` clears an optional one (`description`, `value`, `minimumSpend`, `minimumQuantity`, `endsAt`, `usageLimit`, `unitCap`, `perCustomerLimit`, `buyQuantity`, `getQuantity`, `maxApplications`, `tierValueType`). `rewardTargetIds` and `tiers`, when given, replace the stored ones (`rewardTargetIds` is required when `scope` changes and the promotion has some). `targetIds` replaces every target (`[]` clears them) and is required when `scope` changes; `customerGroupIds` replaces the groups (`[]` opens it to everyone). The result is checked as a whole against the stored promotion (a `value` of 150 on a PERCENT promotion is refused).
 
 #### `deletePromotion`
 
@@ -2035,7 +2047,7 @@ Codes are unique ignoring case (`CONFLICT` for a taken code). A code an order ha
   promotion: PublicPromotion;  // { id, name, description?, endsAt? }
   scope: PromotionScope;
   type: PromotionType;
-  value: Decimal;
+  value?: Decimal;             // Breaking change (P2-B.5): null for TIERED
   minimumSpend?: Money;
   minimumQuantity?: number;
 }
@@ -3720,6 +3732,16 @@ A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or
 - When a cart wants more units than are left, the units left get the promotional price and the rest the normal price: the cart line becomes two quote lines (and two order items) with the same `cartItemId` / variant, the reduced units first. Across several targeted lines the units left go to the units the promotion saves the most on (then by variant).
 - The units an order bought at the price are taken at placement inside the order transaction with a conditional update (`unitsUsed + n <= unitCap`) and recorded on its redemption (`units`). If fewer are left than the quote reduced, `createOrder` fails with `CONFLICT` + `reason: PROMOTION_UNITS_SOLD_OUT` and nothing is recorded. They are given back with the use when the order is cancelled or expires before payment, and kept when a paid order is refunded.
 - A sold-out flash sale is no longer a candidate; its coupon code fails with "This offer has sold out". Product pages show it only while it has units left.
+
+### BXGY, volume tiers and spend X save Y (P2-B.5)
+
+All three are **mix and match**: they count the targeted units of every line together (any variants, products, categories or brands among the promotion's targets), not line by line. They compete in stacking groups, exclusivity and priority exactly like the other types: within a group each unit gets the offer saving the most on it.
+
+- **BXGY** (item scopes): every unit of the targets counts towards `buyQuantity`; every unit of the reward targets (`rewardTargetIds`, default the targets) can be a reward. It applies as many times as the cart allows (at most `maxApplications`, and within a `unitCap`, counted in reward units), each time giving the **cheapest** reward units not yet rewarded `value`% off (100 = free), as long as enough other buy units pay for them: a unit is never both bought and rewarded. The saving is on the reward lines (`OrderAdjustment` per line); a line with some rewarded units is split. Redemption `units` = the reward units.
+- **TIERED, item scopes (volume)**: the tier is the highest `minimumQuantity` the targeted units reach together; every targeted unit gets it as `tierValueType` (e.g. 3+ → 10%, 6+ → 15%).
+- **TIERED, CART (spend X save Y)**: the tier is the highest `minimumSpend` reached by the subtotal after item promotions (as for a minimum spend); it comes off the cart as `PERCENT` or `AMOUNT_OFF` and is allocated to the lines.
+- Product pages (`discountedPrice`) never show BXGY or tiered promotions: they depend on the cart.
+- **Breaking change (P2-B.5):** `Promotion.value` and `CouponCodeValidation.value` are nullable (null for TIERED).
 
 ---
 

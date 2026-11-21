@@ -343,8 +343,10 @@ type CouponCodeValidation {
   scope: PromotionScope!
   type: PromotionType!
 
-  """A percentage (PERCENT) or an amount in the store currency"""
-  value: Decimal!
+  """
+  A percentage (PERCENT, BXGY) or an amount in the store currency; null for TIERED
+  """
+  value: Decimal
 }
 
 input CreateAddressInput {
@@ -567,6 +569,9 @@ input CreateProductTypeInput {
 
 """A new promotion; it starts inactive unless isActive is true"""
 input CreatePromotionInput {
+  """BXGY: units of the targets to buy per application"""
+  buyQuantity: Int
+
   """Only for members of one of these customer groups; [] for all"""
   customerGroupIds: [ID!]! = []
   description: String
@@ -577,7 +582,13 @@ input CreatePromotionInput {
 
   """Only for a customer without an earlier confirmed or paid order"""
   firstOrderOnly: Boolean! = false
+
+  """BXGY: reward units per application (the cheapest get value % off)"""
+  getQuantity: Int
   isActive: Boolean! = false
+
+  """BXGY: most applications per order; null for no limit"""
+  maxApplications: Int
 
   """Least number of targeted units (any unit for CART)"""
   minimumQuantity: Int
@@ -594,6 +605,11 @@ input CreatePromotionInput {
 
   """Only orders entering one of its coupon codes get it"""
   requiresCoupon: Boolean! = false
+
+  """
+  BXGY: reward targets, of the scope's kind; [] for the targets themselves
+  """
+  rewardTargetIds: [ID!]! = []
   scope: PromotionScope!
   stackingGroup: String! = "default"
 
@@ -604,6 +620,16 @@ input CreatePromotionInput {
   Ids of the scope's kind: variants (SKU), products, categories or brands; none for CART
   """
   targetIds: [ID!]! = []
+
+  """
+  TIERED: how each tier value reduces the price: PERCENT, AMOUNT_OFF or FIXED_PRICE (not for CART)
+  """
+  tierValueType: PromotionType
+
+  """
+  TIERED: ascending tiers; minimumQuantity for item scopes, minimumSpend for CART
+  """
+  tiers: [PromotionTierInput!]! = []
   type: PromotionType!
 
   """
@@ -614,8 +640,10 @@ input CreatePromotionInput {
   """Orders that may use it, across all customers"""
   usageLimit: Int
 
-  """A percentage, 0 to 100 (PERCENT), or an amount in the store currency"""
-  value: Decimal!
+  """
+  A percentage, 0 to 100 (PERCENT; BXGY: off each reward unit, 100 = free), or an amount in the store currency. Required except for TIERED, which takes none
+  """
+  value: Decimal
 }
 
 input CreateReturnRequestInput {
@@ -1841,6 +1869,8 @@ type ProductType {
 A promotion with its rules, targets, limits and coupon codes (staff view)
 """
 type Promotion {
+  """BXGY: units of the targets to buy per application"""
+  buyQuantity: Int
   couponCodes: [CouponCode!]!
   createdAt: DateTime!
 
@@ -1856,8 +1886,14 @@ type Promotion {
 
   """Only for a customer without an earlier confirmed or paid order"""
   firstOrderOnly: Boolean!
+
+  """BXGY: reward units per application"""
+  getQuantity: Int
   id: ID!
   isActive: Boolean!
+
+  """BXGY: most applications per order; null for no limit"""
+  maxApplications: Int
 
   """Least number of targeted units (any unit for CART) in the cart"""
   minimumQuantity: Int
@@ -1876,6 +1912,11 @@ type Promotion {
 
   """Only an order that enters one of its coupon codes gets it"""
   requiresCoupon: Boolean!
+
+  """
+  BXGY: reward targets, of the scope kind; empty for the targets themselves
+  """
+  rewardTargetIds: [ID!]!
   scope: PromotionScope!
 
   """
@@ -1888,6 +1929,12 @@ type Promotion {
   Ids of the scope's kind (variants, products, categories or brands); empty for CART
   """
   targetIds: [ID!]!
+
+  """TIERED: how each tier value reduces the price"""
+  tierValueType: PromotionType
+
+  """TIERED: ascending tiers; empty otherwise"""
+  tiers: [PromotionTier!]!
   type: PromotionType!
 
   """
@@ -1907,8 +1954,10 @@ type Promotion {
   """Orders holding a use of it"""
   usedCount: Int!
 
-  """A percentage (PERCENT) or an amount in the store currency"""
-  value: Decimal!
+  """
+  A percentage (PERCENT; BXGY: off each reward unit) or an amount in the store currency; null for TIERED
+  """
+  value: Decimal
 }
 
 """What a promotion targets"""
@@ -1929,10 +1978,41 @@ enum PromotionScope {
   SKU
 }
 
+"""One tier of a TIERED promotion"""
+type PromotionTier {
+  """Item scopes: least targeted units, counted across lines"""
+  minimumQuantity: Int
+
+  """CART: least merchandise total after item promotions"""
+  minimumSpend: Money
+
+  """A percentage, an amount off or a fixed unit price (tierValueType)"""
+  value: Decimal!
+}
+
+"""One tier of a TIERED promotion"""
+input PromotionTierInput {
+  """Item scopes: least targeted units, counted across lines"""
+  minimumQuantity: Int
+
+  """CART: least merchandise total after item promotions"""
+  minimumSpend: Decimal
+
+  """
+  A percentage, an amount off or a fixed unit price, as tierValueType says
+  """
+  value: Decimal!
+}
+
 """How a promotion reduces the price"""
 enum PromotionType {
   """value comes off each targeted unit, or off the cart (CART scope)"""
   AMOUNT_OFF
+
+  """
+  buy buyQuantity targeted units, get getQuantity reward units (the cheapest) value % off, mixing lines (not for CART)
+  """
+  BXGY
 
   """
   each targeted unit costs value, never more than its price (not for CART)
@@ -1941,6 +2021,11 @@ enum PromotionType {
 
   """value is a percentage, 0 to 100"""
   PERCENT
+
+  """
+  the highest tier reached applies as tierValueType: by targeted units across lines (item scopes) or by spend (CART)
+  """
+  TIERED
 }
 
 """What other customers may see about a user, e.g. on reviews"""
@@ -2988,31 +3073,40 @@ input UpdateProductTypeInput {
 }
 
 """
-Changes to a promotion: omitted fields stay as they are, null clears an optional one. targetIds, when given, replaces every target (an empty list clears them); it is required when the scope changes.
+Changes to a promotion: omitted fields stay as they are, null clears an optional one. targetIds, when given, replaces every target (an empty list clears them); it is required when the scope changes. rewardTargetIds and tiers likewise replace the stored ones when given.
 """
 input UpdatePromotionInput {
+  buyQuantity: Int
+
   """Replaces the customer groups; [] opens it to everyone"""
   customerGroupIds: [ID!]
   description: String
   endsAt: DateTime
   exclusive: Boolean
   firstOrderOnly: Boolean
+  getQuantity: Int
   isActive: Boolean
+  maxApplications: Int
   minimumQuantity: Int
   minimumSpend: Decimal
   name: String
   perCustomerLimit: Int
   priority: Int
   requiresCoupon: Boolean
+  rewardTargetIds: [ID!]
   scope: PromotionScope
   stackingGroup: String
   startsAt: DateTime
   targetIds: [ID!]
+  tierValueType: PromotionType
+  tiers: [PromotionTierInput!]
   type: PromotionType
 
   """May be set below unitsUsed: no more units are then sold"""
   unitCap: Int
   usageLimit: Int
+
+  """null clears it (a TIERED promotion has none)"""
   value: Decimal
 }
 

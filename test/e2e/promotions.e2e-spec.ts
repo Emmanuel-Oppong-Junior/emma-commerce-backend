@@ -131,7 +131,7 @@ describe('Promotions admin API (P2-B.1, e2e)', () => {
     );
 
     expect(codeOf(res)?.code).toBe('BAD_REQUEST');
-    expect((await prisma.promotion.findUniqueOrThrow({ where: { id: promotion.id } })).value.toFixed(0)).toBe('10');
+    expect((await prisma.promotion.findUniqueOrThrow({ where: { id: promotion.id } })).value?.toFixed(0)).toBe('10');
   });
 
   it('manages coupon codes: stored upper case, unique ignoring case, audited, deletable only while unused', async () => {

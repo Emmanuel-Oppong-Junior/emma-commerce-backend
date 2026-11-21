@@ -5,13 +5,18 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface PromotionFixture extends Partial<
-  Omit<Prisma.PromotionUncheckedCreateInput, 'scope' | 'type' | 'value'>
+  Omit<Prisma.PromotionUncheckedCreateInput, 'scope' | 'type' | 'value' | 'tiers'>
 > {
   scope?: PromotionScope;
   type: PromotionType;
-  value: Decimal.Value;
+  /** Null for TIERED. */
+  value: Decimal.Value | null;
   /** Of the scope's kind: variant ids (SKU), product (default scope), category or brand ids. */
   targetIds?: string[];
+  /** BXGY reward targets, of the scope's kind. */
+  rewardTargetIds?: string[];
+  /** TIERED tiers. */
+  tiers?: { minimumQuantity?: number; minimumSpend?: Decimal.Value; value: Decimal.Value }[];
 }
 
 const RELATION: Record<PromotionScope, 'variants' | 'products' | 'categories' | 'brands' | null> = {
@@ -22,10 +27,19 @@ const RELATION: Record<PromotionScope, 'variants' | 'products' | 'categories' | 
   CART: null,
 };
 
+const REWARD_RELATION: Record<PromotionScope, string | null> = {
+  SKU: 'rewardVariants',
+  PRODUCT: 'rewardProducts',
+  CATEGORY: 'rewardCategories',
+  BRAND: 'rewardBrands',
+  CART: null,
+};
+
 /** An active promotion, live since yesterday until tomorrow unless the fixture says otherwise. */
 export async function createPromotion(prisma: PrismaService, fixture: PromotionFixture) {
-  const { scope = 'PRODUCT', targetIds = [], type, value, ...rest } = fixture;
+  const { scope = 'PRODUCT', targetIds = [], rewardTargetIds = [], tiers = [], type, value, ...rest } = fixture;
   const relation = RELATION[scope];
+  const rewardRelation = REWARD_RELATION[scope];
   return prisma.promotion.create({
     data: {
       name: rest.name ?? `${type} ${String(value)}`,
@@ -37,6 +51,9 @@ export async function createPromotion(prisma: PrismaService, fixture: PromotionF
       type,
       value,
       ...(relation && targetIds.length > 0 && { [relation]: { connect: targetIds.map((id) => ({ id })) } }),
+      ...(rewardRelation &&
+        rewardTargetIds.length > 0 && { [rewardRelation]: { connect: rewardTargetIds.map((id) => ({ id })) } }),
+      ...(tiers.length > 0 && { tiers: { create: tiers } }),
     } as Prisma.PromotionCreateInput,
   });
 }

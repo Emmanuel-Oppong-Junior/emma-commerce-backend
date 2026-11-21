@@ -13,11 +13,31 @@ import {
   IsString,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { PromotionScope, PromotionType } from '../../generated/prisma/client';
 import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
 
 const MAX_TARGETS = 1000;
+const MAX_TIERS = 20;
+
+@InputType({ description: 'One tier of a TIERED promotion' })
+export class PromotionTierInput {
+  @Field(() => Int, { nullable: true, description: 'Item scopes: least targeted units, counted across lines' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minimumQuantity?: number | null;
+
+  @DecimalInputField({ nullable: true, description: 'CART: least merchandise total after item promotions' })
+  @IsOptional()
+  @IsMoneyAmount()
+  minimumSpend?: Decimal | null;
+
+  @DecimalInputField({ description: 'A percentage, an amount off or a fixed unit price, as tierValueType says' })
+  @IsMoneyAmount()
+  value: Decimal;
+}
 
 @InputType({ description: 'A new promotion; it starts inactive unless isActive is true' })
 export class CreatePromotionInput {
@@ -40,9 +60,63 @@ export class CreatePromotionInput {
   @IsEnum(PromotionType)
   type: PromotionType;
 
-  @DecimalInputField({ description: 'A percentage, 0 to 100 (PERCENT), or an amount in the store currency' })
+  @DecimalInputField({
+    nullable: true,
+    description:
+      'A percentage, 0 to 100 (PERCENT; BXGY: off each reward unit, 100 = free), or an amount in the store currency. ' +
+      'Required except for TIERED, which takes none',
+  })
+  @IsOptional()
   @IsMoneyAmount()
-  value: Decimal;
+  value?: Decimal | null;
+
+  @Field(() => Int, { nullable: true, description: 'BXGY: units of the targets to buy per application' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  buyQuantity?: number | null;
+
+  @Field(() => Int, {
+    nullable: true,
+    description: 'BXGY: reward units per application (the cheapest get value % off)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  getQuantity?: number | null;
+
+  @Field(() => Int, { nullable: true, description: 'BXGY: most applications per order; null for no limit' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxApplications?: number | null;
+
+  @Field(() => [ID], {
+    defaultValue: [],
+    description: "BXGY: reward targets, of the scope's kind; [] for the targets themselves",
+  })
+  @IsArray()
+  @ArrayMaxSize(MAX_TARGETS)
+  @IsString({ each: true })
+  rewardTargetIds: string[] = [];
+
+  @Field(() => PromotionType, {
+    nullable: true,
+    description: 'TIERED: how each tier value reduces the price: PERCENT, AMOUNT_OFF or FIXED_PRICE (not for CART)',
+  })
+  @IsOptional()
+  @IsEnum(PromotionType)
+  tierValueType?: PromotionType | null;
+
+  @Field(() => [PromotionTierInput], {
+    defaultValue: [],
+    description: 'TIERED: ascending tiers; minimumQuantity for item scopes, minimumSpend for CART',
+  })
+  @IsArray()
+  @ArrayMaxSize(MAX_TIERS)
+  @ValidateNested({ each: true })
+  @Type(() => PromotionTierInput)
+  tiers: PromotionTierInput[] = [];
 
   @Field(() => [ID], {
     defaultValue: [],
@@ -135,7 +209,8 @@ export class CreatePromotionInput {
 @InputType({
   description:
     'Changes to a promotion: omitted fields stay as they are, null clears an optional one. targetIds, when given, ' +
-    'replaces every target (an empty list clears them); it is required when the scope changes.',
+    'replaces every target (an empty list clears them); it is required when the scope changes. rewardTargetIds and ' +
+    'tiers likewise replace the stored ones when given.',
 })
 export class UpdatePromotionInput {
   @Field({ nullable: true })
@@ -160,10 +235,48 @@ export class UpdatePromotionInput {
   @IsEnum(PromotionType)
   type?: PromotionType;
 
-  @DecimalInputField({ nullable: true })
+  @DecimalInputField({ nullable: true, description: 'null clears it (a TIERED promotion has none)' })
   @IsOptional()
   @IsMoneyAmount()
-  value?: Decimal;
+  value?: Decimal | null;
+
+  @Field(() => Int, { nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  buyQuantity?: number | null;
+
+  @Field(() => Int, { nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  getQuantity?: number | null;
+
+  @Field(() => Int, { nullable: true })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxApplications?: number | null;
+
+  @Field(() => [ID], { nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TARGETS)
+  @IsString({ each: true })
+  rewardTargetIds?: string[];
+
+  @Field(() => PromotionType, { nullable: true })
+  @IsOptional()
+  @IsEnum(PromotionType)
+  tierValueType?: PromotionType | null;
+
+  @Field(() => [PromotionTierInput], { nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TIERS)
+  @ValidateNested({ each: true })
+  @Type(() => PromotionTierInput)
+  tiers?: PromotionTierInput[];
 
   @Field(() => [ID], { nullable: true })
   @IsOptional()

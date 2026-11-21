@@ -7,7 +7,9 @@ import {
   PricingCouponCode,
   PricingCustomer,
   PricingPromotion,
+  PricingTier,
 } from '../pricing/price';
+import { Decimal } from '@prisma/client/runtime/client';
 import { CreatePromotionInput, UpdatePromotionInput } from './dto/promotion.input';
 import { CreateCouponCodeInput, UpdateCouponCodeInput } from './dto/coupon-code.input';
 import { promotionDefinitionError } from './promotion-definition';
@@ -17,6 +19,8 @@ import {
   PromotionWithRelations,
   PromotionWithTargets,
   RedemptionFilter,
+  REWARD_RELATION,
+  rewardTargetWrites,
   TARGET_RELATION,
   targetWrites,
 } from './promotions.repository';
@@ -46,6 +50,10 @@ const AUDITED_PROMOTION_FIELDS = [
   'requiresCoupon',
   'usageLimit',
   'unitCap',
+  'buyQuantity',
+  'getQuantity',
+  'maxApplications',
+  'tierValueType',
   'perCustomerLimit',
   'firstOrderOnly',
 ] as const satisfies readonly (keyof Promotion)[];
@@ -61,7 +69,6 @@ const REQUIRED_PROMOTION_FIELDS = [
   'name',
   'scope',
   'type',
-  'value',
   'startsAt',
   'isActive',
   'priority',
@@ -98,6 +105,12 @@ export function toPricingPromotion(promotion: PromotionWithTargets): PricingProm
     usedCount: promotion.usedCount,
     unitCap: promotion.unitCap,
     unitsUsed: promotion.unitsUsed,
+    buyQuantity: promotion.buyQuantity,
+    getQuantity: promotion.getQuantity,
+    maxApplications: promotion.maxApplications,
+    rewardTargetIds: rewardTargetIdsOf(promotion),
+    tierValueType: promotion.tierValueType,
+    tiers: promotion.tiers.map(toTier),
     perCustomerLimit: promotion.perCustomerLimit,
     firstOrderOnly: promotion.firstOrderOnly,
     customerGroupIds: promotion.customerGroups.map(({ id }) => id),
@@ -106,12 +119,32 @@ export function toPricingPromotion(promotion: PromotionWithTargets): PricingProm
   };
 }
 
+/** The BXGY reward targets of the promotion's scope; none for CART or when they are the targets themselves. */
+export function rewardTargetIdsOf(promotion: PromotionWithTargets): string[] {
+  const relation = REWARD_RELATION[promotion.scope];
+  return relation ? promotion[relation].map(({ id }) => id) : [];
+}
+
+function toTier(tier: { minimumQuantity?: number | null; minimumSpend?: Decimal | null; value: Decimal }): PricingTier {
+  return { minimumQuantity: tier.minimumQuantity ?? null, minimumSpend: tier.minimumSpend ?? null, value: tier.value };
+}
+
+function auditTier(tier: PricingTier) {
+  return {
+    minimumQuantity: tier.minimumQuantity,
+    minimumSpend: tier.minimumSpend?.toString() ?? null,
+    value: tier.value.toString(),
+  };
+}
+
 function toEntity(promotion: PromotionWithRelations): PromotionEntity {
   // The relation arrays ride along unused: GraphQL serialises only the entity's fields.
   return {
     ...promotion,
     targetIds: targetIdsOf(promotion),
+    rewardTargetIds: rewardTargetIdsOf(promotion),
     customerGroupIds: promotion.customerGroups.map(({ id }) => id),
+    tiers: promotion.tiers.map(toTier),
   };
 }
 
@@ -157,18 +190,34 @@ export class PromotionsService {
   }
 
   async create(input: CreatePromotionInput, actorId: string): Promise<PromotionEntity> {
-    const { targetIds: requestedTargets, customerGroupIds: requestedGroups, ...fields } = input;
+    const {
+      targetIds: requestedTargets,
+      rewardTargetIds: requestedRewards,
+      customerGroupIds: requestedGroups,
+      tiers: requestedTiers,
+      ...fields
+    } = input;
     const targetIds = [...new Set(requestedTargets)];
+    const rewardTargetIds = [...new Set(requestedRewards)];
     const customerGroupIds = [...new Set(requestedGroups)];
+    const tiers = (requestedTiers ?? []).map(toTier);
     const startsAt = input.startsAt ?? new Date();
     this.assertDefinition({
-      ...input,
+      scope: input.scope,
+      type: input.type,
+      value: input.value ?? null,
       targetIds,
       startsAt,
       endsAt: input.endsAt ?? null,
       unitCap: input.unitCap ?? null,
+      buyQuantity: input.buyQuantity ?? null,
+      getQuantity: input.getQuantity ?? null,
+      maxApplications: input.maxApplications ?? null,
+      rewardTargetIds,
+      tierValueType: input.tierValueType ?? null,
+      tiers,
     });
-    await this.assertTargetsExist(input.scope, targetIds);
+    await this.assertTargetsExist(input.scope, [...targetIds, ...rewardTargetIds]);
     await this.assertCustomerGroupsExist(customerGroupIds);
     const created = await this.auditService.record(
       (tx) =>
@@ -177,7 +226,9 @@ export class PromotionsService {
             ...fields,
             startsAt,
             ...targetWrites(input.scope, targetIds, 'connect'),
+            ...rewardTargetWrites(input.scope, rewardTargetIds, 'connect'),
             ...(customerGroupIds.length > 0 && { customerGroups: { connect: customerGroupIds.map((id) => ({ id })) } }),
+            ...(tiers.length > 0 && { tiers: { create: tiers } }),
           },
           tx,
         ),
@@ -186,7 +237,13 @@ export class PromotionsService {
         entityId: promotion.id,
         action: 'CREATE',
         userId: actorId,
-        details: { after: fieldValues(promotion, AUDITED_PROMOTION_FIELDS), targetIds, customerGroupIds },
+        details: {
+          after: fieldValues(promotion, AUDITED_PROMOTION_FIELDS),
+          targetIds,
+          customerGroupIds,
+          ...(rewardTargetIds.length > 0 && { rewardTargetIds }),
+          ...(tiers.length > 0 && { tiers: tiers.map(auditTier) }),
+        },
       }),
     );
     return toEntity(created);
@@ -200,26 +257,50 @@ export class PromotionsService {
     const cleared = REQUIRED_PROMOTION_FIELDS.filter((field) => input[field] === null);
     if (cleared.length > 0) throw new BadRequestException(`${cleared.join(', ')} cannot be null`);
 
-    const { targetIds: requestedTargets, customerGroupIds: requestedGroups, ...fields } = input;
+    const {
+      targetIds: requestedTargets,
+      rewardTargetIds: requestedRewards,
+      customerGroupIds: requestedGroups,
+      tiers: requestedTiers,
+      ...fields
+    } = input;
     const customerGroupIds = requestedGroups && [...new Set(requestedGroups)];
     const scope = input.scope ?? existing.scope;
     const scopeChanged = scope !== existing.scope;
     const existingTargets = targetIdsOf(existing);
+    const existingRewards = rewardTargetIdsOf(existing);
     if (scopeChanged && requestedTargets === undefined && existingTargets.length > 0) {
       throw new BadRequestException('Give targetIds when changing the scope (the current targets are of another kind)');
     }
+    if (scopeChanged && requestedRewards === undefined && existingRewards.length > 0) {
+      throw new BadRequestException(
+        'Give rewardTargetIds when changing the scope (the current ones are of another kind)',
+      );
+    }
     const replaceTargets = requestedTargets !== undefined || scopeChanged;
+    const replaceRewards = requestedRewards !== undefined;
     const targetIds = requestedTargets !== undefined ? [...new Set(requestedTargets)] : existingTargets;
+    const rewardTargetIds = requestedRewards !== undefined ? [...new Set(requestedRewards)] : existingRewards;
+    const tiers = requestedTiers ? requestedTiers.map(toTier) : existing.tiers;
+    const kept = <T>(given: T | undefined, stored: T) => (given === undefined ? stored : given);
     this.assertDefinition({
       scope,
       type: input.type ?? existing.type,
-      value: input.value ?? existing.value,
+      value: kept(input.value, existing.value),
       targetIds,
       startsAt: input.startsAt ?? existing.startsAt,
-      endsAt: input.endsAt === undefined ? existing.endsAt : input.endsAt,
-      unitCap: input.unitCap === undefined ? existing.unitCap : input.unitCap,
+      endsAt: kept(input.endsAt, existing.endsAt),
+      unitCap: kept(input.unitCap, existing.unitCap),
+      buyQuantity: kept(input.buyQuantity, existing.buyQuantity),
+      getQuantity: kept(input.getQuantity, existing.getQuantity),
+      maxApplications: kept(input.maxApplications, existing.maxApplications),
+      rewardTargetIds,
+      tierValueType: kept(input.tierValueType, existing.tierValueType),
+      tiers,
     });
-    if (requestedTargets !== undefined) await this.assertTargetsExist(scope, targetIds);
+    if (requestedTargets !== undefined || requestedRewards !== undefined) {
+      await this.assertTargetsExist(scope, [...targetIds, ...rewardTargetIds]);
+    }
     if (customerGroupIds) await this.assertCustomerGroupsExist(customerGroupIds);
 
     const updated = await this.auditService.record(
@@ -229,7 +310,9 @@ export class PromotionsService {
           {
             ...fields,
             ...(replaceTargets && targetWrites(scope, targetIds, 'set')),
+            ...(replaceRewards && rewardTargetWrites(scope, rewardTargetIds, 'set')),
             ...(customerGroupIds && { customerGroups: { set: customerGroupIds.map((id) => ({ id })) } }),
+            ...(requestedTiers && { tiers: { deleteMany: {}, create: tiers } }),
           } as Prisma.PromotionUpdateInput,
           tx,
         ),
@@ -241,7 +324,9 @@ export class PromotionsService {
         details: {
           changes: fieldChanges(existing, after, AUDITED_PROMOTION_FIELDS),
           ...(replaceTargets && { targetIds }),
+          ...(replaceRewards && { rewardTargetIds }),
           ...(customerGroupIds && { customerGroupIds }),
+          ...(requestedTiers && { tiers: tiers.map(auditTier) }),
         },
       }),
     );

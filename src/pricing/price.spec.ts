@@ -59,6 +59,12 @@ const promotion = (
   usedCount: 0,
   unitCap: null,
   unitsUsed: 0,
+  buyQuantity: null,
+  getQuantity: null,
+  maxApplications: null,
+  rewardTargetIds: [],
+  tierValueType: null,
+  tiers: [],
   perCustomerLimit: null,
   firstOrderOnly: false,
   customerGroupIds: [],
@@ -70,6 +76,33 @@ const pct = (id: string, value: Decimal.Value, overrides: Partial<PricingPromoti
   promotion(id, 'PERCENT', value, overrides);
 const flat = (id: string, value: Decimal.Value, overrides: Partial<PricingPromotion> = {}) =>
   promotion(id, 'AMOUNT_OFF', value, overrides);
+/** Buy `buy` targeted units, get `get` reward units `percentOff` % off. */
+const bxgy = (
+  id: string,
+  buy: number,
+  get: number,
+  percentOff: Decimal.Value,
+  overrides: Partial<PricingPromotion> = {},
+) => promotion(id, 'BXGY', percentOff, { buyQuantity: buy, getQuantity: get, ...overrides });
+/** Tiers as [threshold, value] pairs: units for item scopes, spend for CART. */
+const tiered = (
+  id: string,
+  tierValueType: PricingPromotion['type'],
+  tiers: [Decimal.Value, Decimal.Value][],
+  overrides: Partial<PricingPromotion> = {},
+) => {
+  const cart = overrides.scope === 'CART';
+  return promotion(id, 'TIERED', 0, {
+    value: null,
+    tierValueType,
+    tiers: tiers.map(([threshold, value]) => ({
+      minimumQuantity: cart ? null : Number(threshold),
+      minimumSpend: cart ? d(threshold) : null,
+      value: d(value),
+    })),
+    ...overrides,
+  });
+};
 
 /** A cart promotion a coupon code unlocks (a legacy coupon: CART scope, AMOUNT_OFF 10 by default). */
 const coupon = (overrides: Partial<PricingPromotion> = {}): PricingPromotion =>
@@ -730,6 +763,265 @@ describe('price', () => {
     });
   });
 
+  describe('BXGY, tiered and spend tiers (P2-B.5)', () => {
+    const summary = (quote: Quote) =>
+      quote.lines.map((l) => [l.variantId, l.quantity, money(l.unitDiscount), l.adjustments.map((a) => a.sourceId)]);
+    const inCategory = (variantId: string, unitListPrice: Decimal.Value, quantity: number) =>
+      line({ variantId, productId: `p-${variantId}`, categoryId: 'c1', unitListPrice: d(unitListPrice), quantity });
+
+    describe('BXGY', () => {
+      it('counts units of different variants together and rewards the cheapest qualifying unit', () => {
+        const offer = bxgy('b2g1', 2, 1, 100, { scope: 'CATEGORY', targetIds: ['c1'] });
+        const lines = [inCategory('shirt', 100, 2), inCategory('socks', 50, 1), inCategory('cap', 80, 1)];
+
+        const quote = price(cart(lines), context({ promotions: [offer] }));
+
+        expect(summary(quote)).toEqual([
+          ['shirt', 2, '0.00', []],
+          ['socks', 1, '50.00', ['b2g1']],
+          ['cap', 1, '0.00', []],
+        ]);
+        expect(price(cart([...lines].reverse()), context({ promotions: [offer] })).quoteHash).toBe(quote.quoteHash);
+        expectBalanced(quote);
+      });
+
+      it('repeats per buyQuantity bought, up to maxApplications, rewarding the next cheapest units', () => {
+        const offer = bxgy('b2g1', 2, 1, 100, { scope: 'CATEGORY', targetIds: ['c1'] });
+        const lines = [inCategory('a', 30, 3), inCategory('b', 20, 2), inCategory('c', 90, 2)];
+
+        const repeated = price(cart(lines), context({ promotions: [offer] }));
+        const capped = price(cart(lines), context({ promotions: [{ ...offer, maxApplications: 1 }] }));
+
+        // 7 units: 2 applications reward the 2 cheapest (b, b); a third would need 9.
+        expect(summary(repeated)).toEqual([
+          ['a', 3, '0.00', []],
+          ['b', 2, '20.00', ['b2g1']],
+          ['c', 2, '0.00', []],
+        ]);
+        expect(summary(capped)).toEqual([
+          ['a', 3, '0.00', []],
+          ['b', 1, '20.00', ['b2g1']],
+          ['b', 1, '0.00', []],
+          ['c', 2, '0.00', []],
+        ]);
+        expectBalanced(capped);
+      });
+
+      it('never counts a unit as both bought and rewarded, and gives a percentage off when value is below 100', () => {
+        const offer = bxgy('b1g1', 1, 1, 50, { targetIds: ['p1'] });
+
+        const three = price(cart([line({ unitListPrice: d(100), quantity: 3 })]), context({ promotions: [offer] }));
+        const one = price(cart([line({ unitListPrice: d(100), quantity: 1 })]), context({ promotions: [offer] }));
+
+        expect(summary(three)).toEqual([
+          ['v1', 1, '50.00', ['b1g1']],
+          ['v1', 2, '0.00', []],
+        ]);
+        expect(one.discountTotal).toEqual(d(0));
+      });
+
+      it('rewards only the reward targets when they are given, paid for by the buy targets', () => {
+        const offer = bxgy('phone-case', 1, 1, 100, { targetIds: ['phone'], rewardTargetIds: ['case'] });
+        const phone = line({ variantId: 'phone-v', productId: 'phone', unitListPrice: d(900), quantity: 2 });
+        const cases = line({ variantId: 'case-v', productId: 'case', unitListPrice: d(40), quantity: 3 });
+
+        const quote = price(cart([phone, cases]), context({ promotions: [offer] }));
+        const noPhone = price(cart([cases]), context({ promotions: [offer] }));
+
+        expect(summary(quote)).toEqual([
+          ['phone-v', 2, '0.00', []],
+          ['case-v', 2, '40.00', ['phone-case']],
+          ['case-v', 1, '0.00', []],
+        ]);
+        expect(noPhone.discountTotal).toEqual(d(0));
+      });
+
+      it('caps whole applications at the units left under a unit cap', () => {
+        const offer = bxgy('b1g1', 1, 1, 100, { targetIds: ['p1'], unitCap: 5, unitsUsed: 4 });
+
+        const quote = price(cart([line({ unitListPrice: d(10), quantity: 6 })]), context({ promotions: [offer] }));
+
+        expect(summary(quote)).toEqual([
+          ['v1', 1, '10.00', ['b1g1']],
+          ['v1', 5, '0.00', []],
+        ]);
+      });
+    });
+
+    describe('tiered (volume)', () => {
+      const volume = tiered(
+        'volume',
+        'PERCENT',
+        [
+          [3, 10],
+          [6, 15],
+        ],
+        { scope: 'CATEGORY', targetIds: ['c1'] },
+      );
+
+      it.each([
+        [2, '0.00'],
+        [3, '10.00'],
+        [5, '10.00'],
+        [6, '15.00'],
+        [9, '15.00'],
+      ])('with %i targeted units across lines takes %s off each 100', (units, off) => {
+        const lines = [inCategory('a', 100, Math.ceil(units / 2)), inCategory('b', 100, Math.floor(units / 2))];
+
+        const quote = price(cart(lines), context({ promotions: [volume] }));
+
+        for (const l of quote.lines) expect(money(l.unitDiscount)).toBe(off);
+        expectBalanced(quote);
+      });
+
+      it('fixes the unit price per tier with FIXED_PRICE and never raises it', () => {
+        const fixed = tiered('fixed', 'FIXED_PRICE', [
+          [2, 80],
+          [4, 70],
+        ]);
+
+        const quote = price(
+          cart([
+            line({ unitListPrice: d(100), quantity: 4 }),
+            line({ variantId: 'v2', unitListPrice: d(60), quantity: 1 }),
+          ]),
+          context({ promotions: [fixed] }),
+        );
+
+        expect(summary(quote)).toEqual([
+          ['v1', 4, '30.00', ['fixed']],
+          ['v2', 1, '0.00', []],
+        ]);
+      });
+    });
+
+    describe('spend X save Y (CART tiers)', () => {
+      const spend = tiered(
+        'spend',
+        'AMOUNT_OFF',
+        [
+          [500, 50],
+          [1000, 120],
+        ],
+        { scope: 'CART', targetIds: [] },
+      );
+
+      it('applies the best tier reached by the subtotal after item promotions', () => {
+        const lines = [line({ unitListPrice: d(350), quantity: 3 })];
+
+        const plain = price(cart(lines), context({ promotions: [spend] }));
+        const afterItem = price(cart(lines), context({ promotions: [spend, pct('ten', 10)] }));
+        const below = price(cart([line({ unitListPrice: d(499.99) })]), context({ promotions: [spend] }));
+
+        expect(plain.adjustments.map((a) => [a.sourceId, money(a.amount)])).toEqual([['spend', '-120.00']]);
+        // 1050 - 10% = 945: only the 500 tier is reached.
+        expect(afterItem.adjustments.map((a) => [a.sourceId, money(a.amount)])).toEqual([['spend', '-50.00']]);
+        expect(below.adjustments).toEqual([]);
+        expectBalanced(afterItem);
+      });
+
+      it('takes a percentage per tier', () => {
+        const percent = tiered(
+          'pct-spend',
+          'PERCENT',
+          [
+            [100, 5],
+            [200, 10],
+          ],
+          { scope: 'CART', targetIds: [] },
+        );
+
+        const quote = price(cart([line({ unitListPrice: d('250.00') })]), context({ promotions: [percent] }));
+
+        expect(money(quote.adjustments[0].amount)).toBe('-25.00');
+      });
+    });
+
+    describe('stacking with the existing types', () => {
+      it('lets one stacking group give each unit its best offer: the BXGY reward unit, the rest a percentage', () => {
+        const offer = bxgy('b2g1', 2, 1, 100, { targetIds: ['p1'] });
+        const tenOff = pct('ten', 10);
+
+        const quote = price(
+          cart([line({ unitListPrice: d(100), quantity: 3 })]),
+          context({ promotions: [offer, tenOff] }),
+        );
+
+        expect(summary(quote)).toEqual([
+          ['v1', 1, '100.00', ['b2g1']],
+          ['v1', 2, '10.00', ['ten']],
+        ]);
+      });
+
+      it('stacks a tier with a promotion of another group on what the unit still costs', () => {
+        const volume = tiered('volume', 'PERCENT', [[2, 10]], { stackingGroup: 'volume' });
+        const amount = flat('five', 5);
+
+        const quote = price(
+          cart([line({ unitListPrice: d(100), quantity: 2 })]),
+          context({ promotions: [volume, amount] }),
+        );
+
+        // Same priority and age: 'five' < 'volume' by id, so 5 off first, then 10% of 95.
+        expect(summary(quote)).toEqual([['v1', 2, '14.50', ['five', 'volume']]]);
+      });
+
+      it('lets an exclusive tiered or BXGY promotion that saves the most apply alone', () => {
+        const spend = tiered('spend', 'AMOUNT_OFF', [[100, 40]], { scope: 'CART', targetIds: [], exclusive: true });
+        const offer = bxgy('b1g1', 1, 1, 100, { targetIds: ['p1'], exclusive: true });
+        const tenOff = pct('ten', 10);
+        const lines = [line({ unitListPrice: d(50), quantity: 2 })];
+
+        const bxgyWins = price(cart(lines), context({ promotions: [spend, offer, tenOff] }));
+        const spendWins = price(
+          cart(lines),
+          context({ promotions: [{ ...spend, tiers: [{ ...spend.tiers[0], value: d(70) }] }, offer, tenOff] }),
+        );
+
+        expect(summary(bxgyWins)).toEqual([
+          ['v1', 1, '50.00', ['b1g1']],
+          ['v1', 1, '0.00', []],
+        ]);
+        expect(bxgyWins.adjustments).toEqual([]);
+        expect(summary(spendWins)).toEqual([['v1', 2, '0.00', []]]);
+        expect(spendWins.adjustments.map((a) => a.sourceId)).toEqual(['spend']);
+      });
+
+      it('gives each unit the best offer of its group, and an equal saving to the lowest priority', () => {
+        const offer = bxgy('b1g1', 1, 1, 100, { targetIds: ['p1'], priority: 2 });
+        const volume = tiered('volume', 'PERCENT', [[2, 50]], { priority: 1 });
+
+        // The units compete one by one within the group: the reward unit saves most with BXGY, the other with the tier.
+        const quote = price(
+          cart([line({ unitListPrice: d(100), quantity: 2 })]),
+          context({ promotions: [offer, volume] }),
+        );
+        const tie = price(
+          cart([line({ unitListPrice: d(100), quantity: 1 })]),
+          context({ promotions: [pct('p-low', 20, { priority: 1 }), pct('p-high', 20, { priority: 0 })] }),
+        );
+
+        expect(summary(quote)).toEqual([
+          ['v1', 1, '100.00', ['b1g1']],
+          ['v1', 1, '50.00', ['volume']],
+        ]);
+        expect(tie.lines[0].adjustments.map((a) => a.sourceId)).toEqual(['p-high']);
+      });
+
+      it('never shows BXGY or tiered promotions on a product page (they depend on the cart)', () => {
+        const unit = { variantId: 'v1', productId: 'p1', categoryId: 'c1', brandId: null, unitListPrice: d(100) };
+
+        expect(
+          displayUnitPromotions(
+            unit,
+            [bxgy('b', 1, 1, 100, { targetIds: ['p1'] }), tiered('t', 'PERCENT', [[1, 10]])],
+            NOW,
+          ).applied,
+        ).toEqual([]);
+      });
+    });
+  });
+
   describe('tax', () => {
     it('splits a tax-inclusive price into its net and the tax in it, one tax line per active tax', () => {
       const quote = price(cart([line({ taxable: true, quantity: 2 })]), context({ taxRates: GHANA }));
@@ -1156,5 +1448,80 @@ describe('price', () => {
         }
       },
     );
+
+    it.each(seeds)('holds with BXGY, volume tiers and spend tiers mixed with the other types, from seed %i', (seed) => {
+      const next = sequence(seed * 104_729);
+      const pesewas = (max: number) => d(next(max)).div(100);
+
+      for (let run = 0; run < 300; run += 1) {
+        const lines = Array.from({ length: 1 + next(6) }, (_, index) =>
+          line({
+            variantId: `v${index}`,
+            productId: `p${next(3)}`,
+            categoryId: `c${next(2)}`,
+            quantity: 1 + next(6),
+            unitListPrice: pesewas(50_000),
+            taxable: next(3) !== 0,
+          }),
+        );
+        const common = () => ({
+          stackingGroup: `g${next(3)}`,
+          exclusive: next(6) === 0,
+          priority: next(3),
+          createdAt: new Date(2026, 0, 1 + next(3)),
+          ...(next(4) === 0 && { unitCap: 1 + next(8), unitsUsed: next(3) }),
+        });
+        const promotions = Array.from({ length: 1 + next(6) }, (_, index): PricingPromotion => {
+          const kind = next(4);
+          if (kind === 0) {
+            return bxgy(`b${index}`, 1 + next(3), 1 + next(2), 1 + next(100), {
+              scope: 'CATEGORY',
+              targetIds: [`c${next(2)}`],
+              rewardTargetIds: next(2) === 0 ? [`c${next(2)}`] : [],
+              maxApplications: next(3) === 0 ? 1 + next(2) : null,
+              ...common(),
+            });
+          }
+          if (kind === 1) {
+            const low = 1 + next(4);
+            return tiered(
+              `t${index}`,
+              (['PERCENT', 'AMOUNT_OFF', 'FIXED_PRICE'] as const)[next(3)],
+              [
+                [low, 1 + next(40)],
+                [low + 1 + next(4), 41 + next(59)],
+              ],
+              { scope: 'PRODUCT', targetIds: [`p${next(3)}`], ...common() },
+            );
+          }
+          if (kind === 2) {
+            const cartCommon = { ...common(), unitCap: null, unitsUsed: 0 };
+            return tiered(
+              `s${index}`,
+              next(2) === 0 ? 'PERCENT' : 'AMOUNT_OFF',
+              [
+                [pesewas(100_000), 1 + next(30)],
+                [d(1000).add(pesewas(100_000)), 31 + next(60)],
+              ],
+              { ...cartCommon, scope: 'CART', targetIds: [] },
+            );
+          }
+          return pct(`p${index}`, next(101), { scope: 'SKU', targetIds: [`v${next(6)}`], ...common() });
+        });
+        const shippingFee = pesewas(5_000);
+
+        const quote = price(cart(lines, { shippingFee }), context({ promotions, taxRates: GHANA }));
+        const again = price(
+          cart(shuffled(lines, next), { shippingFee }),
+          context({ promotions: shuffled(promotions, next), taxRates: shuffled(GHANA, next) }),
+        );
+
+        expectBalanced(quote);
+        expect(again.quoteHash).toBe(quote.quoteHash);
+        expectCartCovered(quote, lines);
+        expectWithinUnitCaps(quote, promotions);
+        for (const l of quote.lines) expect(l.unitDiscount.lte(l.unitListPrice)).toBe(true);
+      }
+    });
   });
 });

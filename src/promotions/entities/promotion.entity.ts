@@ -23,8 +23,28 @@ registerEnumType(PromotionType, {
     PERCENT: { description: 'value is a percentage, 0 to 100' },
     AMOUNT_OFF: { description: 'value comes off each targeted unit, or off the cart (CART scope)' },
     FIXED_PRICE: { description: 'each targeted unit costs value, never more than its price (not for CART)' },
+    BXGY: {
+      description:
+        'buy buyQuantity targeted units, get getQuantity reward units (the cheapest) value % off, mixing lines (not for CART)',
+    },
+    TIERED: {
+      description:
+        'the highest tier reached applies as tierValueType: by targeted units across lines (item scopes) or by spend (CART)',
+    },
   },
 });
+
+@ObjectType({ description: 'One tier of a TIERED promotion' })
+export class PromotionTier {
+  @Field(() => Int, { nullable: true, description: 'Item scopes: least targeted units, counted across lines' })
+  minimumQuantity: number | null;
+
+  @Field(() => MoneyObject, { nullable: true, description: 'CART: least merchandise total after item promotions' })
+  minimumSpend: MoneySource | null;
+
+  @Field(() => GraphQLDecimal, { description: 'A percentage, an amount off or a fixed unit price (tierValueType)' })
+  value: Decimal;
+}
 
 registerEnumType(RedemptionStatus, {
   name: 'RedemptionStatus',
@@ -78,13 +98,35 @@ export class Promotion {
   @Field(() => PromotionType)
   type: PromotionType;
 
-  @Field(() => GraphQLDecimal, { description: 'A percentage (PERCENT) or an amount in the store currency' })
-  value: Decimal;
+  @Field(() => GraphQLDecimal, {
+    nullable: true,
+    description:
+      'A percentage (PERCENT; BXGY: off each reward unit) or an amount in the store currency; null for TIERED',
+  })
+  value: Decimal | null;
 
   @Field(() => [ID], {
     description: "Ids of the scope's kind (variants, products, categories or brands); empty for CART",
   })
   targetIds: string[];
+
+  @Field(() => Int, { nullable: true, description: 'BXGY: units of the targets to buy per application' })
+  buyQuantity: number | null;
+
+  @Field(() => Int, { nullable: true, description: 'BXGY: reward units per application' })
+  getQuantity: number | null;
+
+  @Field(() => Int, { nullable: true, description: 'BXGY: most applications per order; null for no limit' })
+  maxApplications: number | null;
+
+  @Field(() => [ID], { description: 'BXGY: reward targets, of the scope kind; empty for the targets themselves' })
+  rewardTargetIds: string[];
+
+  @Field(() => PromotionType, { nullable: true, description: 'TIERED: how each tier value reduces the price' })
+  tierValueType: PromotionType | null;
+
+  @Field(() => [PromotionTier], { description: 'TIERED: ascending tiers; empty otherwise' })
+  tiers: PromotionTier[];
 
   @Field(() => MoneyObject, { nullable: true, description: 'Least merchandise total the order needs' })
   minimumSpend: MoneySource | null;
@@ -221,8 +263,11 @@ export class CouponCodeValidation {
   @Field(() => PromotionType)
   type: PromotionType;
 
-  @Field(() => GraphQLDecimal, { description: 'A percentage (PERCENT) or an amount in the store currency' })
-  value: Decimal;
+  @Field(() => GraphQLDecimal, {
+    nullable: true,
+    description: 'A percentage (PERCENT, BXGY) or an amount in the store currency; null for TIERED',
+  })
+  value: Decimal | null;
 
   @Field(() => MoneyObject, { nullable: true, description: 'Least merchandise total the order needs' })
   minimumSpend: MoneySource | null;

@@ -140,7 +140,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
 
     expect(res.body.errors).toBeDefined();
     const promotion = await prisma.promotion.findUniqueOrThrow({ where: { id: promotionId } });
-    expect(promotion.value.toFixed(2)).toBe('10.00');
+    expect(promotion.value?.toFixed(2)).toBe('10.00');
     expect((await auditRows('Promotion', promotionId)).map((row) => row.action)).toEqual(['CREATE']);
   });
 });

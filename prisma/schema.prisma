@@ -136,15 +136,16 @@ enum GhanaRegion {
 }
 
 model Category {
-  id            String        @id @default(cuid())
-  name          String        @unique
-  description   String?       @db.Text
-  image         String?
-  products      Product[]
-  subcategories SubCategory[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  promotions    Promotion[]
+  id               String        @id @default(cuid())
+  name             String        @unique
+  description      String?       @db.Text
+  image            String?
+  products         Product[]
+  subcategories    SubCategory[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  promotions       Promotion[]   @relation("CategoryToPromotion")
+  rewardPromotions Promotion[]   @relation("PromotionRewardCategories")
 }
 
 model SubCategory {
@@ -162,14 +163,15 @@ model SubCategory {
 }
 
 model Brand {
-  id          String      @id @default(cuid())
-  name        String      @unique @db.VarChar(255)
-  description String?     @db.Text
-  logo        String?
-  products    Product[]
-  promotions  Promotion[]
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id               String      @id @default(cuid())
+  name             String      @unique @db.VarChar(255)
+  description      String?     @db.Text
+  logo             String?
+  products         Product[]
+  promotions       Promotion[] @relation("BrandToPromotion")
+  rewardPromotions Promotion[] @relation("PromotionRewardBrands")
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 }
 
 model Tag {
@@ -203,7 +205,8 @@ model Variant {
   product           Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
   cartItem          CartItem[]
   orderItem         OrderItem[]
-  promotions        Promotion[]
+  promotions        Promotion[]        @relation("PromotionToVariant")
+  rewardPromotions  Promotion[]        @relation("PromotionRewardVariants")
   lowStockThreshold Int?               @default(5)
   stockLevels       StockLevel[]
   stockMovements    StockMovement[]
@@ -313,21 +316,22 @@ model Product {
   fulfilmentKind       FulfilmentKind @default(PHYSICAL)
   unitOfMeasure        UnitOfMeasure  @default(EACH)
 
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  categoryId    String?
-  category      Category?    @relation(fields: [categoryId], references: [id])
-  subcategoryId String?
-  subcategory   SubCategory? @relation(fields: [subcategoryId], references: [id])
-  tags          Tag[]
-  reviews       Review[]
-  variants      Variant[]
-  promotions    Promotion[]
-  cartItem      CartItem[]
-  orderItem     OrderItem[]
-  wishlist      WishList[]
-  brand         Brand?       @relation(fields: [brandId], references: [id])
-  brandId       String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  categoryId       String?
+  category         Category?    @relation(fields: [categoryId], references: [id])
+  subcategoryId    String?
+  subcategory      SubCategory? @relation(fields: [subcategoryId], references: [id])
+  tags             Tag[]
+  reviews          Review[]
+  variants         Variant[]
+  promotions       Promotion[]  @relation("ProductToPromotion")
+  rewardPromotions Promotion[]  @relation("PromotionRewardProducts")
+  cartItem         CartItem[]
+  orderItem        OrderItem[]
+  wishlist         WishList[]
+  brand            Brand?       @relation(fields: [brandId], references: [id])
+  brandId          String?
 
   @@index([brandId])
   @@index([categoryId])
@@ -1054,6 +1058,23 @@ enum PromotionType {
   AMOUNT_OFF
   /// each targeted unit costs value (never more than its price); not for CART
   FIXED_PRICE
+  /// buy buyQuantity units of the targets, get getQuantity of the reward targets value percent off (100 = free); not for CART
+  BXGY
+  /// tiers by targeted quantity (item scopes) or by spend (CART); the best reached tier applies as tierValueType
+  TIERED
+}
+
+/// One tier of a TIERED promotion: minimumQuantity (item scopes) or minimumSpend (CART), and its value.
+model PromotionTier {
+  id              String    @id @default(cuid())
+  promotionId     String
+  minimumQuantity Int?
+  minimumSpend    Decimal?  @db.Decimal(14, 2)
+  /// A percentage, an amount off or a fixed unit price, as the promotion's tierValueType says
+  value           Decimal   @db.Decimal(14, 2)
+  promotion       Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+
+  @@index([promotionId])
 }
 
 /// A price reduction the pricing engine (src/pricing/price.ts) applies while it is active, in its schedule and its
@@ -1065,7 +1086,17 @@ model Promotion {
   description      String?
   scope            PromotionScope
   type             PromotionType
-  value            Decimal         @db.Decimal(14, 2)
+  /// Null only for TIERED (its tiers carry the values)
+  value            Decimal?        @db.Decimal(14, 2)
+  /// BXGY: units of the targets to buy per application
+  buyQuantity      Int?
+  /// BXGY: reward units per application
+  getQuantity      Int?
+  /// BXGY: most applications per order; null for no limit
+  maxApplications  Int?
+  /// TIERED: how each tier's value reduces the price (PERCENT, AMOUNT_OFF, or FIXED_PRICE for item scopes)
+  tierValueType    PromotionType?
+  tiers            PromotionTier[]
   /// The order's merchandise must be worth at least this much (the engine says which subtotal)
   minimumSpend     Decimal?        @db.Decimal(14, 2)
   /// At least this many targeted units (any unit for CART) must be in the cart
@@ -1095,10 +1126,15 @@ model Promotion {
   firstOrderOnly   Boolean         @default(false)
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
-  variants         Variant[]
-  products         Product[]
-  categories       Category[]
-  brands           Brand[]
+  variants         Variant[]       @relation("PromotionToVariant")
+  products         Product[]       @relation("ProductToPromotion")
+  categories       Category[]      @relation("CategoryToPromotion")
+  brands           Brand[]         @relation("BrandToPromotion")
+  /// BXGY reward targets, of the scope's kind; none means the targets themselves
+  rewardVariants   Variant[]       @relation("PromotionRewardVariants")
+  rewardProducts   Product[]       @relation("PromotionRewardProducts")
+  rewardCategories Category[]      @relation("PromotionRewardCategories")
+  rewardBrands     Brand[]         @relation("PromotionRewardBrands")
   /// Only for members of one of these groups; empty for everyone
   customerGroups   CustomerGroup[]
   couponCodes      CouponCode[]
