@@ -2,12 +2,17 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel; 6/15: P2-A, P2-H, P2-B.1–B.3 done); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel; 9/15: P2-A, P2-H, P2-B done); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-**P2-B.4–B.6 — Flash sales, BXGY/tiered/spend-X-save-Y, free-shipping promos** (ADR-0005) · branch `feat/p2-b-promotions-2` from `ecdf9b7` · agent in a worktree · DB `emma_wt_promo2_test`, Redis DB 13 · **State:** in progress
-  - Decisions (Emmanuel, 2026-11-21): flash cap counts units, partial (units left get the sale price, rest normal; reserved at placement, released on cancel/expiry); BXGY and tiers mix and match across all targeted units (BXGY rewards the cheapest qualifying units, repeats, optional max repeats); free shipping is a shipping-level promotion that waives or takes a fixed amount off the fee, optionally per zone, min spend after item and cart promotions.
-  - [ ] B.4 ← **Next step** (agent) · [ ] B.5 · [ ] B.6 · [ ] merge, push
+None. Up next: P2-T is blocked on the tax adviser and P1-K.2–K.4 on hosting; next unblocked work needs Emmanuel's pick (see Up next).
+
+**Last completed: P2-B.4–B.6 Flash sales, BXGY/tiered/spend-X-save-Y, free-shipping promotions (2026-11-21)** (ADR-0005 §2–§3; no audit finding closed): B.4 `e4b5180`, B.5 `61df1ce` `[breaking-api]`, B.6 `0335bac`, fast-forwarded onto dev. P2-B ✅.
+  - B.4: migration `20261128000000_flash_sales` (`Promotion.unitCap`/`unitsUsed`, `Redemption.units`; re-runnable backfill). Partial cap: units left go to the units saving most; the line is split into a promo part and a normal part (several order items per variant, each with one unit price; stock reserved per item). Placement takes units with a conditional increment; CONFLICT `PROMOTION_UNITS_SOLD_OUT`; released once on cancel/expiry before payment, kept on refund. `unitsUsed` counts units at every item promotion's price. No `isFlashSale` flag (window + cap). `PRICING_VERSION` 3.
+  - B.5: migration `20261128010000_bxgy_tiered_promotions` (types BXGY, TIERED; nullable `value`; `buyQuantity`, `getQuantity`, `maxApplications`, `tierValueType`; `PromotionTier`; reward-target join tables). Mix and match across targeted units; BXGY rewards the cheapest reward units at `value`% off, repeats, `maxApplications`, unit cap applies; volume tiers by combined quantity; CART spend tiers after item promotions. Breaking: `Promotion.value`/`CouponCodeValidation.value` nullable.
+  - B.6: migration `20261128020000_free_shipping_promotions` (type FREE_SHIPPING, `OrderAdjustment.target` MERCHANDISE/SHIPPING, promotion ↔ shipping zone). Shipping level after item and cart levels: waive or take an amount off the fee (≥ 0), optional zones, min spend after cart promotions; pickup untouched; `CheckoutQuote.shippingAdjustments`; `shippingTotal` is the fee after free shipping; quote hash includes the zone; a zone a promotion is limited to cannot be deleted.
+  - Gates (agent, final tree = dev): prisma generate/validate, typecheck, build, unit **2396/2396**, repro 21/21 (failed at the B.4/B.5 commits on a stale fixture, fixed in B.6), audit 0 critical, `schema.gql` fresh, e2e **591/591** via `scripts/e2e/run.sh emma_wt_promo2_test 13`, drift 0; lint/format clean on changed files (CRLF noise elsewhere).
+  - Follow-ups: optional "units left" on product pages not built; a capped unit that loses inside its group is not handed to another line; shipping untaxed until P2-T.
 
 **Last completed: P2-B.1–B.3 Promotions model, stacking, limits (2026-11-21)** (ADR-0005; DISC-03, DISC-07, DISC-09, DISC-10, CPN-02, CPN-03, CPN-08, CPN-09; CPN-10 partly): B.1 `6fa614d` `[breaking-api]`, B.2 `40a3acc`, B.3 `41a7e69`, fast-forwarded onto dev.
   - B.1: migrations `20261126000000_promotions` (expand + re-runnable backfill; ids kept, so adjustment `sourceId`s need no rewrite; a discount with several target kinds splits into `<id>_product`/`<id>_category`; Coupon → CART promotion with `requiresCoupon` + upper-case `CouponCode`, `perCustomerLimit` 1; CouponUsage → RESERVED `Redemption`; >100% percentages clamped to 100, charge unchanged) and `_contract` (refuses while anything is unmigrated; drops Discount, Coupon, CouponUsage, DiscountType, `Variant`/`Category.discountId`, `CartItem.discountedPrice`/`discountId`, `Order.couponId` → `couponCodeId`). Report: `scripts/reports/promotions-migration-report.sql`. Admin API under `promotion.manage` with step-up, audited; `validateCouponCode(code)` (signed in) replaces `validateCoupon`; `Variant.appliedPromotion: PublicPromotion`. Rules unchanged (`PRICING_VERSION` 1).
@@ -134,9 +139,8 @@
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P2-B.4–B.6 (in progress) | one run | — |
-| 2 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
-| 3 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
+| 1 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
+| 2 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
