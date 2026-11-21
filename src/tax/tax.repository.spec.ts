@@ -113,10 +113,12 @@ describe('TaxRepository', () => {
   });
 
   describe('repriceTaxableVariants', () => {
+    const origin = { source: 'TAX_RATE_CHANGE' as const, actorId: 'admin1', reason: null };
+
     it('binds the multiplier as a Decimal cast to numeric, never a float', async () => {
       const executeRaw = jest.fn().mockResolvedValue(3);
 
-      await repository.repriceTaxableVariants(new Prisma.Decimal('0.15'), {
+      await repository.repriceTaxableVariants(new Prisma.Decimal('0.15'), origin, {
         $executeRaw: executeRaw,
       } as unknown as Prisma.TransactionClient);
 
@@ -130,7 +132,7 @@ describe('TaxRepository', () => {
     it('reprices the variants of taxable products from their base price', async () => {
       const executeRaw = jest.fn().mockResolvedValue(3);
 
-      await repository.repriceTaxableVariants(new Prisma.Decimal('0.15'), {
+      await repository.repriceTaxableVariants(new Prisma.Decimal('0.15'), origin, {
         $executeRaw: executeRaw,
       } as unknown as Prisma.TransactionClient);
 
@@ -138,9 +140,22 @@ describe('TaxRepository', () => {
       const query = sql.join('?').replace(/\s+/g, ' ');
       expect(query).toContain('UPDATE "Variant" v');
       expect(query).toContain('ROUND(v."basePrice" * ?::numeric, 2)');
-      expect(query).toContain('FROM "Product" p');
-      expect(query).toContain('p.id = v."productId" AND p."isTaxable" = true AND v."basePrice" IS NOT NULL');
+      expect(query).toContain('JOIN "Product" p ON p.id = v."productId"');
+      expect(query).toContain('WHERE p."isTaxable" = true AND v."basePrice" IS NOT NULL');
       expect(query).not.toContain('UPDATE "Product"');
+    });
+
+    it('updates only the prices that move and records each one as a TAX_RATE_CHANGE', async () => {
+      const executeRaw = jest.fn().mockResolvedValue(3);
+
+      await repository.repriceTaxableVariants(new Prisma.Decimal('0.15'), origin, {
+        $executeRaw: executeRaw,
+      } as unknown as Prisma.TransactionClient);
+
+      const [sql, , record] = executeRaw.mock.calls[0] as [TemplateStringsArray, unknown, Prisma.Sql];
+      expect(sql.join('?').replace(/\s+/g, ' ')).toContain('t."oldPrice" IS DISTINCT FROM t."newPrice"');
+      expect(record.sql.replace(/\s+/g, ' ')).toContain('INSERT INTO "PriceChange"');
+      expect(record.values).toEqual(['TAX_RATE_CHANGE', null, 'admin1']);
     });
   });
 

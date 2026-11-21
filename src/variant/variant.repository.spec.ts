@@ -49,4 +49,26 @@ describe('VariantRepository', () => {
 
     await expect(repository.delete('v1')).rejects.toThrow('boom');
   });
+
+  describe('lockPrices', () => {
+    it('reads the prices FOR UPDATE on the transaction', async () => {
+      const prices = { price: new Prisma.Decimal('12.00'), basePrice: new Prisma.Decimal('10.00') };
+      const queryRaw = jest.fn().mockResolvedValue([prices]);
+
+      const result = await repository.lockPrices('v1', { $queryRaw: queryRaw } as never);
+
+      expect(result).toBe(prices);
+      const [sql, variantId] = queryRaw.mock.calls[0] as [TemplateStringsArray, unknown];
+      expect(sql.join('?').replace(/\s+/g, ' ')).toContain('FROM "Variant" WHERE "id" = ? FOR UPDATE');
+      expect(variantId).toBe('v1');
+    });
+
+    it('reports an unknown variant as NOT_FOUND', async () => {
+      const queryRaw = jest.fn().mockResolvedValue([]);
+
+      await expect(repository.lockPrices('gone', { $queryRaw: queryRaw } as never)).rejects.toThrow(
+        new NotFoundException('Variant "gone" not found'),
+      );
+    });
+  });
 });

@@ -123,7 +123,9 @@ async function createProducts() {
   const variants: Prisma.VariantCreateManyInput[] = [];
   const stockLevels: Prisma.StockLevelCreateManyInput[] = [];
   const movements: Prisma.StockMovementCreateManyInput[] = [];
+  const priceChanges: Prisma.PriceChangeCreateManyInput[] = [];
   const { id: locationId } = await prisma.stockLocation.findFirstOrThrow({ where: { isDefault: true } });
+  const { currency } = await prisma.store.findUniqueOrThrow({ where: { singleton: true } });
   for (let i = 0; i < 500; i++) {
     const categoryId = categoryIds[Math.floor(Math.random() * categoryIds.length)];
     const validSubCategoryIds = subCategories.filter((sub) => sub.categoryId === categoryId).map((sub) => sub.id);
@@ -156,12 +158,16 @@ async function createProducts() {
     });
     stockLevels.push({ variantId, locationId, onHand });
     movements.push({ variantId, locationId, onHandDelta: onHand, reason: 'RECEIPT', note: 'Seed stock' });
+    for (const field of ['BASE_PRICE', 'PRICE'] as const) {
+      priceChanges.push({ variantId, field, newValue: price, currency, source: 'VARIANT_CREATED' });
+    }
   }
 
   await prisma.product.createMany({ data: products, skipDuplicates: true });
   const created = await prisma.variant.createMany({ data: variants, skipDuplicates: true });
   await prisma.stockLevel.createMany({ data: stockLevels, skipDuplicates: true });
   await prisma.stockMovement.createMany({ data: movements });
+  await prisma.priceChange.createMany({ data: priceChanges });
   return created;
 }
 

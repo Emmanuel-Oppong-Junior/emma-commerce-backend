@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Tax } from '../generated/prisma/client';
+import { PriceChangeSource, Prisma, Tax } from '../generated/prisma/client';
 import { TaxRepository } from './tax.repository';
 import { CreateTaxInput } from './dto/create-tax-rate.input';
 import { UpdateTaxInput } from './dto/update-tax-rate.input';
@@ -21,7 +21,7 @@ export class TaxService {
           { name: input.name, rate: input.rate, isActive: input.isActive ?? true },
           tx,
         );
-        await this.repriceTaxableVariants(tx);
+        await this.repriceTaxableVariants(tx, actorId, input.priceChangeReason);
         return created;
       },
       (created) => ({
@@ -38,8 +38,9 @@ export class TaxService {
     const existing = await this.findOne(id);
     return this.auditService.record(
       async (tx) => {
-        const updated = await this.taxRepository.update(id, input, tx);
-        await this.repriceTaxableVariants(tx);
+        const { priceChangeReason, ...changes } = input;
+        const updated = await this.taxRepository.update(id, changes, tx);
+        await this.repriceTaxableVariants(tx, actorId, priceChangeReason);
         return updated;
       },
       (updated) => ({
@@ -52,11 +53,11 @@ export class TaxService {
     );
   }
 
-  async delete(id: string, actorId: string): Promise<Tax> {
+  async delete(id: string, actorId: string, priceChangeReason?: string): Promise<Tax> {
     return this.auditService.record(
       async (tx) => {
         const deleted = await this.taxRepository.delete(id, tx);
-        await this.repriceTaxableVariants(tx);
+        await this.repriceTaxableVariants(tx, actorId, priceChangeReason);
         return deleted;
       },
       (deleted) => ({
@@ -89,8 +90,16 @@ export class TaxService {
   }
 
   /** Runs on the tax change's transaction, so a failed reprice rolls the tax change back. */
-  private async repriceTaxableVariants(tx: Prisma.TransactionClient): Promise<void> {
+  private async repriceTaxableVariants(
+    tx: Prisma.TransactionClient,
+    actorId: string,
+    reason: string | undefined,
+  ): Promise<void> {
     const totalRate = await this.taxRepository.getTotalActiveRate(tx);
-    await this.taxRepository.repriceTaxableVariants(totalRate, tx);
+    await this.taxRepository.repriceTaxableVariants(
+      totalRate,
+      { source: PriceChangeSource.TAX_RATE_CHANGE, actorId, reason: reason ?? null },
+      tx,
+    );
   }
 }

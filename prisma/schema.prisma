@@ -210,6 +210,7 @@ model Variant {
   stockLevels       StockLevel[]
   stockMovements    StockMovement[]
   stockReservations StockReservation[]
+  priceChanges      PriceChange[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1063,4 +1064,35 @@ model StockMovement {
   @@index([locationId])
   @@index([refType, refId])
   @@index([createdAt])
+}
+
+enum PriceChangeField {
+  PRICE
+  BASE_PRICE
+}
+
+enum PriceChangeSource {
+  ADMIN_EDIT
+  VARIANT_CREATED
+  TAX_RATE_CHANGE
+  MIGRATION
+}
+
+/// Append-only price history (ADR-0005 §6): one row per changed Variant.price or basePrice, written in the same
+/// transaction as the change. A trigger refuses updates and direct deletes; deleting the variant removes its rows.
+model PriceChange {
+  id        String            @id @default(cuid())
+  variantId String
+  field     PriceChangeField
+  /// Null for the variant's first price
+  oldValue  Decimal?          @db.Decimal(14, 2)
+  newValue  Decimal           @db.Decimal(14, 2)
+  currency  Currency
+  source    PriceChangeSource
+  reason    String?
+  actorId   String?
+  createdAt DateTime          @default(now())
+  variant   Variant           @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([variantId, createdAt])
 }

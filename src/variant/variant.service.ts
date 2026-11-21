@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, StockMovementReason, Variant } from '../generated/prisma/client';
+import { PriceChangeSource, Prisma, StockMovementReason, Variant } from '../generated/prisma/client';
 import { CreateVariantInput, VariantFieldsInput } from './dto/create-variant.input';
 import { UpdateVariantInput } from './dto/update-variant.input';
 import { NewVariant, ProductForVariants, VariantRepository, VariantWithProduct } from './variant.repository';
@@ -9,6 +9,7 @@ import { sellingPrice } from '../tax/tax-inclusive-price';
 import { checkOptionValues, CheckedOptions, describeProblems } from '../product-types/domain/attribute-validation';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { StockLedgerService } from '../inventory/stock-ledger.service';
+import { PriceHistoryService } from '../price-history/price-history.service';
 
 const AUDITED_VARIANT_FIELDS = [
   'productId',
@@ -40,6 +41,7 @@ export class VariantService {
     private readonly auditService: AuditService,
     private readonly taxService: TaxService,
     private readonly stockLedger: StockLedgerService,
+    private readonly priceHistory: PriceHistoryService,
   ) {}
 
   /** Creates a variant; its opening stock is received as a RECEIPT in the same transaction (VAR-05). */
@@ -111,7 +113,7 @@ export class VariantService {
     return prepared;
   }
 
-  /** Inserts prepared variants and receives each one's opening stock, on the caller's transaction. */
+  /** Inserts prepared variants with their first prices and opening stock, on the caller's transaction. */
   async insertPrepared(
     tx: Prisma.TransactionClient,
     productId: string,
@@ -121,6 +123,11 @@ export class VariantService {
     const created: VariantWithProduct[] = [];
     for (const { data, quantity } of prepared) {
       const variant = await this.variantRepository.create({ ...data, productId }, tx);
+      await this.priceHistory.recordVariantPrices(tx, variant.id, null, variant, {
+        source: PriceChangeSource.VARIANT_CREATED,
+        actorId,
+        reason: null,
+      });
       if (quantity > 0) {
         await this.stockLedger.receive(tx, variant.id, quantity, StockMovementReason.RECEIPT, {
           actorId,
@@ -184,7 +191,17 @@ export class VariantService {
     }
 
     return this.auditService.record(
-      (tx) => this.variantRepository.update(variantId, data, tx),
+      async (tx) => {
+        if (data.price === undefined) return this.variantRepository.update(variantId, data, tx);
+        const before = await this.variantRepository.lockPrices(variantId, tx);
+        const updated = await this.variantRepository.update(variantId, data, tx);
+        await this.priceHistory.recordVariantPrices(tx, variantId, before, updated, {
+          source: PriceChangeSource.ADMIN_EDIT,
+          actorId,
+          reason: input.priceChangeReason ?? null,
+        });
+        return updated;
+      },
       (updated) => ({
         entity: 'Variant',
         entityId: variantId,

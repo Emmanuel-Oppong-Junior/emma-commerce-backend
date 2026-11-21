@@ -135,6 +135,7 @@ Query orders                             permission: order.view
 Query payment                            authenticated
 Query payments                           permission: payment.view
 Query pickupLocations                    permission: shipping.manage
+Query priceChanges                       permission: catalog.product.read
 Query product                            public
 Query productReviews                     authenticated
 Query products                           public

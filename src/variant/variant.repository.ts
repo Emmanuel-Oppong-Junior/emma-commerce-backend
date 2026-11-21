@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { randomBytes } from 'node:crypto';
 import { AttributeDefinition, Prisma, Variant } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { VariantPrices } from '../price-history/price-change';
 
 export type VariantWithProduct = Variant & { product: { id: string; name: string } };
 export type ProductForVariants = {
@@ -95,6 +96,15 @@ export class VariantRepository {
 
   async discountExists(discountId: string): Promise<boolean> {
     return (await this.prisma.discount.count({ where: { id: discountId } })) > 0;
+  }
+
+  /** The variant's current prices, row-locked until the transaction ends so they stay current while it reprices. */
+  async lockPrices(variantId: string, tx: Prisma.TransactionClient): Promise<VariantPrices> {
+    const [row] = await tx.$queryRaw<VariantPrices[]>`
+      SELECT "price", "basePrice" FROM "Variant" WHERE "id" = ${variantId} FOR UPDATE
+    `;
+    if (!row) throw new NotFoundException(`Variant "${variantId}" not found`);
+    return row;
   }
 
   async update(

@@ -865,7 +865,7 @@ To attach a discount to a variant, use `createVariant`/`updateVariant` (`discoun
 
 - **Auth**: step-up when `isTaxable` is sent (see [2.25](#225-two-factor-authentication-and-step-up))
 
-`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `variants`**: it has no price, stock, SKU or barcode fields (sending one is a schema error, HTTP 400). Change prices, SKUs and barcodes with `updateVariant`, add variants with `createVariant`, and change stock with `restockVariant` / `adjustVariantStock`. Omitted fields, including `isActive` and `isTaxable`, are left unchanged. Changing `isTaxable` reprices every variant of the product from its `basePrice` in the same transaction (variants without a `basePrice` keep their price).
+`UpdateProductInput` has the `CreateProductInput` fields, all optional, **except `variants`**: it has no price, stock, SKU or barcode fields (sending one is a schema error, HTTP 400). Change prices, SKUs and barcodes with `updateVariant`, add variants with `createVariant`, and change stock with `restockVariant` / `adjustVariantStock`. Omitted fields, including `isActive` and `isTaxable`, are left unchanged. Changing `isTaxable` reprices every variant of the product from its `basePrice` in the same transaction (variants without a `basePrice` keep their price), and records each price that moved in the price history (source `ADMIN_EDIT`, see [Price history](#price-history)). Optional `priceChangeReason?: string` (max 500 characters) is stored on those price history entries; it is not a product field.
 
 **Breaking change (P1-V.3):** `basePrice`, `sku`, `barcode`, `stockStatus`, `lowStockAlert` → removed from `UpdateProductInput` (set them per variant); the step-up condition changed from "`basePrice` is sent" to "`isTaxable` is sent".
 
@@ -1201,6 +1201,7 @@ All variant operations need a staff permission. Customers see the active variant
   weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
   image?: string;             // overrides the product images for this variant
   discountId?: string;
+  priceHistory(first?: Int = 50, after?: ID): PriceChangePage!; // staff with catalog.product.read only, else FORBIDDEN (P2-H.1)
 }
 ```
 
@@ -1238,19 +1239,47 @@ All variant operations need a staff permission. Customers see the active variant
 }
 ```
 
-- **Side effects**: audit entry (entity `Variant`, `CREATE`); a `RECEIPT` stock movement for the opening stock.
+- **Side effects**: audit entry (entity `Variant`, `CREATE`); a `RECEIPT` stock movement for the opening stock; price history entries for the first `BASE_PRICE` and `PRICE` (source `VARIANT_CREATED`). `createProduct` records the same for each variant it creates.
 - **Possible Errors**: `NOT_FOUND` (product, discount), `BAD_REQUEST` (option values invalid for the type: the message lists each problem, e.g. `Invalid option values for product type "apparel": flavour is not an attribute of this product type`), `CONFLICT` (an active variant already has these options; SKU or barcode taken), `BAD_USER_INPUT`.
 
 #### `updateVariant`
 - **Type**: Mutation · **Auth**: `catalog.product.write`; step-up when `basePrice` is sent
 - **Args**: `input: UpdateVariantInput!` = every `CreateVariantInput` field except `productId` and `quantity`, all optional, plus `id: string` (required) and `isActive?: boolean` (`false` archives; `true` restores if no active variant has the same options)
 - Sending `quantity` or `productId` is a schema error. Change stock with `restockVariant` / `adjustVariantStock`.
+- `priceChangeReason?: string` (max 500 characters): why the price changes, stored on the price history entries. A changed `basePrice` and/or `price` each get one entry (source `ADMIN_EDIT`, with the acting staff member); sending the same price records nothing.
 - **Possible Errors**: as `createVariant`.
 
 #### `deleteVariant`
 - **Type**: Mutation · **Auth**: `catalog.product.write`
 - **Args**: `variantId: String!` · **Response**: `Variant!`
-- Refused with `CONFLICT` when any order line, cart line or stock movement references the variant ("... archive it (isActive: false) instead of deleting it"), and when it is the product's only variant.
+- Refused with `CONFLICT` when any order line, cart line or stock movement references the variant ("... archive it (isActive: false) instead of deleting it"), and when it is the product's only variant. Deleting a variant removes its price history.
+
+---
+
+#### Price history
+
+**New (P2-H.1, ADR-0005 §6):** every change to a variant's `basePrice` or `price` is recorded, in the same transaction as the change, as an append-only `PriceChange` (the database refuses edits and deletes). Sources: `VARIANT_CREATED` (first prices, from `createVariant` / `createProduct`), `ADMIN_EDIT` (`updateVariant` with `basePrice`, `updateProduct` changing `isTaxable`), `TAX_RATE_CHANGE` (`createTax` / `updateTax` / `deleteTax` repricing taxable variants) and `MIGRATION` (the price each variant had when price history started; `oldValue` is null). A price that does not change records nothing; a write that fails records nothing. Price writes are still audited as before.
+
+#### `priceChanges`
+- **Type**: Query · **Auth**: `catalog.product.read` (Owner, Manager, Inventory clerk, Cashier)
+- **Args**: `variantId?: ID`, `productId?: ID` (every variant of the product), `from?: DateTime` (inclusive), `to?: DateTime` (exclusive), `first: Int = 50` (1-100), `after?: ID` (id of the last entry of the previous page)
+- **Response**: `PriceChangePage!`, newest first · **Errors**: `UNAUTHENTICATED` (guest), `FORBIDDEN` (customer, staff without the permission), `BAD_USER_INPUT`
+- `Variant.priceHistory(first, after)` returns the same page for one variant.
+
+```typescript
+PriceChangePage = { nodes: PriceChange[]; totalCount: Int; hasNextPage: boolean };
+PriceChange = {
+  id: ID;
+  variantId: ID;
+  field: 'PRICE' | 'BASE_PRICE';        // PRICE = selling price, BASE_PRICE = price before tax
+  oldValue?: Money;                     // null for the field's first price
+  newValue: Money;                      // amounts in the currency they were recorded in
+  source: 'ADMIN_EDIT' | 'VARIANT_CREATED' | 'TAX_RATE_CHANGE' | 'MIGRATION';
+  reason?: string;                      // the priceChangeReason sent with the write
+  actorId?: ID;                         // the staff member; null for MIGRATION
+  createdAt: DateTime;
+};
+```
 
 ---
 
@@ -2414,7 +2443,7 @@ The review queries and mutations below require a signed-in user. Guests can stil
 
 All tax operations: `ADMIN`, `SUPER_ADMIN` only.
 
-Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or region. The sum of the **active** rates is built into the `price` of every variant of a taxable product (`Variant.price = basePrice × (1 + sum)`); creating, updating or deleting a tax reprices all those variants in the same transaction, so if the reprice fails the mutation returns an error and neither the tax change nor any price is saved. Variants without a `basePrice` (unpriced migrated variants) keep their price; it is never reverse-computed. Prices are rounded to 2 decimal places, half away from zero (basePrice 10.10 at 15% → 11.62), the same way whether the price was set by a variant edit, a product's `isTaxable` change or a tax change. No tax is added at checkout and orders do not show a tax line.
+Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or region. The sum of the **active** rates is built into the `price` of every variant of a taxable product (`Variant.price = basePrice × (1 + sum)`); creating, updating or deleting a tax reprices all those variants in the same transaction, recording each price that moved in the price history (source `TAX_RATE_CHANGE`, see [Price history](#price-history)), so if the reprice fails the mutation returns an error and neither the tax change, any price nor any history entry is saved. Variants without a `basePrice` (unpriced migrated variants) keep their price; it is never reverse-computed. Prices are rounded to 2 decimal places, half away from zero (basePrice 10.10 at 15% → 11.62), the same way whether the price was set by a variant edit, a product's `isTaxable` change or a tax change. No tax is added at checkout and orders do not show a tax line.
 
 ---
 
@@ -2456,6 +2485,7 @@ Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or regio
   name: string;       // Required. Unique (CONFLICT).
   rate: Decimal;        // Required. 0 ≤ rate ≤ 1.
   isActive: boolean;  // Default true.
+  priceChangeReason?: string; // Max 500 chars; stored on the price history entries of the variants it reprices
 }
 ```
 
@@ -2463,14 +2493,14 @@ Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or regio
 
 #### `updateTax`
 - **Type**: Mutation
-- **Args**: `id: ID!`, `input: UpdateTaxInput!` (`name?`, `rate?` 0–1, `isActive?`)
+- **Args**: `id: ID!`, `input: UpdateTaxInput!` (`name?`, `rate?` 0–1, `isActive?`, `priceChangeReason?`)
 - **Response**: `TaxEntity!`
 
 ---
 
 #### `deleteTax`
 - **Type**: Mutation
-- **Args**: `id: ID!`
+- **Args**: `id: ID!`, `priceChangeReason?: String` (max 500 characters)
 - **Response**: `TaxEntity!`
 
 ---
@@ -2918,7 +2948,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 
 | Permission | Allows |
 |---|---|
-| `catalog.product.read` | `adminProducts`, `adminProduct` |
+| `catalog.product.read` | `adminProducts`, `adminProduct`, `variant`, `variants`, `priceChanges`; the `Variant.priceHistory` field |
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |

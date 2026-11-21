@@ -442,7 +442,12 @@ describe('ProductsService', () => {
 
       await service.update('prod1', { isTaxable: true }, 'admin1');
 
-      expect(repriceVariants()).toHaveBeenCalledWith('prod1', new Prisma.Decimal('0.2'), AUDIT_TX);
+      expect(repriceVariants()).toHaveBeenCalledWith(
+        'prod1',
+        new Prisma.Decimal('0.2'),
+        { source: 'ADMIN_EDIT', actorId: 'admin1', reason: null },
+        AUDIT_TX,
+      );
       expect(productsRepository.update).toHaveBeenCalledWith(
         'prod1',
         { isTaxable: true },
@@ -457,7 +462,33 @@ describe('ProductsService', () => {
 
       await service.update('prod1', { isTaxable: false }, 'admin1');
 
-      expect(repriceVariants()).toHaveBeenCalledWith('prod1', new Prisma.Decimal(0), AUDIT_TX);
+      expect(repriceVariants()).toHaveBeenCalledWith(
+        'prod1',
+        new Prisma.Decimal(0),
+        { source: 'ADMIN_EDIT', actorId: 'admin1', reason: null },
+        AUDIT_TX,
+      );
+    });
+
+    it('records the acting admin and the price change reason on the reprice, never on the product', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', isTaxable: false });
+      mockTaxService.getTotalActiveRate.mockResolvedValue(new Prisma.Decimal('0.2'));
+
+      await service.update('prod1', { isTaxable: true, priceChangeReason: 'Now VAT-registered' }, 'admin1');
+
+      expect(repriceVariants()).toHaveBeenCalledTimes(1);
+      expect(repriceVariants()).toHaveBeenCalledWith(
+        'prod1',
+        new Prisma.Decimal('0.2'),
+        { source: 'ADMIN_EDIT', actorId: 'admin1', reason: 'Now VAT-registered' },
+        AUDIT_TX,
+      );
+      expect(productsRepository.update).toHaveBeenCalledWith(
+        'prod1',
+        { isTaxable: true },
+        { category: true, subcategory: true },
+        AUDIT_TX,
+      );
     });
 
     it('does not reprice when isTaxable is sent unchanged', async () => {

@@ -68,7 +68,32 @@ describe('TaxService', () => {
     await act();
 
     expect(repository.getTotalActiveRate).toHaveBeenCalledWith(AUDIT_TX);
-    expect(repository.repriceTaxableVariants).toHaveBeenCalledWith(new Prisma.Decimal('0.15'), AUDIT_TX);
+    expect(repository.repriceTaxableVariants).toHaveBeenCalledWith(
+      new Prisma.Decimal('0.15'),
+      { source: 'TAX_RATE_CHANGE', actorId: 'admin1', reason: null },
+      AUDIT_TX,
+    );
+  });
+
+  it.each<[string, () => Promise<unknown>]>([
+    ['create', () => service.create({ name: 'VAT', rate: new Decimal('0.15'), priceChangeReason: 'Budget' }, 'admin1')],
+    ['update', () => service.update('tax1', { rate: new Decimal('0.2'), priceChangeReason: 'Budget' }, 'admin1')],
+    ['delete', () => service.delete('tax1', 'admin1', 'Budget')],
+  ])('%s records its reprice as TAX_RATE_CHANGE with the admin and reason', async (_name, act) => {
+    await act();
+
+    expect(repository.repriceTaxableVariants).toHaveBeenCalledTimes(1);
+    expect(repository.repriceTaxableVariants).toHaveBeenCalledWith(
+      new Prisma.Decimal('0.15'),
+      { source: 'TAX_RATE_CHANGE', actorId: 'admin1', reason: 'Budget' },
+      AUDIT_TX,
+    );
+  });
+
+  it('keeps the price change reason out of the tax row', async () => {
+    await service.update('tax1', { rate: new Decimal('0.2'), priceChangeReason: 'Budget' }, 'admin1');
+
+    expect(repository.update).toHaveBeenCalledWith('tax1', { rate: new Decimal('0.2') }, AUDIT_TX);
   });
 
   it('fails the tax change without an audit entry when the reprice fails', async () => {
