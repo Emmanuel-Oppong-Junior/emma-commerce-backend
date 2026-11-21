@@ -2,10 +2,10 @@ import { Injectable, Scope } from '@nestjs/common';
 import * as DataLoader from 'dataloader';
 import { Decimal } from '@prisma/client/runtime/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { displayUnitPromotion, PricingPromotion } from '../../pricing/price';
+import { displayUnitPromotions, PricingPromotion } from '../../pricing/price';
 import { PromotionsService } from '../../promotions/promotions.service';
 
-/** The promotion a product page shows on one unit of a variant, and the price after it. */
+/** What a product page shows on one unit of a variant: the price after its promotions and the one saving the most. */
 export interface DisplayedPromotion {
   discountedPrice: Decimal;
   discountAmount: Decimal;
@@ -24,7 +24,7 @@ export class PromotionLoader {
   ) {}
 
   /**
-   * The promotion shown on one unit of each variant, picked by the pricing engine's display rule (displayUnitPromotion),
+   * The promotion shown on one unit of each variant, picked by the pricing engine's display rule (displayUnitPromotions),
    * batched per request: one variant query and one promotion query however many variants are resolved.
    */
   readonly loader = new DataLoader<string, DisplayedPromotion>(
@@ -54,7 +54,7 @@ export class PromotionLoader {
       return variantIds.map((id) => {
         const variant = byId.get(id);
         if (!variant || variant.price === null) return NO_PROMOTION;
-        const { unitDiscount, promotion } = displayUnitPromotion(
+        const { unitDiscount, applied } = displayUnitPromotions(
           {
             variantId: variant.id,
             productId: variant.productId,
@@ -65,7 +65,15 @@ export class PromotionLoader {
           promotions,
           now,
         );
-        return { discountedPrice: variant.price.sub(unitDiscount), discountAmount: unitDiscount, promotion };
+        const main = applied.reduce<(typeof applied)[number] | undefined>(
+          (largest, each) => (largest && !each.unitSaving.gt(largest.unitSaving) ? largest : each),
+          undefined,
+        );
+        return {
+          discountedPrice: variant.price.sub(unitDiscount),
+          discountAmount: unitDiscount,
+          promotion: main?.promotion,
+        };
       });
     },
     { cache: false }, // Per-request cache disabled — data can change between resolves

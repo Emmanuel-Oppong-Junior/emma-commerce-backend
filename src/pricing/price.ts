@@ -4,7 +4,7 @@ import { Money, roundHalfUp } from '../commons/money/money';
 import { quoteHash } from './quote-hash';
 
 /** The pricing rules `price` implements; stored on every order it priced (legacy orders have 0). */
-export const PRICING_VERSION = 1;
+export const PRICING_VERSION = 2;
 
 export interface PricingLine {
   variantId: string;
@@ -153,17 +153,25 @@ export interface Quote {
 export class CouponNotApplicableError extends Error {}
 
 /**
- * Prices a cart (ADR-0005). Pure: the same cart and context always give the same quote and hash, whatever order the
- * lines, promotions or taxes come in. A promotion is a candidate when it is active, in its schedule, within its usage
- * limits for the customer, and unlocked by the coupon code if it requires one. The rules:
- * - item level: each line gets the candidate item promotion (on its variant, product, category or brand) that saves
- *   the most money on one unit, capped at the price, whose minimum spend the list-price subtotal reaches and whose
- *   minimum quantity the targeted units in the cart reach; equal savings go to the oldest promotion;
- * - cart level: the candidate cart promotion saving the most comes off the subtotal after item promotions (its
- *   minimum spend is checked against that subtotal), never more than it, and is allocated to the lines;
+ * Prices a cart (ADR-0005 §3). Pure: the same cart and context always give the same quote and hash, whatever order
+ * the lines, promotions or taxes come in. A promotion is a candidate when it is active, in its schedule, within its
+ * usage limits for the customer, and unlocked by the coupon code if it requires one. The rules (PRICING_VERSION 2):
+ * - item level (SKU, PRODUCT, CATEGORY, BRAND): a candidate applies to the lines it targets when the list-price
+ *   subtotal reaches its minimum spend and the targeted units its minimum quantity. On each line, every stacking group
+ *   contributes the promotion saving the most on one unit at the list price; the groups' winners then apply one after
+ *   the other (lowest priority number first, then the oldest), each on what the unit still costs, so a unit never goes
+ *   below zero;
+ * - cart level (CART): a candidate applies when the subtotal after item promotions (before shipping and tax is added;
+ *   prices include tax) reaches its minimum spend and the cart's units its minimum quantity. Every stacking group
+ *   contributes the promotion saving the most on that subtotal; the winners apply one after the other on what is left,
+ *   each allocated to the lines by largest remainder;
+ * - exclusive: when exclusive candidates save anything, only the one saving the most on the whole cart applies, alone
+ *   (an item one on its lines, a cart one on the list-price subtotal), and no other promotion does;
+ * - every tie between equal savings goes to the lowest priority number, then the oldest promotion (createdAt, id);
  * - a taxable price includes the active taxes: per unit, the net is the discounted price over (1 + Σ rates), rounded
  *   half-up, the tax is the rest, split over the rates by largest remainder; cart promotions and shipping are untaxed.
- * A coupon code whose promotion cannot be used throws CouponNotApplicableError.
+ * A coupon code whose promotion cannot be used throws CouponNotApplicableError; one that loses to an exclusive or a
+ * better promotion simply takes nothing off.
  */
 export function price(cart: PricingCart, context: PricingContext): Quote {
   const unhashed = priceWithoutHash(cart, context);
@@ -180,20 +188,32 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   const candidates = context.promotions.filter((promotion) => isCandidate(promotion, cart.couponCode, context));
 
   const grossSubtotal = cart.lines.reduce((sum, line) => sum.add(money(line.unitListPrice).times(line.quantity)), zero);
+  const cartQuantity = cart.lines.reduce((sum, line) => sum + line.quantity, 0);
+  if (couponPromotion && couponPromotion.scope !== PromotionScope.CART) {
+    assertItemCouponApplies(couponPromotion, cart.lines, grossSubtotal.amount);
+  }
   const itemCandidates = candidates.filter(
     (promotion) =>
       promotion.scope !== PromotionScope.CART &&
       reachesMinimums(promotion, grossSubtotal.amount, targetedQuantity(promotion, cart.lines)),
   );
-  if (couponPromotion && couponPromotion.scope !== PromotionScope.CART) {
-    assertItemCouponApplies(couponPromotion, cart.lines, grossSubtotal.amount);
-  }
+  const exclusive = bestExclusive(
+    cart.lines,
+    itemCandidates,
+    candidates.filter(
+      (promotion) =>
+        promotion.scope === PromotionScope.CART && reachesMinimums(promotion, grossSubtotal.amount, cartQuantity),
+    ),
+    grossSubtotal.amount,
+  );
+  const allowed = (promotion: PricingPromotion) => (exclusive ? promotion === exclusive : !promotion.exclusive);
+
   const lines = cart.lines.map((line) =>
     priceLine(
       line,
-      bestUnitPromotion(
+      stackedUnitPromotions(
         line.unitListPrice,
-        itemCandidates.filter((promotion) => targets(promotion, line)),
+        itemCandidates.filter((promotion) => allowed(promotion) && targets(promotion, line)),
       ),
       taxRates,
       money,
@@ -202,21 +222,27 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   );
 
   const merchandise = lines.reduce((sum, line) => sum.add(money(line.lineTotal)), zero);
-  const cartQuantity = cart.lines.reduce((sum, line) => sum + line.quantity, 0);
   if (couponPromotion?.scope === PromotionScope.CART) {
     const rejection = minimumsRejection(couponPromotion, merchandise.amount, cartQuantity);
     if (rejection) throw new CouponNotApplicableError(rejection);
   }
   const cartCandidates = candidates.filter(
     (promotion) =>
-      promotion.scope === PromotionScope.CART && reachesMinimums(promotion, merchandise.amount, cartQuantity),
+      promotion.scope === PromotionScope.CART &&
+      allowed(promotion) &&
+      reachesMinimums(promotion, merchandise.amount, cartQuantity),
   );
   const adjustments: QuoteOrderAdjustment[] = [];
-  const best = bestCartPromotion(merchandise.amount, cartCandidates);
-  if (best) {
+  const remaining = lines.map((line) => money(line.lineTotal));
+  for (const promotion of groupWinners(cartCandidates, (each) => cartSaving(merchandise.amount, each))) {
+    const left = remaining.reduce((sum, amount) => sum.add(amount), zero);
+    const saving = cartSaving(left.amount, promotion);
+    if (!saving.gt(0)) continue;
+    const shares = allocateToLines(money(saving), cart.lines, remaining);
+    shares.forEach((share, index) => (remaining[index] = remaining[index].subtract(share)));
     adjustments.push({
-      ...adjustmentFrom(best.promotion, best.saving, cart.couponCode),
-      allocations: allocateToLines(money(best.saving), cart.lines, lines).map((share) => negate(share.amount)),
+      ...adjustmentFrom(promotion, saving, cart.couponCode),
+      allocations: shares.map((share) => negate(share.amount)),
     });
   }
 
@@ -345,37 +371,111 @@ function assertItemCouponApplies(promotion: PricingPromotion, lines: readonly Pr
 }
 
 export interface UnitPromotion {
-  unitDiscount: Decimal;
-  /** The promotion taken, when one saves anything. */
-  promotion?: PricingPromotion;
+  /** What the promotion took off one unit, after the ones applied before it. */
+  unitSaving: Decimal;
+  promotion: PricingPromotion;
 }
 
-/** The candidate that saves the most money on one unit, capped at the price; equal savings go to the oldest. */
-export function bestUnitPromotion(unitListPrice: Decimal, candidates: readonly PricingPromotion[]): UnitPromotion {
-  let best: { promotion: PricingPromotion; saving: Decimal } | undefined;
-  for (const promotion of [...candidates].sort(oldestFirst)) {
-    const saving = unitSaving(unitListPrice, promotion);
-    if (saving.gt(best?.saving ?? 0)) best = { promotion, saving };
-  }
-  return best ? { unitDiscount: best.saving, promotion: best.promotion } : { unitDiscount: new Decimal(0) };
+export interface UnitPromotions {
+  unitDiscount: Decimal;
+  /** The promotions taken, in the order they applied, each saving something. */
+  applied: UnitPromotion[];
 }
 
 /**
- * The item promotion a product page shows on one unit of the variant: the best automatic (no coupon) one that is live
- * with uses left. Minimum spend and quantity are not checked (there is no cart).
+ * The item promotions on one unit priced `unitListPrice`: per stacking group the candidate saving the most at the list
+ * price, then the groups' winners one after the other, lowest priority number first (then the oldest), each on what is
+ * left of the price, so the unit never goes below zero.
  */
-export function displayUnitPromotion(
+export function stackedUnitPromotions(unitListPrice: Decimal, candidates: readonly PricingPromotion[]): UnitPromotions {
+  let left = unitListPrice;
+  const applied: UnitPromotion[] = [];
+  for (const promotion of groupWinners(candidates, (each) => unitSaving(unitListPrice, each))) {
+    const saving = unitSaving(left, promotion);
+    if (!saving.gt(0)) continue;
+    applied.push({ unitSaving: saving, promotion });
+    left = left.sub(saving);
+  }
+  return { unitDiscount: unitListPrice.sub(left), applied };
+}
+
+/**
+ * The item promotions a product page shows on one unit of the variant: the automatic (no coupon) ones that are live
+ * with uses left, combined as at checkout (an exclusive one that saves anything alone, otherwise the stacked groups).
+ * Minimum spend and quantity are not checked (there is no cart).
+ */
+export function displayUnitPromotions(
   line: Pick<PricingLine, TargetKey | 'unitListPrice'>,
   promotions: readonly PricingPromotion[],
   now: Date,
-): UnitPromotion {
-  return bestUnitPromotion(
-    line.unitListPrice,
-    promotions.filter(
-      (promotion) =>
-        !promotion.requiresCoupon && isLive(promotion, now) && hasUsesLeft(promotion) && targets(promotion, line),
-    ),
+): UnitPromotions {
+  const shown = promotions.filter(
+    (promotion) =>
+      !promotion.requiresCoupon && isLive(promotion, now) && hasUsesLeft(promotion) && targets(promotion, line),
   );
+  const exclusive = best(
+    shown.filter((promotion) => promotion.exclusive),
+    (promotion) => unitSaving(line.unitListPrice, promotion),
+  );
+  return stackedUnitPromotions(
+    line.unitListPrice,
+    exclusive ? [exclusive] : shown.filter((promotion) => !promotion.exclusive),
+  );
+}
+
+/**
+ * The exclusive candidate saving the most on the whole cart on its own (an item one over the lines it targets, a cart
+ * one on the list-price subtotal), when one saves anything.
+ */
+function bestExclusive(
+  lines: readonly PricingLine[],
+  itemCandidates: readonly PricingPromotion[],
+  cartCandidates: readonly PricingPromotion[],
+  grossSubtotal: Decimal,
+): PricingPromotion | undefined {
+  const aloneSaving = (promotion: PricingPromotion) =>
+    promotion.scope === PromotionScope.CART
+      ? cartSaving(grossSubtotal, promotion)
+      : lines.reduce(
+          (sum, line) =>
+            targets(promotion, line) ? sum.add(unitSaving(line.unitListPrice, promotion).mul(line.quantity)) : sum,
+          new Decimal(0),
+        );
+  return best(
+    [...itemCandidates, ...cartCandidates].filter((promotion) => promotion.exclusive),
+    aloneSaving,
+  );
+}
+
+/**
+ * Per stacking group the promotion with the largest `saving` (above zero), the groups' winners in the order they
+ * apply: lowest priority number first, then the oldest.
+ */
+function groupWinners(
+  candidates: readonly PricingPromotion[],
+  saving: (promotion: PricingPromotion) => Decimal,
+): PricingPromotion[] {
+  const groups = new Map<string, PricingPromotion[]>();
+  for (const promotion of candidates) {
+    groups.set(promotion.stackingGroup, [...(groups.get(promotion.stackingGroup) ?? []), promotion]);
+  }
+  return [...groups.values()]
+    .map((group) => best(group, saving))
+    .filter((winner): winner is PricingPromotion => winner !== undefined)
+    .sort(tieOrder);
+}
+
+/** The promotion with the largest saving above zero; equal savings go to the lowest priority number, then the oldest. */
+function best(
+  candidates: readonly PricingPromotion[],
+  saving: (promotion: PricingPromotion) => Decimal,
+): PricingPromotion | undefined {
+  let winner: { promotion: PricingPromotion; saving: Decimal } | undefined;
+  for (const promotion of [...candidates].sort(tieOrder)) {
+    const amount = saving(promotion);
+    if (amount.gt(winner?.saving ?? 0)) winner = { promotion, saving: amount };
+  }
+  return winner?.promotion;
 }
 
 /**
@@ -398,20 +498,8 @@ function cartSaving(subtotal: Decimal, promotion: PricingPromotion): Decimal {
   return Decimal.min(subtotal, Decimal.max(0, roundHalfUp(raw)));
 }
 
-function bestCartPromotion(
-  subtotal: Decimal,
-  candidates: readonly PricingPromotion[],
-): { promotion: PricingPromotion; saving: Decimal } | undefined {
-  let best: { promotion: PricingPromotion; saving: Decimal } | undefined;
-  for (const promotion of [...candidates].sort(oldestFirst)) {
-    const saving = cartSaving(subtotal, promotion);
-    if (saving.gt(best?.saving ?? 0)) best = { promotion, saving };
-  }
-  return best;
-}
-
-function oldestFirst(a: PricingPromotion, b: PricingPromotion): number {
-  return a.createdAt.getTime() - b.createdAt.getTime() || compareStrings(a.id, b.id);
+function tieOrder(a: PricingPromotion, b: PricingPromotion): number {
+  return a.priority - b.priority || a.createdAt.getTime() - b.createdAt.getTime() || compareStrings(a.id, b.id);
 }
 
 /** COUPON with its code when the coupon code unlocked the promotion, DISCOUNT otherwise. */
@@ -452,7 +540,7 @@ function canonicalTaxRates(taxRates: readonly PricingTaxRate[]): PricingTaxRate[
 
 function priceLine(
   line: PricingLine,
-  discount: UnitPromotion,
+  discount: UnitPromotions,
   taxRates: readonly PricingTaxRate[],
   money: (value: Decimal.Value) => Money,
   couponCode: PricingCouponCode | undefined,
@@ -477,8 +565,6 @@ function priceLine(
           amount: amount.amount,
         }))
     : [];
-  const lineDiscount = money(discount.unitDiscount).times(line.quantity);
-
   return {
     variantId: line.variantId,
     productId: line.productId,
@@ -488,22 +574,22 @@ function priceLine(
     unitNet: unitNet.amount,
     unitTax: unitTax.amount,
     lineTotal: unitGross.times(line.quantity).amount,
-    adjustments:
-      discount.promotion && lineDiscount.isPositive()
-        ? [adjustmentFrom(discount.promotion, lineDiscount.amount, couponCode)]
-        : [],
+    adjustments: discount.applied.map(({ promotion, unitSaving: saving }) =>
+      adjustmentFrom(promotion, money(saving).times(line.quantity).amount, couponCode),
+    ),
     taxLines,
   };
 }
 
 /**
- * Splits an order-level amount over the lines in proportion to their totals. Lines are taken in a canonical order
- * (not the cart's), so which line gets a remainder pesewa does not depend on the order the lines came in.
+ * Splits an order-level amount over the lines in proportion to what each still costs (`remaining`). Lines are taken
+ * in a canonical order (not the cart's), so which line gets a remainder pesewa does not depend on the order the lines
+ * came in. The amount is never more than the remaining total, so no line goes below zero.
  */
-function allocateToLines(amount: Money, input: readonly PricingLine[], lines: readonly QuoteLine[]): Money[] {
+function allocateToLines(amount: Money, input: readonly PricingLine[], remaining: readonly Money[]): Money[] {
   const order = canonicalLineOrder(input);
-  const shares = amount.allocate(order.map((index) => lines[index].lineTotal));
-  const byLine = new Array<Money>(lines.length);
+  const shares = amount.allocate(order.map((index) => remaining[index].amount));
+  const byLine = new Array<Money>(remaining.length);
   order.forEach((lineIndex, position) => (byLine[lineIndex] = shares[position]));
   return byLine;
 }

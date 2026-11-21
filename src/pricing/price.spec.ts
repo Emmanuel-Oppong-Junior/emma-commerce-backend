@@ -1,7 +1,7 @@
 import { Decimal } from '@prisma/client/runtime/client';
 import { toMinorUnits } from '../commons/money/money';
 import {
-  bestUnitPromotion,
+  displayUnitPromotions,
   CouponNotApplicableError,
   price as enginePrice,
   PRICING_VERSION,
@@ -12,6 +12,7 @@ import {
   PricingPromotion,
   PricingTaxRate,
   Quote,
+  stackedUnitPromotions,
 } from './price';
 
 const d = (value: Decimal.Value) => new Decimal(value);
@@ -196,9 +197,9 @@ describe('price', () => {
         [older, newer],
         [newer, older],
       ]) {
-        expect(bestUnitPromotion(d(100), discounts).promotion?.id).toBe('zz-older');
+        expect(stackedUnitPromotions(d(100), discounts).applied[0]?.promotion.id).toBe('zz-older');
       }
-      expect(bestUnitPromotion(d(100), [sameAgeB, sameAgeA]).promotion?.id).toBe('a-same');
+      expect(stackedUnitPromotions(d(100), [sameAgeB, sameAgeA]).applied[0]?.promotion.id).toBe('a-same');
     });
 
     it('returns the list price when no discount applies', () => {
@@ -281,6 +282,227 @@ describe('price', () => {
       expect(money(below.grandTotal)).toBe('180.00');
       expect(reached.lines[0].adjustments[0].sourceId).toBe('big');
       expect(money(reached.grandTotal)).toBe('100.00');
+    });
+  });
+
+  describe('stacking (ADR-0005 §3, PRICING_VERSION 2)', () => {
+    const cartPromo = (id: string, type: PricingPromotion['type'], value: Decimal.Value, overrides = {}) =>
+      promotion(id, type, value, { scope: 'CART', targetIds: [], ...overrides });
+
+    it('within a stacking group applies only the promotion saving the most', () => {
+      const quote = price(
+        cart([line({ unitListPrice: d(100) })]),
+        context({ promotions: [pct('pct10', 10), flat('flat15', 15), pct('pct12', 12)] }),
+      );
+
+      expect(quote.lines[0].adjustments.map((a) => [a.sourceId, money(a.amount)])).toEqual([['flat15', '-15.00']]);
+    });
+
+    it('stacks the winners of different groups, each on what the unit still costs, lowest priority number first', () => {
+      const quote = price(
+        cart([line({ unitListPrice: d(200), quantity: 2 })]),
+        context({
+          promotions: [
+            pct('sale20', 20, { stackingGroup: 'sale', priority: 2 }),
+            flat('loyalty10', 10, { stackingGroup: 'loyalty', priority: 1 }),
+          ],
+        }),
+      );
+
+      // 200 - 10 (loyalty, priority 1) = 190, then 20% of 190 = 38.
+      expect(quote.lines[0].adjustments.map((a) => [a.sourceId, money(a.amount)])).toEqual([
+        ['loyalty10', '-20.00'],
+        ['sale20', '-76.00'],
+      ]);
+      expect(money(quote.lines[0].unitDiscount)).toBe('48.00');
+      expectBalanced(quote);
+    });
+
+    it('never takes a unit below zero, however many groups stack', () => {
+      const quote = price(
+        cart([line({ unitListPrice: d(30) })]),
+        context({
+          promotions: [
+            flat('a', 20, { stackingGroup: 'a' }),
+            flat('b', 20, { stackingGroup: 'b' }),
+            pct('c', 100, { stackingGroup: 'c' }),
+          ],
+        }),
+      );
+
+      expect(quote.lines[0]).toMatchObject({ unitDiscount: d(30), lineTotal: d(0) });
+      expect(quote.lines[0].adjustments.map((a) => a.sourceId)).toEqual(['a', 'b']);
+      expectBalanced(quote);
+    });
+
+    it.each([
+      ['the lowest priority number', { priority: 1 }, { priority: 0 }, 'second'],
+      [
+        'the oldest at equal priority',
+        { createdAt: new Date('2026-02-01') },
+        { createdAt: new Date('2026-01-01') },
+        'second',
+      ],
+      ['the lowest id at equal priority and age', {}, {}, 'first'],
+    ])('breaks a tie between equal savings by %s', (_case, firstOverrides, secondOverrides, winner) => {
+      const first = flat('first', 10, firstOverrides);
+      const second = pct('second', 10, secondOverrides);
+
+      for (const promotions of [
+        [first, second],
+        [second, first],
+      ]) {
+        const quote = price(cart([line({ unitListPrice: d(100) })]), context({ promotions }));
+        expect(quote.lines[0].adjustments.map((a) => a.sourceId)).toEqual([winner]);
+      }
+    });
+
+    it('lets an exclusive promotion that applies block every other one, item and cart', () => {
+      const quote = price(
+        cart(
+          [
+            line({ variantId: 'v1', unitListPrice: d(100) }),
+            line({ variantId: 'v2', productId: 'p2', unitListPrice: d(50) }),
+          ],
+          {
+            coupon: coupon({ value: d(10) }),
+          },
+        ),
+        context({
+          promotions: [
+            pct('vip', 5, { exclusive: true, targetIds: ['p1'] }),
+            pct('sale', 30, { stackingGroup: 'sale', targetIds: ['p1', 'p2'] }),
+            cartPromo('cart20', 'AMOUNT_OFF', 20),
+          ],
+        }),
+      );
+
+      expect(quote.lines.map((l) => l.adjustments.map((a) => a.sourceId))).toEqual([['vip'], []]);
+      expect(quote.adjustments).toEqual([]);
+      expect(money(quote.grandTotal)).toBe('145.00');
+    });
+
+    it('applies the exclusive promotion saving the most on the whole cart when several apply', () => {
+      const lines = [line({ unitListPrice: d(100), quantity: 3 })];
+      const quote = price(
+        cart(lines),
+        context({
+          promotions: [
+            flat('item25', 25, { exclusive: true }), // 75 over the three units
+            cartPromo('cart60', 'AMOUNT_OFF', 60, { exclusive: true }),
+            cartPromo('cart30pct', 'PERCENT', 30, { exclusive: true }), // 90 on the 300 list subtotal
+          ],
+        }),
+      );
+
+      expect(quote.lines[0].adjustments).toEqual([]);
+      expect(quote.adjustments.map((a) => [a.sourceId, money(a.amount)])).toEqual([['cart30pct', '-90.00']]);
+    });
+
+    it('ignores an exclusive promotion that saves nothing on this cart', () => {
+      const quote = price(
+        cart([line({ unitListPrice: d(100) })]),
+        context({ promotions: [pct('vip', 50, { exclusive: true, targetIds: ['other'] }), pct('sale', 10)] }),
+      );
+
+      expect(quote.lines[0].adjustments.map((a) => a.sourceId)).toEqual(['sale']);
+    });
+
+    it('stacks cart groups on what is left and allocates each exactly by largest remainder', () => {
+      const lines = [
+        line({ variantId: 'a', unitListPrice: d(10) }),
+        line({ variantId: 'b', unitListPrice: d(10) }),
+        line({ variantId: 'c', unitListPrice: d(10) }),
+      ];
+      const quote = price(
+        cart(lines),
+        context({
+          promotions: [
+            cartPromo('ten', 'AMOUNT_OFF', 10, { stackingGroup: 'a', priority: 1 }),
+            cartPromo('half', 'PERCENT', 50, { stackingGroup: 'b', priority: 2 }),
+          ],
+        }),
+      );
+
+      expect(quote.adjustments.map((a) => [a.sourceId, money(a.amount), a.allocations.map(money)])).toEqual([
+        ['ten', '-10.00', ['-3.34', '-3.33', '-3.33']],
+        ['half', '-10.00', ['-3.33', '-3.34', '-3.33']],
+      ]);
+      expectBalanced(quote);
+    });
+
+    it('measures a cart minimum spend on the subtotal after item promotions, before shipping', () => {
+      const lines = [line({ unitListPrice: d(100), quantity: 2 })];
+      const withMinimum = (minimum: number) =>
+        price(
+          cart(lines, { shippingFee: d(50) }),
+          context({
+            promotions: [pct('sale', 10), cartPromo('spend', 'AMOUNT_OFF', 15, { minimumSpend: d(minimum) })],
+          }),
+        );
+
+      // 200 list, 180 after the item sale: a 190 minimum is no longer reached, even with 50 shipping.
+      expect(withMinimum(190).adjustments).toEqual([]);
+      expect(withMinimum(180).adjustments.map((a) => a.sourceId)).toEqual(['spend']);
+    });
+
+    it('measures a minimum quantity on the targeted units (any unit for a cart promotion)', () => {
+      const lines = [line({ variantId: 'v1', quantity: 2 }), line({ variantId: 'v2', productId: 'p2', quantity: 1 })];
+      const quote = price(
+        cart(lines),
+        context({
+          promotions: [
+            pct('three-of-p1', 10, { minimumQuantity: 3 }),
+            pct('two-of-p1', 5, { minimumQuantity: 2, stackingGroup: 'b' }),
+            cartPromo('three-anything', 'AMOUNT_OFF', 1, { minimumQuantity: 3 }),
+          ],
+        }),
+      );
+
+      expect(quote.lines[0].adjustments.map((a) => a.sourceId)).toEqual(['two-of-p1']);
+      expect(quote.adjustments.map((a) => a.sourceId)).toEqual(['three-anything']);
+    });
+
+    it('never raises a price with FIXED_PRICE: a unit already below it keeps its price', () => {
+      const quote = price(
+        cart([line({ variantId: 'dear', unitListPrice: d(150) }), line({ variantId: 'cheap', unitListPrice: d(80) })]),
+        context({
+          promotions: [promotion('fixed99', 'FIXED_PRICE', 99, { scope: 'SKU', targetIds: ['dear', 'cheap'] })],
+        }),
+      );
+
+      expect(quote.lines.map((l) => [l.variantId, money(l.lineTotal)])).toEqual([
+        ['dear', '99.00'],
+        ['cheap', '80.00'],
+      ]);
+      expect(quote.lines[1].adjustments).toEqual([]);
+    });
+
+    it('lets a coupon whose promotion loses to an exclusive one take nothing off, without an error', () => {
+      const quote = price(
+        cart([line({ unitListPrice: d(100) })], { coupon: coupon({ value: d(5) }) }),
+        context({ promotions: [pct('vip', 50, { exclusive: true })] }),
+      );
+
+      expect(quote.adjustments).toEqual([]);
+      expect(money(quote.grandTotal)).toBe('50.00');
+    });
+
+    it('shows on a product page what checkout would take off one unit: exclusive alone, else the stacked groups', () => {
+      const unit = { variantId: 'v1', productId: 'p1', categoryId: 'c1', brandId: null, unitListPrice: d(100) };
+      const stacked = displayUnitPromotions(
+        unit,
+        [
+          pct('sale', 10, { stackingGroup: 'sale' }),
+          flat('loyal', 5, { stackingGroup: 'loyal' }),
+          pct('code', 50, { requiresCoupon: true }),
+        ],
+        NOW,
+      );
+      const alone = displayUnitPromotions(unit, [pct('sale', 10), flat('vip', 1, { exclusive: true })], NOW);
+
+      expect(money(stacked.unitDiscount)).toBe('14.50');
+      expect(alone.applied.map((a) => a.promotion.id)).toEqual(['vip']);
     });
   });
 
@@ -635,6 +857,72 @@ describe('price', () => {
           expectBalanced(quote);
           expect(again.quoteHash).toBe(quote.quoteHash);
           expect(money(again.grandTotal)).toBe(money(quote.grandTotal));
+        }
+      },
+    );
+
+    it.each(seeds)(
+      'holds with stacking groups, exclusives, priorities, fixed prices and cart promotions, from seed %i',
+      (seed) => {
+        const next = sequence(seed * 7919);
+        const pesewas = (max: number) => d(next(max)).div(100);
+        const scopes = ['SKU', 'PRODUCT', 'CATEGORY', 'CART'] as const;
+        const types = ['PERCENT', 'AMOUNT_OFF', 'FIXED_PRICE'] as const;
+
+        for (let run = 0; run < 300; run += 1) {
+          const lines = Array.from({ length: 1 + next(6) }, (_, index) =>
+            line({
+              variantId: `v${index}`,
+              productId: `p${next(3)}`,
+              categoryId: `c${next(2)}`,
+              quantity: 1 + next(5),
+              unitListPrice: pesewas(100_000),
+              taxable: next(3) !== 0,
+            }),
+          );
+          const promotions = Array.from({ length: next(7) }, (_, index) => {
+            const scope = scopes[next(scopes.length)];
+            const type = scope === 'CART' ? types[next(2)] : types[next(3)];
+            const targetIds =
+              scope === 'SKU'
+                ? [`v${next(6)}`]
+                : scope === 'PRODUCT'
+                  ? [`p${next(3)}`]
+                  : scope === 'CATEGORY'
+                    ? [`c${next(2)}`]
+                    : [];
+            return promotion(`promo${index}`, type, type === 'PERCENT' ? next(101) : pesewas(60_000), {
+              scope,
+              targetIds,
+              stackingGroup: `g${next(3)}`,
+              exclusive: next(5) === 0,
+              priority: next(3),
+              minimumSpend: next(4) === 0 ? pesewas(300_000) : null,
+              minimumQuantity: next(5) === 0 ? 1 + next(6) : null,
+              createdAt: new Date(2026, 0, 1 + next(3)),
+            });
+          });
+          const randomCoupon =
+            next(2) === 0 ? coupon({ value: pesewas(20_000), stackingGroup: `g${next(3)}` }) : undefined;
+          const shippingFee = pesewas(5_000);
+
+          const quote = price(
+            cart(lines, { coupon: randomCoupon, shippingFee }),
+            context({ promotions, taxRates: GHANA }),
+          );
+          const again = price(
+            cart(shuffled(lines, next), { coupon: randomCoupon, shippingFee }),
+            context({ promotions: shuffled(promotions, next), taxRates: shuffled(GHANA, next) }),
+          );
+
+          expectBalanced(quote);
+          expect(again.quoteHash).toBe(quote.quoteHash);
+          const applied = new Set(
+            [...quote.lines.flatMap((l) => l.adjustments), ...quote.adjustments].map((a) => a.sourceId),
+          );
+          const exclusiveApplied = [...applied].filter((id) => promotions.find((p) => p.id === id)?.exclusive);
+          if (exclusiveApplied.length > 0) expect([...applied]).toEqual(exclusiveApplied);
+          for (const l of quote.lines) expect(l.unitDiscount.lte(l.unitListPrice)).toBe(true);
         }
       },
     );

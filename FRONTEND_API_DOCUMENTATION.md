@@ -1481,7 +1481,7 @@ All order operations require `Bearer` JWT.
   contactEmail: string;
   contactPhone: string;
   currency: Currency;                          // GHS
-  pricingVersion: Int;                         // 1: full price and tax snapshot; 0: placed before it (parts may be null)
+  pricingVersion: Int;                         // The pricing rules it was priced with: 2 since P2-B.2 (promotion stacking), 1 before it; both have the full price and tax snapshot. 0: placed before P1-O.1 (parts may be null)
   subtotal?: Money;                            // Σ unitListPrice × quantity, before any discount, tax included
   discountTotal?: Money;                       // Product discounts + coupon (= minus the sum of `adjustments`)
   taxTotal?: Money;                            // Tax included in the line totals; null on pricingVersion 0
@@ -1643,7 +1643,7 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 {
   quoteHash: string;                 // 64 hex chars. Send to createOrder.
   currency: Currency;                // GHS
-  pricingVersion: number;            // The pricing rules used (1); the order stores it
+  pricingVersion: number;            // The pricing rules used (2: promotion stacking, P2-B.2); the order stores it
   lines: QuoteLine[];                // In cart order
   adjustments: QuoteOrderAdjustment[]; // The cart promotions that take something off
   subtotal: Money;                   // Σ unitListPrice × quantity, before any discount, tax included
@@ -1719,7 +1719,7 @@ query {
 3. The cart's variants are share-locked, then the prices, promotions, coupon code, the caller's redemptions, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-promotions-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus its item promotions. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
 4. A coupon code, if given, must be usable (code and promotion active, started, not expired, uses left overall and for the caller, its minimums reached); it unlocks its promotion. Cart promotions come off the lines after item promotions, before shipping, never more than them.
 5. The resulting quote's hash must equal `quoteHash`; otherwise `CONFLICT` / `QUOTE_CHANGED` and nothing is written.
-6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with `pricingVersion` 1.
+6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (2).
 7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); each applied promotion (and the coupon code) has one use taken with a conditional update and a `RESERVED` redemption recorded (none left: `CONFLICT`, see below); the cart is emptied.
 8. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
 9. A confirmation email goes to the account's email (not `contactEmail`) after the response.
@@ -3666,10 +3666,14 @@ A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or
 - Cart promotions (`CART`) come off the merchandise subtotal after item promotions, before shipping: `PERCENT` of it or `AMOUNT_OFF`, never more than it. The amount is allocated to the lines by largest remainder (`checkoutQuote` `allocations`), so refunds per line are exact.
 - `minimumQuantity`: the targeted units in the cart (every unit for CART). `minimumSpend`: for a cart promotion, the subtotal after item promotions (before shipping); for an item promotion, the list-price subtotal (before any promotion).
 
-### Combining
+### Combining (P2-B.2, `pricingVersion` 2)
 
-- Each line gets the one item promotion saving the most on it; then the one cart promotion saving the most applies. Equal savings go to the oldest promotion.
-- One coupon code per order.
+- **Stacking groups**: promotions in one `stackingGroup` do not combine. On each line, every group contributes the item promotion saving the most on one unit (at the list price); the groups' winners then all apply, one after the other, lowest `priority` first, each on what the unit still costs, so a unit never goes below zero. Cart promotions work the same way on the subtotal after item promotions: one winner per group, applied one after the other on what is left, each allocated to the lines. Group names count per level: an item promotion and a cart promotion in the same group do combine.
+- **Exclusive**: when an `exclusive` promotion saves anything on the cart, it applies alone: no other promotion (item, cart or coupon) does. When several do, the one saving the most on the whole cart wins.
+- **Ties** between equal savings go to the lowest `priority` number, then the oldest promotion.
+- **Minimum spend** of a cart promotion is measured on the subtotal after item promotions (before shipping; prices include tax). An item promotion's minimum spend is measured on the list-price subtotal (it applies before item promotions do).
+- One coupon code per order. A code whose promotion loses (to an exclusive one, or to a better promotion of its group) takes nothing off and is not recorded on the order; it is not an error.
+- Existing discounts and coupons were migrated into group "default" at priority 0, so a line still gets only the best of them and a coupon still stacks on top.
 
 ### Coupon codes
 
