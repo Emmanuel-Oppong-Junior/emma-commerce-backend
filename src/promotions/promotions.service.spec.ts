@@ -1,7 +1,12 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
-import { PromotionsService, PROMOTION_CUSTOMER_LIMIT_REACHED, PROMOTION_LIMIT_REACHED } from './promotions.service';
+import {
+  PromotionsService,
+  PROMOTION_CUSTOMER_LIMIT_REACHED,
+  PROMOTION_LIMIT_REACHED,
+  PROMOTION_UNITS_SOLD_OUT,
+} from './promotions.service';
 import { CreatePromotionInput } from './dto/promotion.input';
 
 const CREATED = new Date('2026-11-01T00:00:00.000Z');
@@ -97,6 +102,7 @@ describe('PromotionsService', () => {
         .mockImplementation(async (_id, data) => code({ ...data, code: data.code ?? 'SAVE10' })),
       deleteCouponCode: jest.fn().mockResolvedValue(code()),
       takePromotionUse: jest.fn().mockResolvedValue({ perCustomerLimit: null }),
+      takePromotionUnits: jest.fn().mockResolvedValue(true),
       takeCouponCodeUse: jest.fn().mockResolvedValue(true),
       countReserved: jest.fn().mockResolvedValue(0),
       createRedemption: jest.fn(),
@@ -304,23 +310,25 @@ describe('PromotionsService', () => {
     const order = { orderId: 'order1', customerId: 'user1' };
 
     it('takes a use of each promotion in id order, of the code for the promotion it unlocked, and records each', async () => {
-      await service.reserveRedemptions(tx, order, ['p2', 'p1', 'p2'], { id: 'code1', promotionId: 'p2' });
+      await service.reserveRedemptions(tx, order, ['p2', 'p1', 'p2'], { id: 'code1', promotionId: 'p2' }, {});
 
       expect(repository.takePromotionUse.mock.calls.map((call) => call[1])).toEqual(['p1', 'p2']);
       expect(repository.takeCouponCodeUse).toHaveBeenCalledTimes(1);
       expect(repository.takeCouponCodeUse).toHaveBeenCalledWith(tx, 'code1');
       expect(repository.createRedemption.mock.calls.map((call) => call[1])).toEqual([
-        { promotionId: 'p1', couponCodeId: null, ...order },
-        { promotionId: 'p2', couponCodeId: 'code1', ...order },
+        { promotionId: 'p1', couponCodeId: null, ...order, units: 0 },
+        { promotionId: 'p2', couponCodeId: 'code1', ...order, units: 0 },
       ]);
     });
 
     it('fails with CONFLICT PROMOTION_LIMIT_REACHED when the promotion or the code has no use left', async () => {
       repository.takePromotionUse.mockResolvedValueOnce(undefined);
-      const noPromotionUse = await service.reserveRedemptions(tx, order, ['p1']).catch((error: unknown) => error);
+      const noPromotionUse = await service
+        .reserveRedemptions(tx, order, ['p1'], undefined, {})
+        .catch((error: unknown) => error);
       repository.takeCouponCodeUse.mockResolvedValueOnce(false);
       const noCodeUse = await service
-        .reserveRedemptions(tx, order, ['p1'], { id: 'code1', promotionId: 'p1' })
+        .reserveRedemptions(tx, order, ['p1'], { id: 'code1', promotionId: 'p1' }, {})
         .catch((error: unknown) => error);
 
       for (const error of [noPromotionUse, noCodeUse]) {
@@ -332,11 +340,38 @@ describe('PromotionsService', () => {
       expect(repository.createRedemption).not.toHaveBeenCalled();
     });
 
+    it('counts the units each promotion reduced and records them on its redemption', async () => {
+      await service.reserveRedemptions(tx, order, ['flash', 'cart'], undefined, { flash: 3 });
+
+      expect(repository.takePromotionUnits).toHaveBeenCalledTimes(1);
+      expect(repository.takePromotionUnits).toHaveBeenCalledWith(tx, 'flash', 3);
+      expect(repository.createRedemption.mock.calls.map((call) => call[1])).toEqual([
+        { promotionId: 'cart', couponCodeId: null, ...order, units: 0 },
+        { promotionId: 'flash', couponCodeId: null, ...order, units: 3 },
+      ]);
+    });
+
+    it('fails with CONFLICT PROMOTION_UNITS_SOLD_OUT when fewer units are left than the order reduced', async () => {
+      repository.takePromotionUnits.mockResolvedValueOnce(false);
+
+      const error = await service
+        .reserveRedemptions(tx, order, ['flash'], undefined, { flash: 2 })
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        extensions: { reason: PROMOTION_UNITS_SOLD_OUT },
+      });
+      expect(repository.createRedemption).not.toHaveBeenCalled();
+    });
+
     it("fails with CONFLICT PROMOTION_CUSTOMER_LIMIT_REACHED when the customer's RESERVED uses reach the limit", async () => {
       repository.takePromotionUse.mockResolvedValue({ perCustomerLimit: 1 });
       repository.countReserved.mockResolvedValue(1);
 
-      const error = await service.reserveRedemptions(tx, order, ['p1']).catch((caught: unknown) => caught);
+      const error = await service
+        .reserveRedemptions(tx, order, ['p1'], undefined, {})
+        .catch((caught: unknown) => caught);
 
       expect(error).toBeInstanceOf(ConflictException);
       expect((error as ConflictException).getResponse()).toMatchObject({

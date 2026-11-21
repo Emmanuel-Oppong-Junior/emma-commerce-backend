@@ -1481,7 +1481,7 @@ All order operations require `Bearer` JWT.
   contactEmail: string;
   contactPhone: string;
   currency: Currency;                          // GHS
-  pricingVersion: Int;                         // The pricing rules it was priced with: 2 since P2-B.2 (promotion stacking), 1 before it; both have the full price and tax snapshot. 0: placed before P1-O.1 (parts may be null)
+  pricingVersion: Int;                         // The pricing rules it was priced with: 3 since P2-B.4 (flash sales), 2 since P2-B.2 (promotion stacking), 1 before it; all have the full price and tax snapshot. 0: placed before P1-O.1 (parts may be null)
   subtotal?: Money;                            // Σ unitListPrice × quantity, before any discount, tax included
   discountTotal?: Money;                       // Product discounts + coupon (= minus the sum of `adjustments`)
   taxTotal?: Money;                            // Tax included in the line totals; null on pricingVersion 0
@@ -1505,7 +1505,7 @@ All order operations require `Bearer` JWT.
   id: string;
   orderId: string;
   productId: string;
-  variantId: string;          // The variant (SKU) ordered
+  variantId: string;          // The variant (SKU) ordered. P2-B.4: a variant can have two or more items when a flash sale reduced only some of its units (the reduced units first)
   sku?: string;               // SKU at order time; null on lines ordered before variant checkout (P1-V.3)
   optionValues?: JSONObject;  // Option values at order time, e.g. { size: "M" }; null on lines ordered before P1-V.3
   quantity: Int;              // Breaking change (P1-V.3): was Float
@@ -1643,8 +1643,8 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 {
   quoteHash: string;                 // 64 hex chars. Send to createOrder.
   currency: Currency;                // GHS
-  pricingVersion: number;            // The pricing rules used (2: promotion stacking, P2-B.2); the order stores it
-  lines: QuoteLine[];                // In cart order
+  pricingVersion: number;            // The pricing rules used (3 since P2-B.4: flash sales); the order stores it
+  lines: QuoteLine[];                // In cart order. P2-B.4: a cart line whose units pay different prices (a flash sale reduced only some) has two or more lines with the same cartItemId, the reduced units first
   adjustments: QuoteOrderAdjustment[]; // The cart promotions that take something off
   subtotal: Money;                   // Σ unitListPrice × quantity, before any discount, tax included
   discountTotal: Money;              // Item promotions + cart promotions
@@ -1669,7 +1669,7 @@ QuoteOrderAdjustment {
   type: OrderAdjustmentType;         // DISCOUNT (automatic) | COUPON (unlocked by the code)
   sourceId: string; code?: string;   // The promotion id; the coupon code when it unlocked it
   amount: Money;                     // Negative
-  allocations: { cartItemId: string; amount: Money }[]; // Each line's share; they add up exactly to amount
+  allocations: { cartItemId: string; amount: Money }[]; // Each cart line's share (one per cart item, a split one summed); they add up exactly to amount
 }
 ```
 
@@ -1719,7 +1719,7 @@ query {
 3. The cart's variants are share-locked, then the prices, promotions, coupon code, the caller's redemptions, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-promotions-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus its item promotions. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
 4. A coupon code, if given, must be usable (code and promotion active, started, not expired, uses left overall and for the caller, its minimums reached); it unlocks its promotion. Cart promotions come off the lines after item promotions, before shipping, never more than them.
 5. The resulting quote's hash must equal `quoteHash`; otherwise `CONFLICT` / `QUOTE_CHANGED` and nothing is written.
-6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (2).
+6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (3).
 7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); each applied promotion (and the coupon code) has one use taken with a conditional update and a `RESERVED` redemption recorded (none left: `CONFLICT`, see below); the cart is emptied.
 8. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
 9. A confirmation email goes to the account's email (not `contactEmail`) after the response.
@@ -1729,6 +1729,7 @@ No tax is added at checkout; tax is already inside each variant's `price`, and t
 **Possible Errors**:
 - `CONFLICT` with `extensions.reason: "QUOTE_CHANGED"` — the cart no longer prices to the quote (see above). Call `checkoutQuote` again.
 - `CONFLICT` with `extensions.reason: "PROMOTION_LIMIT_REACHED"` (a promotion or the coupon code has no use left) or `"PROMOTION_CUSTOMER_LIMIT_REACHED"` (the caller used up their uses) — another order took the last use meanwhile; nothing was recorded. Call `checkoutQuote` again.
+- `CONFLICT` with `extensions.reason: "PROMOTION_UNITS_SOLD_OUT"` (P2-B.4) — a flash sale has fewer units left at its price than the quote reduced (another order took them meanwhile); nothing was recorded. Call `checkoutQuote` again: it shows the units still left at the promotional price.
 - `NOT_FOUND` — No cart, empty cart (also the second of two simultaneous submits), shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
 - `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon code inactive, not started, expired, at its usage limit, already used by the caller, below its minimums, or for items not in the cart.
 - `BAD_USER_INPUT` — Missing or malformed `quoteHash`; invalid `contactEmail`/`contactPhone` or enum value.
@@ -1954,6 +1955,8 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   requiresCoupon: boolean;    // Only orders entering one of its couponCodes get it
   usageLimit?: number;        // Orders that may use it, across all customers
   usedCount: number;          // Orders holding a use (taken at placement, given back on cancel/expiry before payment)
+  unitCap?: number;           // P2-B.4 flash sale: units that may be sold at its price across all orders; null = no cap (not for CART)
+  unitsUsed: number;          // P2-B.4: units sold at its price by orders holding a use (given back with the use)
   perCustomerLimit?: number;  // Orders each customer may use it on
   firstOrderOnly: boolean;    // P2-B.3: only for a customer without an earlier confirmed or paid order (see 10)
   customerGroupIds: ID[];     // P2-B.3: only for members of one of these customer groups; [] = everyone
@@ -1989,18 +1992,19 @@ Existing discounts and coupons were migrated with their ids, so the `sourceId` o
   exclusive?: boolean;         // Default false
   requiresCoupon?: boolean;    // Default false
   usageLimit?: number;         // >= 1
+  unitCap?: number;            // >= 1; P2-B.4 flash sale unit cap; not for CART (may later be set below unitsUsed: no more units are sold)
   perCustomerLimit?: number;   // >= 1
   firstOrderOnly?: boolean;    // Default false
   customerGroupIds?: ID[];     // Default [] (everyone); must exist
 }
 ```
 
-**Possible Errors**: `BAD_REQUEST` (unknown customer groups, PERCENT above 100, FIXED_PRICE on CART, targets on CART, unknown targets, `endsAt` not after `startsAt`).
+**Possible Errors**: `BAD_REQUEST` (unknown customer groups, PERCENT above 100, FIXED_PRICE on CART, targets on CART, unknown targets, `endsAt` not after `startsAt`, a `unitCap` on CART).
 
 #### `updatePromotion`
 
 - **Args**: `id: ID!`, `input: UpdatePromotionInput!` (every field optional) → `Promotion!`
-- Omitted fields stay; `null` clears an optional one (`description`, `minimumSpend`, `minimumQuantity`, `endsAt`, `usageLimit`, `perCustomerLimit`). `targetIds` replaces every target (`[]` clears them) and is required when `scope` changes; `customerGroupIds` replaces the groups (`[]` opens it to everyone). The result is checked as a whole against the stored promotion (a `value` of 150 on a PERCENT promotion is refused).
+- Omitted fields stay; `null` clears an optional one (`description`, `minimumSpend`, `minimumQuantity`, `endsAt`, `usageLimit`, `unitCap`, `perCustomerLimit`). `targetIds` replaces every target (`[]` clears them) and is required when `scope` changes; `customerGroupIds` replaces the groups (`[]` opens it to everyone). The result is checked as a whole against the stored promotion (a `value` of 150 on a PERCENT promotion is refused).
 
 #### `deletePromotion`
 
@@ -2019,7 +2023,7 @@ Codes are unique ignoring case (`CONFLICT` for a taken code). A code an order ha
 #### `redemptions`
 
 - **Args**: `promotionId`, `customerId`, `orderId`, `status: RedemptionStatus` (all optional), `first` (1-100, default 50), `after` (cursor: the last node id) → `RedemptionPage { nodes: Redemption[]; totalCount; hasNextPage }`, newest first.
-- `Redemption { id; promotionId; couponCodeId?; customerId; orderId; status: RESERVED | RELEASED; createdAt; releasedAt? }`: one row per promotion an order used.
+- `Redemption { id; promotionId; couponCodeId?; customerId; orderId; status: RESERVED | RELEASED; units; createdAt; releasedAt? }`: one row per promotion an order used; `units` (P2-B.4) is how many units the order bought at the promotion's price (0 for a cart promotion).
 
 #### `validateCouponCode` (any signed-in user)
 
@@ -3680,7 +3684,7 @@ One pricing engine (`src/pricing/price.ts`, ADR-0005) prices `Variant.discounted
 
 ### Which promotions are candidates
 
-A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or no `endsAt`), it has uses left (`usedCount < usageLimit`) and the customer has uses left (their reserved uses `< perCustomerLimit`), it is open to the customer (`firstOrderOnly`: no earlier order counts; `customerGroupIds`: a member of one of them), and, when it `requiresCoupon`, the order entered one of its codes.
+A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or no `endsAt`), it has uses left (`usedCount < usageLimit`) and units left (`unitsUsed < unitCap`, P2-B.4) and the customer has uses left (their reserved uses `< perCustomerLimit`), it is open to the customer (`firstOrderOnly`: no earlier order counts; `customerGroupIds`: a member of one of them), and, when it `requiresCoupon`, the order entered one of its codes.
 
 - **First order** (P2-B.3): an earlier order counts when it reached `CONFIRMED` or a later status (`IN_FULFILMENT`, `COMPLETED`), or `PAYMENT_REVIEW` (the payment was received), at any point of its history, even if it was cancelled or refunded afterwards. An online order cancelled or expired before payment does not count. A cash-on-delivery order is `CONFIRMED` when placed, so it counts at once.
 - **Product pages** (`Variant.discountedPrice`) show only promotions open to everyone: not coupon, first-order or group promotions. Those appear in `checkoutQuote` for the customers they apply to.
@@ -3709,6 +3713,13 @@ A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or
 
 - Placing an order records one `RESERVED` redemption per promotion it applies and takes one use of each (and of the coupon code) inside the order transaction, with a conditional update: when none is left, `createOrder` fails with `CONFLICT` and `reason: PROMOTION_LIMIT_REACHED` (or `PROMOTION_CUSTOMER_LIMIT_REACHED` for the caller's own limit) and nothing is recorded. Get a new quote.
 - Cancelling or expiring an order **before payment** gives its uses back (redemptions `RELEASED`, counts decremented), once. A paid order keeps its uses when it is cancelled and refunded (P2-B.3).
+
+### Flash sales (P2-B.4, `pricingVersion` 3)
+
+- A flash sale is an item promotion with a time window (`startsAt`/`endsAt`) and a `unitCap`: the units that may be sold at its price across all orders. There is no separate flag.
+- When a cart wants more units than are left, the units left get the promotional price and the rest the normal price: the cart line becomes two quote lines (and two order items) with the same `cartItemId` / variant, the reduced units first. Across several targeted lines the units left go to the units the promotion saves the most on (then by variant).
+- The units an order bought at the price are taken at placement inside the order transaction with a conditional update (`unitsUsed + n <= unitCap`) and recorded on its redemption (`units`). If fewer are left than the quote reduced, `createOrder` fails with `CONFLICT` + `reason: PROMOTION_UNITS_SOLD_OUT` and nothing is recorded. They are given back with the use when the order is cancelled or expires before payment, and kept when a paid order is refunded.
+- A sold-out flash sale is no longer a candidate; its coupon code fails with "This offer has sold out". Product pages show it only while it has units left.
 
 ---
 

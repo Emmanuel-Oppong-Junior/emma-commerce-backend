@@ -57,6 +57,8 @@ const promotion = (
   requiresCoupon: false,
   usageLimit: null,
   usedCount: 0,
+  unitCap: null,
+  unitsUsed: 0,
   perCustomerLimit: null,
   firstOrderOnly: false,
   customerGroupIds: [],
@@ -172,6 +174,25 @@ function expectBalanced(quote: Quote) {
   // The charged amount is exactly the grand total, in whole pesewas.
   expectSame(d(toMinorUnits(quote.grandTotal)).div(100), quote.grandTotal);
   expect(quote.grandTotal.isNegative()).toBe(false);
+}
+
+/** Every unit of every cart line is priced once: a split cart line's quote lines add up to its quantity. */
+function expectCartCovered(quote: Quote, lines: readonly PricingLine[]) {
+  lines.forEach((cartLine, index) => {
+    const parts = quote.lines.filter((l) => l.cartLineIndex === index);
+    expect(parts.reduce((total, l) => total + l.quantity, 0)).toBe(cartLine.quantity);
+    for (const part of parts) expect(part.variantId).toBe(cartLine.variantId);
+  });
+}
+
+/** No capped promotion reduces more units than it has left. */
+function expectWithinUnitCaps(quote: Quote, promotions: readonly PricingPromotion[]) {
+  for (const promotion of promotions.filter((p) => p.unitCap !== null)) {
+    const units = quote.lines
+      .filter((l) => l.adjustments.some((a) => a.sourceId === promotion.id))
+      .reduce((total, l) => total + l.quantity, 0);
+    expect(units).toBeLessThanOrEqual(Math.max(0, promotion.unitCap! - promotion.unitsUsed));
+  }
 }
 
 describe('price', () => {
@@ -593,6 +614,122 @@ describe('price', () => {
     });
   });
 
+  describe('flash sales: unit cap (P2-B.4)', () => {
+    const summary = (quote: Quote) =>
+      quote.lines.map((l) => ({
+        variantId: l.variantId,
+        quantity: l.quantity,
+        unitDiscount: money(l.unitDiscount),
+        sources: l.adjustments.map((a) => a.sourceId),
+      }));
+
+    it('gives the units left the promotional price and the rest the normal price, splitting the line', () => {
+      const flash = pct('flash', 50, { unitCap: 10, unitsUsed: 8 });
+
+      const quote = price(cart([line({ unitListPrice: d(100), quantity: 5 })]), context({ promotions: [flash] }));
+
+      expect(summary(quote)).toEqual([
+        { variantId: 'v1', quantity: 2, unitDiscount: '50.00', sources: ['flash'] },
+        { variantId: 'v1', quantity: 3, unitDiscount: '0.00', sources: [] },
+      ]);
+      expect(quote.lines.map((l) => l.cartLineIndex)).toEqual([0, 0]);
+      expect(quote.lines[0].adjustments[0].amount).toEqual(d(-100));
+      expect(money(quote.grandTotal)).toBe('400.00');
+      expectBalanced(quote);
+    });
+
+    it('keeps the line whole when the units left cover it', () => {
+      const quote = price(
+        cart([line({ unitListPrice: d(100), quantity: 3 })]),
+        context({ promotions: [pct('flash', 50, { unitCap: 10, unitsUsed: 7 })] }),
+      );
+
+      expect(summary(quote)).toEqual([{ variantId: 'v1', quantity: 3, unitDiscount: '50.00', sources: ['flash'] }]);
+    });
+
+    it('gives the units left to the lines it saves the most on, then by variant, whatever order they come in', () => {
+      const flash = pct('flash', 20, { scope: 'CATEGORY', targetIds: ['c1'], unitCap: 4 });
+      const lines = [
+        line({ variantId: 'cheap', productId: 'p2', unitListPrice: d(50), quantity: 3 }),
+        line({ variantId: 'dear-b', productId: 'p3', unitListPrice: d(200), quantity: 1 }),
+        line({ variantId: 'dear-a', productId: 'p4', unitListPrice: d(200), quantity: 1 }),
+      ];
+
+      const quote = price(cart(lines), context({ promotions: [flash] }));
+      const reversed = price(cart([...lines].reverse()), context({ promotions: [flash] }));
+
+      expect(summary(quote)).toEqual([
+        { variantId: 'cheap', quantity: 2, unitDiscount: '10.00', sources: ['flash'] },
+        { variantId: 'cheap', quantity: 1, unitDiscount: '0.00', sources: [] },
+        { variantId: 'dear-b', quantity: 1, unitDiscount: '40.00', sources: ['flash'] },
+        { variantId: 'dear-a', quantity: 1, unitDiscount: '40.00', sources: ['flash'] },
+      ]);
+      expect(reversed.quoteHash).toBe(quote.quoteHash);
+      expectBalanced(quote);
+    });
+
+    it('applies nothing once the cap is reached, and refuses its coupon code as sold out', () => {
+      const soldOut = pct('flash', 50, { unitCap: 3, unitsUsed: 3 });
+
+      const quote = price(cart([line()]), context({ promotions: [soldOut] }));
+      const coupon = () =>
+        price(
+          cart([line()], { coupon: pct('cpn1', 50, { unitCap: 3, unitsUsed: 3, requiresCoupon: true }) }),
+          context(),
+        );
+
+      expect(quote.discountTotal).toEqual(d(0));
+      expect(coupon).toThrow(CouponNotApplicableError);
+      expect(coupon).toThrow('This offer has sold out');
+    });
+
+    it('lets the normal-price units of a split line take the other promotions of its group', () => {
+      const flash = pct('flash', 50, { unitCap: 1 });
+      const everyday = pct('everyday', 10);
+
+      const quote = price(
+        cart([line({ unitListPrice: d(100), quantity: 3 })]),
+        context({ promotions: [flash, everyday] }),
+      );
+
+      expect(summary(quote)).toEqual([
+        { variantId: 'v1', quantity: 1, unitDiscount: '50.00', sources: ['flash'] },
+        { variantId: 'v1', quantity: 2, unitDiscount: '10.00', sources: ['everyday'] },
+      ]);
+      expectBalanced(quote);
+    });
+
+    it('stacks a capped promotion with another group on its units, and allocates a cart coupon over the split lines exactly', () => {
+      const flash = flat('flash', 30, { unitCap: 2, stackingGroup: 'flash' });
+      const everyday = pct('everyday', 10);
+
+      const quote = price(
+        cart([line({ unitListPrice: d('99.99'), quantity: 5, taxable: true })], {
+          coupon: coupon({ value: d('7.01') }),
+        }),
+        context({ promotions: [flash, everyday], taxRates: GHANA }),
+      );
+
+      expect(summary(quote)).toEqual([
+        { variantId: 'v1', quantity: 2, unitDiscount: '40.00', sources: ['everyday', 'flash'] },
+        { variantId: 'v1', quantity: 3, unitDiscount: '10.00', sources: ['everyday'] },
+      ]);
+      expect(quote.adjustments[0].allocations).toHaveLength(2);
+      expectBalanced(quote);
+    });
+
+    it('shows a product page a capped promotion only while it has units left', () => {
+      const unit = { variantId: 'v1', productId: 'p1', categoryId: 'c1', brandId: null, unitListPrice: d(100) };
+
+      expect(displayUnitPromotions(unit, [pct('flash', 50, { unitCap: 3, unitsUsed: 2 })], NOW).unitDiscount).toEqual(
+        d(50),
+      );
+      expect(displayUnitPromotions(unit, [pct('flash', 50, { unitCap: 3, unitsUsed: 3 })], NOW).unitDiscount).toEqual(
+        d(0),
+      );
+    });
+  });
+
   describe('tax', () => {
     it('splits a tax-inclusive price into its net and the tax in it, one tax line per active tax', () => {
       const quote = price(cart([line({ taxable: true, quantity: 2 })]), context({ taxRates: GHANA }));
@@ -990,6 +1127,7 @@ describe('price', () => {
               minimumSpend: next(4) === 0 ? pesewas(300_000) : null,
               minimumQuantity: next(5) === 0 ? 1 + next(6) : null,
               createdAt: new Date(2026, 0, 1 + next(3)),
+              ...(scope !== 'CART' && next(3) === 0 && { unitCap: 1 + next(8), unitsUsed: next(4) }),
             });
           });
           const randomCoupon =
@@ -1013,6 +1151,8 @@ describe('price', () => {
           const exclusiveApplied = [...applied].filter((id) => promotions.find((p) => p.id === id)?.exclusive);
           if (exclusiveApplied.length > 0) expect([...applied]).toEqual(exclusiveApplied);
           for (const l of quote.lines) expect(l.unitDiscount.lte(l.unitListPrice)).toBe(true);
+          expectCartCovered(quote, lines);
+          expectWithinUnitCaps(quote, promotions);
         }
       },
     );

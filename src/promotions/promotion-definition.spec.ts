@@ -9,6 +9,7 @@ const definition = (overrides: Partial<PromotionDefinition> = {}): PromotionDefi
   targetIds: ['p1'],
   startsAt: START,
   endsAt: null,
+  unitCap: null,
   ...overrides,
 });
 
@@ -19,6 +20,7 @@ describe('promotionDefinitionError', () => {
     ['an item promotion without targets yet', definition({ targetIds: [] })],
     ['a fixed price on a SKU', definition({ scope: 'SKU', type: 'FIXED_PRICE', value: new Decimal(500) })],
     ['an amount off the cart', definition({ scope: 'CART', type: 'AMOUNT_OFF', targetIds: [] })],
+    ['a flash sale capped at 50 units', definition({ unitCap: 50 })],
   ])('accepts %s', (_case, valid) => {
     expect(promotionDefinitionError(valid)).toBeNull();
   });
@@ -28,6 +30,11 @@ describe('promotionDefinitionError', () => {
     ['a fixed cart price', definition({ scope: 'CART', type: 'FIXED_PRICE', targetIds: [] }), 'FIXED_PRICE'],
     ['targets on a cart promotion', definition({ scope: 'CART', type: 'AMOUNT_OFF' }), 'takes no targetIds'],
     ['an end at its start', definition({ endsAt: START }), 'endsAt must be after startsAt'],
+    [
+      'a unit cap on a cart promotion',
+      definition({ scope: 'CART', type: 'AMOUNT_OFF', targetIds: [], unitCap: 5 }),
+      'cannot have a unitCap',
+    ],
   ])('refuses %s', (_case, invalid, message) => {
     expect(promotionDefinitionError(invalid)).toContain(message);
   });

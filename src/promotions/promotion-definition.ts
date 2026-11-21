@@ -9,11 +9,12 @@ export interface PromotionDefinition {
   targetIds: readonly string[];
   startsAt: Date;
   endsAt: Date | null;
+  unitCap: number | null;
 }
 
 /** Why the promotion, as it would be stored after a create or an update, is inconsistent; null when it is fine. */
 export function promotionDefinitionError(definition: PromotionDefinition): string | null {
-  const { scope, type, value, targetIds, startsAt, endsAt } = definition;
+  const { scope, type, value, targetIds, startsAt, endsAt, unitCap } = definition;
   if (type === PromotionType.PERCENT && value.gt(100)) {
     return `A PERCENT promotion's value must be at most 100, got ${value.toString()}`;
   }
@@ -21,6 +22,9 @@ export function promotionDefinitionError(definition: PromotionDefinition): strin
     return 'A CART promotion cannot be FIXED_PRICE: a cart has no unit price to fix';
   }
   if (scope === PromotionScope.CART && targetIds.length > 0) return 'A CART promotion takes no targetIds';
+  if (scope === PromotionScope.CART && unitCap !== null) {
+    return 'A CART promotion cannot have a unitCap: it reduces the cart, not units';
+  }
   if (endsAt !== null && endsAt <= startsAt) return 'endsAt must be after startsAt';
   return null;
 }

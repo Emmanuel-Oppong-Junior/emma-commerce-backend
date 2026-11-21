@@ -96,6 +96,24 @@ function appliedPromotionIds(quote: Pick<Quote, 'lines' | 'adjustments'>): strin
   return [...new Set(adjustments.map((adjustment) => adjustment.sourceId))];
 }
 
+/** Each cart item's share of an order adjustment: the shares of its quote lines (a split cart line has several). */
+function sharesByCartItem(allocations: Decimal[], cartItemIds: string[]): { cartItemId: string; amount: Decimal }[] {
+  const byCartItem = new Map<string, Decimal>();
+  allocations.forEach((amount, index) =>
+    byCartItem.set(cartItemIds[index], (byCartItem.get(cartItemIds[index]) ?? new Decimal(0)).add(amount)),
+  );
+  return [...byCartItem].map(([cartItemId, amount]) => ({ cartItemId, amount }));
+}
+
+/** The units each item promotion reduced, by promotion id (a quote line's adjustments apply to all its units). */
+function discountedUnits(quote: Pick<Quote, 'lines'>): Record<string, number> {
+  const units: Record<string, number> = {};
+  for (const line of quote.lines) {
+    for (const { sourceId } of line.adjustments) units[sourceId] = (units[sourceId] ?? 0) + line.quantity;
+  }
+  return units;
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -118,13 +136,13 @@ export class OrdersService {
    */
   async checkoutQuote(userId: string, params: CheckoutParams): Promise<CheckoutQuote> {
     const { cart, snapshot } = await this.priceCheckout(userId, params);
-    const cartItemIds = cart.items.map((item) => item.id);
+    const cartItemIds = snapshot.lines.map((line) => cart.items[line.cartLineIndex].id);
     return {
       ...snapshot,
       lines: snapshot.lines.map((line, index) => ({ ...line, cartItemId: cartItemIds[index] })),
       adjustments: snapshot.adjustments.map(({ allocations, ...adjustment }) => ({
         ...adjustment,
-        allocations: allocations.map((amount, index) => ({ cartItemId: cartItemIds[index], amount })),
+        allocations: sharesByCartItem(allocations, cartItemIds),
       })),
     };
   }
@@ -542,11 +560,11 @@ export class OrdersService {
     );
     const snapshot: OrderSnapshot = {
       ...quote,
-      lines: quote.lines.map((line, index) => ({
+      lines: quote.lines.map((line) => ({
         ...line,
-        productName: variants[index].product.name,
-        sku: variants[index].sku,
-        optionValues: variants[index].optionValues,
+        productName: variants[line.cartLineIndex].product.name,
+        sku: variants[line.cartLineIndex].sku,
+        optionValues: variants[line.cartLineIndex].optionValues,
       })),
     };
     const applied = appliedPromotionIds(quote);
@@ -642,6 +660,7 @@ export class OrdersService {
       { orderId: newOrder.id, customerId: userId },
       appliedPromotionIds(checkout.snapshot),
       checkout.couponCode,
+      discountedUnits(checkout.snapshot),
     );
     await this.outbox.record(tx, {
       type: 'order.placed.v1',

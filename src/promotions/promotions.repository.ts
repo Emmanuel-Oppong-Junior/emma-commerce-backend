@@ -256,6 +256,17 @@ export class PromotionsRepository {
     return row;
   }
 
+  /**
+   * Counts `units` more units sold at the promotion's price if its unit cap leaves that many (a conditional increment
+   * on the promotion row the order already locked); false when fewer are left.
+   */
+  async takePromotionUnits(tx: Prisma.TransactionClient, promotionId: string, units: number): Promise<boolean> {
+    const taken = await tx.$executeRaw`
+      UPDATE "Promotion" SET "unitsUsed" = "unitsUsed" + ${units}
+      WHERE "id" = ${promotionId} AND ("unitCap" IS NULL OR "unitsUsed" + ${units} <= "unitCap")`;
+    return taken === 1;
+  }
+
   /** Takes one use of the coupon code if it has any left; false when none is. */
   async takeCouponCodeUse(tx: Prisma.TransactionClient, couponCodeId: string): Promise<boolean> {
     const taken = await tx.$executeRaw`
@@ -270,25 +281,31 @@ export class PromotionsRepository {
 
   async createRedemption(
     tx: Prisma.TransactionClient,
-    data: { promotionId: string; couponCodeId: string | null; customerId: string; orderId: string },
+    data: { promotionId: string; couponCodeId: string | null; customerId: string; orderId: string; units: number },
   ): Promise<void> {
     await tx.redemption.create({ data });
   }
 
   /**
    * Releases the order's RESERVED redemptions (a conditional update, so each is released once) and gives their uses
-   * back to the promotions and coupon codes.
+   * and units back to the promotions and coupon codes.
    */
   async releaseOrder(tx: Prisma.TransactionClient, orderId: string): Promise<number> {
-    const released = await tx.$queryRaw<Pick<Redemption, 'promotionId' | 'couponCodeId'>[]>`
+    const released = await tx.$queryRaw<Pick<Redemption, 'promotionId' | 'couponCodeId' | 'units'>[]>`
       UPDATE "Redemption" SET "status" = 'RELEASED', "releasedAt" = now()
       WHERE "orderId" = ${orderId} AND "status" = 'RESERVED'
-      RETURNING "promotionId", "couponCodeId"`;
-    for (const { promotionId, couponCodeId } of released) {
+      RETURNING "promotionId", "couponCodeId", "units"`;
+    for (const { promotionId, couponCodeId, units } of released) {
       await tx.promotion.updateMany({
         where: { id: promotionId, usedCount: { gt: 0 } },
         data: { usedCount: { decrement: 1 } },
       });
+      if (units > 0) {
+        await tx.promotion.updateMany({
+          where: { id: promotionId, unitsUsed: { gte: units } },
+          data: { unitsUsed: { decrement: units } },
+        });
+      }
       if (couponCodeId) {
         await tx.couponCode.updateMany({
           where: { id: couponCodeId, usedCount: { gt: 0 } },

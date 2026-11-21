@@ -104,6 +104,17 @@ export class CreatePromotionInput {
   @Min(1)
   usageLimit?: number | null;
 
+  @Field(() => Int, {
+    nullable: true,
+    description:
+      'Flash sale: units that may be sold at its price across all orders (not for CART). A cart wanting more than are ' +
+      'left gets the units left at the promotional price and the rest at the normal price',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  unitCap?: number | null;
+
   @Field(() => Int, { nullable: true, description: 'Orders each customer may use it on' })
   @IsOptional()
   @IsInt()
@@ -216,6 +227,12 @@ export class UpdatePromotionInput {
   @IsInt()
   @Min(1)
   usageLimit?: number | null;
+
+  @Field(() => Int, { nullable: true, description: 'May be set below unitsUsed: no more units are then sold' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  unitCap?: number | null;
 
   @Field(() => Int, { nullable: true })
   @IsOptional()

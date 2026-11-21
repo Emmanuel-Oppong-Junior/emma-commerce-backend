@@ -119,6 +119,18 @@ export class Promotion {
   @Field(() => Int, { description: 'Orders holding a use of it' })
   usedCount: number;
 
+  @Field(() => Int, {
+    nullable: true,
+    description: 'Flash sale: units that may be sold at its price across all orders; null for no cap',
+  })
+  unitCap: number | null;
+
+  @Field(() => Int, {
+    description:
+      'Units sold at its price by orders holding a use of it (given back on cancel or expiry before payment)',
+  })
+  unitsUsed: number;
+
   @Field(() => Int, { nullable: true, description: 'Orders each customer may use it on' })
   perCustomerLimit: number | null;
 
@@ -157,6 +169,9 @@ export class Redemption {
 
   @Field(() => RedemptionStatus)
   status: RedemptionStatus;
+
+  @Field(() => Int, { description: 'Units the order bought at the promotional price (0 for a cart promotion)' })
+  units: number;
 
   @Field(() => GraphQLISODateTime)
   createdAt: Date;

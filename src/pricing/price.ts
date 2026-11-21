@@ -4,7 +4,7 @@ import { Money, roundHalfUp } from '../commons/money/money';
 import { quoteHash } from './quote-hash';
 
 /** The pricing rules `price` implements; stored on every order it priced (legacy orders have 0). */
-export const PRICING_VERSION = 2;
+export const PRICING_VERSION = 3;
 
 export interface PricingLine {
   variantId: string;
@@ -37,6 +37,10 @@ export interface PricingPromotion {
   requiresCoupon: boolean;
   usageLimit: number | null;
   usedCount: number;
+  /** Units that may be sold at the promotional price across all orders (a flash sale); null for no cap. */
+  unitCap: number | null;
+  /** Units sold at the promotional price by orders holding a redemption. */
+  unitsUsed: number;
   perCustomerLimit: number | null;
   /** Only for a customer without a prior order (PricingCustomer.hasPriorOrder). */
   firstOrderOnly: boolean;
@@ -117,7 +121,13 @@ export interface QuoteTaxLine {
   amount: Decimal;
 }
 
+/**
+ * Units of one cart line that pay the same price. A cart line is one quote line, unless a promotion reduces only some
+ * of its units (a flash sale's last units): then it is split, the reduced units first.
+ */
 export interface QuoteLine {
+  /** The cart line it prices (its index in PricingCart.lines). */
+  cartLineIndex: number;
   variantId: string;
   productId: string;
   quantity: number;
@@ -144,7 +154,7 @@ export type UnhashedQuote = Omit<Quote, 'quoteHash'>;
 export interface Quote {
   currency: Currency;
   pricingVersion: number;
-  /** In the order of the cart's lines. */
+  /** In the order of the cart's lines (a split cart line's quote lines next to each other). */
   lines: QuoteLine[];
   /** The cart promotions that take something off. */
   adjustments: QuoteOrderAdjustment[];
@@ -166,19 +176,21 @@ export class CouponNotApplicableError extends Error {}
 /**
  * Prices a cart (ADR-0005 §3). Pure: the same cart and context always give the same quote and hash, whatever order
  * the lines, promotions or taxes come in. A promotion is a candidate when it is active, in its schedule, within its
- * usage limits, open to the customer (first order only: no prior order; customer groups: a member of one), and
- * unlocked by the coupon code if it requires one. The rules (PRICING_VERSION 2):
- * - item level (SKU, PRODUCT, CATEGORY, BRAND): a candidate applies to the lines it targets when the list-price
- *   subtotal reaches its minimum spend and the targeted units its minimum quantity. On each line, every stacking group
- *   contributes the promotion saving the most on one unit at the list price; the groups' winners then apply one after
- *   the other (lowest priority number first, then the oldest), each on what the unit still costs, so a unit never goes
- *   below zero;
+ * usage limits (and with units left, under a unit cap), open to the customer (first order only: no prior order;
+ * customer groups: a member of one), and unlocked by the coupon code if it requires one. The rules (PRICING_VERSION 3):
+ * - item level (SKU, PRODUCT, CATEGORY, BRAND): a candidate offers to reduce the units of the lines it targets when
+ *   the list-price subtotal reaches its minimum spend and the targeted units its minimum quantity. Under a unit cap
+ *   (a flash sale) it offers only the units left, those it saves the most on at the list price first (then by
+ *   variant); the rest of a line pays the normal price, so the line is split. On each unit, every stacking group
+ *   contributes the offer saving the most on it at the list price; the groups' winners then apply one after the other
+ *   (lowest priority number first, then the oldest), each on what the unit still costs, so a unit never goes below
+ *   zero;
  * - cart level (CART): a candidate applies when the subtotal after item promotions (before shipping and tax is added;
  *   prices include tax) reaches its minimum spend and the cart's units its minimum quantity. Every stacking group
  *   contributes the promotion saving the most on that subtotal; the winners apply one after the other on what is left,
  *   each allocated to the lines by largest remainder;
  * - exclusive: when exclusive candidates save anything, only the one saving the most on the whole cart applies, alone
- *   (an item one on its lines, a cart one on the list-price subtotal), and no other promotion does;
+ *   (an item one on the units it offers, a cart one on the list-price subtotal), and no other promotion does;
  * - every tie between equal savings goes to the lowest priority number, then the oldest promotion (createdAt, id);
  * - a taxable price includes the active taxes: per unit, the net is the discounted price over (1 + Σ rates), rounded
  *   half-up, the tax is the rest, split over the rates by largest remainder; cart promotions and shipping are untaxed.
@@ -204,14 +216,16 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   if (couponPromotion && couponPromotion.scope !== PromotionScope.CART) {
     assertItemCouponApplies(couponPromotion, cart.lines, grossSubtotal.amount);
   }
-  const itemCandidates = candidates.filter(
-    (promotion) =>
-      promotion.scope !== PromotionScope.CART &&
-      reachesMinimums(promotion, grossSubtotal.amount, targetedQuantity(promotion, cart.lines)),
-  );
+  const itemOffers = candidates
+    .filter(
+      (promotion) =>
+        promotion.scope !== PromotionScope.CART &&
+        reachesMinimums(promotion, grossSubtotal.amount, targetedQuantity(promotion, cart.lines)),
+    )
+    .flatMap((promotion) => offersOf(promotion, cart.lines));
   const exclusive = bestExclusive(
     cart.lines,
-    itemCandidates,
+    itemOffers,
     candidates.filter(
       (promotion) =>
         promotion.scope === PromotionScope.CART && reachesMinimums(promotion, grossSubtotal.amount, cartQuantity),
@@ -220,17 +234,12 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   );
   const allowed = (promotion: PricingPromotion) => (exclusive ? promotion === exclusive : !promotion.exclusive);
 
-  const lines = cart.lines.map((line) =>
-    priceLine(
+  const allowedOffers = itemOffers.filter((offer) => allowed(offer.promotion));
+  const lines = cart.lines.flatMap((line, lineIndex) =>
+    unitGroups(
       line,
-      stackedUnitPromotions(
-        line.unitListPrice,
-        itemCandidates.filter((promotion) => allowed(promotion) && targets(promotion, line)),
-      ),
-      taxRates,
-      money,
-      cart.couponCode,
-    ),
+      allowedOffers.filter((offer) => offer.lineIndex === lineIndex),
+    ).map(({ quantity, discount }) => priceLine(line, lineIndex, quantity, discount, taxRates, money, cart.couponCode)),
   );
 
   const merchandise = lines.reduce((sum, line) => sum.add(money(line.lineTotal)), zero);
@@ -246,11 +255,11 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   );
   const adjustments: QuoteOrderAdjustment[] = [];
   const remaining = lines.map((line) => money(line.lineTotal));
-  for (const promotion of groupWinners(cartCandidates, (each) => cartSaving(merchandise.amount, each))) {
+  for (const promotion of groupWinners(cartCandidates, (each) => cartSaving(merchandise.amount, ownRule(each)))) {
     const left = remaining.reduce((sum, amount) => sum.add(amount), zero);
-    const saving = cartSaving(left.amount, promotion);
+    const saving = cartSaving(left.amount, ownRule(promotion));
     if (!saving.gt(0)) continue;
-    const shares = allocateToLines(money(saving), cart.lines, remaining);
+    const shares = allocateToLines(money(saving), lines, remaining);
     shares.forEach((share, index) => (remaining[index] = remaining[index].subtract(share)));
     adjustments.push({
       ...adjustmentFrom(promotion, saving, cart.couponCode),
@@ -289,6 +298,11 @@ function hasUsesLeft(promotion: PricingPromotion): boolean {
   return promotion.usageLimit === null || promotion.usedCount < promotion.usageLimit;
 }
 
+/** Units the promotion may still sell at its price; Infinity without a unit cap. */
+export function unitsLeft(promotion: Pick<PricingPromotion, 'unitCap' | 'unitsUsed'>): number {
+  return promotion.unitCap === null ? Infinity : Math.max(0, promotion.unitCap - promotion.unitsUsed);
+}
+
 function customerHasUsesLeft(promotion: PricingPromotion, customer: PricingCustomer): boolean {
   return promotion.perCustomerLimit === null || (customer.redemptions[promotion.id] ?? 0) < promotion.perCustomerLimit;
 }
@@ -313,6 +327,7 @@ function isCandidate(
   return (
     isLive(promotion, context.now) &&
     hasUsesLeft(promotion) &&
+    unitsLeft(promotion) > 0 &&
     customerHasUsesLeft(promotion, context.customer) &&
     audienceRejection(promotion, context.customer) === null &&
     (!promotion.requiresCoupon || couponCode?.promotionId === promotion.id)
@@ -362,7 +377,8 @@ function minimumsRejection(promotion: PricingPromotion, spend: Decimal, quantity
 
 /**
  * Why the coupon code cannot be used by this customer, whatever the cart, or null when it can: the code and its
- * promotion must be active and in date, with uses left overall and for the customer, and open to the customer.
+ * promotion must be active and in date, with uses (and units, under a unit cap) left overall and uses left for the
+ * customer, and open to the customer.
  */
 export function couponCodeRejection(
   couponCode: PricingCouponCode,
@@ -376,6 +392,7 @@ export function couponCodeRejection(
   if (!hasUsesLeft(promotion) || (couponCode.usageLimit !== null && couponCode.usedCount >= couponCode.usageLimit)) {
     return 'This coupon has reached its usage limit';
   }
+  if (unitsLeft(promotion) === 0) return 'This offer has sold out';
   if (!customerHasUsesLeft(promotion, customer)) return 'You have already used this coupon';
   return audienceRejection(promotion, customer);
 }
@@ -407,16 +424,105 @@ export interface UnitPromotions {
   applied: UnitPromotion[];
 }
 
+/** How a promotion reduces one unit (or the cart subtotal), once the engine knows it applies. */
+interface Rule {
+  type: PromotionType;
+  value: Decimal;
+}
+
+/** A promotion's offer to reduce a unit by `rule`. */
+interface UnitOffer {
+  promotion: PricingPromotion;
+  rule: Rule;
+}
+
+/** A promotion's offer to reduce the first `units` units of cart line `lineIndex`, before it competes with others. */
+interface LineOffer extends UnitOffer {
+  lineIndex: number;
+  units: number;
+}
+
+function ownRule(promotion: PricingPromotion): Rule {
+  return { type: promotion.type, value: promotion.value };
+}
+
+/**
+ * The units an item promotion offers to reduce, at list prices: every unit of the lines it targets, or, under a unit
+ * cap, only the units left, those it saves the most on first (then by variant).
+ */
+function offersOf(promotion: PricingPromotion, lines: readonly PricingLine[]): LineOffer[] {
+  const rule = ownRule(promotion);
+  const offers = lines.flatMap((line, lineIndex) =>
+    targets(promotion, line) ? [{ promotion, rule, lineIndex, units: line.quantity }] : [],
+  );
+  return promotion.unitCap === null ? offers : withinCap(offers, unitsLeft(promotion), lines);
+}
+
+function withinCap(offers: readonly LineOffer[], cap: number, lines: readonly PricingLine[]): LineOffer[] {
+  const saving = (offer: LineOffer) => unitSaving(lines[offer.lineIndex].unitListPrice, offer.rule);
+  const ranked = [...offers].sort(
+    (a, b) => saving(b).comparedTo(saving(a)) || compareLines(lines[a.lineIndex], lines[b.lineIndex]),
+  );
+  let left = cap;
+  const kept: LineOffer[] = [];
+  for (const offer of ranked) {
+    const units = Math.min(offer.units, left);
+    if (units > 0) kept.push({ ...offer, units });
+    left -= units;
+  }
+  return kept;
+}
+
+/**
+ * The line's units grouped by what they pay. Each offer covers the line's first units, so the units between two
+ * offers' unit counts share the same offers; neighbouring groups that end up with the same promotions are merged.
+ */
+function unitGroups(line: PricingLine, offers: readonly LineOffer[]): { quantity: number; discount: UnitPromotions }[] {
+  const ends = [...new Set([...offers.map((offer) => offer.units), line.quantity])].sort((a, b) => a - b);
+  const groups: { quantity: number; discount: UnitPromotions }[] = [];
+  let start = 0;
+  for (const end of ends) {
+    const discount = stackedUnitOffers(
+      line.unitListPrice,
+      offers.filter((offer) => offer.units >= end),
+    );
+    const previous = groups[groups.length - 1];
+    if (previous && samePromotions(previous.discount, discount)) previous.quantity += end - start;
+    else groups.push({ quantity: end - start, discount });
+    start = end;
+  }
+  return groups;
+}
+
+function samePromotions(a: UnitPromotions, b: UnitPromotions): boolean {
+  return (
+    a.applied.length === b.applied.length &&
+    a.applied.every(
+      (each, index) =>
+        each.promotion === b.applied[index].promotion && each.unitSaving.equals(b.applied[index].unitSaving),
+    )
+  );
+}
+
 /**
  * The item promotions on one unit priced `unitListPrice`: per stacking group the candidate saving the most at the list
  * price, then the groups' winners one after the other, lowest priority number first (then the oldest), each on what is
  * left of the price, so the unit never goes below zero.
  */
 export function stackedUnitPromotions(unitListPrice: Decimal, candidates: readonly PricingPromotion[]): UnitPromotions {
+  return stackedUnitOffers(
+    unitListPrice,
+    candidates.map((promotion) => ({ promotion, rule: ownRule(promotion) })),
+  );
+}
+
+function stackedUnitOffers(unitListPrice: Decimal, offers: readonly UnitOffer[]): UnitPromotions {
+  const ruleOf = new Map(offers.map((offer) => [offer.promotion, offer.rule]));
+  const rule = (promotion: PricingPromotion) => ruleOf.get(promotion)!;
   let left = unitListPrice;
   const applied: UnitPromotion[] = [];
-  for (const promotion of groupWinners(candidates, (each) => unitSaving(unitListPrice, each))) {
-    const saving = unitSaving(left, promotion);
+  for (const promotion of groupWinners([...ruleOf.keys()], (each) => unitSaving(unitListPrice, rule(each)))) {
+    const saving = unitSaving(left, rule(promotion));
     if (!saving.gt(0)) continue;
     applied.push({ unitSaving: saving, promotion });
     left = left.sub(saving);
@@ -426,9 +532,9 @@ export function stackedUnitPromotions(unitListPrice: Decimal, candidates: readon
 
 /**
  * The item promotions a product page shows `customer` on one unit of the variant: the automatic ones (no coupon, not
- * first-order only: a page cannot tell a first order) that are live with uses left and open to the customer, combined
- * as at checkout (an exclusive one that saves anything alone, otherwise the stacked groups). Minimum spend and quantity
- * are not checked (there is no cart).
+ * first-order only: a page cannot tell a first order) that are live with uses and units left and open to the customer,
+ * combined as at checkout (an exclusive one that saves anything alone, otherwise the stacked groups). Minimum spend
+ * and quantity are not checked (there is no cart).
  */
 export function displayUnitPromotions(
   line: Pick<PricingLine, TargetKey | 'unitListPrice'>,
@@ -442,12 +548,13 @@ export function displayUnitPromotions(
       !promotion.firstOrderOnly &&
       isLive(promotion, now) &&
       hasUsesLeft(promotion) &&
+      unitsLeft(promotion) > 0 &&
       audienceRejection(promotion, customer) === null &&
       targets(promotion, line),
   );
   const exclusive = best(
     shown.filter((promotion) => promotion.exclusive),
-    (promotion) => unitSaving(line.unitListPrice, promotion),
+    (promotion) => unitSaving(line.unitListPrice, ownRule(promotion)),
   );
   return stackedUnitPromotions(
     line.unitListPrice,
@@ -456,23 +563,25 @@ export function displayUnitPromotions(
 }
 
 /**
- * The exclusive candidate saving the most on the whole cart on its own (an item one over the lines it targets, a cart
+ * The exclusive candidate saving the most on the whole cart on its own (an item one on the units it offers, a cart
  * one on the list-price subtotal), when one saves anything.
  */
 function bestExclusive(
   lines: readonly PricingLine[],
-  itemCandidates: readonly PricingPromotion[],
+  itemOffers: readonly LineOffer[],
   cartCandidates: readonly PricingPromotion[],
   grossSubtotal: Decimal,
 ): PricingPromotion | undefined {
   const aloneSaving = (promotion: PricingPromotion) =>
     promotion.scope === PromotionScope.CART
-      ? cartSaving(grossSubtotal, promotion)
-      : lines.reduce(
-          (sum, line) =>
-            targets(promotion, line) ? sum.add(unitSaving(line.unitListPrice, promotion).mul(line.quantity)) : sum,
-          new Decimal(0),
-        );
+      ? cartSaving(grossSubtotal, ownRule(promotion))
+      : itemOffers
+          .filter((offer) => offer.promotion === promotion)
+          .reduce(
+            (sum, offer) => sum.add(unitSaving(lines[offer.lineIndex].unitListPrice, offer.rule).mul(offer.units)),
+            new Decimal(0),
+          );
+  const itemCandidates = [...new Set(itemOffers.map((offer) => offer.promotion))];
   return best(
     [...itemCandidates, ...cartCandidates].filter((promotion) => promotion.exclusive),
     aloneSaving,
@@ -511,22 +620,22 @@ function best(
 }
 
 /**
- * What the promotion takes off one unit priced `unitPrice`: a percentage rounded half-up, an amount, or down to a
- * fixed price; never more than the price, never a rise.
+ * What `rule` takes off one unit priced `unitPrice`: a percentage rounded half-up, an amount, or down to a fixed
+ * price; never more than the price, never a rise.
  */
-function unitSaving(unitPrice: Decimal, promotion: PricingPromotion): Decimal {
+function unitSaving(unitPrice: Decimal, rule: Rule): Decimal {
   const raw =
-    promotion.type === PromotionType.PERCENT
-      ? unitPrice.mul(promotion.value).div(100)
-      : promotion.type === PromotionType.AMOUNT_OFF
-        ? promotion.value
-        : unitPrice.sub(promotion.value);
+    rule.type === PromotionType.PERCENT
+      ? unitPrice.mul(rule.value).div(100)
+      : rule.type === PromotionType.AMOUNT_OFF
+        ? rule.value
+        : unitPrice.sub(rule.value);
   return Decimal.min(unitPrice, Decimal.max(0, roundHalfUp(raw)));
 }
 
-/** What a cart promotion takes off `subtotal`: a percentage rounded half-up or an amount, never more than it. */
-function cartSaving(subtotal: Decimal, promotion: PricingPromotion): Decimal {
-  const raw = promotion.type === PromotionType.PERCENT ? subtotal.mul(promotion.value).div(100) : promotion.value;
+/** What a cart rule takes off `subtotal`: a percentage rounded half-up or an amount, never more than it. */
+function cartSaving(subtotal: Decimal, rule: Rule): Decimal {
+  const raw = rule.type === PromotionType.PERCENT ? subtotal.mul(rule.value).div(100) : rule.value;
   return Decimal.min(subtotal, Decimal.max(0, roundHalfUp(raw)));
 }
 
@@ -572,6 +681,8 @@ function canonicalTaxRates(taxRates: readonly PricingTaxRate[]): PricingTaxRate[
 
 function priceLine(
   line: PricingLine,
+  cartLineIndex: number,
+  quantity: number,
   discount: UnitPromotions,
   taxRates: readonly PricingTaxRate[],
   money: (value: Decimal.Value) => Money,
@@ -584,10 +695,10 @@ function priceLine(
   // The net is rounded once per unit and the tax is what remains, so net + tax is exactly the price paid.
   const unitNet = taxed ? money(roundHalfUp(unitGross.amount.div(totalRate.add(1)))) : unitGross;
   const unitTax = unitGross.subtract(unitNet);
-  const base = unitNet.times(line.quantity).amount;
+  const base = unitNet.times(quantity).amount;
   const taxLines = taxed
     ? unitTax
-        .times(line.quantity)
+        .times(quantity)
         .allocate(taxRates.map((tax) => tax.rate))
         .map((amount, index) => ({
           taxId: taxRates[index].id,
@@ -598,44 +709,45 @@ function priceLine(
         }))
     : [];
   return {
+    cartLineIndex,
     variantId: line.variantId,
     productId: line.productId,
-    quantity: line.quantity,
+    quantity,
     unitListPrice: unitList.amount,
     unitDiscount: discount.unitDiscount,
     unitNet: unitNet.amount,
     unitTax: unitTax.amount,
-    lineTotal: unitGross.times(line.quantity).amount,
+    lineTotal: unitGross.times(quantity).amount,
     adjustments: discount.applied.map(({ promotion, unitSaving: saving }) =>
-      adjustmentFrom(promotion, money(saving).times(line.quantity).amount, couponCode),
+      adjustmentFrom(promotion, money(saving).times(quantity).amount, couponCode),
     ),
     taxLines,
   };
 }
 
 /**
- * Splits an order-level amount over the lines in proportion to what each still costs (`remaining`). Lines are taken
- * in a canonical order (not the cart's), so which line gets a remainder pesewa does not depend on the order the lines
- * came in. The amount is never more than the remaining total, so no line goes below zero.
+ * Splits an order-level amount over the quote lines in proportion to what each still costs (`remaining`). Lines are
+ * taken in a canonical order (not the cart's), so which line gets a remainder pesewa does not depend on the order the
+ * lines came in. The amount is never more than the remaining total, so no line goes below zero.
  */
-function allocateToLines(amount: Money, input: readonly PricingLine[], remaining: readonly Money[]): Money[] {
-  const order = canonicalLineOrder(input);
+function allocateToLines(amount: Money, lines: readonly QuoteLine[], remaining: readonly Money[]): Money[] {
+  const order = lines.map((_, index) => index).sort((a, b) => compareLines(lines[a], lines[b]));
   const shares = amount.allocate(order.map((index) => remaining[index].amount));
   const byLine = new Array<Money>(remaining.length);
   order.forEach((lineIndex, position) => (byLine[lineIndex] = shares[position]));
   return byLine;
 }
 
-/** Line indexes sorted by variant, then quantity, then price: identical lines are interchangeable. */
-export function canonicalLineOrder(lines: readonly Pick<PricingLine, 'variantId' | 'quantity' | 'unitListPrice'>[]) {
-  return lines
-    .map((_, index) => index)
-    .sort(
-      (a, b) =>
-        compareStrings(lines[a].variantId, lines[b].variantId) ||
-        lines[a].quantity - lines[b].quantity ||
-        lines[a].unitListPrice.comparedTo(lines[b].unitListPrice),
-    );
+type ComparableLine = Pick<QuoteLine, 'variantId' | 'quantity' | 'unitListPrice'> & { unitDiscount?: Decimal };
+
+/** By variant, then quantity, then price, then discount: lines equal in all of them are interchangeable. */
+function compareLines(a: ComparableLine, b: ComparableLine): number {
+  return (
+    compareStrings(a.variantId, b.variantId) ||
+    a.quantity - b.quantity ||
+    a.unitListPrice.comparedTo(b.unitListPrice) ||
+    (a.unitDiscount ?? new Decimal(0)).comparedTo(b.unitDiscount ?? new Decimal(0))
+  );
 }
 
 function negate(amount: Decimal): Decimal {

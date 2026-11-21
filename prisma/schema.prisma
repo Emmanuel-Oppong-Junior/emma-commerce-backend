@@ -1085,6 +1085,10 @@ model Promotion {
   usageLimit       Int?
   /// Reserved redemptions: taken when an order is placed, given back on cancel or expiry before payment
   usedCount        Int             @default(0)
+  /// Units that may be sold at the promotional price across all orders (a flash sale); null for no cap
+  unitCap          Int?
+  /// Units sold at the promotional price by orders holding a RESERVED redemption (the sum of their units)
+  unitsUsed        Int             @default(0)
   /// Orders each customer may use it on; null for no limit
   perCustomerLimit Int?
   /// Only for a customer without an earlier order that reached CONFIRMED (or later) or PAYMENT_REVIEW
@@ -1137,6 +1141,8 @@ model Redemption {
   customerId   String
   orderId      String
   status       RedemptionStatus @default(RESERVED)
+  /// Units the order bought at the promotional price (0 for a cart promotion); counted in Promotion.unitsUsed while RESERVED
+  units        Int              @default(0)
   createdAt    DateTime         @default(now())
   releasedAt   DateTime?
   promotion    Promotion        @relation(fields: [promotionId], references: [id], onDelete: Restrict)

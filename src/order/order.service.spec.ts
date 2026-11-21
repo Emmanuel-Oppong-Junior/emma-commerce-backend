@@ -53,6 +53,8 @@ const candidate = (
   requiresCoupon: false,
   usageLimit: null,
   usedCount: 0,
+  unitCap: null,
+  unitsUsed: 0,
   perCustomerLimit: null,
   firstOrderOnly: false,
   customerGroupIds: [],
@@ -495,6 +497,7 @@ describe('OrdersService', () => {
           { orderId: 'order1', customerId: mockUserId },
           ['disc10', 'coupon1'],
           expect.objectContaining({ id: 'code1', promotionId: 'coupon1' }),
+          { disc10: 2 },
         );
       });
 
@@ -513,6 +516,7 @@ describe('OrdersService', () => {
           expect.anything(),
           ['disc10'],
           undefined,
+          { disc10: 2 },
         );
       });
     });

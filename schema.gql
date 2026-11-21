@@ -606,6 +606,11 @@ input CreatePromotionInput {
   targetIds: [ID!]! = []
   type: PromotionType!
 
+  """
+  Flash sale: units that may be sold at its price across all orders (not for CART). A cart wanting more than are left gets the units left at the promotional price and the rest at the normal price
+  """
+  unitCap: Int
+
   """Orders that may use it, across all customers"""
   usageLimit: Int
 
@@ -1884,6 +1889,16 @@ type Promotion {
   """
   targetIds: [ID!]!
   type: PromotionType!
+
+  """
+  Flash sale: units that may be sold at its price across all orders; null for no cap
+  """
+  unitCap: Int
+
+  """
+  Units sold at its price by orders holding a use of it (given back on cancel or expiry before payment)
+  """
+  unitsUsed: Int!
   updatedAt: DateTime!
 
   """Orders that may use it, across all customers"""
@@ -2225,9 +2240,13 @@ type QuoteAllocation {
   cartItemId: ID!
 }
 
-"""One cart line as checkout prices it"""
+"""
+Units of one cart line that pay the same price. A cart line is one quote line, unless a promotion reduces only some of its units (a flash sale's last units): then it has two or more, the reduced units first
+"""
 type QuoteLine {
   adjustments: [QuoteAdjustment!]!
+
+  """The cart line it prices; a split cart line has several quote lines"""
   cartItemId: ID!
 
   """(unitListPrice - unitDiscount) x quantity, tax included"""
@@ -2298,6 +2317,11 @@ type Redemption {
   promotionId: ID!
   releasedAt: DateTime
   status: RedemptionStatus!
+
+  """
+  Units the order bought at the promotional price (0 for a cart promotion)
+  """
+  units: Int!
 }
 
 type RedemptionPage {
@@ -2985,6 +3009,9 @@ input UpdatePromotionInput {
   startsAt: DateTime
   targetIds: [ID!]
   type: PromotionType
+
+  """May be set below unitsUsed: no more units are then sold"""
+  unitCap: Int
   usageLimit: Int
   value: Decimal
 }

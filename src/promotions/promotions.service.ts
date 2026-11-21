@@ -26,6 +26,8 @@ import { CouponCodeValidation, Promotion as PromotionEntity, RedemptionPage } fr
 export const PROMOTION_LIMIT_REACHED = 'PROMOTION_LIMIT_REACHED';
 /** `extensions.reason` of the CONFLICT createOrder fails with when the customer used up their uses of a promotion. */
 export const PROMOTION_CUSTOMER_LIMIT_REACHED = 'PROMOTION_CUSTOMER_LIMIT_REACHED';
+/** `extensions.reason` of the CONFLICT createOrder fails with when a flash sale has fewer units left than the quote. */
+export const PROMOTION_UNITS_SOLD_OUT = 'PROMOTION_UNITS_SOLD_OUT';
 
 const AUDITED_PROMOTION_FIELDS = [
   'name',
@@ -43,6 +45,7 @@ const AUDITED_PROMOTION_FIELDS = [
   'exclusive',
   'requiresCoupon',
   'usageLimit',
+  'unitCap',
   'perCustomerLimit',
   'firstOrderOnly',
 ] as const satisfies readonly (keyof Promotion)[];
@@ -93,6 +96,8 @@ export function toPricingPromotion(promotion: PromotionWithTargets): PricingProm
     requiresCoupon: promotion.requiresCoupon,
     usageLimit: promotion.usageLimit,
     usedCount: promotion.usedCount,
+    unitCap: promotion.unitCap,
+    unitsUsed: promotion.unitsUsed,
     perCustomerLimit: promotion.perCustomerLimit,
     firstOrderOnly: promotion.firstOrderOnly,
     customerGroupIds: promotion.customerGroups.map(({ id }) => id),
@@ -156,7 +161,13 @@ export class PromotionsService {
     const targetIds = [...new Set(requestedTargets)];
     const customerGroupIds = [...new Set(requestedGroups)];
     const startsAt = input.startsAt ?? new Date();
-    this.assertDefinition({ ...input, targetIds, startsAt, endsAt: input.endsAt ?? null });
+    this.assertDefinition({
+      ...input,
+      targetIds,
+      startsAt,
+      endsAt: input.endsAt ?? null,
+      unitCap: input.unitCap ?? null,
+    });
     await this.assertTargetsExist(input.scope, targetIds);
     await this.assertCustomerGroupsExist(customerGroupIds);
     const created = await this.auditService.record(
@@ -206,6 +217,7 @@ export class PromotionsService {
       targetIds,
       startsAt: input.startsAt ?? existing.startsAt,
       endsAt: input.endsAt === undefined ? existing.endsAt : input.endsAt,
+      unitCap: input.unitCap === undefined ? existing.unitCap : input.unitCap,
     });
     if (requestedTargets !== undefined) await this.assertTargetsExist(scope, targetIds);
     if (customerGroupIds) await this.assertCustomerGroupsExist(customerGroupIds);
@@ -378,16 +390,18 @@ export class PromotionsService {
   /**
    * Records the promotions an order uses, in the order transaction: for each (in id order, so concurrent orders lock
    * promotions in the same order), takes a use if any is left (a conditional increment that row-locks the
-   * promotion), checks the customer's own limit against their RESERVED redemptions, takes a use of the coupon code
-   * for the promotion it unlocked, and writes the RESERVED redemption.
-   * @throws ConflictException (reason PROMOTION_LIMIT_REACHED or PROMOTION_CUSTOMER_LIMIT_REACHED); the caller's
-   * transaction then rolls back, so nothing is recorded.
+   * promotion), counts the units the order bought at its price (`units`, by promotion id; 0 when absent) if its unit
+   * cap leaves that many, checks the customer's own limit against their RESERVED redemptions, takes a use of the
+   * coupon code for the promotion it unlocked, and writes the RESERVED redemption with its units.
+   * @throws ConflictException (reason PROMOTION_LIMIT_REACHED, PROMOTION_UNITS_SOLD_OUT or
+   * PROMOTION_CUSTOMER_LIMIT_REACHED); the caller's transaction then rolls back, so nothing is recorded.
    */
   async reserveRedemptions(
     tx: Prisma.TransactionClient,
     order: { orderId: string; customerId: string },
     promotionIds: readonly string[],
-    couponCode?: { id: string; promotionId: string },
+    couponCode: { id: string; promotionId: string } | undefined,
+    units: Readonly<Record<string, number>>,
   ): Promise<void> {
     for (const promotionId of [...new Set(promotionIds)].sort()) {
       const taken = await this.repository.takePromotionUse(tx, promotionId);
@@ -395,6 +409,13 @@ export class PromotionsService {
         throw limitReached(
           `Promotion "${promotionId}" has no uses left: get a new checkoutQuote`,
           PROMOTION_LIMIT_REACHED,
+        );
+      }
+      const promotionUnits = units[promotionId] ?? 0;
+      if (promotionUnits > 0 && !(await this.repository.takePromotionUnits(tx, promotionId, promotionUnits))) {
+        throw limitReached(
+          `Promotion "${promotionId}" has fewer than ${promotionUnits} units left at its price: get a new checkoutQuote`,
+          PROMOTION_UNITS_SOLD_OUT,
         );
       }
       if (
@@ -410,7 +431,7 @@ export class PromotionsService {
       if (couponCodeId && !(await this.repository.takeCouponCodeUse(tx, couponCodeId))) {
         throw limitReached('This coupon has reached its usage limit: get a new checkoutQuote', PROMOTION_LIMIT_REACHED);
       }
-      await this.repository.createRedemption(tx, { promotionId, couponCodeId, ...order });
+      await this.repository.createRedemption(tx, { promotionId, couponCodeId, ...order, units: promotionUnits });
     }
   }
 

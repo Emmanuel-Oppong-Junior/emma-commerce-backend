@@ -67,9 +67,13 @@ export class QuoteOrderAdjustment {
   allocations: QuoteAllocation[];
 }
 
-@ObjectType({ description: 'One cart line as checkout prices it' })
+@ObjectType({
+  description:
+    'Units of one cart line that pay the same price. A cart line is one quote line, unless a promotion reduces only ' +
+    "some of its units (a flash sale's last units): then it has two or more, the reduced units first",
+})
 export class QuoteLine {
-  @Field(() => ID)
+  @Field(() => ID, { description: 'The cart line it prices; a split cart line has several quote lines' })
   cartItemId: string;
 
   @Field(() => ID)
