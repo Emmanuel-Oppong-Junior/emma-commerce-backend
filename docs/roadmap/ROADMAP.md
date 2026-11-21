@@ -24,7 +24,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
-| 2 — Pricing & tax engine | 3 / 15 | 🔄 in progress |
+| 2 — Pricing & tax engine | 6 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **79 / 154** | |
+| **All** | **82 / 154** | |
 
 ---
 
@@ -308,11 +308,11 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P2-A.1** `price(cart, ctx) → Quote` pure module with line/order adjustments + allocation [a6dff54]
 - [x] **P2-A.2** createOrder uses quote inside tx; quote hash shown to client and checked [148e522]
 
-### P2-B — Promotions
+### P2-B — Promotions  🔄 in progress
 > Run: B.1 → B.2 → (B.3 ∥ B.4 ∥ B.5 ∥ B.6) · L · 🟥 B.1–B.3 / 🟧 B.4–B.6
-- [ ] **P2-B.1** `Promotion`/`CouponCode`/`Redemption` (M10) replacing Discount/Coupon
-- [ ] **P2-B.2** Stacking groups, exclusivity, priority, best-saving
-- [ ] **P2-B.3** Per-user/global limits, first-order, segment
+- [x] **P2-B.1** `Promotion`/`CouponCode`/`Redemption` (M10) replacing Discount/Coupon [6fa614d]
+- [x] **P2-B.2** Stacking groups, exclusivity, priority, best-saving [40a3acc]
+- [x] **P2-B.3** Per-user/global limits, first-order, segment [41a7e69]
 - [ ] **P2-B.4** Flash sales (time window + quantity cap)
 - [ ] **P2-B.5** BXGY, tiered/volume, spend-X-save-Y
 - [ ] **P2-B.6** Free-shipping promos

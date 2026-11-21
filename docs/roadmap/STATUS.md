@@ -2,10 +2,17 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel; 6/15: P2-A, P2-H, P2-B.1–B.3 done); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: P2-B promotions (see **Up next**).
+None. Next: P2-B.4–B.6 (flash sales, BXGY/tiered/spend-X-save-Y, free-shipping promos), waiting on Emmanuel's go-ahead.
+
+**Last completed: P2-B.1–B.3 Promotions model, stacking, limits (2026-11-21)** (ADR-0005; DISC-03, DISC-07, DISC-09, DISC-10, CPN-02, CPN-03, CPN-08, CPN-09; CPN-10 partly): B.1 `6fa614d` `[breaking-api]`, B.2 `40a3acc`, B.3 `41a7e69`, fast-forwarded onto dev.
+  - B.1: migrations `20261126000000_promotions` (expand + re-runnable backfill; ids kept, so adjustment `sourceId`s need no rewrite; a discount with several target kinds splits into `<id>_product`/`<id>_category`; Coupon → CART promotion with `requiresCoupon` + upper-case `CouponCode`, `perCustomerLimit` 1; CouponUsage → RESERVED `Redemption`; >100% percentages clamped to 100, charge unchanged) and `_contract` (refuses while anything is unmigrated; drops Discount, Coupon, CouponUsage, DiscountType, `Variant`/`Category.discountId`, `CartItem.discountedPrice`/`discountId`, `Order.couponId` → `couponCodeId`). Report: `scripts/reports/promotions-migration-report.sql`. Admin API under `promotion.manage` with step-up, audited; `validateCouponCode(code)` (signed in) replaces `validateCoupon`; `Variant.appliedPromotion: PublicPromotion`. Rules unchanged (`PRICING_VERSION` 1).
+  - B.2: one winner per stacking group per level (item per line, then cart on the subtotal after item promotions); exclusive promotion that saves anything applies alone (best saving among several); ties → lowest priority, then oldest; cart amounts allocated by largest remainder, no line below zero; min spend for cart promotions after item promotions (item promotions measure list subtotal). One coupon code per order; a losing code takes nothing off and is not an error. `PRICING_VERSION` 2.
+  - B.3: migration `20261127000000_customer_groups` (`Promotion.firstOrderOnly`, `CustomerGroup`, members, promotion ↔ group; grants `customer.group.manage` to Owner and Manager). Placement: conditional `usedCount` increment per promotion and code + customer RESERVED count vs `perCustomerLimit` + Redemption, else CONFLICT `PROMOTION_LIMIT_REACHED` / `PROMOTION_CUSTOMER_LIMIT_REACHED`; released once on cancel/expiry without a captured payment, kept on refund. First order = no earlier order that reached CONFIRMED, IN_FULFILMENT, COMPLETED or PAYMENT_REVIEW (even if later cancelled/refunded; a COD order counts at placement). Product pages show only promotions open to everyone; used promotions/codes and groups limiting a promotion cannot be deleted (CONFLICT). `redemptions` query.
+  - Gates (agent, final tree = dev): prisma generate/validate, typecheck, build, unit **2325/2325** (deleted discount/coupon specs replaced), repro 21/21, audit 0 critical, `schema.gql` fresh, drift 0 at every commit, lint/format clean on changed files; e2e **564** via `scripts/e2e/run.sh emma_wt_promo_test 13`: 555 + `catalogue` 9 failures from a closed Redis connection, 22/22 on rerun. New suites: `promotions`, `promotions-migration`, `promotion-stacking`, `promotion-limits`.
+  - Follow-ups: CPN-04 (different errors for unknown vs inactive codes, no dedicated throttle on `validateCouponCode`); no max-discount cap or payment-method rule (CPN-09 rest); public product queries have no optional-auth path, so group/first-order promotions can't show on product pages; confirm the first-order rule for COD orders cancelled before delivery; e2e race test accepts `QUOTE_CHANGED` or `PROMOTION_LIMIT_REACHED` for the loser (timing).
 
 **Last completed: P2-A Pricing engine core + P2-H Price history (2026-11-21)** (ADR-0005; DISC-04, DISC-06, CART-07, CPN-06; ORD-08, ORD-10, CPN-03 partly): A.1 `a6dff54`, A.2 `148e522` `[breaking-api]` (fast-forward), H.1 `274b332` merged into dev (no conflicts).
   - A.1: pure `src/pricing/price.ts` `price(cart, context) → Quote` (no I/O; `now` is input) replaces `src/discount/pricing.ts` and the P1-O.1 `order-totals.ts`; used by placement, the display loader and coupon rules. Rules unchanged (`PRICING_VERSION` 1) except: coupon capped at the discounted subtotal (a >100% percentage coupon no longer eats shipping) and equal-saving discount ties go to the oldest. `quoteHash` (`src/pricing/quote-hash.ts`) = SHA-256 over every value that sets the charge, order-independent. Seeded property test (5 × 300 carts).
@@ -125,7 +132,7 @@ None. Next: P2-B promotions (see **Up next**).
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P2-B promotions (B.1 → B.2 → B.3–B.6) | → sequential | — |
+| 1 | P2-B.4–B.6 flash sales, BXGY/tiered, free-shipping promos | B.4 ∥ B.5 ∥ B.6 (one run) | Emmanuel's go-ahead |
 | 2 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
 | 3 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
 
@@ -178,6 +185,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-21 | P2-B: segments = generic `CustomerGroup`; run B.1–B.3 first, B.4–B.6 next | STATUS (P2-B) |
 | 2026-11-21 | Phase 2 started. P2-A: required `quoteHash`, CONFLICT `QUOTE_CHANGED` on mismatch. P2-B: min spend after item discounts; refunds keep promotion uses | STATUS (P2-A) |
 | 2026-11-21 | P1-O: snapshot current tax as `OrderLineTax` (no engine), legacy pricingVersion 0; payment machine on `PaymentIntent`, ABANDONED → CANCELLED; shipment created on first fulfilment step, forward skips allowed before dispatch; COD orders start CONFIRMED, delivered only via `recordCodPayment`; `order.fulfil` for Owner/Manager/InventoryClerk/Cashier | STATUS (P1-O) |
 | 2026-11-20 | P1-N: one default location; consume on online payment success or COD SHIPPED; paid cancel before dispatch restocks once automatically; late payment on a cancelled order → review + refund; legacy open-order lines as CONSUMED reservations; low stock as an outbox event; reconciliation flags only | STATUS (P1-N) |
