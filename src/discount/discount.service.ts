@@ -15,7 +15,8 @@ import {
 } from './types';
 import { DiscountRepository } from './discount.repository';
 import { AuditEntry, AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
-import { CandidateDiscount, priceCart } from './pricing';
+import { price, PricingDiscount } from '../pricing/price';
+import { StoreService } from '../store/store.service';
 
 const DISCOUNT_ALL_KEY = 'discount:all';
 const discountKey = (id: string) => `discount:${id}`;
@@ -75,6 +76,7 @@ export class DiscountService {
     private readonly discountRepository: DiscountRepository,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     private readonly auditService: AuditService,
+    private readonly storeService: StoreService,
   ) {}
 
   /**
@@ -263,74 +265,92 @@ export class DiscountService {
   }
 
   /**
-   * Prices the cart with the same rules createOrder charges, and records each line's price on the cart item.
+   * Prices the cart's items with the pricing engine (no coupon, shipping or tax), the same item pricing createOrder
+   * charges, and records each line's price on the cart item.
    * @throws NotFoundException if the cart is not found.
    * @throws BadRequestException if a variant in the cart has no price.
    */
   async applyDiscountsToCart(cartId: string): Promise<CartWithDiscount> {
     const cart = await this.findCartOrThrow(cartId);
-    const discounts = await this.findActiveDiscountsByVariant(
-      cart.items.map((item) => ({
-        id: item.variantId,
-        productId: item.productId,
-        categoryId: item.product.categoryId,
-        discountId: item.variant.discountId,
-      })),
-    );
-    const priced = priceCart(
-      cart.items.map((item) => ({
-        variantId: item.variantId,
-        productId: item.productId,
-        quantity: item.quantity,
-        unitPrice: requirePrice(item.product, item.variant),
-      })),
-      discounts,
+    const now = new Date();
+    const variants = cart.items.map((item) => ({
+      id: item.variantId,
+      productId: item.productId,
+      categoryId: item.product.categoryId,
+      discountId: item.variant.discountId,
+    }));
+    const quote = price(
+      {
+        lines: cart.items.map((item) => ({
+          variantId: item.variantId,
+          productId: item.productId,
+          categoryId: item.product.categoryId,
+          quantity: item.quantity,
+          unitListPrice: requirePrice(item.product, item.variant),
+          taxable: false,
+        })),
+        shippingFee: new Prisma.Decimal(0),
+      },
+      {
+        currency: await this.storeService.getCurrency(),
+        now,
+        discounts: await this.findCandidateDiscounts(variants, now),
+        taxRates: [],
+      },
     );
 
     const updatedItems: CartItem[] = [];
     for (const [index, item] of cart.items.entries()) {
-      const line = priced.lines[index];
+      const line = quote.lines[index];
       updatedItems.push(
         await this.discountRepository.updateCartItem(item.id, {
-          originalPrice: line.unitPrice,
-          discountedPrice: line.discountedUnitPrice,
-          discountId: line.discountId ?? null,
+          originalPrice: line.unitListPrice,
+          discountedPrice: line.unitListPrice.sub(line.unitDiscount),
+          discountId: line.adjustments[0]?.sourceId ?? null,
         }),
       );
     }
     return {
       ...cart,
       items: updatedItems,
-      total: priced.grossSubtotal,
-      discountTotal: priced.discountTotal,
-      finalTotal: priced.subtotal,
+      total: quote.subtotal,
+      discountTotal: quote.discountTotal,
+      finalTotal: quote.grandTotal,
     };
   }
 
   /**
-   * Active, in-date discounts for each variant, keyed by variant ID: its own discount and those that target its
-   * product or its product's category (a discount on a product applies to all its variants).
+   * The discounts that may apply to the variants at `now`, as the pricing engine takes them: active, in date, and
+   * targeting one of the variants (its own discount), their products or their categories. Which applies to which
+   * line is the engine's decision.
    */
-  async findActiveDiscountsByVariant(variants: DiscountableVariant[]): Promise<Map<string, CandidateDiscount[]>> {
+  async findCandidateDiscounts(
+    variants: DiscountableVariant[],
+    now: Date,
+    db?: Prisma.TransactionClient,
+  ): Promise<PricingDiscount[]> {
+    if (variants.length === 0) return [];
     const unique = <T>(values: (T | null)[]) => [...new Set(values.filter((value): value is T => value !== null))];
-    const productIds = unique(variants.map((variant) => variant.productId));
-    const categoryIds = unique(variants.map((variant) => variant.categoryId));
-    const discountIds = unique(variants.map((variant) => variant.discountId));
-    const discounts = variants.length
-      ? await this.discountRepository.findActiveDiscountsFor(productIds, categoryIds, discountIds)
-      : [];
-
-    return new Map(
-      variants.map((variant) => [
-        variant.id,
-        discounts.filter(
-          (discount) =>
-            discount.id === variant.discountId ||
-            discount.products.some(({ id }) => id === variant.productId) ||
-            discount.categories.some(({ id }) => id === variant.categoryId),
-        ),
-      ]),
+    const discounts = await this.discountRepository.findActiveDiscountsFor(
+      unique(variants.map((variant) => variant.productId)),
+      unique(variants.map((variant) => variant.categoryId)),
+      unique(variants.map((variant) => variant.discountId)),
+      now,
+      db,
     );
+    return discounts.map((discount) => ({
+      id: discount.id,
+      type: discount.type,
+      value: discount.value,
+      minimumPurchase: discount.minimumPurchase,
+      isActive: discount.isActive,
+      startDate: discount.startDate,
+      endDate: discount.endDate,
+      createdAt: discount.createdAt,
+      variantIds: variants.filter((variant) => variant.discountId === discount.id).map((variant) => variant.id),
+      productIds: discount.products.map(({ id }) => id),
+      categoryIds: discount.categories.map(({ id }) => id),
+    }));
   }
 
   private async validateDiscountInput(input: CreateOrUpdateDiscountInput, isUpdate = false): Promise<void> {

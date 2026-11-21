@@ -94,14 +94,15 @@ export class DiscountRepository {
     return db.discount.update({ where: { id }, data });
   }
 
-  /** Active, in-date discounts on any of the products or categories, or with one of the ids (variant discounts). */
+  /** Discounts active at `now` on any of the products or categories, or with one of the ids (variant discounts). */
   async findActiveDiscountsFor(
     productIds: string[],
     categoryIds: string[],
     discountIds: string[] = [],
+    now = new Date(),
+    db: Prisma.TransactionClient = this.prisma,
   ): Promise<(Discount & { products: { id: string }[]; categories: { id: string }[] })[]> {
-    const now = new Date();
-    return this.prisma.discount.findMany({
+    return db.discount.findMany({
       where: {
         isActive: true,
         startDate: { lte: now },

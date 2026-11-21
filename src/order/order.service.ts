@@ -21,7 +21,7 @@ import {
   ShipmentStatus,
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
-import { abandonedOrderWhere, OrdersRepository } from './order.repository';
+import { abandonedOrderWhere, OrderSnapshot, OrdersRepository } from './order.repository';
 import { VariantForSale } from '../cart/cart.repository';
 import { notSellableReason } from '../variant/sellable';
 import { CouponsService } from '../coupons/coupons.service';
@@ -32,10 +32,9 @@ import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
 import { DiscountService } from '../discount/discount.service';
-import { priceCart } from '../discount/pricing';
+import { CouponNotApplicableError, price, PricingCoupon } from '../pricing/price';
 import { StoreService } from '../store/store.service';
 import { TaxService } from '../tax/tax.service';
-import { OrderSnapshot, snapshotOrder } from './order-totals';
 import { assertDeliverableAddress } from '../addresses/deliverable-address';
 import { toAddressSnapshot } from '../addresses/address-snapshot';
 
@@ -420,9 +419,9 @@ export class OrdersService {
   }
 
   /**
-   * Prices the cart with the same function as cartWithDiscount, then takes the coupon off the discounted
-   * merchandise subtotal and adds shipping, so the total charged is the total the customer was shown. The result is
-   * snapshotted with the tax the prices include (taxable variants with a basePrice) and the discounts as adjustments.
+   * Prices the cart with the pricing engine, the same as cartWithDiscount for the items: item discounts, the coupon off
+   * the discounted subtotal, the tax the prices include and shipping. The quote is the order snapshot, so the total
+   * charged is the quote's grand total.
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
@@ -430,53 +429,64 @@ export class OrdersService {
     shippingFee: Prisma.Decimal,
     couponCode?: string,
   ): Promise<{ snapshot: OrderSnapshot; couponId?: string }> {
+    const now = new Date();
     const currency = await this.storeService.getCurrency();
     const variants: VariantForSale[] = [];
     for (const item of cartItems) variants.push(await this.checkVariantAvailability(item, currency));
-    const discounts = await this.discountService.findActiveDiscountsByVariant(
+    const discounts = await this.discountService.findCandidateDiscounts(
       variants.map((variant) => ({
         id: variant.id,
         productId: variant.productId,
         categoryId: variant.product.categoryId,
         discountId: variant.discountId,
       })),
+      now,
     );
-    const priced = priceCart(
-      variants.map((variant, index) => ({
-        variantId: variant.id,
-        productId: variant.productId,
-        quantity: cartItems[index].quantity,
-        unitPrice: variant.price!,
-      })),
-      discounts,
-    );
-
-    let coupon: { couponId: string; code: string; amount: Prisma.Decimal } | undefined;
-    if (couponCode) {
-      const validated = await this.couponsService.validateCoupon(couponCode, userId, priced.subtotal);
-      coupon = { couponId: validated.coupon.id, code: validated.coupon.code, amount: validated.discountAmount };
-    }
-
+    let coupon: PricingCoupon | undefined;
+    if (couponCode) coupon = (await this.couponsService.findForPricing(couponCode, userId)).pricing;
     const taxes = await this.taxService.findActive();
-    const snapshot = snapshotOrder({
-      currency,
-      lines: priced.lines.map((line, index) => ({
-        productId: line.productId,
-        variantId: line.variantId,
+
+    const quote = this.priceOrThrow(() =>
+      price(
+        {
+          lines: variants.map((variant, index) => ({
+            variantId: variant.id,
+            productId: variant.productId,
+            categoryId: variant.product.categoryId,
+            quantity: cartItems[index].quantity,
+            unitListPrice: variant.price!,
+            taxable: variant.product.isTaxable && variant.basePrice !== null,
+          })),
+          coupon,
+          shippingFee,
+        },
+        {
+          currency,
+          now,
+          discounts,
+          taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
+        },
+      ),
+    );
+    const snapshot: OrderSnapshot = {
+      ...quote,
+      lines: quote.lines.map((line, index) => ({
+        ...line,
         productName: variants[index].product.name,
         sku: variants[index].sku,
         optionValues: variants[index].optionValues,
-        quantity: line.quantity,
-        unitListPrice: line.unitPrice,
-        unitDiscount: line.unitDiscount,
-        discountId: line.discountId,
-        taxable: variants[index].product.isTaxable && variants[index].basePrice !== null,
       })),
-      taxes: taxes.map((tax) => ({ taxId: tax.id, name: tax.name, rate: tax.rate })),
-      shipping: shippingFee,
-      coupon,
-    });
-    return { snapshot, couponId: coupon?.couponId };
+    };
+    return { snapshot, couponId: coupon?.id };
+  }
+
+  private priceOrThrow<T>(pricing: () => T): T {
+    try {
+      return pricing();
+    } catch (error) {
+      if (error instanceof CouponNotApplicableError) throw new BadRequestException(error.message);
+      throw error;
+    }
   }
 
   private async checkVariantAvailability(item: CartItem, currency: Currency): Promise<VariantForSale> {

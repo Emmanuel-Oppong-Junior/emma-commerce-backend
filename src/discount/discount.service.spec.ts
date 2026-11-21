@@ -10,6 +10,7 @@ import { DiscountType } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
 import { Decimal } from '@prisma/client/runtime/client';
+import { StoreService } from '../store/store.service';
 
 const mockCacheManager = {
   get: jest.fn(),
@@ -104,6 +105,7 @@ describe('DiscountService', () => {
         { provide: DiscountRepository, useValue: mockDiscountRepository },
         { provide: CACHE_MANAGER, useValue: mockCacheManager },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: StoreService, useValue: { getCurrency: jest.fn().mockResolvedValue('GHS') } },
       ],
     }).compile();
 
@@ -268,7 +270,8 @@ describe('DiscountService', () => {
     });
   });
 
-  describe('findActiveDiscountsByVariant', () => {
+  describe('findCandidateDiscounts', () => {
+    const now = new Date('2025-06-15');
     const targeting = (discount: Discount, productIds: string[], categoryIds: string[] = []) => ({
       ...discount,
       products: productIds.map((id) => ({ id })),
@@ -281,71 +284,71 @@ describe('DiscountService', () => {
       discountId,
     });
 
-    it("applies a product's discount to every one of its variants", async () => {
-      const productDiscount = targeting(mockDiscount, ['product1']);
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([productDiscount]);
+    it('looks the discounts up for the products, categories and variant discounts at `now`, on the given client', async () => {
+      const tx = {} as Prisma.TransactionClient;
+      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([targeting(mockDiscount, ['product1'])]);
 
-      const result = await service.findActiveDiscountsByVariant([variant('variant1'), variant('variant2')]);
-
-      expect(result).toEqual(
-        new Map([
-          ['variant1', [productDiscount]],
-          ['variant2', [productDiscount]],
-        ]),
+      const result = await service.findCandidateDiscounts(
+        [variant('variant1', 'variantSale'), variant('variant2')],
+        now,
+        tx,
       );
-      expect(discountRepository.findActiveDiscountsFor).toHaveBeenCalledWith(['product1'], ['category1'], []);
-    });
 
-    it("applies the product's category discount", async () => {
-      const categoryDiscount = targeting(mockDiscount, [], ['category1']);
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([categoryDiscount]);
-
-      const result = await service.findActiveDiscountsByVariant([variant('variant1')]);
-
-      expect(result.get('variant1')).toEqual([categoryDiscount]);
-    });
-
-    it("applies a variant's own discount only to that variant", async () => {
-      const variantDiscount = targeting({ ...mockDiscount, id: 'variantSale' }, []);
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([variantDiscount]);
-
-      const result = await service.findActiveDiscountsByVariant([
-        variant('variant1', 'variantSale'),
-        variant('variant2'),
-      ]);
-
-      expect(result).toEqual(
-        new Map([
-          ['variant1', [variantDiscount]],
-          ['variant2', []],
-        ]),
-      );
       expect(discountRepository.findActiveDiscountsFor).toHaveBeenCalledWith(
         ['product1'],
         ['category1'],
         ['variantSale'],
+        now,
+        tx,
       );
+      expect(result).toEqual([
+        {
+          id: 'discount1',
+          type: 'PERCENTAGE',
+          value: new Prisma.Decimal(20),
+          minimumPurchase: null,
+          isActive: true,
+          startDate: mockDiscount.startDate,
+          endDate: mockDiscount.endDate,
+          createdAt: mockDiscount.createdAt,
+          variantIds: [],
+          productIds: ['product1'],
+          categoryIds: [],
+        },
+      ]);
     });
 
-    it('gives a variant no candidates when no discount applies', async () => {
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([targeting(mockDiscount, ['otherProduct'])]);
+    it("targets a product's or category's discount by id, and a variant's own discount only to that variant", async () => {
+      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([
+        targeting(mockDiscount, [], ['category1']),
+        targeting({ ...mockDiscount, id: 'variantSale' }, []),
+      ]);
 
-      const result = await service.findActiveDiscountsByVariant([variant('variant1')]);
+      const result = await service.findCandidateDiscounts(
+        [variant('variant1', 'variantSale'), variant('variant2')],
+        now,
+      );
 
-      expect(result).toEqual(new Map([['variant1', []]]));
+      expect(result.map((d) => [d.id, d.variantIds, d.productIds, d.categoryIds])).toEqual([
+        ['discount1', [], [], ['category1']],
+        ['variantSale', ['variant1'], [], []],
+      ]);
     });
 
     it('does not query for an empty list', async () => {
-      const result = await service.findActiveDiscountsByVariant([]);
+      const result = await service.findCandidateDiscounts([], now);
 
-      expect(result).toEqual(new Map());
+      expect(result).toEqual([]);
       expect(discountRepository.findActiveDiscountsFor).not.toHaveBeenCalled();
     });
   });
 
   describe('applyDiscountsToCart', () => {
+    // The engine applies only discounts in date at the time of pricing.
     const targeting = (discount: Discount, productIds: string[], categoryIds: string[] = []) => ({
       ...discount,
+      startDate: new Date(Date.now() - 86_400_000),
+      endDate: new Date(Date.now() + 86_400_000),
       products: productIds.map((id) => ({ id })),
       categories: categoryIds.map((id) => ({ id })),
     });
@@ -368,7 +371,13 @@ describe('DiscountService', () => {
         discountTotal: new Decimal('40'),
         finalTotal: new Decimal('160'),
       });
-      expect(discountRepository.findActiveDiscountsFor).toHaveBeenCalledWith(['product1'], ['category1'], []);
+      expect(discountRepository.findActiveDiscountsFor).toHaveBeenCalledWith(
+        ['product1'],
+        ['category1'],
+        [],
+        expect.any(Date),
+        undefined,
+      );
       expect(discountRepository.updateCartItem).toHaveBeenCalledWith('cartItem1', {
         originalPrice: new Prisma.Decimal(100),
         discountedPrice: new Prisma.Decimal(80),

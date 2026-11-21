@@ -3,10 +3,21 @@ import { join } from 'path';
 import { Prisma } from '../../src/generated/prisma/client';
 import { DiscountService } from '../../src/discount/discount.service';
 import { OrdersService } from '../../src/order/order.service';
-import { priceCart } from '../../src/discount/pricing';
+import { price } from '../../src/pricing/price';
+
+const IN_DATE = { startDate: new Date(Date.now() - 86_400_000), endDate: new Date(Date.now() + 86_400_000) };
 
 function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number) {
-  return { id, name: id, type, value, minimumPurchase: null };
+  return {
+    id,
+    name: id,
+    type,
+    value: new Prisma.Decimal(value),
+    minimumPurchase: null,
+    isActive: true,
+    createdAt: new Date(0),
+    ...IN_DATE,
+  };
 }
 
 function onProduct(...discounts: ReturnType<typeof discount>[]) {
@@ -14,18 +25,26 @@ function onProduct(...discounts: ReturnType<typeof discount>[]) {
 }
 
 /** Prices one unit of variant-1 (of product-1) at `price` with the discounts the DiscountService finds for it. */
-async function priceOneUnit(price: number, discounts: ReturnType<typeof onProduct>) {
+async function priceOneUnit(unitPrice: number, discounts: ReturnType<typeof onProduct>) {
   const repository = { findActiveDiscountsFor: jest.fn().mockResolvedValue(discounts) };
   const service = new DiscountService(
     repository as never,
     { get: jest.fn(), set: jest.fn(), del: jest.fn() } as never,
     {} as never,
+    {} as never,
   );
-  const candidates = await service.findActiveDiscountsByVariant([
-    { id: 'variant-1', productId: 'product-1', categoryId: null, discountId: null },
-  ]);
-  return priceCart([{ variantId: 'variant-1', productId: 'product-1', unitPrice: price, quantity: 1 }], candidates)
-    .lines[0];
+  const now = new Date();
+  const candidates = await service.findCandidateDiscounts(
+    [{ id: 'variant-1', productId: 'product-1', categoryId: null, discountId: null }],
+    now,
+  );
+  const line = { variantId: 'variant-1', productId: 'product-1', categoryId: null, quantity: 1, taxable: false };
+  const quote = price(
+    { lines: [{ ...line, unitListPrice: new Prisma.Decimal(unitPrice) }], shippingFee: new Prisma.Decimal(0) },
+    { currency: 'GHS', now, discounts: candidates, taxRates: [] },
+  );
+  const [priced] = quote.lines;
+  return { unitDiscount: priced.unitDiscount, discountedUnitPrice: priced.unitListPrice.sub(priced.unitDiscount) };
 }
 
 describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
@@ -89,9 +108,14 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
     };
     const cart = { id: 'cart-1', items: [{ productId: 'product-1', variantId: 'variant-1', quantity: 1 }] };
     const discounts = {
-      findActiveDiscountsByVariant: jest
-        .fn()
-        .mockResolvedValue(new Map([['variant-1', [discount('pct-10', 'PERCENTAGE', 10)]]])),
+      findCandidateDiscounts: jest.fn().mockResolvedValue([
+        {
+          ...discount('pct-10', 'PERCENTAGE', 10),
+          variantIds: ['variant-1'],
+          productIds: [],
+          categoryIds: [],
+        },
+      ]),
     };
     const service = new OrdersService(
       repository as never,

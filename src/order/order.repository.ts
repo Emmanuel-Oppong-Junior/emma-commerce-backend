@@ -15,12 +15,23 @@ import {
 } from '../generated/prisma/client';
 import { FOR_SALE, VariantForSale } from '../cart/cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { OrderSnapshot } from './order-totals';
+import { Quote, QuoteLine } from '../pricing/price';
 import { TransitionContext, transitionOrder } from './order-transition';
 import { isDispatch } from './shipment-status';
 import { intentAllowedFrom } from '../payment/payment-intent-status';
 
 type OrderWithItems = Order & { items: OrderItem[] };
+
+export interface OrderSnapshotLine extends QuoteLine {
+  productName: string;
+  sku: string;
+  optionValues: unknown;
+}
+
+/** The quote an order was placed at, with what each line was when ordered. */
+export interface OrderSnapshot extends Omit<Quote, 'lines'> {
+  lines: OrderSnapshotLine[];
+}
 
 /** What an order is read with everywhere: lines with tax lines, adjustments, shipments, history and payment status. */
 export const ORDER_INCLUDE = {
@@ -92,7 +103,7 @@ export class OrdersRepository {
     }) as unknown as Promise<Order[]>;
   }
 
-  /** Writes the PLACED order with its line, tax and adjustment snapshot (see snapshotOrder) and first history event. */
+  /** Writes the PLACED order with its line, tax and adjustment snapshot (the quote) and first history event. */
   async create(
     tx: Prisma.TransactionClient,
     userId: string,
@@ -157,7 +168,13 @@ export class OrdersRepository {
     }
     if (snapshot.adjustments.length > 0) {
       await tx.orderAdjustment.createMany({
-        data: snapshot.adjustments.map((adjustment) => ({ ...adjustment, orderId: order.id })),
+        data: snapshot.adjustments.map(({ type, sourceId, code, amount }) => ({
+          orderId: order.id,
+          type,
+          sourceId,
+          code,
+          amount,
+        })),
       });
     }
     return this.findInTransaction(tx, order.id);

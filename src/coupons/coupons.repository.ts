@@ -21,8 +21,8 @@ export class CouponsRepository {
     return this.prisma.coupon.findUnique({ where: { id } });
   }
 
-  async findByCode(code: string): Promise<Coupon | null> {
-    return this.prisma.coupon.findUnique({ where: { code } });
+  async findByCode(code: string, db: Prisma.TransactionClient = this.prisma): Promise<Coupon | null> {
+    return db.coupon.findUnique({ where: { code } });
   }
 
   async findAll(): Promise<Coupon[]> {
@@ -55,8 +55,12 @@ export class CouponsRepository {
     }
   }
 
-  async hasUserUsedCoupon(couponId: string, userId: string): Promise<boolean> {
-    const usage = await this.prisma.couponUsage.findUnique({
+  async hasUserUsedCoupon(
+    couponId: string,
+    userId: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<boolean> {
+    const usage = await db.couponUsage.findUnique({
       where: { couponId_userId: { couponId, userId } },
     });
     return !!usage;

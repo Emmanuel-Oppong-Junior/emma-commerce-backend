@@ -3,7 +3,7 @@ import * as DataLoader from 'dataloader';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '../../generated/prisma/client';
 import { DiscountCalculation } from '../../discount/types';
-import { bestUnitPrice, toDiscountCalculation } from '../../discount/pricing';
+import { bestUnitDiscount, discountsApplyingTo } from '../../pricing/price';
 import { DiscountService } from '../../discount/discount.service';
 
 const NO_DISCOUNT: DiscountCalculation = {
@@ -19,8 +19,9 @@ export class DiscountLoader {
   ) {}
 
   /**
-   * The best active discount on one unit of each variant (its own, its product's or its category's), batched per
-   * request: one variant query and one discount query however many variants are resolved.
+   * The best active discount on one unit of each variant (its own, its product's or its category's), picked by the
+   * pricing engine's item rule (minimum purchases are not checked: there is no cart), batched per request: one
+   * variant query and one discount query however many variants are resolved.
    */
   readonly loader = new DataLoader<string, DiscountCalculation>(
     async (variantIds: readonly string[]) => {
@@ -28,19 +29,27 @@ export class DiscountLoader {
         where: { id: { in: [...variantIds] } },
         select: { id: true, price: true, productId: true, discountId: true, product: { select: { categoryId: true } } },
       });
-      const discounts = await this.discountService.findActiveDiscountsByVariant(
+      const now = new Date();
+      const discounts = await this.discountService.findCandidateDiscounts(
         variants.map((variant) => ({
           id: variant.id,
           productId: variant.productId,
           categoryId: variant.product.categoryId,
           discountId: variant.discountId,
         })),
+        now,
       );
       const byId = new Map(variants.map((variant) => [variant.id, variant]));
       return variantIds.map((id) => {
         const variant = byId.get(id);
         if (!variant || variant.price === null) return NO_DISCOUNT;
-        return toDiscountCalculation(bestUnitPrice(variant.price, discounts.get(id) ?? []));
+        const line = { variantId: variant.id, productId: variant.productId, categoryId: variant.product.categoryId };
+        const { unitDiscount, discountId } = bestUnitDiscount(variant.price, discountsApplyingTo(line, discounts, now));
+        return {
+          discountedPrice: variant.price.sub(unitDiscount),
+          discountAmount: unitDiscount,
+          ...(discountId && { discountId }),
+        };
       });
     },
     { cache: false }, // Per-request cache disabled — data can change between resolves

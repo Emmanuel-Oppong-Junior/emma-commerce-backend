@@ -18,14 +18,29 @@ import { DiscountService } from '../discount/discount.service';
 import { StoreService } from '../store/store.service';
 
 const mockAuditService = { log: jest.fn() };
-const mockCouponsService = { validateCoupon: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
+const mockCouponsService = { findForPricing: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
 const mockTaxService = { findActive: jest.fn() };
 const mockStockLedger = { reserve: jest.fn(), consumeOrder: jest.fn(), releaseOrder: jest.fn() };
 const mockOutbox = { record: jest.fn() };
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
-const mockDiscountService = { findActiveDiscountsByVariant: jest.fn() };
+const mockDiscountService = { findCandidateDiscounts: jest.fn() };
+/** A discount as the pricing engine takes it, in date and active. */
+const candidate = (id: string, type: 'PERCENTAGE' | 'FLAT', value: number, targets: object) => ({
+  id,
+  type,
+  value: new Decimal(value),
+  minimumPurchase: null,
+  isActive: true,
+  startDate: new Date(Date.now() - 86_400_000),
+  endDate: new Date(Date.now() + 86_400_000),
+  createdAt: new Date(0),
+  variantIds: [],
+  productIds: [],
+  categoryIds: [],
+  ...targets,
+});
 const mockStoreService = { getCurrency: jest.fn() };
 
 const mockOrdersRepository = {
@@ -213,7 +228,7 @@ describe('OrdersService', () => {
     mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CONFIRMED });
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
     mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
-    mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(new Map());
+    mockDiscountService.findCandidateDiscounts.mockResolvedValue([]);
   });
 
   describe('createOrderFromCart', () => {
@@ -344,15 +359,15 @@ describe('OrdersService', () => {
       const [line] = details.snapshot.lines;
       expect([line.unitNet, line.unitTax, line.lineTotal].map(String)).toEqual(['100', '15', '230']);
       expect(line.taxLines.map((t: { taxId: string; amount: Decimal }) => [t.taxId, String(t.amount)])).toEqual([
-        ['vat', '20'],
         ['nhil', '10'],
+        ['vat', '20'],
       ]);
       expect(String(details.snapshot.taxTotal)).toBe('30');
       expect(String(details.snapshot.grandTotal)).toBe('235');
     });
 
     describe('with product discounts', () => {
-      const tenPercentOff = { id: 'disc10', type: 'PERCENTAGE', value: new Decimal(10), minimumPurchase: null };
+      const tenPercentOff = candidate('disc10', 'PERCENTAGE', 10, { productIds: ['prod1'] });
 
       beforeEach(() => {
         mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
@@ -360,15 +375,16 @@ describe('OrdersService', () => {
         mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
         mockOrdersRepository.findVariant.mockResolvedValue({ ...mockVariant, price: new Decimal('100') });
         mockOrdersRepository.create.mockResolvedValue(mockOrder);
-        mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(new Map([['var1', [tenPercentOff]]]));
+        mockDiscountService.findCandidateDiscounts.mockResolvedValue([tenPercentOff]);
       });
 
       it('charges the discounted price and records the list price and discount on each line', async () => {
         await ordersService.createOrderFromCart(mockUserId, deliveryParams);
 
-        expect(mockDiscountService.findActiveDiscountsByVariant).toHaveBeenCalledWith([
-          { id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null },
-        ]);
+        expect(mockDiscountService.findCandidateDiscounts).toHaveBeenCalledWith(
+          [{ id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null }],
+          expect.any(Date),
+        );
         expect(mockOrdersRepository.create).toHaveBeenCalledWith(
           expect.anything(),
           mockUserId,
@@ -382,7 +398,6 @@ describe('OrdersService', () => {
                   unitListPrice: new Decimal('100'),
                   unitDiscount: new Decimal('10'),
                   lineTotal: new Decimal('180'),
-                  discountId: 'disc10',
                   adjustments: [{ type: 'DISCOUNT', sourceId: 'disc10', code: null, amount: new Decimal('-20') }],
                 }),
               ],
@@ -396,21 +411,41 @@ describe('OrdersService', () => {
       });
 
       it('takes the coupon off the discounted subtotal, before shipping', async () => {
-        mockCouponsService.validateCoupon.mockResolvedValue({
-          discountAmount: new Decimal('18.00'),
+        mockCouponsService.findForPricing.mockResolvedValue({
           coupon: { id: 'coupon1', code: 'SAVE10' },
+          pricing: {
+            id: 'coupon1',
+            code: 'SAVE10',
+            discountType: 'PERCENTAGE',
+            value: new Decimal(10),
+            minimumOrderAmount: null,
+            isActive: true,
+            expiresAt: null,
+            usageLimit: null,
+            usedCount: 0,
+            usedByCustomer: false,
+          },
         });
 
         await ordersService.createOrderFromCart(mockUserId, { ...deliveryParams, couponCode: 'SAVE10' });
 
-        expect(mockCouponsService.validateCoupon).toHaveBeenCalledWith('SAVE10', mockUserId, new Decimal('180'));
+        // 10% of the discounted 180.
+        expect(mockCouponsService.findForPricing).toHaveBeenCalledWith('SAVE10', mockUserId);
         expect(mockOrdersRepository.create).toHaveBeenCalledWith(
           expect.anything(),
           mockUserId,
           expect.objectContaining({
             couponId: 'coupon1',
             snapshot: expect.objectContaining({
-              adjustments: [{ type: 'COUPON', sourceId: 'coupon1', code: 'SAVE10', amount: new Decimal('-18') }],
+              adjustments: [
+                {
+                  type: 'COUPON',
+                  sourceId: 'coupon1',
+                  code: 'SAVE10',
+                  amount: new Decimal('-18'),
+                  allocations: [new Decimal('-18')],
+                },
+              ],
               grandTotal: new Decimal('167'),
             }),
           }),
@@ -428,8 +463,8 @@ describe('OrdersService', () => {
         stockLevels: [{ onHand: 10, reserved: 0 }],
         discountId: 'large20',
       };
-      const productTenPercent = { id: 'product10', type: 'PERCENTAGE', value: new Decimal(10), minimumPurchase: null };
-      const largeTwentyOff = { id: 'large20', type: 'FLAT', value: new Decimal(20), minimumPurchase: null };
+      const productTenPercent = candidate('product10', 'PERCENTAGE', 10, { productIds: ['prod1'] });
+      const largeTwentyOff = candidate('large20', 'FLAT', 20, { variantIds: ['var2'] });
 
       beforeEach(() => {
         mockCartService.getCartOrThrow.mockResolvedValue({
@@ -451,12 +486,7 @@ describe('OrdersService', () => {
             { ...mockOrderItem, id: 'orderItem2', variantId: 'var2', sku: 'TSHIRT-L', quantity: 1 },
           ],
         });
-        mockDiscountService.findActiveDiscountsByVariant.mockResolvedValue(
-          new Map([
-            ['var1', [productTenPercent]],
-            ['var2', [productTenPercent, largeTwentyOff]],
-          ]),
-        );
+        mockDiscountService.findCandidateDiscounts.mockResolvedValue([productTenPercent, largeTwentyOff]);
       });
 
       it('prices each line from its own variant, with a product discount on every variant and a variant discount on one', async () => {
@@ -464,10 +494,13 @@ describe('OrdersService', () => {
 
         expect(mockOrdersRepository.findVariant).toHaveBeenCalledWith('var1');
         expect(mockOrdersRepository.findVariant).toHaveBeenCalledWith('var2');
-        expect(mockDiscountService.findActiveDiscountsByVariant).toHaveBeenCalledWith([
-          { id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null },
-          { id: 'var2', productId: 'prod1', categoryId: 'cat1', discountId: 'large20' },
-        ]);
+        expect(mockDiscountService.findCandidateDiscounts).toHaveBeenCalledWith(
+          [
+            { id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null },
+            { id: 'var2', productId: 'prod1', categoryId: 'cat1', discountId: 'large20' },
+          ],
+          expect.any(Date),
+        );
         expect(mockOrdersRepository.create).toHaveBeenCalledWith(
           expect.anything(),
           mockUserId,
@@ -479,14 +512,14 @@ describe('OrdersService', () => {
                   unitListPrice: new Decimal('100'),
                   unitDiscount: new Decimal('10'),
                   lineTotal: new Decimal('180'),
-                  discountId: 'product10',
+                  adjustments: [expect.objectContaining({ sourceId: 'product10' })],
                 }),
                 expect.objectContaining({
                   variantId: 'var2',
                   unitListPrice: new Decimal('120'),
                   unitDiscount: new Decimal('20'),
                   lineTotal: new Decimal('100'),
-                  discountId: 'large20',
+                  adjustments: [expect.objectContaining({ sourceId: 'large20' })],
                 }),
               ],
               subtotal: new Decimal('320'),

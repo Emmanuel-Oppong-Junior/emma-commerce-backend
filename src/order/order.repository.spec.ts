@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { OrderSnapshot } from './order-totals';
-import { ORDER_INCLUDE, OrdersRepository } from './order.repository';
+import { ORDER_INCLUDE, OrderSnapshot, OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { Address, FulfillmentType, Order, OrderItem, Prisma, User } from '../generated/prisma/client';
 
@@ -50,6 +49,7 @@ const snapshotOf = (totals: { subtotal: number; shippingTotal: number; grandTota
   taxTotal: new Prisma.Decimal(0),
   shippingTotal: new Prisma.Decimal(totals.shippingTotal),
   grandTotal: new Prisma.Decimal(totals.grandTotal),
+  quoteHash: 'hash',
 });
 
 describe('OrdersRepository', () => {
