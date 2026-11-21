@@ -87,7 +87,7 @@ async function priceOneUnit(unitPrice: number, discounts: ReturnType<typeof onPr
       shippingFee: new Prisma.Decimal(0),
       shippingZoneId: null,
     },
-    { currency: 'GHS', now, promotions, taxRates: [], customer },
+    { currency: 'GHS', now, promotions, taxRates: [], customer, priceLists: [] },
   );
   const [priced] = quote.lines;
   return { unitDiscount: priced.unitDiscount, discountedUnitPrice: priced.unitListPrice.sub(priced.unitDiscount) };
@@ -167,6 +167,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       {} as never,
       {} as never,
       promotions,
+      { findForPricing: jest.fn().mockResolvedValue([]) } as never,
       { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
       { findActive: jest.fn().mockResolvedValue([]) } as never,
     );

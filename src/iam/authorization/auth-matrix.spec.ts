@@ -42,6 +42,7 @@ function policyOf(method: object, cls: ClassRef): Omit<MatrixRow, 'operation'> {
   const explicit = authTypes !== undefined || !!permissions?.length || !!customerOnly;
   const parts: string[] = [];
   if (authTypes?.includes(AuthType.None)) parts.push('public');
+  else if (authTypes?.includes(AuthType.Optional)) parts.push('public, optional sign-in');
   else if (permissions?.length) parts.push(`permission: ${permissions.join(' + ')}`);
   else if (customerOnly) parts.push('customer only');
   else parts.push('authenticated');

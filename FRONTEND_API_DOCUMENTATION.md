@@ -100,6 +100,7 @@ feature/
 ### Auth Strategy
 
 - **Default**: all routes require Bearer JWT unless decorated with `@Auth(AuthType.None)`.
+- **Optional sign-in** (P2-W.1): the public catalogue queries `products`, `product`, `brands`, `brand` and `categories` work without a token, and honour one when it is sent, so a signed-in customer sees their own prices (`Variant.customerPrice`, `priceTiers`, and their group and first-order promotions in `discountedPrice`). A token that is sent must be valid: an invalid or expired one fails with `UNAUTHENTICATED` (refresh it, or send no token), it never falls back to the anonymous view.
 - Access token: short-lived (default 1 hour, `JWT_ACCESS_TOKEN_TTL`).
 - Refresh token: longer-lived (default 24 hours, `JWT_REFRESH_TOKEN_TTL`), stored **hashed** in the `RefreshToken` database table.
 - Refresh tokens are **rotated** on use — old token is revoked, new pair is issued atomically. Replaying a used refresh token signs the user out everywhere (see [Section 5](#5-authentication--authorization)).
@@ -651,6 +652,8 @@ query {
 
 ### 2.3 Products
 
+> **Optional sign-in (P2-W.1):** `products` and `product` (and `brands`, `brand`, `categories`) need no token, but a valid bearer token makes the viewer's prices personal: see `Variant.customerPrice` / `priceTiers` in [2.8](#28-variants). An invalid or expired token fails with `UNAUTHENTICATED`.
+
 > **Visibility:** the public `products` and `product` queries only ever return products that are active **and** `PUBLISHED`; `isActive`/`status` sent in `filterArgs` cannot widen that. `product` returns `null` for a draft, archived or inactive product. Admins list and open products in any state with `adminProducts` / `adminProduct`. Nested `products` on `Category`, `SubCategory` and `Brand` also return published products only, newest first, capped by `first` (default 20, 1–100; anything else is an error).
 
 > **Price and stock live on the variant (P1-V.3, ADR-0003).** A product is sold only through its variants (SKUs, see [2.8](#28-variants)): each variant has its own `basePrice`, `price`, `discountedPrice`, `sku`, `barcode` and `quantity`. A variant's `price` (what customers pay and checkout charges) is `basePrice × (1 + sum of active tax rates)` when the product `isTaxable`, otherwise `basePrice`. The product shows summaries: `priceRange`, `totalStock` and `inStock`. Customers pick a variant from `Product.variants` and put that in the cart.
@@ -1193,8 +1196,10 @@ All variant operations need a staff permission. Customers see the active variant
   lowStockThreshold?: Int;    // available stock at or below which inventory.low_stock is raised (default 5)
   price?: Money;              // selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
   basePrice?: Money;          // price before tax, as entered
-  discountedPrice?: Money;    // price of one unit after the best automatic promotion on it (on the variant, its product, category or brand); null without one. Coupons and cart minimums apply only in checkoutQuote
+  discountedPrice?: Money;    // price of one unit after the best automatic promotion on it (on the variant, its product, category or brand); null without one. Coupons and cart minimums apply only in checkoutQuote. Signed in (P2-W.1): starts from the customer's price-list price when it applies to one unit (then null unless that list allows promotions) and includes their customer-group and first-order promotions
   appliedPromotion?: PublicPromotion; // { id, name, description?, endsAt? } of the promotion behind discountedPrice
+  customerPrice?: VariantPriceTier;   // P2-W.1, signed-in customer only: their B2B price at its minimum quantity (= priceTiers[0]); null for a visitor or when no price list of theirs prices the variant below `price`
+  priceTiers?: VariantPriceTier[];    // P2-W.1: their B2B unit prices by quantity of this variant, ascending; null for a visitor, [] when no list applies
   isActive: boolean;          // false = archived
   weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
   image?: string;             // overrides the product images for this variant
@@ -1481,7 +1486,7 @@ All order operations require `Bearer` JWT.
   contactEmail: string;
   contactPhone: string;
   currency: Currency;                          // GHS
-  pricingVersion: Int;                         // The pricing rules it was priced with: 3 since P2-B.4 (flash sales), 2 since P2-B.2 (promotion stacking), 1 before it; all have the full price and tax snapshot. 0: placed before P1-O.1 (parts may be null)
+  pricingVersion: Int;                         // The pricing rules it was priced with: 4 since P2-W.1 (B2B price lists), 3 since P2-B.4 (flash sales), 2 since P2-B.2 (promotion stacking), 1 before it; all have the full price and tax snapshot. 0: placed before P1-O.1 (parts may be null)
   subtotal?: Money;                            // Σ unitListPrice × quantity, before any discount, tax included
   discountTotal?: Money;                       // Product discounts + coupon (= minus the sum of `adjustments`)
   taxTotal?: Money;                            // Tax included in the line totals; null on pricingVersion 0
@@ -1510,7 +1515,7 @@ All order operations require `Bearer` JWT.
   optionValues?: JSONObject;  // Option values at order time, e.g. { size: "M" }; null on lines ordered before P1-V.3
   quantity: Int;              // Breaking change (P1-V.3): was Float
   productName: string;        // Product name when ordered (older orders: the name when migrated)
-  unitListPrice: Money;       // Catalogue price of one unit when ordered, tax included
+  unitListPrice: Money;       // Price of one unit when ordered before promotions, tax included: the variant price, or the customer's B2B price-list price (P2-W.1)
   unitDiscount: Money;        // Product discount taken off one unit (0 if none)
   unitNet?: Money;            // One unit after its discount, without tax; null on pricingVersion 0
   unitTax?: Money;            // Tax included in one discounted unit; null on pricingVersion 0
@@ -1644,7 +1649,7 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 {
   quoteHash: string;                 // 64 hex chars. Send to createOrder.
   currency: Currency;                // GHS
-  pricingVersion: number;            // The pricing rules used (3 since P2-B.4: flash sales); the order stores it
+  pricingVersion: number;            // The pricing rules used (4 since P2-W.1: B2B price lists); the order stores it
   lines: QuoteLine[];                // In cart order. P2-B.4: a cart line whose units pay different prices (a flash sale reduced only some) has two or more lines with the same cartItemId, the reduced units first
   adjustments: QuoteOrderAdjustment[]; // The cart promotions that take something off
   shippingAdjustments: QuoteAdjustment[]; // P2-B.6: the free-shipping promotions taken off the delivery fee (already in shippingTotal)
@@ -1658,7 +1663,8 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 QuoteLine {
   cartItemId: string; variantId: string; productId: string; productName: string; sku: string;
   optionValues?: JSON; quantity: number;
-  unitListPrice: Money;              // Variant price, tax included
+  unitListPrice: Money;              // Price of one unit before promotions, tax included: the variant price, or the customer's price-list price
+  fromPriceList: boolean;            // P2-W.1: unitListPrice comes from one of the customer's B2B price lists
   unitDiscount: Money;               // Item promotions taken off one unit
   unitNet: Money;                    // One discounted unit without tax
   unitTax: Money;                    // Tax included in one discounted unit
@@ -1721,7 +1727,7 @@ query {
 3. The cart's variants are share-locked, then the prices, promotions, coupon code, the caller's redemptions, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-promotions-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus its item promotions. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
 4. A coupon code, if given, must be usable (code and promotion active, started, not expired, uses left overall and for the caller, its minimums reached); it unlocks its promotion. Cart promotions come off the lines after item promotions, before shipping, never more than them.
 5. The resulting quote's hash must equal `quoteHash`; otherwise `CONFLICT` / `QUOTE_CHANGED` and nothing is written.
-6. `grandTotal = Σ lineTotal - cart promotions + shippingTotal` (the fee after free-shipping promotions, P2-B.6), the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (3).
+6. `grandTotal = Σ lineTotal - cart promotions + shippingTotal` (the fee after free-shipping promotions, P2-B.6), the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (4).
 7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); each applied promotion (and the coupon code) has one use taken with a conditional update and a `RESERVED` redemption recorded (none left: `CONFLICT`, see below); the cart is emptied.
 8. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
 9. A confirmation email goes to the account's email (not `contactEmail`) after the response.
@@ -2063,7 +2069,7 @@ It checks the code for the caller whatever the cart (active, started, not expire
 
 #### Customer groups (P2-B.3, `customer.group.manage`)
 
-A customer group is a named set of customers. A promotion with `customerGroupIds` applies only to members (B2B price lists will reuse the groups). Changes are audit-logged (members by user id only).
+A customer group is a named set of customers. A promotion with `customerGroupIds` applies only to members, and members of a price list's groups get its prices (P2-W.1). Changes are audit-logged (members by user id only).
 
 ```typescript
 CustomerGroup { id; name /* unique */; description?; memberCount: number; members(first = 50 /* 1-100 */, after?: ID /* last userId */): CustomerGroupMemberPage; createdAt; updatedAt }
@@ -2077,6 +2083,37 @@ CustomerGroupMembersInput { groupId: ID; userIds: ID[] /* 1-500 */ }
 - `createCustomerGroup(input)`, `updateCustomerGroup(id, input)` (`CONFLICT` for a taken name).
 - `deleteCustomerGroup(id)`: deletes the group and its memberships; `CONFLICT` while a promotion is limited to it (deleting it would open the promotion to everyone).
 - `addCustomerGroupMembers(input)` (members already in the group are kept; `BAD_REQUEST` for unknown user ids), `removeCustomerGroupMembers(input)`; both return the group.
+- Deleting a group a price list uses only takes those prices away from its members (a list without groups prices nobody), so it is allowed.
+
+#### B2B price lists (P2-W.1, `pricelist.manage`)
+
+A price list gives the members of its customer groups their own unit prices per variant, from a minimum quantity (MOQ), with lower prices for larger quantities. How checkout uses them: [10. Promotions System → B2B price lists](#b2b-price-lists-p2-w1-pricingversion-4). Every mutation needs `pricelist.manage` (Owner and Manager) **and a recent step-up** (`STEP_UP_REQUIRED` otherwise), and is audit-logged (entries with their prices before and after). Customers cannot read price lists, their entries, or which list or group gives them a price: they only see their own prices on `Variant.customerPrice` / `priceTiers` and `QuoteLine.fromPriceList`.
+
+```typescript
+PriceList {
+  id; name /* unique */; description?; currency /* the store currency */; isActive; startsAt?; endsAt?;
+  priority: number;          // breaks ties between equal prices: lowest first, then the oldest list
+  allowPromotions: boolean;  // promotions apply on top of its prices (default false: its lines are left out of promotions)
+  customerGroupIds: ID[]; entryCount: number;
+  entries(first = 50 /* 1-200 */, after?: ID /* last variantId */): PriceListEntryPage; createdAt; updatedAt
+}
+PriceListEntry { variantId; price: Money /* from minQuantity units, tax included */; minQuantity: number; tiers: { minQuantity; price: Money }[]; updatedAt }
+PriceListEntryPage { nodes: PriceListEntry[]; totalCount; hasNextPage }
+VariantPriceTier { minQuantity: number; unitPrice: Money; promotionsApply: boolean }   // the customer's view
+
+CreatePriceListInput { name /* max 100 */; description?; isActive = false; startsAt?; endsAt?; priority = 0; allowPromotions = false; customerGroupIds: ID[] = [] }
+UpdatePriceListInput { name?; description?; isActive?; startsAt?; endsAt?; priority?; allowPromotions?; customerGroupIds? /* replaces */ }
+SetPriceListEntriesInput { priceListId: ID; entries: PriceListEntryInput[] /* 1-200 */ }
+PriceListEntryInput { variantId: ID; price: Decimal /* > 0, tax included like Variant.price */; minQuantity: Int = 1; tiers: { minQuantity: Int; price: Decimal }[] = [] }
+RemovePriceListEntriesInput { priceListId: ID; variantIds: ID[] /* 1-200 */ }
+```
+
+- `priceLists(isActive?)` (newest first), `priceList(id)`.
+- `createPriceList(input)`, `updatePriceList(id, input)`: `CONFLICT` for a taken name; `BAD_REQUEST` for unknown customer group ids or `endsAt` not after `startsAt`.
+- `deletePriceList(id)`: removes the list and its entries; orders placed at its prices keep them.
+- `setPriceListEntries(input)`: each entry replaces its variant's entry (and tiers) in the list. `BAD_REQUEST` for an unknown variant, a variant given twice, a tier not above `minQuantity` and the previous tier, or a tier price above the price below it (equal is allowed); `BAD_USER_INPUT` for a price of 0. A list price at or above the variant's normal price is stored but never used (the normal price applies).
+- `removePriceListEntries(input)`: takes the variants out (unknown ones are ignored).
+- Prices are tax-inclusive like `Variant.price` and are **not** repriced when tax rates change. Entry changes are audit-logged, not added to the variant price history (`priceChanges` covers `Variant.price` / `basePrice` only).
 
 ---
 
@@ -2922,6 +2959,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `payment.manage` | `softDeletePayment`, `restorePayment` |
 | `promotion.manage` | `promotions`, `promotion`, `createPromotion`, `updatePromotion`, `deletePromotion`, `createCouponCode`, `updateCouponCode`, `deleteCouponCode`, `redemptions` (P2-B.1) |
 | `customer.group.manage` | `customerGroups`, `customerGroup` (with `members`), `createCustomerGroup`, `updateCustomerGroup`, `deleteCustomerGroup`, `addCustomerGroupMembers`, `removeCustomerGroupMembers` (P2-B.3; held by Owner and Manager) |
+| `pricelist.manage` | `priceLists`, `priceList` (with `entries`), and with step-up `createPriceList`, `updatePriceList`, `deletePriceList`, `setPriceListEntries`, `removePriceListEntries` (P2-W.1; held by Owner and Manager) |
 | `tax.manage` | `taxes`, `tax`, `createTax`, `updateTax`, `deleteTax` |
 | `shipping.manage` | admin shipping zone and pickup location queries and mutations |
 | `review.moderate` | `adminDeleteReview` |
@@ -3703,7 +3741,7 @@ One pricing engine (`src/pricing/price.ts`, ADR-0005) prices `Variant.discounted
 A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or no `endsAt`), it has uses left (`usedCount < usageLimit`) and units left (`unitsUsed < unitCap`, P2-B.4) and the customer has uses left (their reserved uses `< perCustomerLimit`), it is open to the customer (`firstOrderOnly`: no earlier order counts; `customerGroupIds`: a member of one of them), and, when it `requiresCoupon`, the order entered one of its codes.
 
 - **First order** (P2-B.3): an earlier order counts when it reached `CONFIRMED` or a later status (`IN_FULFILMENT`, `COMPLETED`), or `PAYMENT_REVIEW` (the payment was received), at any point of its history, even if it was cancelled or refunded afterwards. An online order cancelled or expired before payment does not count. A cash-on-delivery order is `CONFIRMED` when placed, so it counts at once.
-- **Product pages** (`Variant.discountedPrice`) show only promotions open to everyone: not coupon, first-order or group promotions. Those appear in `checkoutQuote` for the customers they apply to.
+- **Product pages** (`Variant.discountedPrice`) never show coupon promotions. To a visitor they show only promotions open to everyone; to a signed-in customer (optional sign-in, P2-W.1) also their customer-group promotions and, while they have no earlier order, first-order promotions.
 
 ### What a promotion takes off
 
@@ -3746,6 +3784,17 @@ All three are **mix and match**: they count the targeted units of every line tog
 - **TIERED, CART (spend X save Y)**: the tier is the highest `minimumSpend` reached by the subtotal after item promotions (as for a minimum spend); it comes off the cart as `PERCENT` or `AMOUNT_OFF` and is allocated to the lines.
 - Product pages (`discountedPrice`) never show BXGY or tiered promotions: they depend on the cart.
 - **Breaking change (P2-B.5):** `Promotion.value` and `CouponCodeValidation.value` are nullable (null for TIERED).
+
+### B2B price lists (P2-W.1, `pricingVersion` 4)
+
+Price lists come before promotions: they set the price a unit costs, which promotions may then reduce.
+
+- **Which price**: a line's unit price is the lowest price the customer's open lists give its variant for the cart's quantity **of that variant** (lines of other variants do not count towards its tiers). A list is open when it `isActive`, is in its schedule (`startsAt`/`endsAt`, each optional), and the customer belongs to one of its `customerGroupIds`. Within a list the entry's highest break the quantity reaches applies (`minQuantity` at `price`, then each tier from its `minQuantity`).
+- **Minimum quantity (MOQ)**: below an entry's `minQuantity` the normal price applies; nothing is refused.
+- **Overlap**: across lists the lowest unit price wins; equal prices go to the lowest `priority` number, then the oldest list.
+- **Never above normal**: when the best list price is not below the variant's `price`, the normal price applies and the line counts as not price-listed (`fromPriceList: false`, promotions as usual).
+- **Promotions on top**: on a line priced from a list with `allowPromotions: true`, promotions work as on any line, from the list price. With `allowPromotions: false` (the default) the line is left out of promotions entirely: it gets no item promotion; its amount and units do not count towards any `minimumSpend` or `minimumQuantity` (item, cart or free shipping) and it takes no share of a cart promotion (`allocations` 0). A free-shipping promotion without a minimum still applies to the order. A coupon code on a cart whose every line is left out fails with `BAD_REQUEST` "This coupon does not apply to any item in your cart".
+- `checkoutQuote` shows the price on `QuoteLine.unitListPrice` with `fromPriceList: true`; `subtotal` uses those prices. The quote hash covers the list, the break reached and `allowPromotions`, so a change to them before `createOrder` gives `CONFLICT` + `QUOTE_CHANGED`. The order item stores the price as `unitListPrice` (and the list id internally).
 
 ### Free shipping (P2-B.6)
 

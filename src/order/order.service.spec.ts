@@ -14,6 +14,7 @@ import { PickupLocationsService } from '../pickup-locations/pickup-locations.ser
 import { FulfillmentType } from '../generated/prisma/client';
 import { ReturnsService } from '../returns/returns.service';
 import { PromotionsService } from '../promotions/promotions.service';
+import { PriceListsService } from '../price-lists/price-lists.service';
 import { PricingCouponCode, PricingPromotion } from '../pricing/price';
 import { StoreService } from '../store/store.service';
 
@@ -25,6 +26,8 @@ const zoneWithFee = (fee: string | number) => ({ id: 'zone1', fee: new Decimal(f
 const mockShippingZonesService = { getZoneForCity: jest.fn().mockResolvedValue(zoneWithFee('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
+const mockPriceListsService = { findForPricing: jest.fn() };
+
 const mockPromotionsService = {
   findForPricing: jest.fn(),
   reserveRedemptions: jest.fn(),
@@ -249,6 +252,7 @@ describe('OrdersService', () => {
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
         { provide: ReturnsService, useValue: mockReturnsService },
         { provide: PromotionsService, useValue: mockPromotionsService },
+        { provide: PriceListsService, useValue: mockPriceListsService },
         { provide: StoreService, useValue: mockStoreService },
       ],
     }).compile();
@@ -281,6 +285,7 @@ describe('OrdersService', () => {
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
     mockShippingZonesService.getZoneForCity.mockResolvedValue(zoneWithFee('5'));
     mockPromotionsService.findForPricing.mockResolvedValue(pricingFacts([]));
+    mockPriceListsService.findForPricing.mockResolvedValue([]);
   });
 
   describe('createOrderFromCart', () => {

@@ -11,7 +11,11 @@ const schema = buildSchema(`
   type ProductEdge { node: Product! }
   type ProductConnection { edges: [ProductEdge!]! }
   type Category { name: String! products(first: Int): [Product!]! }
+  type Tier { minQuantity: Int! }
+  type Entry { id: ID! tiers: [Tier!]! }
+  type EntryPage { nodes: [Entry!]! totalCount: Int! }
   type Query {
+    entries(first: Int): EntryPage!
     products(paginationArgs: PaginationArgs): ProductConnection!
     product(id: ID!): Product
     categories: [Category!]!
@@ -69,6 +73,11 @@ describe('listAwareEstimator', () => {
   it('multiplies a connection by the requested page size, counting edges once', () => {
     // products 1 + 20 × (edges 1 + node 1 + name 1)
     expect(cost('{ products(paginationArgs: { first: 20 }) { edges { node { name } } } }')).toBe(61);
+  });
+
+  it('multiplies a page by the requested page size, counting its nodes once', () => {
+    // entries 1 + 50 × (nodes 1 + (id 1 + tiers 1 + 10 × minQuantity 1) + totalCount 1)
+    expect(cost('{ entries(first: 50) { totalCount nodes { id tiers { minQuantity } } } }')).toBe(701);
   });
 
   it('uses the request variables for the page size', () => {

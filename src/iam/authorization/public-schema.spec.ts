@@ -35,7 +35,7 @@ function publicRootFields(resolvers: ClassRef[]): { root: 'Query' | 'Mutation'; 
       const root = Reflect.getMetadata(RESOLVER_TYPE_METADATA, method);
       if (root !== 'Query' && root !== 'Mutation') return [];
       const auth: AuthType[] | undefined = Reflect.getMetadata(AUTH_TYPE_KEY, method) ?? classAuth;
-      if (!auth?.includes(AuthType.None)) return [];
+      if (!auth?.includes(AuthType.None) && !auth?.includes(AuthType.Optional)) return [];
       return [{ root, field: Reflect.getMetadata(RESOLVER_NAME_METADATA, method) ?? key }];
     });
   });

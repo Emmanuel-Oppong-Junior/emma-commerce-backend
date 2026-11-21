@@ -32,6 +32,7 @@ import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
 import { PromotionsService } from '../promotions/promotions.service';
+import { PriceListsService } from '../price-lists/price-lists.service';
 import { CouponNotApplicableError, price, Quote, QuoteAdjustment } from '../pricing/price';
 import { StoreService } from '../store/store.service';
 import { TaxService } from '../tax/tax.service';
@@ -63,7 +64,7 @@ export interface CreateOrderParams extends CheckoutParams {
 
 /** The cart priced for checkout, with each line's cart item and each order adjustment's share per cart item. */
 export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments'> {
-  lines: (OrderSnapshotLine & { cartItemId: string })[];
+  lines: (OrderSnapshotLine & { cartItemId: string; fromPriceList: boolean })[];
   adjustments: (QuoteAdjustment & { allocations: { cartItemId: string; amount: Decimal }[] })[];
 }
 
@@ -132,6 +133,7 @@ export class OrdersService {
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly returnsService: ReturnsService,
     private readonly promotionsService: PromotionsService,
+    private readonly priceListsService: PriceListsService,
     private readonly storeService: StoreService,
     private readonly taxService: TaxService,
   ) {}
@@ -145,7 +147,11 @@ export class OrdersService {
     const cartItemIds = snapshot.lines.map((line) => cart.items[line.cartLineIndex].id);
     return {
       ...snapshot,
-      lines: snapshot.lines.map((line, index) => ({ ...line, cartItemId: cartItemIds[index] })),
+      lines: snapshot.lines.map((line, index) => ({
+        ...line,
+        cartItemId: cartItemIds[index],
+        fromPriceList: line.priceList !== null,
+      })),
       adjustments: snapshot.adjustments.map(({ allocations, ...adjustment }) => ({
         ...adjustment,
         allocations: sharesByCartItem(allocations, cartItemIds),
@@ -514,8 +520,8 @@ export class OrdersService {
   }
 
   /**
-   * Prices the cart with the pricing engine: item and cart promotions (the coupon code unlocking one), the tax the
-   * prices include and shipping. The quote is the order snapshot, so the total charged is the quote's grand total.
+   * Prices the cart with the pricing engine: the customer's price lists, item and cart promotions (the coupon code
+   * unlocking one), the tax the prices include and shipping. The quote is the order snapshot, so the total charged is the quote's grand total.
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
@@ -538,6 +544,12 @@ export class OrdersService {
       },
       userId,
       couponCode,
+      now,
+      tx,
+    );
+    const priceLists = await this.priceListsService.findForPricing(
+      unique(variants.map((variant) => variant.id)),
+      promotions.customer.groupIds,
       now,
       tx,
     );
@@ -565,6 +577,7 @@ export class OrdersService {
           promotions: promotions.promotions,
           taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
           customer: promotions.customer,
+          priceLists,
         },
       ),
     );

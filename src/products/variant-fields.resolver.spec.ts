@@ -27,9 +27,9 @@ describe('VariantFieldsResolver', () => {
         discountAmount: new Prisma.Decimal('14.99'),
       });
 
-      const result = await resolver.discountedPrice(mockVariant);
+      const result = await resolver.discountedPrice(mockVariant, undefined);
 
-      expect(mockLoad).toHaveBeenCalledWith('var1');
+      expect(mockLoad).toHaveBeenCalledWith({ userId: null, variantId: 'var1' });
       expect(result).toEqual(new Prisma.Decimal('5.00'));
     });
 
@@ -39,7 +39,7 @@ describe('VariantFieldsResolver', () => {
         discountAmount: new Prisma.Decimal(0),
       });
 
-      const result = await resolver.discountedPrice(mockVariant);
+      const result = await resolver.discountedPrice(mockVariant, undefined);
 
       expect(result).toEqual(null);
     });
@@ -61,9 +61,9 @@ describe('VariantFieldsResolver', () => {
         },
       });
 
-      const result = await resolver.appliedPromotion(mockVariant);
+      const result = await resolver.appliedPromotion(mockVariant, undefined);
 
-      expect(mockLoad).toHaveBeenCalledWith('var1');
+      expect(mockLoad).toHaveBeenCalledWith({ userId: null, variantId: 'var1' });
       expect(result).toEqual({
         id: 'promo1',
         name: 'Summer Sale',
@@ -75,9 +75,40 @@ describe('VariantFieldsResolver', () => {
     it('should return null without a promotion', async () => {
       mockLoad.mockResolvedValue({ discountedPrice: new Prisma.Decimal(80), discountAmount: new Prisma.Decimal(0) });
 
-      const result = await resolver.appliedPromotion(mockVariant);
+      const result = await resolver.appliedPromotion(mockVariant, undefined);
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('customerPrice and priceTiers', () => {
+    const tiers = [
+      { priceListId: 'l1', minQuantity: 1, unitPrice: new Prisma.Decimal(90), allowPromotions: false },
+      { priceListId: 'l2', minQuantity: 10, unitPrice: new Prisma.Decimal(80), allowPromotions: true },
+    ];
+
+    it("gives the signed-in customer's tiers, loaded for that customer, without the list ids", async () => {
+      mockLoad.mockResolvedValue({ discountAmount: new Prisma.Decimal(0), priceTiers: tiers });
+
+      const first = await resolver.customerPrice(mockVariant, 'user1');
+      const all = await resolver.priceTiers(mockVariant, 'user1');
+
+      expect(mockLoad).toHaveBeenCalledWith({ userId: 'user1', variantId: 'var1' });
+      expect(first).toEqual({ minQuantity: 1, unitPrice: new Prisma.Decimal(90), promotionsApply: false });
+      expect(all).toEqual([
+        { minQuantity: 1, unitPrice: new Prisma.Decimal(90), promotionsApply: false },
+        { minQuantity: 10, unitPrice: new Prisma.Decimal(80), promotionsApply: true },
+      ]);
+    });
+
+    it('gives a visitor null without loading anything, and a customer without a list null and []', async () => {
+      expect(await resolver.customerPrice(mockVariant, undefined)).toBeNull();
+      expect(await resolver.priceTiers(mockVariant, undefined)).toBeNull();
+      expect(mockLoad).not.toHaveBeenCalled();
+
+      mockLoad.mockResolvedValue({ discountAmount: new Prisma.Decimal(0), priceTiers: [] });
+      expect(await resolver.customerPrice(mockVariant, 'user1')).toBeNull();
+      expect(await resolver.priceTiers(mockVariant, 'user1')).toEqual([]);
     });
   });
 });

@@ -15,6 +15,7 @@ export const PERMISSION_CATALOGUE = {
   'payment.manage': 'Soft-delete and restore payment records',
   'promotion.manage': 'Manage promotions, coupon codes and their redemptions',
   'customer.group.manage': 'Manage customer groups and their members',
+  'pricelist.manage': 'Manage B2B price lists and their entries (what members of customer groups pay)',
   'tax.manage': 'Manage tax rates',
   'shipping.manage': 'Manage shipping zones and pickup locations',
   'review.moderate': 'Delete any customer review',

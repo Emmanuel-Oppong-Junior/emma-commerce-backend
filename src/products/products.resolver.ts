@@ -113,7 +113,7 @@ export class ProductsResolver {
     return this.productsService.removeTagFromProduct(productId, tagId, actorId);
   }
 
-  @Auth(AuthType.None)
+  @Auth(AuthType.Optional)
   @Query(() => ProductConnection, {
     name: 'products',
     description: 'Public catalogue: only active, PUBLISHED products, whatever filter is sent',
@@ -130,7 +130,7 @@ export class ProductsResolver {
     return this.productsService.findAllPublished(paginationArgs, filterArgs, sortArgs, connectionSelect(requestInfo));
   }
 
-  @Auth(AuthType.None)
+  @Auth(AuthType.Optional)
   @Query(() => Product, {
     name: 'product',
     nullable: true,

@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { AccessTokenGuard } from './access-token.guard';
 import { AuthType } from '../enums/auth-type.enum';
 import { AUTH_TYPE_KEY } from '../decorators/auth.decorator';
+import { getRequest } from '../../../commons/request-context';
 
 @Injectable()
 export class AuthenticationGuard implements CanActivate {
@@ -10,6 +11,12 @@ export class AuthenticationGuard implements CanActivate {
   private readonly authTypeGuardMap: Record<AuthType, CanActivate | CanActivate[]> = {
     [AuthType.Bearer]: this.accessTokenGuard,
     [AuthType.None]: { canActivate: () => true },
+    // A token that is sent is always checked: an expired one gets UNAUTHENTICATED (refresh it) rather than the
+    // anonymous view, which would silently hide the member's prices.
+    [AuthType.Optional]: {
+      canActivate: (context) =>
+        getRequest(context).headers.authorization === undefined || this.accessTokenGuard.canActivate(context),
+    },
   };
 
   constructor(

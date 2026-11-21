@@ -162,6 +162,7 @@ export class OrdersRepository {
           unitNet: line.unitNet,
           unitTax: line.unitTax,
           lineTotal: line.lineTotal,
+          priceListId: line.priceList?.priceListId ?? null,
           taxLines: { create: line.taxLines },
           adjustments: { create: line.adjustments.map((adjustment) => ({ ...adjustment, orderId: order.id })) },
         },

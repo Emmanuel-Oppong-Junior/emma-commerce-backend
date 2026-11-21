@@ -482,6 +482,33 @@ input CreatePickupLocationInput {
   state: String!
 }
 
+"""
+A new price list in the store currency; it starts inactive unless isActive is true
+"""
+input CreatePriceListInput {
+  """
+  Promotions apply on top of its prices. When false, lines priced from it get no promotion and do not count towards any minimum spend or quantity, nor share a cart promotion
+  """
+  allowPromotions: Boolean! = false
+
+  """Members of these customer groups get its prices"""
+  customerGroupIds: [ID!]! = []
+  description: String
+
+  """Null: open-ended"""
+  endsAt: DateTime
+  isActive: Boolean! = false
+
+  """Unique, max 100"""
+  name: String!
+
+  """Lowest number wins a tie between equal prices, then the oldest"""
+  priority: Int! = 0
+
+  """Null: open from creation"""
+  startsAt: DateTime
+}
+
 input CreateProductInput {
   """URLs to downloadable attachments or spec sheets"""
   attachments: [String!]
@@ -1062,6 +1089,9 @@ type Mutation {
 
   """Create a pickup location (admin only)"""
   createPickupLocation(input: CreatePickupLocationInput!): PickupLocationEntity!
+
+  """Admin: create a price list in the store currency"""
+  createPriceList(input: CreatePriceListInput!): PriceList!
   createProduct(createProductInput: CreateProductInput!): Product!
 
   """Creates a product type, optionally with its attributes (admin only)"""
@@ -1122,6 +1152,9 @@ type Mutation {
 
   """Delete a pickup location (admin only)"""
   deletePickupLocation(id: ID!): PickupLocationEntity!
+
+  """Admin: delete a price list and its entries (orders keep their prices)"""
+  deletePriceList(id: ID!): PriceList!
 
   """Deletes a product type no product uses; system types are read-only"""
   deleteProductType(id: ID!): ProductType!
@@ -1194,6 +1227,9 @@ type Mutation {
   """Removes a product from the user’s wishlist"""
   removeFromWishlist(productId: String!): Wishlist!
 
+  """Admin: take variants out of a price list (unknown ones are ignored)"""
+  removePriceListEntries(input: RemovePriceListEntriesInput!): PriceList!
+
   """Add products to a tag"""
   removeProductsFromTag(tagId: String!, updateDiscountInput: RemoveProductsFromTagDto!): Tag!
 
@@ -1231,6 +1267,11 @@ type Mutation {
   Send a failed job back to the queue with its attempts reset (super admin only; audited)
   """
   retryFailedJob(jobId: ID!, queue: JobQueue!): FailedJob!
+
+  """
+  Admin: set variants' prices in a price list; each entry replaces the variant's entry and tiers
+  """
+  setPriceListEntries(input: SetPriceListEntriesInput!): PriceList!
 
   """Sign in an existing user with email and password"""
   signIn(input: SignInInput!): AuthEntity!
@@ -1294,6 +1335,9 @@ type Mutation {
 
   """Update a pickup location (admin only)"""
   updatePickupLocation(id: ID!, input: UpdatePickupLocationInput!): PickupLocationEntity!
+
+  """Admin: change a price list"""
+  updatePriceList(id: ID!, input: UpdatePriceListInput!): PriceList!
   updateProduct(productId: String!, updateProductInput: UpdateProductInput!): Product!
 
   """Renames or redescribes a product type; system types are read-only"""
@@ -1673,6 +1717,90 @@ enum PriceChangeSource {
 
   """The first price of a new variant"""
   VARIANT_CREATED
+}
+
+"""
+A B2B price list (staff view): members of its customer groups pay its entries instead of the normal price
+"""
+type PriceList {
+  allowPromotions: Boolean!
+  createdAt: DateTime!
+  currency: Currency!
+  customerGroupIds: [ID!]!
+  description: String
+  endsAt: DateTime
+
+  """The entries, by variant id"""
+  entries(
+    after: ID
+
+    """1-200"""
+    first: Int! = 50
+  ): PriceListEntryPage!
+  entryCount: Int!
+  id: ID!
+  isActive: Boolean!
+  name: String!
+  priority: Int!
+  startsAt: DateTime
+  updatedAt: DateTime!
+}
+
+"""A variant's price in a price list (staff view)"""
+type PriceListEntry {
+  """
+  Minimum quantity (MOQ) for the list price; below it the normal price applies
+  """
+  minQuantity: Int!
+
+  """Unit price from minQuantity units, tax included"""
+  price: Money!
+
+  """Lower prices for larger quantities, ascending"""
+  tiers: [PriceListTier!]!
+  updatedAt: DateTime!
+  variantId: ID!
+}
+
+"""A variant's price in a list"""
+input PriceListEntryInput {
+  """
+  Minimum quantity (MOQ) for the list price; below it the normal price applies (nothing is refused)
+  """
+  minQuantity: Int! = 1
+
+  """
+  Unit price from minQuantity units, tax included like Variant.price; never charged above the normal price
+  """
+  price: Decimal!
+
+  """Lower prices for larger quantities, ascending"""
+  tiers: [PriceListTierInput!]! = []
+  variantId: ID!
+}
+
+type PriceListEntryPage {
+  """Pass the last node variantId as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [PriceListEntry!]!
+  totalCount: Int!
+}
+
+"""A quantity break of a price-list entry"""
+type PriceListTier {
+  minQuantity: Int!
+
+  """Unit price from minQuantity units, tax included"""
+  price: Money!
+}
+
+"""A quantity break: from minQuantity units, each costs price"""
+input PriceListTierInput {
+  """Above the entry's minQuantity and the previous tier's"""
+  minQuantity: Int!
+
+  """Tax included, like Variant.price; at most the price of the break below"""
+  price: Decimal!
 }
 
 """Lowest and highest selling price of a product's active variants"""
@@ -2182,6 +2310,12 @@ type Query {
     variantId: ID
   ): PriceChangePage!
 
+  """Admin: one price list"""
+  priceList(id: ID!): PriceList!
+
+  """Admin: price lists, newest first"""
+  priceLists(isActive: Boolean): [PriceList!]!
+
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
 
@@ -2370,6 +2504,11 @@ type QuoteLine {
   """The cart line it prices; a split cart line has several quote lines"""
   cartItemId: ID!
 
+  """
+  unitListPrice comes from one of the customer's B2B price lists (the quantity of the variant reached its minimum)
+  """
+  fromPriceList: Boolean!
+
   """(unitListPrice - unitDiscount) x quantity, tax included"""
   lineTotal: Money!
 
@@ -2384,7 +2523,9 @@ type QuoteLine {
   """Item discount taken off one unit"""
   unitDiscount: Money!
 
-  """Catalogue price of one unit, tax included"""
+  """
+  Price of one unit before promotions, tax included: the customer's price-list price or the normal price
+  """
   unitListPrice: Money!
 
   """One unit after its discount, without tax"""
@@ -2511,6 +2652,13 @@ input RejectReturnInput {
   returnRequestId: ID!
 }
 
+input RemovePriceListEntriesInput {
+  priceListId: ID!
+
+  """1-200 variant ids"""
+  variantIds: [ID!]!
+}
+
 input RemoveProductsFromTagDto {
   """List of product IDs to be added to tag"""
   productIds: [ID!] = []
@@ -2618,6 +2766,14 @@ type SalesReport {
   """Refunds processed in the period against accepted payments"""
   refunds: Money!
   totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
+}
+
+input SetPriceListEntriesInput {
+  """
+  1-200 entries; each replaces its variant's entry (with its tiers) in the list
+  """
+  entries: [PriceListEntryInput!]!
+  priceListId: ID!
 }
 
 """
@@ -3022,6 +3178,20 @@ input UpdatePickupLocationInput {
   state: String
 }
 
+"""
+Changes to a price list: omitted fields stay as they are, null clears an optional one; customerGroupIds, when given, replaces the groups
+"""
+input UpdatePriceListInput {
+  allowPromotions: Boolean
+  customerGroupIds: [ID!]
+  description: String
+  endsAt: DateTime
+  isActive: Boolean
+  name: String
+  priority: Int
+  startsAt: DateTime
+}
+
 input UpdateProductInput {
   """URLs to downloadable attachments or spec sheets"""
   attachments: [String!]
@@ -3413,7 +3583,12 @@ type Variant {
   basePrice: Money
 
   """
-  Price of one unit after the best automatic promotion on it (its own, its product, category or brand); null without one. Checkout may differ: coupons, cart minimums and cart promotions apply there.
+  The signed-in customer's B2B price at its minimum quantity (the first of priceTiers); null for a visitor or when none of their price lists prices this variant below its normal price
+  """
+  customerPrice: VariantPriceTier
+
+  """
+  Price of one unit after the best automatic promotion on it (its own, its product, category or brand); null without one. For a signed-in customer it starts from their price-list price when that applies to a single unit (none when the list does not allow promotions) and includes their customer-group and first-order promotions. Checkout may differ: coupons, cart minimums and cart promotions apply there.
   """
   discountedPrice: Money
   heightMm: Int
@@ -3456,6 +3631,11 @@ type Variant {
     """1-100"""
     first: Int! = 50
   ): PriceChangePage!
+
+  """
+  The signed-in customer's B2B unit prices by quantity, ascending (each from the quantity at which it applies, counting units of this variant only); null for a visitor, empty when no price list applies
+  """
+  priceTiers: [VariantPriceTier!]
   product: Product!
   productId: ID!
 
@@ -3510,6 +3690,19 @@ input VariantFieldsInput {
   sku: String
   weightGrams: Int
   widthMm: Int
+}
+
+"""
+What the signed-in customer pays per unit from a quantity, from their price lists
+"""
+type VariantPriceTier {
+  minQuantity: Int!
+
+  """Whether promotions may apply on top of this price"""
+  promotionsApply: Boolean!
+
+  """Unit price, tax included, before promotions"""
+  unitPrice: Money!
 }
 
 input VerifyEmailInput {

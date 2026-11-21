@@ -12,6 +12,8 @@ import { ProductsLoader } from './loaders/products.loader';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ProductsRepository } from './products.repository';
 import { TaxModule } from '../tax/tax.module';
+import { PriceListsModule } from '../price-lists/price-lists.module';
+import { StoreModule } from '../store/store.module';
 import { CommonsModule } from '../commons/commons.module';
 import { ProductTypesModule } from '../product-types/product-types.module';
 import { VariantModule } from '../variant/variant.module';
@@ -36,7 +38,17 @@ import {
     ReviewsLoader,
     ProductsLoader,
   ],
-  imports: [TagModule, PromotionsModule, PrismaModule, TaxModule, CommonsModule, ProductTypesModule, VariantModule],
+  imports: [
+    TagModule,
+    PromotionsModule,
+    PriceListsModule,
+    StoreModule,
+    PrismaModule,
+    TaxModule,
+    CommonsModule,
+    ProductTypesModule,
+    VariantModule,
+  ],
   exports: [ProductsLoader],
 })
 export class ProductsModule {}

@@ -28,6 +28,7 @@ Mutation createCouponCode                permission: promotion.manage; step-up
 Mutation createCustomerGroup             permission: customer.group.manage
 Mutation createOrder                     authenticated
 Mutation createPickupLocation            permission: shipping.manage
+Mutation createPriceList                 permission: pricelist.manage; step-up
 Mutation createProduct                   permission: catalog.product.write
 Mutation createProductType               permission: catalog.taxonomy.write
 Mutation createPromotion                 permission: promotion.manage; step-up
@@ -47,6 +48,7 @@ Mutation deleteCouponCode                permission: promotion.manage; step-up
 Mutation deleteCustomerGroup             permission: customer.group.manage
 Mutation deleteOrder                     permission: order.manage
 Mutation deletePickupLocation            permission: shipping.manage
+Mutation deletePriceList                 permission: pricelist.manage; step-up
 Mutation deleteProductType               permission: catalog.taxonomy.write
 Mutation deletePromotion                 permission: promotion.manage; step-up
 Mutation deleteReview                    customer only
@@ -66,6 +68,7 @@ Mutation removeCategory                  permission: catalog.taxonomy.write
 Mutation removeCustomerGroupMembers      permission: customer.group.manage
 Mutation removeFromCart                  authenticated
 Mutation removeFromWishlist              authenticated
+Mutation removePriceListEntries          permission: pricelist.manage; step-up
 Mutation removeProductsFromTag           permission: catalog.taxonomy.write
 Mutation removeStaffRole                 permission: staff.manage; step-up
 Mutation removeSubCategory               permission: catalog.taxonomy.write
@@ -77,6 +80,7 @@ Mutation restockVariant                  permission: inventory.adjust
 Mutation restorePayment                  permission: payment.manage
 Mutation restoreProduct                  permission: catalog.product.write
 Mutation retryFailedJob                  permission: jobs.manage
+Mutation setPriceListEntries             permission: pricelist.manage; step-up
 Mutation signIn                          public
 Mutation signInWithFacebook              public
 Mutation signInWithGoogle                public
@@ -94,6 +98,7 @@ Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateMyProfile                 authenticated
 Mutation updatePickupLocation            permission: shipping.manage
+Mutation updatePriceList                 permission: pricelist.manage; step-up
 Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.isTaxable is set
 Mutation updateProductType               permission: catalog.taxonomy.write
 Mutation updatePromotion                 permission: promotion.manage; step-up
@@ -116,10 +121,10 @@ Query address                            authenticated
 Query addresses                          permission: user.view; step-up when userId is omitted (exports every address)
 Query adminProduct                       permission: catalog.product.read
 Query adminProducts                      permission: catalog.product.read
-Query brand                              public
-Query brands                             public
+Query brand                              public, optional sign-in
+Query brands                             public, optional sign-in
 Query cart                               authenticated
-Query categories                         public
+Query categories                         public, optional sign-in
 Query category                           authenticated
 Query checkoutQuote                      authenticated
 Query customerGroup                      permission: customer.group.manage
@@ -136,9 +141,11 @@ Query payment                            authenticated
 Query payments                           permission: payment.view
 Query pickupLocations                    permission: shipping.manage
 Query priceChanges                       permission: catalog.product.read
-Query product                            public
+Query priceList                          permission: pricelist.manage
+Query priceLists                         permission: pricelist.manage
+Query product                            public, optional sign-in
 Query productReviews                     authenticated
-Query products                           public
+Query products                           public, optional sign-in
 Query productType                        public
 Query productTypes                       public
 Query promotion                          permission: promotion.manage

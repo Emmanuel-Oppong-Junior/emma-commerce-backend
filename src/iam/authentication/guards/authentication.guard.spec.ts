@@ -15,6 +15,11 @@ class MixedController {
   privateRoute() {
     return 'ok';
   }
+
+  @Auth(AuthType.Optional)
+  optionalRoute() {
+    return 'ok';
+  }
 }
 
 describe('AuthenticationGuard', () => {
@@ -44,6 +49,28 @@ describe('AuthenticationGuard', () => {
 
       await expect(guard.canActivate(context)).resolves.toBe(true);
       expect(accessTokenGuard.canActivate).toHaveBeenCalledWith(context);
+    });
+
+    it('lets an @Auth(Optional) handler through anonymously when no Authorization header is sent', async () => {
+      const context = buildContext({ headers: {} }, MixedController.prototype.optionalRoute, MixedController);
+
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(accessTokenGuard.canActivate).not.toHaveBeenCalled();
+    });
+
+    it('verifies the token an @Auth(Optional) request sends, and refuses an invalid one', async () => {
+      const context = buildContext(
+        { headers: { authorization: 'Bearer expired' } },
+        MixedController.prototype.optionalRoute,
+        MixedController,
+      );
+      accessTokenGuard.canActivate.mockResolvedValueOnce(true);
+
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+      expect(accessTokenGuard.canActivate).toHaveBeenCalledWith(context);
+
+      accessTokenGuard.canActivate.mockRejectedValueOnce(new UnauthorizedException('bad token'));
+      await expect(guard.canActivate(context)).rejects.toThrow('bad token');
     });
 
     it('rethrows the bearer check failure', async () => {

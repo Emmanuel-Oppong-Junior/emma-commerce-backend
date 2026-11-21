@@ -67,6 +67,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.productType.deleteMany({ where: { isSystem: false } });
 
   // Catalogue
+  await prisma.priceList.deleteMany();
   await prisma.promotion.deleteMany();
   await prisma.subCategory.deleteMany();
   await prisma.category.deleteMany();

@@ -97,8 +97,17 @@ export class QuoteLine {
   @Field(() => Int)
   quantity: number;
 
-  @Field(() => MoneyObject, { description: 'Catalogue price of one unit, tax included' })
+  @Field(() => MoneyObject, {
+    description:
+      "Price of one unit before promotions, tax included: the customer's price-list price or the normal price",
+  })
   unitListPrice: Decimal;
+
+  @Field({
+    description:
+      "unitListPrice comes from one of the customer's B2B price lists (the quantity of the variant reached its minimum)",
+  })
+  fromPriceList: boolean;
 
   @Field(() => MoneyObject, { description: 'Item discount taken off one unit' })
   unitDiscount: Decimal;

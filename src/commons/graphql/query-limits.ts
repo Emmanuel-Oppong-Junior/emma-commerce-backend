@@ -82,16 +82,19 @@ export function aliasLimitRule(maxAliases = MAX_ALIASES) {
 }
 
 // Lists cost their child complexity times the page size the client asked for (or a default).
-// Connection `edges` are already multiplied at the connection field, so they count once.
+// Connection `edges` and page `nodes` are already multiplied at the connection or page field, so they count once.
 export function listAwareEstimator({ type, field, args, childComplexity }: ComplexityEstimatorArgs): number {
   if (isIntrospection(type.name) || isIntrospection(field.name)) return 0;
   const requested = args.first ?? args.paginationArgs?.first;
   const returnType = isNonNullType(field.type) ? field.type.ofType : field.type;
-  const isConnectionEdges = type.name.endsWith('Connection') && field.name === 'edges';
-  const isConnection = getNamedType(field.type).name.endsWith('Connection');
+  const isPageItems =
+    (type.name.endsWith('Connection') && field.name === 'edges') ||
+    (type.name.endsWith('Page') && field.name === 'nodes');
+  const pageType = getNamedType(field.type).name;
+  const isPage = pageType.endsWith('Connection') || pageType.endsWith('Page');
   let size = 1;
   if (typeof requested === 'number') size = requested;
-  else if (isConnection || (isListType(returnType) && !isConnectionEdges)) size = DEFAULT_LIST_SIZE;
+  else if (isPage || (isListType(returnType) && !isPageItems)) size = DEFAULT_LIST_SIZE;
   return 1 + size * childComplexity;
 }
 

@@ -31,13 +31,13 @@ export class BrandResolver {
     return this.brandService.deleteBrand(id);
   }
 
-  @Auth(AuthType.None)
+  @Auth(AuthType.Optional)
   @Query(() => Brand, { nullable: true })
   async brand(@Args('id') id: string) {
     return this.brandService.getBrandById(id);
   }
 
-  @Auth(AuthType.None)
+  @Auth(AuthType.Optional)
   @Query(() => [Brand], { nullable: 'itemsAndList' })
   async brands(@Info() requestInfo?: GraphQLResolveInfo) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {

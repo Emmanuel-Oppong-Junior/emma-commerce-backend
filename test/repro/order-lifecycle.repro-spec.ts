@@ -23,6 +23,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     {} as never,
     { createSystemReturnRequest: jest.fn() } as never,
     {} as never,
+    {} as never,
     { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
     { findActive: jest.fn().mockResolvedValue([]) } as never,
   );

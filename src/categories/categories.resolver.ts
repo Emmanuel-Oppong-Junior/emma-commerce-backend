@@ -24,7 +24,7 @@ export class CategoriesResolver {
     return this.categoriesService.create(input);
   }
 
-  @Auth(AuthType.None)
+  @Auth(AuthType.Optional)
   @Query(() => [Category], {
     name: 'categories',
     description: 'Retrieves a list of all categories, sorted alphabetically by name',

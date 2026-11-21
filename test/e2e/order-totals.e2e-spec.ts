@@ -127,7 +127,7 @@ describe('Order totals, line snapshots and tax lines (P1-O.1, e2e)', () => {
       const orderAdjustments = sum(order.adjustments.filter((a) => a.orderItemId === null).map((a) => a.amount));
       const taxLines = sum(order.items.flatMap((item) => item.taxLines.map((line) => line.amount)));
 
-      expect(order).toMatchObject({ currency: 'GHS', pricingVersion: 3 });
+      expect(order).toMatchObject({ currency: 'GHS', pricingVersion: 4 });
       expect(lineNets.add(orderAdjustments).add(taxLines).add(order.shippingTotal!).toFixed(2)).toBe(
         order.grandTotal.toFixed(2),
       );

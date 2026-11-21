@@ -1,14 +1,20 @@
 import { Decimal } from '@prisma/client/runtime/client';
 import { toMinorUnits } from '../commons/money/money';
 import {
+  ANONYMOUS_CUSTOMER,
+  displayPriceTiers,
   displayUnitPromotions,
   CouponNotApplicableError,
+  listPrice,
   price as enginePrice,
   PRICING_VERSION,
   PricingCart,
   PricingContext,
   PricingCouponCode,
+  PricingCustomer,
   PricingLine,
+  PricingPriceList,
+  PricingPriceListEntry,
   PricingPromotion,
   PricingTaxRate,
   Quote,
@@ -124,6 +130,30 @@ const couponCode = (overrides: Partial<PricingCouponCode> = {}): PricingCouponCo
   ...overrides,
 });
 
+/** A live price list for the 'trade' customer group, created yesterday, with no schedule. */
+const priceList = (
+  id: string,
+  entries: PricingPriceListEntry[],
+  overrides: Partial<PricingPriceList> = {},
+): PricingPriceList => ({
+  id,
+  currency: 'GHS',
+  isActive: true,
+  startsAt: null,
+  endsAt: null,
+  priority: 0,
+  allowPromotions: false,
+  customerGroupIds: ['trade'],
+  createdAt: YESTERDAY,
+  entries,
+  ...overrides,
+});
+const entry = (
+  variantId: string,
+  listed: Decimal.Value,
+  overrides: Partial<PricingPriceListEntry> = {},
+): PricingPriceListEntry => ({ variantId, minQuantity: 1, price: d(listed), tiers: [], ...overrides });
+
 const VAT: PricingTaxRate = { id: 'vat', name: 'VAT', rate: d('0.15') };
 const NHIL: PricingTaxRate = { id: 'nhil', name: 'NHIL', rate: d('0.025') };
 const GETFUND: PricingTaxRate = { id: 'getfund', name: 'GETFund', rate: d('0.025') };
@@ -136,6 +166,7 @@ const context = (overrides: Partial<PricingContext> = {}): PricingContext => ({
   promotions: [],
   taxRates: [],
   customer: { redemptions: {}, groupIds: [], hasPriorOrder: false },
+  priceLists: [],
   ...overrides,
 });
 
@@ -646,6 +677,17 @@ describe('price', () => {
           (a) => a.promotion.id,
         ),
       ).toEqual(['vip']);
+    });
+
+    it('shows a signed-in customer without a prior order the first-order promotions, a visitor never', () => {
+      const unit = { variantId: 'v1', productId: 'p1', categoryId: 'c1', brandId: null, unitListPrice: d(100) };
+      const promotions = [pct('welcome', 50, { firstOrderOnly: true }), pct('all', 5, { stackingGroup: 'other' })];
+      const shown = (shopper: PricingCustomer | null) =>
+        displayUnitPromotions(unit, promotions, NOW, shopper).applied.map((a) => a.promotion.id);
+
+      expect(shown(customer())).toEqual(['all', 'welcome']);
+      expect(shown(customer({ hasPriorOrder: true }))).toEqual(['all']);
+      expect(shown(null)).toEqual(['all']);
     });
   });
 
@@ -1380,6 +1422,241 @@ describe('price', () => {
     });
   });
 
+  describe('price lists (P2-W.1)', () => {
+    const member: PricingCustomer = { redemptions: {}, groupIds: ['trade'], hasPriorOrder: false };
+    const lineOf = (quantity: number, overrides: Partial<PricingLine> = {}) =>
+      line({ variantId: 'v1', unitListPrice: d(100), quantity, ...overrides });
+    const quoteOf = (lines: PricingLine[], lists: PricingPriceList[], overrides: Partial<PricingContext> = {}) =>
+      price(cart(lines), context({ customer: member, priceLists: lists, ...overrides }));
+    const unitPrices = (quote: Quote) =>
+      quote.lines.map((l) => [l.variantId, l.quantity, money(l.unitListPrice), l.priceList?.priceListId ?? null]);
+
+    it('replaces the normal price with the list price for a member, and leaves a non-member on the normal price', () => {
+      const lists = [priceList('trade-list', [entry('v1', 80)])];
+
+      const quote = quoteOf([lineOf(2)], lists);
+      const visitor = price(cart([lineOf(2)]), context({ priceLists: lists }));
+
+      expect(unitPrices(quote)).toEqual([['v1', 2, '80.00', 'trade-list']]);
+      expect(quote.lines[0].priceList).toEqual({ priceListId: 'trade-list', minQuantity: 1, allowPromotions: false });
+      expect(money(quote.subtotal)).toBe('160.00');
+      expect(money(quote.grandTotal)).toBe('160.00');
+      expect(unitPrices(visitor)).toEqual([['v1', 2, '100.00', null]]);
+      expectBalanced(quote);
+    });
+
+    it('takes the highest tier the quantity reaches, at its exact boundary', () => {
+      const lists = [
+        priceList('trade-list', [
+          entry('v1', 90, {
+            tiers: [
+              { minQuantity: 10, price: d(80) },
+              { minQuantity: 50, price: d(70) },
+            ],
+          }),
+        ]),
+      ];
+      const at = (quantity: number) => unitPrices(quoteOf([lineOf(quantity)], lists))[0].slice(2, 3)[0];
+
+      expect([at(1), at(9), at(10), at(49), at(50), at(500)]).toEqual([
+        '90.00',
+        '90.00',
+        '80.00',
+        '80.00',
+        '70.00',
+        '70.00',
+      ]);
+      expect(quoteOf([lineOf(10)], lists).lines[0].priceList?.minQuantity).toBe(10);
+    });
+
+    it('counts the units of the variant across the cart, not across other variants (no mix and match)', () => {
+      const lists = [priceList('trade-list', [entry('v1', 90, { tiers: [{ minQuantity: 10, price: d(80) }] })])];
+
+      const sameVariant = quoteOf([lineOf(6), lineOf(4)], lists);
+      const otherVariant = quoteOf([lineOf(6), lineOf(4, { variantId: 'v2' })], lists);
+
+      expect(unitPrices(sameVariant).map((row) => row[2])).toEqual(['80.00', '80.00']);
+      expect(unitPrices(otherVariant)).toEqual([
+        ['v1', 6, '90.00', 'trade-list'],
+        ['v2', 4, '100.00', null],
+      ]);
+    });
+
+    it('charges the normal price below the minimum quantity, refusing nothing', () => {
+      const lists = [priceList('trade-list', [entry('v1', 80, { minQuantity: 12 })])];
+
+      expect(unitPrices(quoteOf([lineOf(11)], lists))).toEqual([['v1', 11, '100.00', null]]);
+      expect(unitPrices(quoteOf([lineOf(12)], lists))).toEqual([['v1', 12, '80.00', 'trade-list']]);
+    });
+
+    it('gives the lowest price across the open lists for the quantity; equal prices go to priority, then age', () => {
+      const tiered = priceList('volume', [entry('v1', 95, { tiers: [{ minQuantity: 20, price: d(60) }] })]);
+      const flatList = priceList('flat', [entry('v1', 85)]);
+      const sameOlder = priceList('same-older', [entry('v1', 85)], { createdAt: new Date('2026-01-01') });
+      const samePriority = priceList('same-priority', [entry('v1', 85)], { priority: -1, createdAt: TOMORROW });
+
+      expect(unitPrices(quoteOf([lineOf(5)], [tiered, flatList]))[0][3]).toBe('flat');
+      expect(unitPrices(quoteOf([lineOf(20)], [tiered, flatList]))[0].slice(2)).toEqual(['60.00', 'volume']);
+      expect(unitPrices(quoteOf([lineOf(5)], [flatList, sameOlder]))[0][3]).toBe('same-older');
+      expect(unitPrices(quoteOf([lineOf(5)], [flatList, sameOlder, samePriority]))[0][3]).toBe('same-priority');
+    });
+
+    it('never charges more than the normal price: a higher or equal list price leaves the line on the normal price', () => {
+      for (const listed of [120, 100]) {
+        const quote = quoteOf([lineOf(1)], [priceList('dear', [entry('v1', listed)])], {
+          promotions: [pct('ten', 10)],
+        });
+
+        expect(unitPrices(quote)).toEqual([['v1', 1, '100.00', null]]);
+        expect(money(quote.lines[0].unitDiscount)).toBe('10.00');
+      }
+    });
+
+    it.each([
+      ['inactive', { isActive: false }],
+      ['not started', { startsAt: TOMORROW }],
+      ['expired', { endsAt: YESTERDAY }],
+      ['for another group', { customerGroupIds: ['other'] }],
+      ['in another currency', { currency: 'USD' as const }],
+    ])('ignores a list that is %s', (_case, overrides) => {
+      expect(unitPrices(quoteOf([lineOf(1)], [priceList('l', [entry('v1', 80)], overrides)]))[0][2]).toBe('100.00');
+    });
+
+    describe('promotions on top', () => {
+      const lists = (allowPromotions: boolean) => [priceList('trade-list', [entry('v1', 80)], { allowPromotions })];
+      const lines = () => [lineOf(2), line({ variantId: 'v2', productId: 'p2', unitListPrice: d(50), quantity: 1 })];
+
+      it('item level: applies on the list price only when the list allows promotions', () => {
+        const promotions = [pct('ten', 10, { targetIds: ['p1', 'p2'] })];
+
+        const allowed = quoteOf(lines(), lists(true), { promotions });
+        const excluded = quoteOf(lines(), lists(false), { promotions });
+
+        expect(allowed.lines.map((l) => money(l.unitDiscount))).toEqual(['8.00', '5.00']);
+        expect(excluded.lines.map((l) => money(l.unitDiscount))).toEqual(['0.00', '5.00']);
+        expectBalanced(allowed);
+        expectBalanced(excluded);
+      });
+
+      it('cart level: an excluded line takes no share and its amount is not part of the promoted subtotal', () => {
+        const promotions = [pct('cart10', 10, { scope: 'CART', targetIds: [] })];
+
+        const allowed = quoteOf(lines(), lists(true), { promotions });
+        const excluded = quoteOf(lines(), lists(false), { promotions });
+
+        expect(allowed.adjustments.map((a) => [money(a.amount), a.allocations.map(money)])).toEqual([
+          ['-21.00', ['-16.00', '-5.00']],
+        ]);
+        expect(excluded.adjustments.map((a) => [money(a.amount), a.allocations.map(money)])).toEqual([
+          ['-5.00', ['0.00', '-5.00']],
+        ]);
+        expect(money(excluded.grandTotal)).toBe('205.00');
+        expectBalanced(excluded);
+      });
+
+      it('minimum spend and quantity count only the lines promotions may apply to', () => {
+        const promotions = [flat('over100', 20, { scope: 'CART', targetIds: [], minimumSpend: d(100) })];
+        const units = [flat('three', 20, { scope: 'CART', targetIds: [], minimumQuantity: 3 })];
+
+        expect(quoteOf(lines(), lists(true), { promotions }).adjustments).toHaveLength(1);
+        expect(quoteOf(lines(), lists(false), { promotions }).adjustments).toHaveLength(0);
+        expect(quoteOf(lines(), lists(true), { promotions: units }).adjustments).toHaveLength(1);
+        expect(quoteOf(lines(), lists(false), { promotions: units }).adjustments).toHaveLength(0);
+      });
+
+      it('free-shipping minimum spend leaves excluded lines out too; one without a minimum still applies', () => {
+        const delivery = { shippingFee: d(20), shippingZoneId: 'z1' };
+        const over100 = promotion('free100', 'FREE_SHIPPING', 0, {
+          scope: 'CART',
+          targetIds: [],
+          value: null,
+          minimumSpend: d(100),
+        });
+        const always = { ...over100, id: 'free', minimumSpend: null };
+        const quoteWith = (allow: boolean, promotions: PricingPromotion[]) =>
+          price(cart(lines(), delivery), context({ customer: member, priceLists: lists(allow), promotions }));
+
+        expect(money(quoteWith(true, [over100]).shippingTotal)).toBe('0.00');
+        expect(money(quoteWith(false, [over100]).shippingTotal)).toBe('20.00');
+        expect(money(quoteWith(false, [always]).shippingTotal)).toBe('0.00');
+      });
+
+      it('refuses a coupon when every line is left out of promotions', () => {
+        const only = [lineOf(2)];
+        const cartCoupon = coupon();
+        const itemCoupon = coupon({ scope: 'PRODUCT', targetIds: ['p1'], type: 'PERCENT', value: d(10) });
+        const priced = (allow: boolean, unlocked: PricingPromotion) =>
+          price(cart(only, { coupon: unlocked }), context({ customer: member, priceLists: lists(allow) }));
+
+        expect(() => priced(false, cartCoupon)).toThrow(CouponNotApplicableError);
+        expect(() => priced(false, itemCoupon)).toThrow('This coupon does not apply to any item in your cart');
+        expect(money(priced(true, cartCoupon).discountTotal)).toBe('10.00');
+      });
+    });
+
+    it('extracts the tax a taxable list price includes, like a normal price', () => {
+      const quote = quoteOf(
+        [lineOf(1, { taxable: true, unitListPrice: d('121.00') })],
+        [priceList('l', [entry('v1', '110.00')])],
+        { taxRates: GHANA },
+      );
+
+      expect([money(quote.lines[0].unitNet), money(quote.lines[0].unitTax)]).toEqual(['90.91', '19.09']);
+      expectBalanced(quote);
+    });
+
+    it('changes the quote hash with the applied list, the tier reached and whether promotions apply', () => {
+      const base = (overrides: Partial<PricingPriceList> = {}, quantity = 5) =>
+        quoteOf([lineOf(quantity)], [priceList('l', [entry('v1', 80)], overrides)]).quoteHash;
+      const tiered = (minQuantity: number) =>
+        quoteOf([lineOf(10)], [priceList('l', [entry('v1', 80, { tiers: [{ minQuantity, price: d('79.99') }] })])])
+          .quoteHash;
+      const sameAmount = quoteOf([lineOf(5, { unitListPrice: d(80) })], []).quoteHash;
+
+      expect(base()).toBe(base());
+      expect(base({ id: 'other' })).not.toBe(base());
+      expect(base({ allowPromotions: true })).not.toBe(base());
+      expect(tiered(9)).not.toBe(tiered(10));
+      expect(sameAmount).not.toBe(base());
+    });
+
+    describe('display (product pages)', () => {
+      const pageContext = (lists: PricingPriceList[], customer = member) => ({
+        currency: 'GHS' as const,
+        now: NOW,
+        customer,
+        priceLists: lists,
+      });
+      const shown = (tiers: ReturnType<typeof displayPriceTiers>) =>
+        tiers.map((t) => [t.minQuantity, money(t.unitPrice), t.priceListId, t.allowPromotions]);
+
+      it('shows the member every quantity at which their price drops, across lists, and nothing to others', () => {
+        const lists = [
+          priceList('volume', [entry('v1', 95, { minQuantity: 5, tiers: [{ minQuantity: 20, price: d(60) }] })]),
+          priceList('flat', [entry('v1', 85, { minQuantity: 10 })], { allowPromotions: true }),
+          priceList('dear', [entry('v1', 99)]),
+        ];
+
+        expect(shown(displayPriceTiers('v1', d(100), pageContext(lists)))).toEqual([
+          [1, '99.00', 'dear', false],
+          [5, '95.00', 'volume', false],
+          [10, '85.00', 'flat', true],
+          [20, '60.00', 'volume', false],
+        ]);
+        expect(displayPriceTiers('v1', d(100), pageContext(lists, ANONYMOUS_CUSTOMER))).toEqual([]);
+        expect(displayPriceTiers('v1', d(90), pageContext([priceList('dear', [entry('v1', 99)])]))).toEqual([]);
+      });
+
+      it('agrees with listPrice at every quantity', () => {
+        const lists = [priceList('volume', [entry('v1', 95, { tiers: [{ minQuantity: 3, price: d(90) }] })])];
+
+        expect(listPrice('v1', d(100), 2, pageContext(lists))?.unitPrice).toEqual(d(95));
+        expect(listPrice('v1', d(100), 3, pageContext(lists))?.unitPrice).toEqual(d(90));
+        expect(listPrice('v2', d(100), 3, pageContext(lists))).toBeNull();
+      });
+    });
+  });
+
   describe('quote hash', () => {
     const lines = [
       line({ variantId: 'v1', unitListPrice: d('117.50'), quantity: 2, taxable: true }),
@@ -1663,6 +1940,112 @@ describe('price', () => {
           expectCartCovered(quote, lines);
           expectWithinUnitCaps(quote, promotions);
           for (const l of quote.lines) expect(l.unitDiscount.lte(l.unitListPrice)).toBe(true);
+        }
+      },
+    );
+
+    it.each(seeds)(
+      'holds with overlapping price lists, tiers, minimum quantities and promotions on top or not, from seed %i',
+      (seed) => {
+        const next = sequence(seed * 15_485_863);
+        const pesewas = (max: number) => d(next(max)).div(100);
+        const customer: PricingCustomer = { redemptions: {}, groupIds: ['trade'], hasPriorOrder: false };
+
+        for (let run = 0; run < 300; run += 1) {
+          const lines = Array.from({ length: 1 + next(6) }, () =>
+            line({
+              variantId: `v${next(4)}`,
+              productId: `p${next(3)}`,
+              categoryId: `c${next(2)}`,
+              quantity: 1 + next(15),
+              unitListPrice: d(1).add(pesewas(50_000)),
+              taxable: next(3) !== 0,
+            }),
+          );
+          const lists = Array.from({ length: next(4) }, (_, index) =>
+            priceList(
+              `l${index}`,
+              Array.from({ length: 4 }, (_, variant) => variant)
+                .filter(() => next(2) === 0)
+                .map((variant) => {
+                  const start = d(1).add(pesewas(60_000));
+                  const lower = start.mul(next(100)).div(100).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+                  return entry(`v${variant}`, start, {
+                    minQuantity: 1 + next(4),
+                    tiers: next(2) === 0 ? [] : [{ minQuantity: 5 + next(6), price: Decimal.max(d('0.01'), lower) }],
+                  });
+                }),
+              {
+                allowPromotions: next(2) === 0,
+                priority: next(3),
+                createdAt: new Date(2026, 0, 1 + next(3)),
+                customerGroupIds: next(5) === 0 ? ['other'] : ['trade'],
+              },
+            ),
+          );
+          const promotions = Array.from({ length: next(5) }, (_, index): PricingPromotion => {
+            const common = {
+              stackingGroup: `g${next(3)}`,
+              exclusive: next(6) === 0,
+              priority: next(3),
+              createdAt: new Date(2026, 0, 1 + next(3)),
+              minimumSpend: next(4) === 0 ? pesewas(200_000) : null,
+              minimumQuantity: next(5) === 0 ? 1 + next(6) : null,
+            };
+            const kind = next(4);
+            if (kind === 0) return pct(`cart${index}`, next(101), { ...common, scope: 'CART', targetIds: [] });
+            if (kind === 1) {
+              return promotion(`ship${index}`, 'FREE_SHIPPING', 0, {
+                ...common,
+                scope: 'CART',
+                targetIds: [],
+                value: next(2) === 0 ? null : pesewas(4_000),
+              });
+            }
+            if (kind === 2) return flat(`flat${index}`, pesewas(30_000), { ...common, targetIds: [`p${next(3)}`] });
+            return pct(`sku${index}`, next(101), { ...common, scope: 'SKU', targetIds: [`v${next(4)}`] });
+          });
+          const randomCoupon = next(3) === 0 ? coupon({ value: pesewas(20_000) }) : undefined;
+          const shipping = { shippingFee: pesewas(5_000), shippingZoneId: 'z1' };
+          const pricingContext = context({ promotions, priceLists: lists, customer, taxRates: GHANA });
+
+          let quote: Quote;
+          try {
+            quote = price(cart(lines, { ...shipping, coupon: randomCoupon }), pricingContext);
+          } catch (error) {
+            // Only a coupon on a cart whose every line a price list keeps out of promotions is refused.
+            expect(error).toBeInstanceOf(CouponNotApplicableError);
+            continue;
+          }
+          const again = price(
+            cart(shuffled(lines, next), { ...shipping, coupon: randomCoupon }),
+            context({
+              promotions: shuffled(promotions, next),
+              priceLists: shuffled(lists, next),
+              customer,
+              taxRates: shuffled(GHANA, next),
+            }),
+          );
+
+          expectBalanced(quote);
+          expectCartCovered(quote, lines);
+          expect(again.quoteHash).toBe(quote.quoteHash);
+          for (const l of quote.lines) {
+            const cartLine = lines[l.cartLineIndex];
+            const units = lines
+              .filter((each) => each.variantId === l.variantId)
+              .reduce((n, each) => n + each.quantity, 0);
+            // Never above the normal price; exactly the price listPrice gives for the variant's units.
+            expect(l.unitListPrice.lte(cartLine.unitListPrice)).toBe(true);
+            const expected = listPrice(l.variantId, cartLine.unitListPrice, units, pricingContext);
+            expect(l.priceList?.priceListId ?? null).toBe(expected?.priceListId ?? null);
+            expectSame(l.unitListPrice, expected?.unitPrice ?? cartLine.unitListPrice);
+            if (l.priceList && !l.priceList.allowPromotions) {
+              expect(l.adjustments).toEqual([]);
+              for (const adjustment of quote.adjustments)
+                expectSame(adjustment.allocations[quote.lines.indexOf(l)], d(0));
+            }
+          }
         }
       },
     );
