@@ -23,7 +23,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | Phase | Done | Status |
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
-| 1 — Foundations | 28 / 33 | 🔄 in progress |
+| 1 — Foundations | 30 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 0 / 15 | ⬜ not started |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **74 / 154** | |
+| **All** | **76 / 154** | |
 
 ---
 
@@ -271,10 +271,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P1-N.2** Reserve at placement, consume at capture/dispatch, release on cancel/expiry — all conditional [aab5a0c, 76de3d8]
 - [x] **P1-N.3** Nightly reconciliation Σ movements = onHand [c7bc7d8]
 
-### P1-O — Order snapshots & tax lines (ADR-0006/0014)
+### P1-O — Order snapshots & tax lines (ADR-0006/0014)  ✅ complete
 > Accept: Σ lines + adjustments + tax + shipping = grand total (property test) · Run: → after V.3 · L · 🟥
-- [ ] **P1-O.1** Order totals/currency/pricingVersion + line snapshots + `OrderAdjustment` + `OrderLineTax` (M8; legacy = pricingVersion 0, no invented tax)
-- [ ] **P1-O.2** Order/payment/fulfilment state machines complete (statuses `PLACED…COMPLETED`, `PAYMENT_REVIEW`, history table M4)
+- [x] **P1-O.1** Order totals/currency/pricingVersion + line snapshots + `OrderAdjustment` + `OrderLineTax` (M8; legacy = pricingVersion 0, no invented tax) [f03848a]
+- [x] **P1-O.2** Order/payment/fulfilment state machines complete (statuses `PLACED…COMPLETED`, `PAYMENT_REVIEW`, history table M4) [0c523a0]
 
 ### P1-G — Ghana addresses  ✅ complete
 > Accept: Checkout works without zip code · Run: ∥ · M · 🟥
