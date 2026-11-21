@@ -38,6 +38,7 @@ import { StoreService } from '../store/store.service';
 import { TaxService } from '../tax/tax.service';
 import { assertDeliverableAddress } from '../addresses/deliverable-address';
 import { toAddressSnapshot } from '../addresses/address-snapshot';
+import { PaymentSettingsService } from '../payment/settings/payment-settings.service';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -52,12 +53,13 @@ export interface CheckoutParams {
   shippingAddressId?: string;
   pickupLocationId?: string;
   couponCode?: string;
+  /** Defaults to ONLINE; refused when the store does not offer it. */
+  paymentMethod?: PaymentMethod;
 }
 
 export interface CreateOrderParams extends CheckoutParams {
   contactEmail: string;
   contactPhone: string;
-  paymentMethod?: PaymentMethod;
   /** quoteHash of the checkoutQuote the customer confirmed. */
   quoteHash: string;
 }
@@ -136,13 +138,15 @@ export class OrdersService {
     private readonly priceListsService: PriceListsService,
     private readonly storeService: StoreService,
     private readonly taxService: TaxService,
+    private readonly paymentSettings: PaymentSettingsService,
   ) {}
 
   /**
    * Prices the user's cart for checkout with the given fulfilment and coupon, exactly as createOrder will charge it.
-   * Writes nothing.
+   * Writes nothing. BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer the payment method.
    */
   async checkoutQuote(userId: string, params: CheckoutParams): Promise<CheckoutQuote> {
+    await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
     const { cart, snapshot } = await this.priceCheckout(userId, params);
     const cartItemIds = snapshot.lines.map((line) => cart.items[line.cartLineIndex].id);
     return {
@@ -164,9 +168,11 @@ export class OrdersService {
    * shipping are read and priced inside it (the cart row and its variants locked), and the order is placed only if
    * that quote's hash is the `quoteHash` the customer confirmed; otherwise CONFLICT with reason QUOTE_CHANGED and
    * nothing is reserved, charged or recorded. The order stores the quote as its snapshot, so it charges the quote's
-   * grand total. DELIVERY needs shippingAddressId (shipping fee by city); PICKUP needs pickupLocationId (no fee).
+   * grand total. DELIVERY needs shippingAddressId (shipping fee by city); PICKUP needs pickupLocationId (no fee). A
+   * payment method the store does not offer is refused first (BAD_REQUEST, reason PAYMENT_METHOD_UNAVAILABLE).
    */
   async createOrderFromCart(userId: string, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
+    await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
     return this.ordersRepository.runTransaction(async (tx) => {
       const checkout = await this.priceCheckout(userId, params, tx);
       if (checkout.snapshot.quoteHash !== params.quoteHash) throw quoteChanged();

@@ -3,11 +3,21 @@ import { validate } from 'class-validator';
 import { CreatePaymentDto } from './create-payment.dto';
 
 const errorsFor = (body: Record<string, unknown>) =>
-  validate(plainToInstance(CreatePaymentDto, { orderId: 'order1', paymentMethod: 'card', ...body }));
+  validate(plainToInstance(CreatePaymentDto, { orderId: 'order1', paymentMethod: 'CARD', ...body }));
 
 describe('CreatePaymentDto', () => {
   it('accepts a request without a currency', async () => {
     await expect(errorsFor({})).resolves.toEqual([]);
+  });
+
+  it.each(['CARD', 'MOBILE_MONEY'])('accepts the online method %s', async (paymentMethod) => {
+    await expect(errorsFor({ paymentMethod })).resolves.toEqual([]);
+  });
+
+  it.each(['card', 'CASH_ON_DELIVERY', undefined])('rejects paymentMethod %s', async (paymentMethod) => {
+    const errors = await errorsFor({ paymentMethod });
+
+    expect(errors.map((e) => e.property)).toEqual(['paymentMethod']);
   });
 
   it('accepts GHS', async () => {

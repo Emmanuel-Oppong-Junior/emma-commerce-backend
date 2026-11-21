@@ -29,6 +29,7 @@ const values = {
   JWT_REFRESH_SECRET: secret(),
   JWT_RESET_SECRET: secret(),
   MFA_ENCRYPTION_KEY: secret(),
+  PAYMENT_CONFIG_ENCRYPTION_KEY: secret(),
   JWT_TOKEN_AUDIENCE: 'emma-commerce-test',
   JWT_TOKEN_ISSUER: 'emma-commerce-test',
   GOOGLE_CLIENT_ID: 'test-google-client-id',

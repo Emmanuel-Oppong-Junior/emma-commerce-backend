@@ -73,6 +73,7 @@ export class OrdersResolver {
       shippingAddressId: input.shippingAddressId,
       pickupLocationId: input.pickupLocationId,
       couponCode: input.couponCode,
+      paymentMethod: input.paymentMethod as PaymentMethod,
     });
   }
 

@@ -4,6 +4,7 @@ import { Prisma } from '../../generated/prisma/client';
 import { providerRegistryWith, TEST_PAYSTACK_SECRET } from '../../../test/helpers/payment-providers.helper';
 import { PaystackRequestRejected } from '../paystack.client';
 import { PaymentProvider, ProviderCapabilities, ProviderRequestRejected } from './payment-provider.port';
+import { OnlinePaymentMethod } from '../settings/payment-methods';
 
 const paystackClient = {
   initializeTransaction: jest.fn(),
@@ -14,7 +15,13 @@ const paystackClient = {
 const registry = providerRegistryWith(paystackClient, { callbackUrl: 'https://shop.test/paid' });
 
 const sign = (raw: Buffer, secret = TEST_PAYSTACK_SECRET) => createHmac('sha512', secret).update(raw).digest('hex');
-const checkout = { email: 'buyer@example.com', amount: new Prisma.Decimal('125.50'), currency: 'GHS', reference: 'r1' };
+const checkout = {
+  method: OnlinePaymentMethod.CARD,
+  email: 'buyer@example.com',
+  amount: new Prisma.Decimal('125.50'),
+  currency: 'GHS',
+  reference: 'r1',
+};
 const listRequest = { from: new Date(0), to: new Date(1), status: 'success' as const, page: 1, perPage: 10 };
 
 /** Every adapter: an operation its capabilities rule out is refused before anything is sent. */
@@ -78,6 +85,7 @@ describe('PaystackAdapter', () => {
       currency: 'GHS',
       reference: 'r1',
       callback_url: 'https://shop.test/paid',
+      channels: ['card'],
     });
   });
 

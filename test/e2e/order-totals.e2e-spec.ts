@@ -189,7 +189,7 @@ describe('Order totals, line snapshots and tax lines (P1-O.1, e2e)', () => {
       await request(app.getHttpServer())
         .post('/payment/initialize')
         .set('Authorization', `Bearer ${userToken}`)
-        .send({ orderId, paymentMethod: 'card' })
+        .send({ orderId, paymentMethod: 'CARD' })
         .expect(201);
 
       const intent = await prisma.paymentIntent.findUniqueOrThrow({ where: { orderId } });

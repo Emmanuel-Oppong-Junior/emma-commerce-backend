@@ -1,6 +1,7 @@
 import { BadGatewayException, UnauthorizedException } from '@nestjs/common';
 import { PaymentProvider as ProviderName, Prisma } from '../../generated/prisma/client';
 import { ProviderVerification } from '../payment-verification';
+import { OnlinePaymentMethod } from '../settings/payment-methods';
 
 /** What a provider can do; callers check it before asking for an operation (ADR-0007 §1). */
 export interface ProviderCapabilities {
@@ -13,6 +14,7 @@ export interface ProviderCapabilities {
 }
 
 export interface CheckoutRequest {
+  method: OnlinePaymentMethod;
   email: string;
   amount: Prisma.Decimal;
   currency: string;

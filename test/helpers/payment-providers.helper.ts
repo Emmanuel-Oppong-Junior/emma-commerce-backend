@@ -5,25 +5,28 @@ import { PaymentProviderRegistry } from '../../src/payment/providers/payment-pro
 
 export const TEST_PAYSTACK_SECRET = 'sk_test_webhook_secret';
 
+/**
+ * PaymentSettingsService as the payment code sees it, for unit tests: Paystack configured with `secretKey`, every
+ * method on offer and served by Paystack. Override a function to test refusals.
+ */
+export function paymentSettingsStub(settings: { secretKey?: string; callbackUrl?: string } = {}) {
+  const credentials = { secretKey: settings.secretKey ?? TEST_PAYSTACK_SECRET, callbackUrl: settings.callbackUrl };
+  return {
+    paystackCredentials: jest.fn(async () => credentials),
+    requirePaystackCredentials: jest.fn(async () => credentials),
+    onlineProviderFor: jest.fn(async () => 'PAYSTACK'),
+    assertOrderPaymentMethod: jest.fn(async () => undefined),
+  };
+}
+
 /** The real adapters and registry over a mocked Paystack HTTP client, so unit tests mock only the I/O boundary. */
 export function providerRegistryWith(
   paystack: Partial<Record<keyof PaystackClient, jest.Mock>>,
-  settings: { secretKey?: string; callbackUrl?: string } = {},
+  settings: ReturnType<typeof paymentSettingsStub> | { secretKey?: string; callbackUrl?: string } = {},
 ): PaymentProviderRegistry {
-  const values: Record<string, string | undefined> = {
-    PAYSTACK_SECRET_KEY: settings.secretKey ?? TEST_PAYSTACK_SECRET,
-    PAYSTACK_CALLBACK_URL: settings.callbackUrl,
-  };
-  const config = {
-    get: (key: string) => values[key],
-    getOrThrow: (key: string) => {
-      const value = values[key];
-      if (value === undefined) throw new Error(`${key} is not set`);
-      return value;
-    },
-  };
+  const stub = 'paystackCredentials' in settings ? settings : paymentSettingsStub(settings);
   return new PaymentProviderRegistry(
-    new PaystackAdapter(paystack as unknown as PaystackClient, config as never),
+    new PaystackAdapter(paystack as unknown as PaystackClient, stub as never),
     new CashOnDeliveryAdapter(),
   );
 }

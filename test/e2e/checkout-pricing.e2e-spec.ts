@@ -134,7 +134,7 @@ describe('Checkout pricing (e2e)', () => {
     await request(app.getHttpServer())
       .post('/payment/initialize')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ orderId: order.id, paymentMethod: 'card' })
+      .send({ orderId: order.id, paymentMethod: 'CARD' })
       .expect(201);
     expect(paystack.initializeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ amount: 179998, currency: 'GHS' }),

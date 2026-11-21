@@ -12,7 +12,10 @@ const PRODUCTION_SECRET_KEYS = [
   'REDIS_PASSWORD',
   'RESEND_API_KEY',
   'MFA_ENCRYPTION_KEY',
+  'PAYMENT_CONFIG_ENCRYPTION_KEY',
 ] as const;
+
+const ENCRYPTION_KEYS = ['MFA_ENCRYPTION_KEY', 'PAYMENT_CONFIG_ENCRYPTION_KEY'] as const;
 
 const JWT_SECRET_KEYS = ['JWT_SECRET', 'JWT_REFRESH_SECRET', 'JWT_RESET_SECRET'] as const;
 
@@ -34,7 +37,7 @@ function rejectUnsafeProductionSecrets(env: Record<string, unknown>, helpers: Jo
     (key) =>
       typeof env[key] === 'string' &&
       (PLACEHOLDER_SECRET_PATTERN.test(env[key] as string) ||
-        (key === 'MFA_ENCRYPTION_KEY' && REPEATED_UNIT_PATTERN.test(env[key] as string))),
+        ((ENCRYPTION_KEYS as readonly string[]).includes(key) && REPEATED_UNIT_PATTERN.test(env[key] as string))),
   );
   if (placeholderKeys.length > 0) {
     return helpers.message({
@@ -44,6 +47,10 @@ function rejectUnsafeProductionSecrets(env: Record<string, unknown>, helpers: Jo
 
   if (new Set(JWT_SECRET_KEYS.map((key) => env[key])).size !== JWT_SECRET_KEYS.length) {
     return helpers.message({ custom: `${JWT_SECRET_KEYS.join(', ')} must all be different in production` });
+  }
+
+  if (String(env.MFA_ENCRYPTION_KEY).toLowerCase() === String(env.PAYMENT_CONFIG_ENCRYPTION_KEY).toLowerCase()) {
+    return helpers.message({ custom: `${ENCRYPTION_KEYS.join(' and ')} must be different in production` });
   }
 
   return env;
@@ -82,8 +89,9 @@ export const envValidationSchema = Joi.object({
   FACEBOOK_APP_ID: Joi.string().required(),
   FACEBOOK_APP_SECRET: Joi.string().required(),
 
-  // Paystack
-  PAYSTACK_SECRET_KEY: Joi.string().required(),
+  // Paystack fallback: used only while the store has no Paystack config in the database (setPaystackConfig). Without
+  // either, online payment is unavailable and Paystack webhooks are refused.
+  PAYSTACK_SECRET_KEY: Joi.string().optional(),
   PAYSTACK_CALLBACK_URL: Joi.string().uri().optional(),
 
   // Cloudinary
@@ -111,6 +119,12 @@ export const envValidationSchema = Joi.object({
     .pattern(/^[0-9a-fA-F]{64}$/)
     .required()
     .messages({ 'string.pattern.base': 'MFA_ENCRYPTION_KEY must be 64 hexadecimal characters (32 bytes)' }),
+
+  // AES-256-GCM key for payment provider secrets stored in the database: 32 random bytes as hex (`openssl rand -hex 32`).
+  PAYMENT_CONFIG_ENCRYPTION_KEY: Joi.string()
+    .pattern(/^[0-9a-fA-F]{64}$/)
+    .required()
+    .messages({ 'string.pattern.base': 'PAYMENT_CONFIG_ENCRYPTION_KEY must be 64 hexadecimal characters (32 bytes)' }),
 
   // Logging
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug').default('info'),

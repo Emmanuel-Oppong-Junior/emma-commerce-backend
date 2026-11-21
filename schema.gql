@@ -144,6 +144,25 @@ type AuthEntity {
   refreshToken: String!
 }
 
+type AvailableOnlinePaymentMethod {
+  method: OnlinePaymentMethod!
+  provider: OnlinePaymentProvider!
+
+  """The provider's public key, for opening its popup checkout"""
+  publicKey: String
+}
+
+"""What a customer can pay with at this store right now"""
+type AvailablePaymentMethods {
+  """Whether CASH_ON_DELIVERY orders are accepted"""
+  cashOnDelivery: Boolean!
+
+  """
+  Online methods on offer (ONLINE orders need at least one); pass the method to POST /payment/initialize
+  """
+  online: [AvailableOnlinePaymentMethod!]!
+}
+
 type Brand {
   createdAt: DateTime!
   description: String
@@ -289,7 +308,7 @@ type CheckoutQuote {
 }
 
 """
-What checkout prices the cart for: the fulfilment and an optional coupon
+What checkout prices the cart for: the fulfilment, an optional coupon and how the order will be paid
 """
 input CheckoutQuoteInput {
   """Optional coupon code to apply to the order"""
@@ -299,6 +318,11 @@ input CheckoutQuoteInput {
   Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
   """
   fulfillmentType: FulfillmentType!
+
+  """
+  ONLINE (pay now by card or mobile money, see availablePaymentMethods) or CASH_ON_DELIVERY. BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer it
+  """
+  paymentMethod: OrderPaymentMethod = ONLINE
 
   """
   Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
@@ -450,7 +474,7 @@ input CreateOrderInput {
   fulfillmentType: FulfillmentType!
 
   """
-  Payment method for this order. Defaults to ONLINE (Paystack). Use CASH_ON_DELIVERY to pay on delivery.
+  ONLINE (pay now by card or mobile money, see availablePaymentMethods) or CASH_ON_DELIVERY. BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer it
   """
   paymentMethod: OrderPaymentMethod = ONLINE
 
@@ -1227,6 +1251,11 @@ type Mutation {
   """Removes a product from the user’s wishlist"""
   removeFromWishlist(productId: String!): Wishlist!
 
+  """
+  Delete the stored Paystack keys, so PAYSTACK_SECRET_KEY (if set) applies again. NOT_FOUND when none are stored. Owner, recent step-up, audited
+  """
+  removePaystackConfig: PaymentSettings!
+
   """Admin: take variants out of a price list (unknown ones are ignored)"""
   removePriceListEntries(input: RemovePriceListEntriesInput!): PriceList!
 
@@ -1267,6 +1296,11 @@ type Mutation {
   Send a failed job back to the queue with its attempts reset (super admin only; audited)
   """
   retryFailedJob(jobId: ID!, queue: JobQueue!): FailedJob!
+
+  """
+  Store the Paystack keys for this store, encrypted, replacing any earlier ones; they take precedence over PAYSTACK_SECRET_KEY and sign-check webhooks from then on. Owner, recent step-up, audited without the secret
+  """
+  setPaystackConfig(input: SetPaystackConfigInput!): PaymentSettings!
 
   """
   Admin: set variants' prices in a price list; each entry replaces the variant's entry and tiers
@@ -1333,6 +1367,11 @@ type Mutation {
     updateMyProfileInput: UpdateUserInput!
   ): User!
 
+  """
+  Switch card, mobile money and cash on delivery on or off and choose the provider of each online method. Owner, recent step-up, audited
+  """
+  updatePaymentMethods(input: UpdatePaymentMethodsInput!): PaymentSettings!
+
   """Update a pickup location (admin only)"""
   updatePickupLocation(id: ID!, input: UpdatePickupLocationInput!): PickupLocationEntity!
 
@@ -1398,6 +1437,16 @@ type Mutation {
   """
   verifyEmail(input: VerifyEmailInput!): Boolean!
   verifyPayment(verifyPaymentInput: VerifyPaymentInput!): Payment!
+}
+
+"""How an ONLINE order is paid; chosen per payment attempt"""
+enum OnlinePaymentMethod {
+  CARD
+  MOBILE_MONEY
+}
+
+enum OnlinePaymentProvider {
+  PAYSTACK
 }
 
 type Order {
@@ -1648,11 +1697,64 @@ type Payment {
   updatedAt: DateTime!
 }
 
+"""
+Where the credentials in use come from: the store config (setPaystackConfig), the server environment fallback, or nowhere (online payment unavailable)
+"""
+enum PaymentCredentialSource {
+  DATABASE
+  ENVIRONMENT
+  NONE
+}
+
+"""
+Which payment methods the store offers and which provider serves each online method
+"""
+type PaymentMethodSettings {
+  cardPaymentProvider: OnlinePaymentProvider!
+  cardPaymentsEnabled: Boolean!
+  cashOnDeliveryEnabled: Boolean!
+  mobileMoneyPaymentProvider: OnlinePaymentProvider!
+  mobileMoneyPaymentsEnabled: Boolean!
+}
+
+"""Test or live keys, from the secret key prefix"""
+enum PaymentProviderMode {
+  LIVE
+  TEST
+}
+
+"""The store payment settings (payment.settings.manage)"""
+type PaymentSettings {
+  methods: PaymentMethodSettings!
+  paystack: PaystackSettings!
+}
+
 enum PaymentStatus {
   CANCELLED
   CAPTURED
   FAILED
   PENDING
+}
+
+"""
+The Paystack config in use. The secret key is write-only: only its last 4 characters show
+"""
+type PaystackSettings {
+  """Where Paystack sends the customer after paying"""
+  callbackUrl: String
+  configured: Boolean!
+
+  """Null for an environment key without sk_test_/sk_live_"""
+  mode: PaymentProviderMode
+  publicKey: String
+  secretKeyLast4: String
+  source: PaymentCredentialSource!
+
+  """Null unless the config is stored in the database"""
+  updatedAt: DateTime
+
+  """The staff user who last set the config"""
+  updatedById: ID
 }
 
 type PickupLocationEntity {
@@ -2232,6 +2334,11 @@ type Query {
   Admin: all products in any status, including DRAFT, ARCHIVED and inactive
   """
   adminProducts(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs, sortArgs: ProductSortArgs): ProductConnection!
+
+  """
+  What a customer can pay with right now: the online methods on offer and whether cash on delivery is (public)
+  """
+  availablePaymentMethods: AvailablePaymentMethods!
   brand(id: String!): Brand
   brands: [Brand]
 
@@ -2284,6 +2391,11 @@ type Query {
   """Retrieves all orders (admin only)"""
   orders: [Order!]!
   payment(id: String!): Payment!
+
+  """
+  The payment methods and the Paystack config in use, without the secret key (Owner)
+  """
+  paymentSettings: PaymentSettings!
   payments: [Payment!]!
 
   """Get all pickup locations (admin only)"""
@@ -2768,6 +2880,20 @@ type SalesReport {
   totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
 }
 
+"""The whole Paystack config; it replaces the current one"""
+input SetPaystackConfigInput {
+  """Overrides PAYSTACK_CALLBACK_URL when set"""
+  callbackUrl: String
+
+  """Public key (pk_test_... or pk_live_...) of the same mode"""
+  publicKey: String
+
+  """
+  Secret key (sk_test_... or sk_live_...); the mode follows its prefix. Write-only
+  """
+  secretKey: String!
+}
+
 input SetPriceListEntriesInput {
   """
   1-200 entries; each replaces its variant's entry (with its tiers) in the list
@@ -3167,6 +3293,15 @@ input UpdateCouponCodeInput {
 input UpdateCustomerGroupInput {
   description: String
   name: String
+}
+
+"""Payment-method switches to change; omitted fields keep their value"""
+input UpdatePaymentMethodsInput {
+  cardPaymentProvider: OnlinePaymentProvider
+  cardPaymentsEnabled: Boolean
+  cashOnDeliveryEnabled: Boolean
+  mobileMoneyPaymentProvider: OnlinePaymentProvider
+  mobileMoneyPaymentsEnabled: Boolean
 }
 
 input UpdatePickupLocationInput {

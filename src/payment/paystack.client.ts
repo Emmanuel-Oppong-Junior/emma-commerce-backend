@@ -1,5 +1,5 @@
 import { BadGatewayException, GatewayTimeoutException, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { PaymentSettingsService } from './settings/payment-settings.service';
 import {
   PAYSTACK_REFUND_URL,
   PAYSTACK_TRANSACTION_INI_URL,
@@ -24,6 +24,8 @@ export interface InitializeTransactionRequest {
   currency: string;
   reference: string;
   callback_url?: string;
+  /** Limits the checkout to these channels, e.g. ['card'] or ['mobile_money']. */
+  channels: string[];
 }
 
 export interface InitializedTransaction {
@@ -62,16 +64,13 @@ export interface CreatedRefund {
 export class PaystackRequestRejected extends ProviderRequestRejected {}
 
 /**
- * The Paystack calls the app makes, over `fetch` with a timeout. Transport failures, timeouts, non-2xx answers and
- * malformed envelopes all surface as 502/504 so callers never act on a response they could not read.
+ * The Paystack calls the app makes, over `fetch` with a timeout, authenticated with the store's current Paystack
+ * secret key (503 when there is none). Transport failures, timeouts, non-2xx answers and malformed envelopes all
+ * surface as 502/504 so callers never act on a response they could not read.
  */
 @Injectable()
 export class PaystackClient {
-  private readonly secretKey: string;
-
-  constructor(configService: ConfigService) {
-    this.secretKey = configService.getOrThrow<string>('PAYSTACK_SECRET_KEY');
-  }
+  constructor(private readonly paymentSettings: PaymentSettingsService) {}
 
   async initializeTransaction(request: InitializeTransactionRequest): Promise<InitializedTransaction> {
     const data = await this.call('initialize', PAYSTACK_TRANSACTION_INI_URL, {
@@ -128,12 +127,13 @@ export class PaystackClient {
   }
 
   private async send(operation: string, url: string, init: RequestInit): Promise<Record<string, unknown>> {
+    const { secretKey } = await this.paymentSettings.requirePaystackCredentials();
     let response: Response;
     let body: unknown;
     try {
       response = await fetch(url, {
         ...init,
-        headers: { Authorization: `Bearer ${this.secretKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(PAYSTACK_TIMEOUT_MS),
       });
       body = await response.text().then(parseJson);

@@ -1,6 +1,5 @@
 import { InputType, Field } from '@nestjs/graphql';
-import { IsEmail, IsEnum, IsOptional, IsPhoneNumber, Matches } from 'class-validator';
-import { OrderPaymentMethodEnum } from '../enums/order.enum';
+import { IsEmail, IsPhoneNumber, Matches } from 'class-validator';
 import { CheckoutQuoteInput } from './checkout-quote.input';
 
 @InputType()
@@ -12,16 +11,6 @@ export class CreateOrderInput extends CheckoutQuoteInput {
   @Field({ description: 'Contact phone number for delivery coordination' })
   @IsPhoneNumber(undefined, { message: 'contactPhone must be a valid phone number' })
   contactPhone: string;
-
-  @Field(() => OrderPaymentMethodEnum, {
-    nullable: true,
-    defaultValue: OrderPaymentMethodEnum.ONLINE,
-    description:
-      'Payment method for this order. Defaults to ONLINE (Paystack). Use CASH_ON_DELIVERY to pay on delivery.',
-  })
-  @IsOptional()
-  @IsEnum(OrderPaymentMethodEnum)
-  paymentMethod?: OrderPaymentMethodEnum;
 
   @Field({
     description:

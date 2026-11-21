@@ -201,7 +201,7 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
     await request(app.getHttpServer())
       .post('/payment/initialize')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ orderId: order.id, paymentMethod: 'card' })
+      .send({ orderId: order.id, paymentMethod: 'CARD' })
       .expect(201);
     expect(paystack.initializeTransaction).toHaveBeenLastCalledWith(
       expect.objectContaining({ amount: 70649, currency: 'GHS' }),

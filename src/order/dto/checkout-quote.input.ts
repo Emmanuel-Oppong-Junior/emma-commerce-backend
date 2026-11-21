@@ -1,8 +1,10 @@
 import { Field, ID, InputType } from '@nestjs/graphql';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
-import { FulfillmentTypeEnum } from '../enums/order.enum';
+import { FulfillmentTypeEnum, OrderPaymentMethodEnum } from '../enums/order.enum';
 
-@InputType({ description: 'What checkout prices the cart for: the fulfilment and an optional coupon' })
+@InputType({
+  description: 'What checkout prices the cart for: the fulfilment, an optional coupon and how the order will be paid',
+})
 export class CheckoutQuoteInput {
   @Field(() => FulfillmentTypeEnum, {
     description: 'Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)',
@@ -30,4 +32,15 @@ export class CheckoutQuoteInput {
   @IsOptional()
   @IsString()
   couponCode?: string;
+
+  @Field(() => OrderPaymentMethodEnum, {
+    nullable: true,
+    defaultValue: OrderPaymentMethodEnum.ONLINE,
+    description:
+      'ONLINE (pay now by card or mobile money, see availablePaymentMethods) or CASH_ON_DELIVERY. BAD_REQUEST with ' +
+      'reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer it',
+  })
+  @IsOptional()
+  @IsEnum(OrderPaymentMethodEnum)
+  paymentMethod?: OrderPaymentMethodEnum;
 }

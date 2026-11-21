@@ -67,6 +67,9 @@ const AUDITED: Record<string, string> = {
   updateStoreSettings: 'store.service.spec',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
   retryFailedJob: 'failed-jobs.service.spec',
+  setPaystackConfig: 'payment-settings.service.spec (audited without the secret)',
+  removePaystackConfig: 'payment-settings.service.spec',
+  updatePaymentMethods: 'payment-settings.service.spec',
   assignStaffRole: 'staff.service.spec (audit trail)',
   removeStaffRole: 'staff.service.spec (audit trail)',
   createStaffRole: 'staff.service.spec (audit trail)',

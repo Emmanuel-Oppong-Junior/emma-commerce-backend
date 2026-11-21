@@ -1,5 +1,6 @@
 import { PaymentService } from '../../src/payment/payment.service';
-import { providerRegistryWith } from '../helpers/payment-providers.helper';
+import { OnlinePaymentMethod } from '../../src/payment/settings/payment-methods';
+import { paymentSettingsStub, providerRegistryWith } from '../helpers/payment-providers.helper';
 
 interface PaystackVerifyData {
   status: string;
@@ -36,6 +37,7 @@ function buildPaymentService(
     { log: jest.fn() } as never,
     providerRegistryWith(paystack),
     { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
+    paymentSettingsStub() as never,
   );
   return { service, repository, paystack };
 }
@@ -88,7 +90,11 @@ describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
     ).paymentRepository.findByOrderId.mockResolvedValue(null);
 
     await expect(
-      service.initiatePayment('user-1', { orderId: 'order-1', paymentMethod: 'card', currency: 'GHS' }),
+      service.initiatePayment('user-1', {
+        orderId: 'order-1',
+        paymentMethod: OnlinePaymentMethod.CARD,
+        currency: 'GHS',
+      }),
     ).rejects.toThrow();
     expect(paystack.initializeTransaction).not.toHaveBeenCalled();
   });
@@ -99,7 +105,7 @@ describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
     const { service, repository } = buildPaymentService(payment, order);
 
     await service
-      .initiatePayment('user-1', { orderId: 'order-1', paymentMethod: 'card', currency: 'GHS' })
+      .initiatePayment('user-1', { orderId: 'order-1', paymentMethod: OnlinePaymentMethod.CARD, currency: 'GHS' })
       .catch(() => undefined);
 
     expect(repository.delete).not.toHaveBeenCalled();

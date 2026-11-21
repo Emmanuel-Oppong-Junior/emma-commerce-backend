@@ -74,7 +74,7 @@ describe('REST routes (e2e)', () => {
       const res = await request(server())
         .post('/payment/initialize')
         .set(getAuthHeader(userToken))
-        .send({ orderId: 'any-order', paymentMethod: 'card', currency: 'USD' })
+        .send({ orderId: 'any-order', paymentMethod: 'CARD', currency: 'USD' })
         .expect(400);
 
       expect(JSON.stringify(res.body)).toContain('currency must be GHS');

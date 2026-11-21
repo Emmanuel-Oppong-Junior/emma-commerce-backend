@@ -22,6 +22,7 @@ const baseEnv = {
   CLOUDINARY_API_SECRET: 'Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2',
   REDIS_HOST: 'localhost',
   MFA_ENCRYPTION_KEY: 'ab'.repeat(32),
+  PAYMENT_CONFIG_ENCRYPTION_KEY: 'cd'.repeat(32),
 };
 
 const productionEnv = {
@@ -30,6 +31,7 @@ const productionEnv = {
   ALLOWED_ORIGINS: 'https://shop.example.com',
   REDIS_HOST: 'redis.internal',
   MFA_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
+  PAYMENT_CONFIG_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
 };
 
 const messageOf = (env: Record<string, string | undefined>) => validate(env).error?.message ?? '';
@@ -141,6 +143,53 @@ describe('envValidationSchema', () => {
     it('accepts a repeated-unit key outside production', () => {
       expect(validate({ ...baseEnv, NODE_ENV: 'development' }).error).toBeUndefined();
     });
+  });
+
+  describe('PAYMENT_CONFIG_ENCRYPTION_KEY', () => {
+    it('is required in every environment', () => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'test', PAYMENT_CONFIG_ENCRYPTION_KEY: undefined })).toContain(
+        '"PAYMENT_CONFIG_ENCRYPTION_KEY" is required',
+      );
+    });
+
+    it.each(['abc', 'g'.repeat(64), 'ab'.repeat(33)])('rejects %s, which is not 32 bytes of hex', (value) => {
+      expect(messageOf({ ...baseEnv, NODE_ENV: 'test', PAYMENT_CONFIG_ENCRYPTION_KEY: value })).toContain(
+        'PAYMENT_CONFIG_ENCRYPTION_KEY must be 64 hexadecimal characters (32 bytes)',
+      );
+    });
+
+    it.each(['ef'.repeat(32), '0123456789abcdef'.repeat(4)])(
+      'rejects a key made of a repeated unit in production (%s)',
+      (value) => {
+        const message = messageOf({ ...productionEnv, PAYMENT_CONFIG_ENCRYPTION_KEY: value });
+        expect(message).toContain(
+          'Placeholder secret values are not allowed in production: PAYMENT_CONFIG_ENCRYPTION_KEY',
+        );
+        expect(message).not.toContain(value);
+      },
+    );
+
+    it('must differ from MFA_ENCRYPTION_KEY in production, whatever the letter case', () => {
+      const message = messageOf({
+        ...productionEnv,
+        PAYMENT_CONFIG_ENCRYPTION_KEY: productionEnv.MFA_ENCRYPTION_KEY.toUpperCase(),
+      });
+      expect(message).toContain('MFA_ENCRYPTION_KEY and PAYMENT_CONFIG_ENCRYPTION_KEY must be different in production');
+    });
+
+    it('may equal MFA_ENCRYPTION_KEY outside production', () => {
+      const env = { ...baseEnv, NODE_ENV: 'development', PAYMENT_CONFIG_ENCRYPTION_KEY: baseEnv.MFA_ENCRYPTION_KEY };
+      expect(validate(env).error).toBeUndefined();
+    });
+  });
+
+  describe('PAYSTACK_SECRET_KEY', () => {
+    it.each(['test', 'production'])(
+      'is optional when NODE_ENV=%s (the store may hold its own Paystack keys)',
+      (env) => {
+        expect(validate({ ...productionEnv, NODE_ENV: env, PAYSTACK_SECRET_KEY: undefined }).error).toBeUndefined();
+      },
+    );
   });
 
   describe('ROLE', () => {

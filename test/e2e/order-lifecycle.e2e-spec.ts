@@ -69,7 +69,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     await request(app.getHttpServer())
       .post('/payment/initialize')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ orderId, paymentMethod: 'card' })
+      .send({ orderId, paymentMethod: 'CARD' })
       .expect(201);
     const attempt = await prisma.paymentAttempt.findFirstOrThrow({
       where: { intent: { orderId } },
@@ -263,7 +263,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     await request(app.getHttpServer())
       .post('/payment/initialize')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ orderId, paymentMethod: 'card' })
+      .send({ orderId, paymentMethod: 'CARD' })
       .expect(201);
     await gql(`mutation { cancelOrder(orderId: "${orderId}") { status } }`, userToken);
     const attempt = await prisma.paymentAttempt.findFirstOrThrow({ where: { intent: { orderId } } });

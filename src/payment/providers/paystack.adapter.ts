@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PaymentProvider as ProviderName, Prisma } from '../../generated/prisma/client';
 import { toMinorUnits } from '../../commons/money/money';
 import { PAYSTACK_WEBHOOK_SIGNATURE_KEY } from '../constant';
 import { PaystackClient, VerifiedTransaction } from '../paystack.client';
 import { isSettlingEvent, isValidPaystackSignature, parsePaystackWebhook } from '../paystack-webhook';
 import { parseProviderVerification } from '../payment-verification';
+import { PaymentSettingsService } from '../settings/payment-settings.service';
+import { OnlinePaymentMethod } from '../settings/payment-methods';
 import {
   CheckoutRequest,
   ListTransactionsRequest,
@@ -19,6 +20,11 @@ import {
   WebhookSignatureRejected,
 } from './payment-provider.port';
 
+const CHANNELS: Record<OnlinePaymentMethod, string[]> = {
+  [OnlinePaymentMethod.CARD]: ['card'],
+  [OnlinePaymentMethod.MOBILE_MONEY]: ['mobile_money'],
+};
+
 @Injectable()
 export class PaystackAdapter implements PaymentProvider {
   readonly name = ProviderName.PAYSTACK;
@@ -27,16 +33,18 @@ export class PaystackAdapter implements PaymentProvider {
 
   constructor(
     private readonly client: PaystackClient,
-    private readonly configService: ConfigService,
+    private readonly paymentSettings: PaymentSettingsService,
   ) {}
 
   async initialize(request: CheckoutRequest): Promise<OpenedCheckout> {
+    const { callbackUrl } = await this.paymentSettings.requirePaystackCredentials();
     const transaction = await this.client.initializeTransaction({
       email: request.email,
       amount: toMinorUnits(request.amount),
       currency: request.currency,
       reference: request.reference,
-      callback_url: this.configService.get('PAYSTACK_CALLBACK_URL'),
+      callback_url: callbackUrl,
+      channels: CHANNELS[request.method],
     });
     // The checkout URL is kept in its own column so an idempotent retry can hand it back.
     const details = { reference: transaction.reference ?? null, access_code: transaction.access_code ?? null };
@@ -58,8 +66,16 @@ export class PaystackAdapter implements PaymentProvider {
 
   async parseWebhook(rawBody: Buffer, headers: WebhookHeaders): Promise<VerifiedEvent> {
     const signature = headers[PAYSTACK_WEBHOOK_SIGNATURE_KEY];
-    const secret = this.configService.getOrThrow<string>('PAYSTACK_SECRET_KEY');
-    if (!isValidPaystackSignature(rawBody, typeof signature === 'string' ? signature : undefined, secret)) {
+    const credentials = await this.paymentSettings.paystackCredentials();
+    if (!credentials) {
+      throw new WebhookSignatureRejected('Paystack is not configured, so the webhook signature cannot be checked');
+    }
+    const valid = isValidPaystackSignature(
+      rawBody,
+      typeof signature === 'string' ? signature : undefined,
+      credentials.secretKey,
+    );
+    if (!valid) {
       throw new WebhookSignatureRejected('Invalid webhook signature');
     }
     return parsePaystackWebhook(rawBody);

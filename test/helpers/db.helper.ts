@@ -81,6 +81,18 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.authProvider.deleteMany();
   await prisma.refreshToken.deleteMany();
 
+  // Store payment settings back to their defaults: no stored provider keys, every method on through Paystack
+  await prisma.paymentProviderConfig.deleteMany();
+  await prisma.store.updateMany({
+    data: {
+      cardPaymentsEnabled: true,
+      mobileMoneyPaymentsEnabled: true,
+      cashOnDeliveryEnabled: true,
+      cardPaymentProvider: 'PAYSTACK',
+      mobileMoneyPaymentProvider: 'PAYSTACK',
+    },
+  });
+
   // Independent reference data
   await prisma.tax.deleteMany();
   await prisma.shippingZone.deleteMany();

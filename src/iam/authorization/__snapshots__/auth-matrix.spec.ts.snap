@@ -68,6 +68,7 @@ Mutation removeCategory                  permission: catalog.taxonomy.write
 Mutation removeCustomerGroupMembers      permission: customer.group.manage
 Mutation removeFromCart                  authenticated
 Mutation removeFromWishlist              authenticated
+Mutation removePaystackConfig            permission: payment.settings.manage; step-up
 Mutation removePriceListEntries          permission: pricelist.manage; step-up
 Mutation removeProductsFromTag           permission: catalog.taxonomy.write
 Mutation removeStaffRole                 permission: staff.manage; step-up
@@ -80,6 +81,7 @@ Mutation restockVariant                  permission: inventory.adjust
 Mutation restorePayment                  permission: payment.manage
 Mutation restoreProduct                  permission: catalog.product.write
 Mutation retryFailedJob                  permission: jobs.manage
+Mutation setPaystackConfig               permission: payment.settings.manage; step-up
 Mutation setPriceListEntries             permission: pricelist.manage; step-up
 Mutation signIn                          public
 Mutation signInWithFacebook              public
@@ -97,6 +99,7 @@ Mutation updateCategory                  permission: catalog.taxonomy.write
 Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateMyProfile                 authenticated
+Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
 Mutation updatePickupLocation            permission: shipping.manage
 Mutation updatePriceList                 permission: pricelist.manage; step-up
 Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.isTaxable is set
@@ -121,6 +124,7 @@ Query address                            authenticated
 Query addresses                          permission: user.view; step-up when userId is omitted (exports every address)
 Query adminProduct                       permission: catalog.product.read
 Query adminProducts                      permission: catalog.product.read
+Query availablePaymentMethods            public
 Query brand                              public, optional sign-in
 Query brands                             public, optional sign-in
 Query cart                               authenticated
@@ -139,6 +143,7 @@ Query order                              authenticated
 Query orders                             permission: order.view
 Query payment                            authenticated
 Query payments                           permission: payment.view
+Query paymentSettings                    permission: payment.settings.manage
 Query pickupLocations                    permission: shipping.manage
 Query priceChanges                       permission: catalog.product.read
 Query priceList                          permission: pricelist.manage

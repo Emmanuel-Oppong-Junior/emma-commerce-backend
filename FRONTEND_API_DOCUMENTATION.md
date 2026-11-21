@@ -111,8 +111,8 @@ feature/
 
 ### Payment Integration
 
-- Paystack is used exclusively.
-- Payment is initiated via a **REST POST** endpoint (`POST /payment/initialize`).
+- Paystack serves online payments (card and mobile money). The store's Paystack keys are set by the Owner with `setPaystackConfig` ([2.12](#212-payment)); the server's `PAYSTACK_SECRET_KEY` is only a fallback. Which methods are on offer comes from the public `availablePaymentMethods` query.
+- Payment is initiated via a **REST POST** endpoint (`POST /payment/initialize`) with the chosen method (`CARD` or `MOBILE_MONEY`).
 - Frontend redirects user to Paystack's `authorizationUrl`.
 - After payment Paystack redirects the browser to `PAYSTACK_CALLBACK_URL`, which must be a **frontend page** (the backend has no callback route). That page calls the `verifyPayment` GraphQL mutation with the `reference` query parameter.
 - Paystack also calls the **webhook** (`POST /payment/webhook`) with `charge.success` or `charge.failed` events, and a background sweep re-checks open payments every 5 minutes.
@@ -1632,7 +1632,7 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 - **Response**: `CheckoutQuote!`
 - **Description**: Prices the caller's cart for checkout with the chosen fulfilment and coupon, exactly as `createOrder` will charge it, and returns the full breakdown plus the `quoteHash` that `createOrder` requires. Writes nothing (no reservation, no coupon use). Show its `grandTotal` as the amount to pay and send its `quoteHash` with `createOrder`. Quote again whenever the cart, fulfilment or coupon changes. A quote does not expire: `createOrder` re-prices the cart and compares.
 
-**Input: `CheckoutQuoteInput`** (the fulfilment and coupon fields of `CreateOrderInput`)
+**Input: `CheckoutQuoteInput`** (the fulfilment, coupon and payment-method fields of `CreateOrderInput`)
 
 ```typescript
 {
@@ -1640,8 +1640,11 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   shippingAddressId?: string;        // Required for DELIVERY: one of the caller's addresses
   pickupLocationId?: string;         // Required for PICKUP: an active pickup location
   couponCode?: string;               // Optional. Case-insensitive.
+  paymentMethod?: OrderPaymentMethod; // Default ONLINE. CASH_ON_DELIVERY to pay on delivery/pickup. (P3-A.2)
 }
 ```
+
+**Payment method not offered (P3-A.2):** `checkoutQuote` and `createOrder` fail with `BAD_REQUEST` and `extensions.reason: "PAYMENT_METHOD_UNAVAILABLE"` before anything else when the store does not offer the payment method: `CASH_ON_DELIVERY` while cash on delivery is switched off, or `ONLINE` while no online method is on offer (card and mobile money both off, or Paystack not configured). Read `availablePaymentMethods` to show only what is offered. The payment method does not change the price or the `quoteHash`.
 
 **`CheckoutQuote` Object Type**:
 
@@ -1716,7 +1719,7 @@ query {
   couponCode?: string;                    // Optional. Case-insensitive.
   contactEmail: string;                   // Required. Valid email.
   contactPhone: string;                   // Required. Valid phone number in international format (e.g. +233…).
-  paymentMethod?: OrderPaymentMethod;     // Default ONLINE (Paystack). CASH_ON_DELIVERY to pay on delivery/pickup.
+  paymentMethod?: OrderPaymentMethod;     // Default ONLINE (card or mobile money, chosen at POST /payment/initialize). CASH_ON_DELIVERY to pay on delivery/pickup. BAD_REQUEST PAYMENT_METHOD_UNAVAILABLE when not offered.
   quoteHash: string;                      // Required. checkoutQuote's quoteHash for the same fulfilment and coupon.
 }
 ```
@@ -1856,7 +1859,7 @@ mutation {
   order: Order;
   amount: Money;
   currency: string;          // "GHS"
-  paymentMethod: string;     // Channel sent at initialize (e.g. "card"), or "CASH_ON_DELIVERY"
+  paymentMethod: string;     // Method sent at initialize ("CARD" | "MOBILE_MONEY"; older attempts may hold a free label such as "card"), or "CASH_ON_DELIVERY"
   status: PaymentStatus;     // PENDING | CAPTURED | FAILED | CANCELLED
   transactionId?: string;    // Paystack reference of this attempt
   paymentDetails?: JSON;     // Sanitised provider data: { reference, access_code } after initialize; { reference, status, amount, currency, channel, paid_at, gateway_response } after verification
@@ -1911,6 +1914,58 @@ mutation {
 - `NOT_FOUND` — order does not exist or is deleted.
 - `BAD_REQUEST` — the order is an `ONLINE` order.
 - `CONFLICT` — the order is not `IN_FULFILMENT` (e.g. `PLACED`, `CONFIRMED`, `CANCELLED`, already `COMPLETED`), its shipment has not been dispatched, or its payment was already recorded.
+
+---
+
+#### `availablePaymentMethods` (P3-A.2)
+- **Type**: Query
+- **Auth Required**: No
+- **Response**: `AvailablePaymentMethods!`
+- **Description**: What a customer can pay with right now. `online` lists the online methods on offer, each with its provider and, when the Owner set one, the provider's public key (for a popup checkout); an `ONLINE` order needs at least one. `cashOnDelivery` says whether `CASH_ON_DELIVERY` orders are accepted. With nothing configured: card and mobile money through Paystack (when the server has `PAYSTACK_SECRET_KEY`) and cash on delivery.
+
+```graphql
+query { availablePaymentMethods { cashOnDelivery online { method provider publicKey } } }
+```
+
+```typescript
+{
+  online: { method: OnlinePaymentMethod; provider: OnlinePaymentProvider; publicKey: string | null }[]; // CARD | MOBILE_MONEY; PAYSTACK
+  cashOnDelivery: boolean;
+}
+```
+
+---
+
+#### `paymentSettings` (Owner: `payment.settings.manage`) (P3-A.2)
+- **Type**: Query
+- **Response**: `PaymentSettings!`
+- **Description**: The payment-method switches and the Paystack config in use. The secret key is write-only: only `secretKeyLast4` is ever shown.
+
+```typescript
+{
+  methods: {
+    cardPaymentsEnabled: boolean; mobileMoneyPaymentsEnabled: boolean; cashOnDeliveryEnabled: boolean;
+    cardPaymentProvider: OnlinePaymentProvider; mobileMoneyPaymentProvider: OnlinePaymentProvider; // PAYSTACK
+  };
+  paystack: {
+    configured: boolean;
+    source: PaymentCredentialSource;  // DATABASE (setPaystackConfig) | ENVIRONMENT (PAYSTACK_SECRET_KEY fallback) | NONE (online payment unavailable)
+    mode: PaymentProviderMode | null; // TEST | LIVE, from the key prefix; null for an environment key without sk_test_/sk_live_
+    secretKeyLast4: string | null;
+    publicKey: string | null;
+    callbackUrl: string | null;
+    updatedAt: DateTime | null;       // null unless stored in the database
+    updatedById: string | null;
+  };
+}
+```
+
+#### `setPaystackConfig` / `removePaystackConfig` / `updatePaymentMethods` (Owner, step-up) (P3-A.2)
+- **Type**: Mutations, each returning `PaymentSettings!`
+- **Policy**: permission `payment.settings.manage` (only the Owner holds it) **and** a recent step-up (`FORBIDDEN` + `reason: STEP_UP_REQUIRED` otherwise). Every change is audited; secret values never appear in audit rows or logs.
+- `setPaystackConfig(input: { secretKey: String!, publicKey: String, callbackUrl: String })`: replaces the whole Paystack config. `secretKey` must start with `sk_test_` or `sk_live_` (the mode follows it); `publicKey`, if sent, must be a `pk_` key of the same mode (`BAD_REQUEST` otherwise). The secret is stored AES-256-GCM encrypted. From then on these keys open checkouts and check webhook signatures; `PAYSTACK_SECRET_KEY` is no longer used. `callbackUrl` replaces `PAYSTACK_CALLBACK_URL` when set.
+- `removePaystackConfig`: deletes the stored keys, so `PAYSTACK_SECRET_KEY` (if set) applies again. `NOT_FOUND` when none are stored.
+- `updatePaymentMethods(input: { cardPaymentsEnabled, mobileMoneyPaymentsEnabled, cashOnDeliveryEnabled, cardPaymentProvider, mobileMoneyPaymentProvider })`: omitted fields keep their value. A switched-off method is refused at `checkoutQuote`/`createOrder` (order level) and `POST /payment/initialize` (online method), with `BAD_REQUEST` and reason `PAYMENT_METHOD_UNAVAILABLE`. Orders already placed keep their method.
 
 ---
 
@@ -3163,7 +3218,7 @@ These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ 
 ```typescript
 {
   orderId: string;       // Required.
-  paymentMethod: string; // Required. Paystack channel label, e.g. "card" or "mobile_money"; stored as Payment.paymentMethod.
+  paymentMethod: "CARD" | "MOBILE_MONEY"; // Required. Stored as Payment.paymentMethod; the checkout offers only that channel.
   currency?: "GHS";      // Optional. Any other value is rejected (400). Payments are always charged in GHS.
   idempotencyKey?: string; // Optional, 1-255 chars. Generate one per "Pay" click and resend it on network retries.
 }
@@ -3171,13 +3226,15 @@ These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ 
 
 The amount is always the order total at the first initialization; any other field (e.g. `amount`) is rejected with 400.
 
+**Breaking change (P3-A.2):** `paymentMethod` was any string (e.g. `"card"`); it must now be `CARD` or `MOBILE_MONEY` (400 otherwise). The method must be on offer (`availablePaymentMethods`): a switched-off method, or no Paystack configuration at all, is refused with 400 (`Card payment is not available at this store` / `Mobile money payment is not available at this store`) before any attempt is opened.
+
 **Rules**:
 
 - Only the owner's `PENDING`, non-deleted, online-payment order can be paid. A cancelled, processing, shipped or delivered order returns 400, a cash-on-delivery order returns 400, an already paid order returns 400 (`Payment for this order has already been completed`), a missing or deleted order returns 404, and another user's order returns 403.
 - Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `CANCELLED`; it is kept, and if the customer still completes that older checkout the payment is matched.
 - Repeating an `idempotencyKey` for the same order returns the same attempt and the same `authorizationUrl` without opening a new checkout. It returns **409** if that attempt is still being set up (retry shortly) or is no longer `PENDING` (use a new key).
 - If Paystack cannot open the checkout the request fails and the same key may be retried.
-- Paystack's `callback_url` is `PAYSTACK_CALLBACK_URL` (a frontend page; see [Section 8](#8-payment-integration-paystack)).
+- The checkout is opened with the provider the store configured for the method (Paystack), limited to that channel (`card` or `mobile_money`). Paystack's `callback_url` is the store's configured callback URL, else `PAYSTACK_CALLBACK_URL` (a frontend page; see [Section 8](#8-payment-integration-paystack)).
 
 **Response** (`201`): the payment attempt plus `authorizationUrl`. Decimal amounts are JSON strings here.
 
@@ -3187,7 +3244,7 @@ The amount is always the order total at the first initialization; any other fiel
   "orderId": "clx_order",
   "amount": "29.99",
   "currency": "GHS",
-  "paymentMethod": "card",
+  "paymentMethod": "CARD",
   "status": "PENDING",
   "transactionId": "clx_order-1731900000000-a1b2c3d4",
   "paymentDetails": { "reference": "clx_order-1731900000000-a1b2c3d4", "access_code": "..." },
@@ -3210,7 +3267,7 @@ The amount is always the order total at the first initialization; any other fiel
 **Description**: Paystack webhook. Must be registered in Paystack dashboard.
 
 **Headers required**:
-- `x-paystack-signature: <hex HMAC-SHA512 of the raw request body, keyed with PAYSTACK_SECRET_KEY>` (Paystack sends this automatically)
+- `x-paystack-signature: <hex HMAC-SHA512 of the raw request body, keyed with the store's Paystack secret key: the one set with setPaystackConfig, else PAYSTACK_SECRET_KEY>` (Paystack sends this automatically)
 - `Content-Type: application/json`
 
 **Body**: Paystack's event JSON, `{ event: string; data: { id?, reference?, amount?, currency?, status?, ... } }`. The signature is checked over the exact bytes received, so any proxy or gateway in front of the API must forward the body unmodified (no re-encoding, re-formatting or compression changes).
@@ -3218,7 +3275,7 @@ The amount is always the order total at the first initialization; any other fiel
 **Responses**:
 - `200 OK`: the event is stored. A settling event is then processed by the background worker (queue `WEBHOOKS`, retried with exponential backoff); an unhandled type or a duplicate of an event already processed needs no processing.
 - `400`: empty body, or a signed body that is not `{ event, data }` JSON.
-- `401`: missing or invalid signature. Nothing is stored.
+- `401`: missing or invalid signature, or Paystack is not configured at all (no stored keys and no `PAYSTACK_SECRET_KEY`), so no signature can be checked. Nothing is stored.
 
 The endpoint no longer answers `503` when processing fails: the stored event is retried by the queue, and the 5-minute payment sweep reprocesses any stored event still unprocessed.
 
@@ -3546,7 +3603,7 @@ Authorization: Bearer <accessToken>
 ### Order Placement Flow
 
 1. Order is created (see Checkout Flow above).
-2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod, idempotencyKey }` (`currency` may be omitted; if sent it must be `"GHS"`). Only `PENDING` online orders can be paid.
+2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod: "CARD" | "MOBILE_MONEY", idempotencyKey }` (`currency` may be omitted; if sent it must be `"GHS"`). Only `PENDING` online orders can be paid.
 3. Backend opens a new payment attempt with `status = PENDING` (any earlier pending attempt becomes `CANCELLED`) and returns `authorizationUrl`.
 4. Frontend redirects user to `authorizationUrl`.
 5. After payment, Paystack redirects the browser to the frontend page configured as `PAYSTACK_CALLBACK_URL`, with `?reference=…` (and `trxref`) in the query string.
@@ -3665,7 +3722,7 @@ Frontend                       Backend                          Paystack
 
 **Endpoint**: `POST /payment/initialize` (see [Section 3](#post-paymentinitialize)).
 
-The backend calls Paystack's transaction initialize with the order owner's email, the payment intent's amount (the order total when payment was first initialized) converted to pesewas, currency `GHS`, the attempt's own reference, and `callback_url = PAYSTACK_CALLBACK_URL`. The customer never sends an amount.
+The backend calls Paystack's transaction initialize with the order owner's email, the payment intent's amount (the order total when payment was first initialized) converted to pesewas, currency `GHS`, the attempt's own reference, `channels` limited to the chosen method, and `callback_url` = the store's configured callback URL, else `PAYSTACK_CALLBACK_URL`. The customer never sends an amount.
 
 ### Webhook Security
 
@@ -4386,7 +4443,7 @@ client.mutate({
 const res = await fetch('/payment/initialize', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-  body: JSON.stringify({ orderId, paymentMethod: 'card', idempotencyKey }),
+  body: JSON.stringify({ orderId, paymentMethod: 'CARD', idempotencyKey }),
 });
 if (!res.ok) throw new Error((await res.json()).message);
 const { authorizationUrl, transactionId } = await res.json();
@@ -4792,7 +4849,7 @@ Content-Type: application/json
 
 {
   "orderId": "clx_order_789",
-  "paymentMethod": "card",
+  "paymentMethod": "CARD",
   "idempotencyKey": "6f1c2a9e-0d1b-4c55-9a0e-3b7f2f4d8e11"
 }
 ```

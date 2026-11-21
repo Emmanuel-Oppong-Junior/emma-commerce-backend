@@ -15,7 +15,9 @@ import { LoggerService } from '../commons/logger.service';
 import { AuditService } from '../commons/audit.service';
 import { StoreService } from '../store/store.service';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
-import { providerRegistryWith } from '../../test/helpers/payment-providers.helper';
+import { paymentSettingsStub, providerRegistryWith } from '../../test/helpers/payment-providers.helper';
+import { OnlinePaymentMethod } from './settings/payment-methods';
+import { PaymentSettingsService } from './settings/payment-settings.service';
 
 const mockPaystack = {
   initializeTransaction: jest.fn(),
@@ -49,6 +51,8 @@ const mockAuditService = {
 
 const mockStoreService = { getCurrency: jest.fn().mockResolvedValue('GHS') };
 
+const mockPaymentSettings = paymentSettingsStub({ callbackUrl: 'http://callback.test' });
+
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
 describe('PaymentService', () => {
@@ -64,8 +68,9 @@ describe('PaymentService', () => {
         { provide: AuditService, useValue: mockAuditService },
         {
           provide: PaymentProviderRegistry,
-          useValue: providerRegistryWith(mockPaystack, { callbackUrl: 'http://callback.test' }),
+          useValue: providerRegistryWith(mockPaystack, mockPaymentSettings),
         },
+        { provide: PaymentSettingsService, useValue: mockPaymentSettings },
         { provide: StoreService, useValue: mockStoreService },
       ],
     }).compile();
@@ -78,7 +83,11 @@ describe('PaymentService', () => {
 
   describe('initiatePayment', () => {
     const userId = 'user1';
-    const createPaymentDto: CreatePaymentDto = { orderId: 'order1', currency: 'GHS', paymentMethod: 'card' };
+    const createPaymentDto: CreatePaymentDto = {
+      orderId: 'order1',
+      currency: 'GHS',
+      paymentMethod: OnlinePaymentMethod.CARD,
+    };
     const order = {
       id: 'order1',
       userId: 'user1',
@@ -126,7 +135,7 @@ describe('PaymentService', () => {
       const result = await service.initiatePayment(userId, { ...createPaymentDto, idempotencyKey: 'key-1' });
 
       expect(paymentRepository.openAttempt).toHaveBeenCalledWith(
-        expect.objectContaining({ orderId: 'order1', idempotencyKey: 'key-1', provider: 'PAYSTACK', channel: 'card' }),
+        expect.objectContaining({ orderId: 'order1', idempotencyKey: 'key-1', provider: 'PAYSTACK', channel: 'CARD' }),
         expect.any(Function),
       );
       const { reference } = mockPaymentRepository.openAttempt.mock.calls[0][0];
@@ -142,7 +151,11 @@ describe('PaymentService', () => {
     });
 
     it('charges the attempt currency when the request names none', async () => {
-      await service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency: undefined });
+      await service.initiatePayment(userId, {
+        orderId: 'order1',
+        paymentMethod: OnlinePaymentMethod.CARD,
+        currency: undefined,
+      });
 
       expect(mockPaystack.initializeTransaction).toHaveBeenCalledWith(expect.objectContaining({ currency: 'GHS' }));
     });
@@ -151,7 +164,7 @@ describe('PaymentService', () => {
       'rejects %s so the client cannot choose the charge currency, before opening an attempt',
       async (currency) => {
         await expect(
-          service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency }),
+          service.initiatePayment(userId, { orderId: 'order1', paymentMethod: OnlinePaymentMethod.CARD, currency }),
         ).rejects.toThrow(new BadRequestException('currency must be GHS; payments are charged in GHS only'));
         expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
         expect(mockPaystack.initializeTransaction).not.toHaveBeenCalled();
@@ -162,7 +175,11 @@ describe('PaymentService', () => {
       mockStoreService.getCurrency.mockResolvedValueOnce('USD');
 
       await expect(
-        service.initiatePayment(userId, { orderId: 'order1', paymentMethod: 'card', currency: 'USD' }),
+        service.initiatePayment(userId, {
+          orderId: 'order1',
+          paymentMethod: OnlinePaymentMethod.CARD,
+          currency: 'USD',
+        }),
       ).resolves.toBeDefined();
     });
 

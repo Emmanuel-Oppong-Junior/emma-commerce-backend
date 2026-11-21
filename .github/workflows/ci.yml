@@ -179,6 +179,7 @@ jobs:
           CLOUDINARY_API_KEY=ci-smoke
           CLOUDINARY_API_SECRET=ci-smoke
           MFA_ENCRYPTION_KEY=abababababababababababababababababababababababababababababababab
+          PAYMENT_CONFIG_ENCRYPTION_KEY=cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd
           EOF
       # The worker's relay reads the outbox table, so the schema must exist before it starts.
       - run: docker run --rm --network host --env-file "$RUNNER_TEMP/smoke.env" emma-backend:ci npx prisma migrate deploy

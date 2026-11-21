@@ -1,23 +1,29 @@
-import { BadGatewayException, GatewayTimeoutException } from '@nestjs/common';
+import { BadGatewayException, GatewayTimeoutException, ServiceUnavailableException } from '@nestjs/common';
 import { PAYSTACK_TIMEOUT_MS, PaystackClient, PaystackRequestRejected } from './paystack.client';
 
 const jsonResponse = (status: number, body: unknown) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
 
 describe('PaystackClient', () => {
-  const config = { getOrThrow: jest.fn(() => 'sk_test_client_secret') };
+  const paymentSettings = { requirePaystackCredentials: jest.fn(async () => ({ secretKey: 'sk_test_client_secret' })) };
   let fetchMock: jest.SpyInstance;
   let client: PaystackClient;
 
   beforeEach(() => {
     fetchMock = jest.spyOn(global, 'fetch');
-    client = new PaystackClient(config as never);
+    client = new PaystackClient(paymentSettings as never);
   });
 
   afterEach(() => fetchMock.mockRestore());
 
   describe('initializeTransaction', () => {
-    const request = { email: 'buyer@example.com', amount: 10000, currency: 'GHS', reference: 'ref1' };
+    const request = {
+      email: 'buyer@example.com',
+      amount: 10000,
+      currency: 'GHS',
+      reference: 'ref1',
+      channels: ['card'],
+    };
 
     it('posts the request with the secret key and a timeout, and returns the checkout', async () => {
       const timeout = jest.spyOn(AbortSignal, 'timeout');
@@ -203,13 +209,16 @@ describe('PaystackClient', () => {
     });
   });
 
-  it('refuses to start without a secret key', () => {
-    const missing = {
-      getOrThrow: () => {
-        throw new Error('Configuration key "PAYSTACK_SECRET_KEY" does not exist');
-      },
+  it('calls nothing and answers 503 while neither the store nor the environment has a Paystack secret key', async () => {
+    const unconfigured = {
+      requirePaystackCredentials: jest.fn(async () => {
+        throw new ServiceUnavailableException('Paystack is not configured');
+      }),
     };
 
-    expect(() => new PaystackClient(missing as never)).toThrow('PAYSTACK_SECRET_KEY');
+    await expect(new PaystackClient(unconfigured as never).verifyTransaction('ref1')).rejects.toThrow(
+      ServiceUnavailableException,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

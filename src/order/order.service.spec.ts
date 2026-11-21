@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PaymentSettingsService } from '../payment/settings/payment-settings.service';
 import { CartService } from '../cart/cart.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '../generated/prisma/client';
@@ -232,6 +233,8 @@ const mockUser = {
   role: 'USER',
 };
 
+const mockPaymentSettings = { assertOrderPaymentMethod: jest.fn() };
+
 describe('OrdersService', () => {
   let ordersService: OrdersService;
   let placeOrder: (params: Omit<CreateOrderParams, 'quoteHash'>) => ReturnType<OrdersService['createOrderFromCart']>;
@@ -254,6 +257,7 @@ describe('OrdersService', () => {
         { provide: PromotionsService, useValue: mockPromotionsService },
         { provide: PriceListsService, useValue: mockPriceListsService },
         { provide: StoreService, useValue: mockStoreService },
+        { provide: PaymentSettingsService, useValue: mockPaymentSettings },
       ],
     }).compile();
 

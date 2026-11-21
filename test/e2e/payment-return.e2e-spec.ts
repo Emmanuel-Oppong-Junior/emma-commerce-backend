@@ -113,7 +113,7 @@ describe('Payments & Returns (e2e)', () => {
       const res = await request(mockApp.getHttpServer())
         .post('/payment/initialize')
         .set('Authorization', `Bearer ${userToken}`)
-        .send({ orderId: 'some-order-id', paymentMethod: 'card', currency: 'GHS' })
+        .send({ orderId: 'some-order-id', paymentMethod: 'CARD', currency: 'GHS' })
         .expect(201);
 
       // Assert

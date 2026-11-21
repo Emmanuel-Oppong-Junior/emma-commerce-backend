@@ -18,6 +18,11 @@ const store: Store = {
   supportEmail: null,
   supportPhone: null,
   nextOrderNumber: 10001,
+  cardPaymentsEnabled: true,
+  mobileMoneyPaymentsEnabled: true,
+  cashOnDeliveryEnabled: true,
+  cardPaymentProvider: 'PAYSTACK',
+  mobileMoneyPaymentProvider: 'PAYSTACK',
   createdAt: fixedDate,
   updatedAt: fixedDate,
 };

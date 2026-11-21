@@ -170,6 +170,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       { findForPricing: jest.fn().mockResolvedValue([]) } as never,
       { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
       { findActive: jest.fn().mockResolvedValue([]) } as never,
+      { assertOrderPaymentMethod: jest.fn() } as never,
     );
 
     const params = {

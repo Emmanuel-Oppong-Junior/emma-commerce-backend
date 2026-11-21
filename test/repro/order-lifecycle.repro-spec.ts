@@ -26,6 +26,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     {} as never,
     { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
     { findActive: jest.fn().mockResolvedValue([]) } as never,
+    { assertOrderPaymentMethod: jest.fn() } as never,
   );
   return { service, repository };
 }

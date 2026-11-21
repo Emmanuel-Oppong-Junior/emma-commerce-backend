@@ -55,7 +55,7 @@ describe('Payment initiation (e2e)', () => {
     request(app.getHttpServer())
       .post('/payment/initialize')
       .set('Authorization', `Bearer ${userToken}`)
-      .send({ paymentMethod: 'card', ...body });
+      .send({ paymentMethod: 'CARD', ...body });
 
   const attemptsOf = (orderId: string) =>
     prisma.paymentAttempt.findMany({ where: { intent: { orderId } }, orderBy: { createdAt: 'asc' } });

@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { OrderStatus, PaymentProvider } from '../generated/prisma/client';
+import { OnlinePaymentMethod } from './settings/payment-methods';
+import { PaymentSettingsService } from './settings/payment-settings.service';
 import { randomBytes } from 'node:crypto';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
@@ -25,30 +27,33 @@ export class PaymentService {
     private readonly auditService: AuditService,
     private readonly providers: PaymentProviderRegistry,
     private readonly storeService: StoreService,
+    private readonly paymentSettings: PaymentSettingsService,
   ) {}
 
   /**
-   * Opens a provider checkout for a PENDING online order. The amount and currency come from the order's payment
-   * intent. Repeating an idempotency key returns the attempt already opened under it instead of a new one.
+   * Opens a checkout for a PENDING online order with the provider the store configured for the chosen method (card
+   * or mobile money); BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer it. The amount
+   * and currency come from the order's payment intent. Repeating an idempotency key returns the attempt already
+   * opened under it instead of a new one.
    */
   async initiatePayment(
     userId: string,
     createPaymentDto: CreatePaymentDto,
   ): Promise<PaymentRecord & { authorizationUrl: string }> {
-    const { orderId, idempotencyKey } = createPaymentDto;
+    const { orderId, idempotencyKey, paymentMethod } = createPaymentDto;
     await this.assertStoreCurrency(createPaymentDto.currency);
     const order = await this.paymentRepository.findOrderWithUser(orderId);
     assertOrderPayable(order, orderId, userId);
+    const provider = await this.paymentSettings.onlineProviderFor(paymentMethod);
 
     const reference = this.generateReference(orderId);
-    const provider = PaymentProvider.PAYSTACK;
     const opened = await this.paymentRepository.openAttempt(
       {
         orderId,
         idempotencyKey,
         reference,
         provider,
-        channel: createPaymentDto.paymentMethod,
+        channel: paymentMethod,
       },
       (current) => assertOrderPayable(current, orderId, userId),
     );
@@ -60,7 +65,13 @@ export class PaymentService {
       return { ...opened.attempt, authorizationUrl };
     }
 
-    const authorizationUrl = await this.openCheckout(provider, opened.attempt, reference, order.user.email);
+    const authorizationUrl = await this.openCheckout(
+      provider,
+      paymentMethod,
+      opened.attempt,
+      reference,
+      order.user.email,
+    );
     return { ...opened.attempt, authorizationUrl };
   }
 
@@ -193,6 +204,7 @@ export class PaymentService {
 
   private async openCheckout(
     providerName: PaymentProvider,
+    method: OnlinePaymentMethod,
     attempt: PaymentRecord,
     reference: string,
     email: string,
@@ -200,6 +212,7 @@ export class PaymentService {
     const provider = this.providers.get(providerName);
     try {
       const { authorizationUrl, details } = await provider.initialize({
+        method,
         email,
         amount: attempt.amount,
         currency: attempt.currency,

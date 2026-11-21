@@ -14,6 +14,7 @@ import { ReturnsModule } from '../returns/returns.module';
 import { UsersModule } from '../users/users.module';
 import { StoreModule } from '../store/store.module';
 import { TaxModule } from '../tax/tax.module';
+import { PaymentProvidersModule } from '../payment/providers/payment-providers.module';
 
 @Module({
   providers: [OrdersService, OrdersResolver, OrdersRepository],
@@ -30,6 +31,7 @@ import { TaxModule } from '../tax/tax.module';
     UsersModule,
     StoreModule,
     TaxModule,
+    PaymentProvidersModule,
   ],
   exports: [OrdersService, OrdersRepository],
 })
