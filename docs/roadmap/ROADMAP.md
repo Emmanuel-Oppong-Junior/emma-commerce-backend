@@ -24,7 +24,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 |---|---|---|
 | 0 — Stabilise | 46 / 46 | ✅ complete |
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
-| 2 — Pricing & tax engine | 9 / 15 | 🔄 in progress |
+| 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 0 / 11 | ⬜ not started |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
@@ -32,7 +32,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **85 / 154** | |
+| **All** | **86 / 154** | |
 
 ---
 
@@ -329,9 +329,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > Run: ∥ · S · 🟧
 - [x] **P2-H.1** `PriceChange` audit on every price write; admin view [274b332]
 
-### P2-W — B2B  🔄 in progress
+### P2-W — B2B  ✅ complete
 > Run: ∥ · M · ⬜
-- [ ] 🔄 **P2-W.1** Price lists per customer group, quantity tiers, MOQ
+- [x] **P2-W.1** Price lists per customer group, quantity tiers, MOQ [08335d4]
 
 ## Phase 3 — Payments & Ghana payment methods (ADR-0007)
 
