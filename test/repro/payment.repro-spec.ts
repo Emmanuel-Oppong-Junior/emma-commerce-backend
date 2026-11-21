@@ -1,4 +1,5 @@
 import { PaymentService } from '../../src/payment/payment.service';
+import { providerRegistryWith } from '../helpers/payment-providers.helper';
 
 interface PaystackVerifyData {
   status: string;
@@ -12,7 +13,7 @@ function buildPaymentService(
   verified: PaystackVerifyData = { status: 'success', amount: 50000, currency: 'GHS' },
 ) {
   const repository = {
-    findByReference: jest.fn().mockResolvedValue(payment),
+    findByReference: jest.fn().mockResolvedValue({ provider: 'PAYSTACK', ...payment }),
     findOrderById: jest.fn().mockResolvedValue(order),
     findByOrderId: jest.fn().mockResolvedValue(payment),
     findOrderWithUser: jest.fn().mockResolvedValue({ ...order, user: { email: 'customer@test.local' } }),
@@ -31,10 +32,9 @@ function buildPaymentService(
   };
   const service = new PaymentService(
     repository as never,
-    { get: () => 'sk_test_placeholder' } as never,
     { log: jest.fn(), warn: jest.fn(), error: jest.fn() } as never,
     { log: jest.fn() } as never,
-    paystack as never,
+    providerRegistryWith(paystack),
     { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
   );
   return { service, repository, paystack };

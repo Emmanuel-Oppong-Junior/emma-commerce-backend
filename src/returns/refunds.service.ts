@@ -2,20 +2,21 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma, Refund, RefundStatus, ReturnRequest } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
-import { PaystackClient, PaystackRequestRejected } from '../payment/paystack.client';
 import { assertRefundable } from './refund-cap';
-import { toMinorUnits } from '../commons/money/money';
+import { PaymentProviderRegistry } from '../payment/providers/payment-provider.registry';
+import { ProviderRequestRejected } from '../payment/providers/payment-provider.port';
 import { RecordedRefund, RefundRepository } from './refund.repository';
 
 /**
- * Sends refunds through Paystack. A refund is claimed (PENDING/FAILED -> SENDING) in a committed transaction before
- * the provider is called, so a repeated or concurrent request finds it SENDING and never calls Paystack again.
+ * Sends refunds through the attempt's payment provider. A refund is claimed (PENDING/FAILED -> SENDING) in a committed
+ * transaction before the provider is called, so a repeated or concurrent request finds it SENDING and never calls the
+ * provider again.
  */
 @Injectable()
 export class RefundsService {
   constructor(
     private readonly refundRepository: RefundRepository,
-    private readonly paystack: PaystackClient,
+    private readonly providers: PaymentProviderRegistry,
     private readonly auditService: AuditService,
     private readonly logger: LoggerService,
   ) {}
@@ -61,9 +62,9 @@ export class RefundsService {
   }
 
   /**
-   * Claims the refund, calls Paystack once and records the outcome. A refusal (4xx) marks it FAILED so it can be sent
-   * again. Any other failure (timeout, 5xx, unreadable answer) leaves it SENDING: Paystack may have created the
-   * refund, so it must be checked there before anyone sends money again.
+   * Claims the refund, calls the provider once and records the outcome. A refusal (4xx) marks it FAILED so it can be
+   * sent again. Any other failure (timeout, 5xx, unreadable answer) leaves it SENDING: the provider may have created
+   * the refund, so it must be checked there before anyone sends money again.
    */
   async send(refundId: string, adminUserId: string): Promise<RecordedRefund> {
     const { refund, ledger } = await this.refundRepository.claimForSending(
@@ -89,23 +90,21 @@ export class RefundsService {
         ),
     );
     const reference = ledger.attempt.reference as string;
+    const provider = this.providers.get(ledger.attempt.provider);
 
     let providerRefundId: string;
     try {
-      ({ id: providerRefundId } = await this.paystack.createRefund({
-        transaction: reference,
-        amount: toMinorUnits(refund.amount),
-      }));
+      providerRefundId = await provider.refund({ reference, amount: refund.amount });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (error instanceof PaystackRequestRejected) {
+      if (error instanceof ProviderRequestRejected) {
         await this.recordRejected(refund, reason, adminUserId);
         throw new BadRequestException(
-          `Paystack refused refund "${refund.id}": ${reason}. Nothing was refunded; it can be sent again.`,
+          `${provider.label} refused refund "${refund.id}": ${reason}. Nothing was refunded; it can be sent again.`,
         );
       }
       this.logger.error(
-        `Paystack refund outcome unknown; left SENDING, check Paystack before resending | refundId: ${refund.id} | reference: ${reference}`,
+        `${provider.label} refund outcome unknown; left SENDING, check ${provider.label} before resending | refundId: ${refund.id} | reference: ${reference}`,
         reason,
         'RefundsService',
       );
@@ -114,7 +113,7 @@ export class RefundsService {
     }
 
     this.logger.log(
-      `Paystack refund accepted | refundId: ${refund.id} | providerRefundId: ${providerRefundId} | reference: ${reference}`,
+      `${provider.label} refund accepted | refundId: ${refund.id} | providerRefundId: ${providerRefundId} | reference: ${reference}`,
       'RefundsService',
     );
     return this.refundRepository.recordProcessed(refund.id, providerRefundId, async (tx, recorded) => {

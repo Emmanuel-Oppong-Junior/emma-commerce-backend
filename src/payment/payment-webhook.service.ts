@@ -1,5 +1,4 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PaymentProvider, WebhookEvent } from '../generated/prisma/client';
@@ -9,8 +8,9 @@ import { JobQueue } from '../jobs/job-queues';
 import { withJobMeta, WithJobMeta } from '../jobs/job-context';
 import { AppMetrics } from '../observability/metrics';
 import { PaymentService } from './payment.service';
-import { isSettlingEvent, isValidPaystackSignature, parsePaystackWebhook } from './paystack-webhook';
 import { WebhookEventRepository } from './webhook-event.repository';
+import { PaymentProviderRegistry } from './providers/payment-provider.registry';
+import { VerifiedEvent, WebhookHeaders, WebhookSignatureRejected } from './providers/payment-provider.port';
 
 export const PAYSTACK_WEBHOOK_JOB = 'paystack.webhook.v1';
 
@@ -27,7 +27,7 @@ export class PaymentWebhookService {
   constructor(
     private readonly webhookEvents: WebhookEventRepository,
     private readonly paymentService: PaymentService,
-    private readonly configService: ConfigService,
+    private readonly providers: PaymentProviderRegistry,
     private readonly logger: LoggerService,
     @InjectQueue(JobQueue.WEBHOOKS) private readonly webhookQueue: Queue,
     private readonly metrics: AppMetrics,
@@ -38,17 +38,20 @@ export class PaymentWebhookService {
    * (HTTP 200) as soon as it is stored. Throws 401 for a bad signature (nothing stored). Processing runs in the
    * worker with retries and backoff; if queueing fails, the stored event is still picked up by the payment sweep.
    */
-  async handlePaystackWebhook(rawBody: Buffer | undefined, signature: string | undefined): Promise<void> {
+  async handlePaystackWebhook(rawBody: Buffer | undefined, headers: WebhookHeaders): Promise<void> {
     if (!rawBody?.length) throw new BadRequestException('Webhook body is empty');
-    const secret = this.configService.getOrThrow<string>('PAYSTACK_SECRET_KEY');
-    if (!isValidPaystackSignature(rawBody, signature, secret)) {
-      this.logger.warn('Webhook rejected | reason: invalid signature', CONTEXT);
-      this.metrics.recordWebhookFailure('invalid_signature');
-      throw new UnauthorizedException('Invalid webhook signature');
+    const provider = this.providers.get(PaymentProvider.PAYSTACK);
+    let parsed: VerifiedEvent;
+    try {
+      parsed = await provider.parseWebhook(rawBody, headers);
+    } catch (error) {
+      if (error instanceof WebhookSignatureRejected) {
+        this.logger.warn('Webhook rejected | reason: invalid signature', CONTEXT);
+        this.metrics.recordWebhookFailure('invalid_signature');
+      }
+      throw error;
     }
-
-    const parsed = parsePaystackWebhook(rawBody);
-    const { created, event } = await this.webhookEvents.record({ provider: PaymentProvider.PAYSTACK, ...parsed });
+    const { created, event } = await this.webhookEvents.record({ provider: provider.name, ...parsed });
     const summary = describeEvent(event);
     if (event.processedAt) {
       this.logger.log(`Webhook duplicate ignored | ${summary}`, CONTEXT);
@@ -56,7 +59,7 @@ export class PaymentWebhookService {
     }
     this.logger.log(`Webhook ${created ? 'received' : 'redelivered before processing'} | ${summary}`, CONTEXT);
 
-    if (!isSettlingEvent(event.event) || !event.reference) {
+    if (!provider.settlesPayment(event.event) || !event.reference) {
       this.logger.log(`Webhook stored without processing | ${summary} | reason: not a settling event`, CONTEXT);
       await this.webhookEvents.markProcessed(event.id, 0);
       return;
@@ -89,7 +92,7 @@ export class PaymentWebhookService {
 
   private async processOnce(event: WebhookEvent): Promise<{ outcome: ReprocessOutcome; error?: string }> {
     const summary = describeEvent(event);
-    if (!isSettlingEvent(event.event) || !event.reference) {
+    if (!this.providers.get(event.provider).settlesPayment(event.event) || !event.reference) {
       await this.webhookEvents.markProcessed(event.id, 0);
       return { outcome: 'skipped' };
     }

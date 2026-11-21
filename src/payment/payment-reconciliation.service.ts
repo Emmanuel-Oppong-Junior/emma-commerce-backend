@@ -7,8 +7,10 @@ import { PaymentService } from './payment.service';
 import { PaymentWebhookService, ReprocessOutcome } from './payment-webhook.service';
 import { isSettled } from './payment-verification';
 import { diffSuccessfulTransactions, Mismatch, previousUtcDay, staleAttemptWindow } from './payment-reconciliation';
-import { ListedTransaction, PaystackClient } from './paystack.client';
 import { WebhookEventRepository } from './webhook-event.repository';
+import { PaymentProvider } from '../generated/prisma/client';
+import { PaymentProviderRegistry } from './providers/payment-provider.registry';
+import { ListedTransaction } from './providers/payment-provider.port';
 
 export const PAYMENT_SWEEP_LOCK_KEY = 70_412_002;
 export const PAYMENT_DIFF_LOCK_KEY = 70_412_003;
@@ -52,7 +54,7 @@ export class PaymentReconciliationService {
     private readonly webhookEvents: WebhookEventRepository,
     private readonly paymentService: PaymentService,
     private readonly webhookService: PaymentWebhookService,
-    private readonly paystack: PaystackClient,
+    private readonly providers: PaymentProviderRegistry,
     private readonly ordersRepository: OrdersRepository,
     private readonly logger: LoggerService,
   ) {}
@@ -164,9 +166,10 @@ export class PaymentReconciliationService {
     from: Date,
     to: Date,
   ): Promise<{ transactions: ListedTransaction[]; complete: boolean }> {
+    const paystack = this.providers.get(PaymentProvider.PAYSTACK);
     const transactions: ListedTransaction[] = [];
     for (let page = 1; page <= DIFF_MAX_PAGES; page++) {
-      const result = await this.paystack.listTransactions({
+      const result = await paystack.listTransactions({
         from,
         to,
         status: 'success',

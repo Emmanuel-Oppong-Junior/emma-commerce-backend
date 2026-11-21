@@ -9,6 +9,7 @@ import {
   WEBHOOK_SWEEP_BATCH,
   WEBHOOK_SWEEP_MAX_ATTEMPTS,
 } from './payment-reconciliation.service';
+import { providerRegistryWith } from '../../test/helpers/payment-providers.helper';
 
 const NOW = new Date('2026-11-18T01:30:00.000Z');
 const DAY_START = new Date('2026-11-17T00:00:00.000Z');
@@ -27,7 +28,7 @@ describe('PaymentReconciliationService', () => {
     webhookEvents as never,
     paymentService as never,
     webhookService as never,
-    paystack as never,
+    providerRegistryWith(paystack),
     ordersRepository as never,
     logger as never,
   );

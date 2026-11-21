@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentService } from './payment.service';
 import { PaymentRepository } from './payment.repository';
-import { ConfigService } from '@nestjs/config';
 import {
   BadGatewayException,
   BadRequestException,
@@ -14,8 +13,9 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentStatus, Prisma } from '../generated/prisma/client';
 import { LoggerService } from '../commons/logger.service';
 import { AuditService } from '../commons/audit.service';
-import { PaystackClient } from './paystack.client';
 import { StoreService } from '../store/store.service';
+import { PaymentProviderRegistry } from './providers/payment-provider.registry';
+import { providerRegistryWith } from '../../test/helpers/payment-providers.helper';
 
 const mockPaystack = {
   initializeTransaction: jest.fn(),
@@ -35,10 +35,6 @@ const mockPaymentRepository = {
   findOrderWithUser: jest.fn(),
   findOrderById: jest.fn(),
   settleAttempt: jest.fn(),
-};
-
-const mockConfigService = {
-  get: jest.fn(),
 };
 
 const mockLoggerService = {
@@ -64,22 +60,18 @@ describe('PaymentService', () => {
       providers: [
         PaymentService,
         { provide: PaymentRepository, useValue: mockPaymentRepository },
-        { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: AuditService, useValue: mockAuditService },
-        { provide: PaystackClient, useValue: mockPaystack },
+        {
+          provide: PaymentProviderRegistry,
+          useValue: providerRegistryWith(mockPaystack, { callbackUrl: 'http://callback.test' }),
+        },
         { provide: StoreService, useValue: mockStoreService },
       ],
     }).compile();
 
     service = module.get<PaymentService>(PaymentService);
     paymentRepository = module.get<PaymentRepository>(PaymentRepository) as jest.Mocked<PaymentRepository>;
-
-    mockConfigService.get.mockImplementation((key: string) => {
-      if (key === 'PAYSTACK_SECRET_KEY') return 'test_secret';
-      if (key === 'PAYSTACK_CALLBACK_URL') return 'http://callback.test';
-      return undefined;
-    });
 
     jest.clearAllMocks();
   });
@@ -273,6 +265,7 @@ describe('PaymentService', () => {
       amount: new Prisma.Decimal(250),
       currency: 'GHS',
       transactionId: 'ref1',
+      provider: 'PAYSTACK',
       status: PaymentStatus.PENDING,
       deleted: false,
     };

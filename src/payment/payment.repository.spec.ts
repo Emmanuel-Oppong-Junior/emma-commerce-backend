@@ -40,6 +40,7 @@ const mockPayment = {
   id: 'pay1',
   orderId: 'order1',
   order: mockOrder,
+  provider: 'PAYSTACK',
   amount: new Prisma.Decimal(100),
   currency: 'GHS',
   paymentMethod: 'CARD',

@@ -1,7 +1,7 @@
 import { PaymentReviewReason, PaymentStatus, Prisma } from '../generated/prisma/client';
 import { PAYSTACK_SUCCESS_STATUS } from './constant';
 import { isSettled } from './payment-verification';
-import { ListedTransaction } from './paystack.client';
+import { ListedTransaction } from './providers/payment-provider.port';
 
 /** A webhook normally settles an attempt within seconds; one still open after this is re-verified. */
 export const STALE_ATTEMPT_MIN_AGE_MS = 15 * 60 * 1000;

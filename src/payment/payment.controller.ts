@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, HttpCode, HttpStatus, Post, RawBodyRequest, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, RawBodyRequest, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { PaymentService } from './payment.service';
@@ -7,7 +7,6 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
-import { PAYSTACK_WEBHOOK_SIGNATURE_KEY } from './constant';
 
 @Controller('payment')
 export class PaymentController {
@@ -26,10 +25,7 @@ export class PaymentController {
   @Auth(AuthType.None)
   @Post('/webhook')
   @HttpCode(HttpStatus.OK)
-  async paymentWebhookHandler(
-    @Req() request: RawBodyRequest<Request>,
-    @Headers(PAYSTACK_WEBHOOK_SIGNATURE_KEY) signature?: string,
-  ): Promise<void> {
-    await this.paymentWebhookService.handlePaystackWebhook(request.rawBody, signature);
+  async paymentWebhookHandler(@Req() request: RawBodyRequest<Request>): Promise<void> {
+    await this.paymentWebhookService.handlePaystackWebhook(request.rawBody, request.headers);
   }
 }

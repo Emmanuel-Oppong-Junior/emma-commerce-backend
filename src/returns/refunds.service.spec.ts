@@ -2,7 +2,8 @@ import { BadGatewayException, BadRequestException, ConflictException, GatewayTim
 import { PaymentProvider, PaymentStatus, Prisma, Refund, RefundStatus } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
-import { PaystackClient, PaystackRequestRejected } from '../payment/paystack.client';
+import { PaystackRequestRejected } from '../payment/paystack.client';
+import { providerRegistryWith } from '../../test/helpers/payment-providers.helper';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 import { RefundLedger } from './refund-cap';
 import { RefundRepository } from './refund.repository';
@@ -51,7 +52,7 @@ describe('RefundsService', () => {
     auditService = createAuditServiceMock();
     service = new RefundsService(
       repository as unknown as RefundRepository,
-      paystack as unknown as PaystackClient,
+      providerRegistryWith(paystack),
       auditService as unknown as AuditService,
       logger as unknown as LoggerService,
     );

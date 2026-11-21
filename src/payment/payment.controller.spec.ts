@@ -26,8 +26,10 @@ describe('PaymentController', () => {
   it('hands the webhook the raw request bytes, not the parsed body', async () => {
     const rawBody = Buffer.from('{"event":"charge.success","data":{}}');
 
-    await controller.paymentWebhookHandler({ rawBody, body: { parsed: true } } as never, 'sig');
+    const headers = { 'x-paystack-signature': 'sig' };
 
-    expect(webhookService.handlePaystackWebhook).toHaveBeenCalledWith(rawBody, 'sig');
+    await controller.paymentWebhookHandler({ rawBody, body: { parsed: true }, headers } as never);
+
+    expect(webhookService.handlePaystackWebhook).toHaveBeenCalledWith(rawBody, headers);
   });
 });

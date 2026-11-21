@@ -2,29 +2,26 @@ import { Module } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { PaymentResolver } from './payment.resolver';
 import { PaymentController } from './payment.controller';
-import { ConfigService } from '@nestjs/config';
 import { CommonsModule } from '../commons/commons.module';
 import { PaymentRepository } from './payment.repository';
 import { PaymentWebhookService } from './payment-webhook.service';
-import { PaystackClient } from './paystack.client';
 import { WebhookEventRepository } from './webhook-event.repository';
 import { OutboxModule } from '../outbox/outbox.module';
 import { OrderModule } from '../order/order.module';
 import { StoreModule } from '../store/store.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
+import { PaymentProvidersModule } from './providers/payment-providers.module';
 
 @Module({
-  imports: [CommonsModule, OutboxModule, OrderModule, StoreModule, InventoryModule],
+  imports: [CommonsModule, OutboxModule, OrderModule, StoreModule, InventoryModule, PaymentProvidersModule],
   providers: [
     PaymentResolver,
     PaymentService,
     PaymentRepository,
     PaymentWebhookService,
     WebhookEventRepository,
-    PaystackClient,
     PaymentReconciliationService,
-    ConfigService,
   ],
   controllers: [PaymentController],
   exports: [PaymentReconciliationService, PaymentWebhookService],

@@ -6,6 +6,14 @@ import {
   PAYSTACK_TRANSACTION_LIST_URL,
   PAYSTACK_TRANSACTION_VERIFY_BASE_URL,
 } from './constant';
+import {
+  ListedTransaction,
+  ListTransactionsRequest,
+  ProviderRequestRejected,
+  TransactionPage,
+} from './providers/payment-provider.port';
+
+export type { ListedTransaction, ListTransactionsRequest, TransactionPage };
 
 export const PAYSTACK_TIMEOUT_MS = 8000;
 
@@ -35,27 +43,6 @@ export interface VerifiedTransaction {
   gateway_response?: unknown;
 }
 
-export interface ListTransactionsRequest {
-  from: Date;
-  to: Date;
-  status: 'success' | 'failed' | 'abandoned';
-  page: number;
-  perPage: number;
-}
-
-/** One listed transaction, reduced to what reconciliation compares. `amount` is in subunits (pesewas). */
-export interface ListedTransaction {
-  reference: string;
-  status: string;
-  amount: number;
-  currency: string;
-}
-
-export interface TransactionPage {
-  transactions: ListedTransaction[];
-  pageCount: number;
-}
-
 export interface CreateRefundRequest {
   /** The transaction reference. */
   transaction: string;
@@ -72,7 +59,7 @@ export interface CreatedRefund {
  * Paystack answered with a 4xx and `status: false`, so it refused the request and did nothing. Every other failure
  * leaves the outcome unknown.
  */
-export class PaystackRequestRejected extends BadGatewayException {}
+export class PaystackRequestRejected extends ProviderRequestRejected {}
 
 /**
  * The Paystack calls the app makes, over `fetch` with a timeout. Transport failures, timeouts, non-2xx answers and

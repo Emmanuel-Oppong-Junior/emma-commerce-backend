@@ -6,32 +6,29 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { OrderStatus, PaymentProvider, Prisma } from '../generated/prisma/client';
-import { ConfigService } from '@nestjs/config';
+import { OrderStatus, PaymentProvider } from '../generated/prisma/client';
 import { randomBytes } from 'node:crypto';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
-import { decideVerification, isSettled, parseProviderVerification } from './payment-verification';
+import { decideVerification, isSettled } from './payment-verification';
 import { assertCodCollectable } from './cash-on-delivery';
 import { AuditService } from '../commons/audit.service';
-import { InitializedTransaction, PaystackClient, VerifiedTransaction } from './paystack.client';
 import { StoreService } from '../store/store.service';
-import { toMinorUnits } from '../commons/money/money';
+import { PaymentProviderRegistry } from './providers/payment-provider.registry';
 
 @Injectable()
 export class PaymentService {
   constructor(
     private readonly paymentRepository: PaymentRepository,
-    private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly auditService: AuditService,
-    private readonly paystack: PaystackClient,
+    private readonly providers: PaymentProviderRegistry,
     private readonly storeService: StoreService,
   ) {}
 
   /**
-   * Opens a Paystack checkout for a PENDING online order. The amount and currency come from the order's payment
+   * Opens a provider checkout for a PENDING online order. The amount and currency come from the order's payment
    * intent. Repeating an idempotency key returns the attempt already opened under it instead of a new one.
    */
   async initiatePayment(
@@ -44,12 +41,13 @@ export class PaymentService {
     assertOrderPayable(order, orderId, userId);
 
     const reference = this.generateReference(orderId);
+    const provider = PaymentProvider.PAYSTACK;
     const opened = await this.paymentRepository.openAttempt(
       {
         orderId,
         idempotencyKey,
         reference,
-        provider: PaymentProvider.PAYSTACK,
+        provider,
         channel: createPaymentDto.paymentMethod,
       },
       (current) => assertOrderPayable(current, orderId, userId),
@@ -62,12 +60,12 @@ export class PaymentService {
       return { ...opened.attempt, authorizationUrl };
     }
 
-    const authorizationUrl = await this.openPaystackCheckout(opened.attempt, reference, order.user.email);
+    const authorizationUrl = await this.openCheckout(provider, opened.attempt, reference, order.user.email);
     return { ...opened.attempt, authorizationUrl };
   }
 
   /**
-   * Verifies a payment by its Paystack reference. For the webhook only: no ownership check.
+   * Verifies a payment by its provider reference. For the webhook only: no ownership check.
    */
   async verifyPayment(reference: string): Promise<PaymentRecord> {
     this.logger.log(`Verifying payment | reference: ${reference}`, 'PaymentService');
@@ -193,25 +191,25 @@ export class PaymentService {
     if (!payment) throw new NotFoundException('Payment Not found');
   }
 
-  private async openPaystackCheckout(attempt: PaymentRecord, reference: string, email: string): Promise<string> {
+  private async openCheckout(
+    providerName: PaymentProvider,
+    attempt: PaymentRecord,
+    reference: string,
+    email: string,
+  ): Promise<string> {
+    const provider = this.providers.get(providerName);
     try {
-      const transaction = await this.paystack.initializeTransaction({
+      const { authorizationUrl, details } = await provider.initialize({
         email,
-        amount: toMinorUnits(attempt.amount),
+        amount: attempt.amount,
         currency: attempt.currency,
         reference,
-        callback_url: this.configService.get('PAYSTACK_CALLBACK_URL'),
       });
-      const authorizationUrl = transaction.authorization_url;
-      await this.paymentRepository.recordCheckout(
-        attempt.id,
-        authorizationUrl,
-        this.sanitizeInitializeDetails(transaction),
-      );
+      await this.paymentRepository.recordCheckout(attempt.id, authorizationUrl, details);
       return authorizationUrl;
     } catch (error) {
       this.logger.error(
-        `Paystack checkout could not be opened | orderId: ${attempt.orderId} | paymentId: ${attempt.id}`,
+        `${provider.label} checkout could not be opened | orderId: ${attempt.orderId} | paymentId: ${attempt.id}`,
         error instanceof Error ? error.message : String(error),
         'PaymentService',
       );
@@ -223,34 +221,6 @@ export class PaymentService {
   // The random suffix keeps two initiations in the same millisecond from colliding on the unique reference.
   private generateReference(orderId: string): string {
     return `${orderId}-${Date.now()}-${randomBytes(4).toString('hex')}`;
-  }
-
-  /**
-   * Strips raw Paystack initialization data down to the minimum fields needed for audit.
-   * The checkout URL is kept in its own column so an idempotent retry can hand it back.
-   * [LOW-1] Null-coalesce each field to avoid storing `undefined` in the JSON column.
-   */
-  private sanitizeInitializeDetails(data: InitializedTransaction): Prisma.InputJsonValue {
-    return {
-      reference: data.reference ?? null,
-      access_code: data.access_code ?? null,
-    } as Prisma.InputJsonValue;
-  }
-
-  /**
-   * Strips raw Paystack verification data down to safe audit fields.
-   * Omits customer PII, IP addresses, raw channel tokens, and authorization objects.
-   */
-  private sanitizeVerifyDetails(data: VerifiedTransaction): Prisma.InputJsonValue {
-    return {
-      reference: data.reference ?? null,
-      status: data.status ?? null,
-      amount: data.amount ?? null,
-      currency: data.currency ?? null,
-      channel: data.channel ?? null,
-      paid_at: data.paid_at ?? null,
-      gateway_response: data.gateway_response ?? null,
-    } as Prisma.InputJsonValue;
   }
 
   private async fetchPaymentByReference(reference: string): Promise<PaymentRecord> {
@@ -265,13 +235,9 @@ export class PaymentService {
    */
   private async settleWithProvider(payment: PaymentRecord, reference: string): Promise<PaymentRecord> {
     if (isSettled(payment.status)) return payment;
-    const transaction = await this.paystack.verifyTransaction(reference);
-    const verified = parseProviderVerification(reference, transaction);
-    const settled = await this.paymentRepository.settleAttempt(
-      payment.id,
-      verified,
-      this.sanitizeVerifyDetails(transaction),
-      (state) => decideVerification(state, verified),
+    const { verification: verified, details } = await this.providers.get(payment.provider).verify(reference);
+    const settled = await this.paymentRepository.settleAttempt(payment.id, verified, details, (state) =>
+      decideVerification(state, verified),
     );
 
     const { outcome, attempt } = settled;

@@ -2,15 +2,18 @@ import { BadRequestException, NotFoundException, UnauthorizedException } from '@
 import { createHmac } from 'node:crypto';
 import { PAYSTACK_WEBHOOK_JOB, PaymentWebhookService } from './payment-webhook.service';
 import { runWithCorrelation } from '../commons/correlation';
+import { providerRegistryWith } from '../../test/helpers/payment-providers.helper';
 
 const SECRET = 'sk_test_webhook_secret';
 
 const sign = (raw: Buffer) => createHmac('sha512', SECRET).update(raw).digest('hex');
+const signed = (raw: Buffer) => ({ 'x-paystack-signature': sign(raw) });
 const body = (event: string, data: Record<string, unknown>) => Buffer.from(JSON.stringify({ event, data }));
 
 describe('PaymentWebhookService', () => {
   const storedEvent = (overrides: Record<string, unknown> = {}) => ({
     id: 'evt1',
+    provider: 'PAYSTACK',
     event: 'charge.success',
     reference: 'ref1',
     processedAt: null,
@@ -24,13 +27,12 @@ describe('PaymentWebhookService', () => {
   };
   const paymentService = { verifyPayment: jest.fn() };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
-  const config = { getOrThrow: jest.fn(() => SECRET) };
   const queue = { add: jest.fn() };
   const metrics = { recordWebhookFailure: jest.fn() };
   const service = new PaymentWebhookService(
     webhookEvents as never,
     paymentService as never,
-    config as never,
+    providerRegistryWith({}, { secretKey: SECRET }),
     logger as never,
     queue as never,
     metrics as never,
@@ -46,7 +48,7 @@ describe('PaymentWebhookService', () => {
   it('tags the processing job with the delivery request id', async () => {
     const raw = body('charge.success', { id: 42, reference: 'ref1' });
 
-    await runWithCorrelation({ requestId: 'req-1' }, () => service.handlePaystackWebhook(raw, sign(raw)));
+    await runWithCorrelation({ requestId: 'req-1' }, () => service.handlePaystackWebhook(raw, signed(raw)));
 
     expect(queue.add).toHaveBeenCalledWith(
       PAYSTACK_WEBHOOK_JOB,
@@ -58,7 +60,7 @@ describe('PaymentWebhookService', () => {
   it('stores a signed charge event, then queues its processing under the stored id without settling inline', async () => {
     const raw = body('charge.success', { id: 42, reference: 'ref1', customer: { email: 'buyer@example.com' } });
 
-    await service.handlePaystackWebhook(raw, sign(raw));
+    await service.handlePaystackWebhook(raw, signed(raw));
 
     expect(webhookEvents.record).toHaveBeenCalledWith({
       provider: 'PAYSTACK',
@@ -79,14 +81,18 @@ describe('PaymentWebhookService', () => {
   ])('rejects %s with 401 and stores nothing', async (_label, signature) => {
     const raw = body('charge.success', { reference: 'ref1' });
 
-    await expect(service.handlePaystackWebhook(raw, signature)).rejects.toThrow(UnauthorizedException);
+    await expect(service.handlePaystackWebhook(raw, { 'x-paystack-signature': signature })).rejects.toThrow(
+      UnauthorizedException,
+    );
     expect(webhookEvents.record).not.toHaveBeenCalled();
     expect(queue.add).not.toHaveBeenCalled();
     expect(metrics.recordWebhookFailure).toHaveBeenCalledWith('invalid_signature');
   });
 
   it('rejects a request without a raw body', async () => {
-    await expect(service.handlePaystackWebhook(undefined, 'sig')).rejects.toThrow(BadRequestException);
+    await expect(service.handlePaystackWebhook(undefined, { 'x-paystack-signature': 'sig' })).rejects.toThrow(
+      BadRequestException,
+    );
     expect(webhookEvents.record).not.toHaveBeenCalled();
   });
 
@@ -94,7 +100,7 @@ describe('PaymentWebhookService', () => {
     webhookEvents.record.mockResolvedValue({ created: false, event: storedEvent({ processedAt: new Date() }) });
     const raw = body('charge.success', { reference: 'ref1' });
 
-    await service.handlePaystackWebhook(raw, sign(raw));
+    await service.handlePaystackWebhook(raw, signed(raw));
 
     expect(queue.add).not.toHaveBeenCalled();
     expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
@@ -104,7 +110,7 @@ describe('PaymentWebhookService', () => {
     webhookEvents.record.mockResolvedValue({ created: false, event: storedEvent() });
     const raw = body('charge.success', { reference: 'ref1' });
 
-    await service.handlePaystackWebhook(raw, sign(raw));
+    await service.handlePaystackWebhook(raw, signed(raw));
 
     expect(queue.add).toHaveBeenCalledWith(PAYSTACK_WEBHOOK_JOB, { webhookEventId: 'evt1' }, { jobId: 'evt1' });
   });
@@ -116,7 +122,7 @@ describe('PaymentWebhookService', () => {
     });
     const raw = body('refund.processed', { id: 7, reference: 'ref1' });
 
-    await service.handlePaystackWebhook(raw, sign(raw));
+    await service.handlePaystackWebhook(raw, signed(raw));
 
     expect(webhookEvents.record).toHaveBeenCalledWith(expect.objectContaining({ event: 'refund.processed' }));
     expect(paymentService.verifyPayment).not.toHaveBeenCalled();
@@ -128,7 +134,7 @@ describe('PaymentWebhookService', () => {
     queue.add.mockRejectedValue(new Error('Redis connection lost'));
     const raw = body('charge.success', { reference: 'ref1' });
 
-    await expect(service.handlePaystackWebhook(raw, sign(raw))).resolves.toBeUndefined();
+    await expect(service.handlePaystackWebhook(raw, signed(raw))).resolves.toBeUndefined();
 
     expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(

@@ -32,6 +32,7 @@ export interface PaymentRecord {
   id: string;
   orderId: string;
   order?: Order;
+  provider: PaymentProvider;
   amount: Prisma.Decimal;
   currency: string;
   paymentMethod: string;
@@ -92,6 +93,7 @@ function toPaymentRecord(attempt: AttemptWithIntent): PaymentRecord {
     id: attempt.id,
     orderId: attempt.intent.orderId,
     ...(attempt.intent.order && { order: attempt.intent.order }),
+    provider: attempt.provider,
     amount: attempt.amount,
     currency: attempt.currency,
     paymentMethod: attempt.channel,
