@@ -5,6 +5,7 @@ import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
 import { signInAdmin, signInUser, signUpUser } from '../helpers/auth.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { createCoupon, createPromotion } from '../helpers/promotion.helper';
 
 const M = '{ amount currency }';
 
@@ -118,18 +119,13 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
   });
 
   it("sells the chosen variant at its own price, applies a product discount, a coupon, snapshots the SKU and takes that variant's stock", async () => {
-    const discount = await prisma.discount.create({
-      data: {
-        name: 'Shirt week',
-        type: 'PERCENTAGE',
-        value: 10,
-        isActive: true,
-        startDate: new Date(Date.now() - 86_400_000),
-        endDate: new Date(Date.now() + 86_400_000),
-        products: { connect: { id: shirtId } },
-      },
+    const discount = await createPromotion(prisma, {
+      name: 'Shirt week',
+      type: 'PERCENT',
+      value: 10,
+      targetIds: [shirtId],
     });
-    await prisma.coupon.create({ data: { code: 'SKU10', discountType: 'FLAT', value: 10 } });
+    await createCoupon(prisma, { code: 'SKU10', type: 'AMOUNT_OFF', value: 10 });
     try {
       const cart = await addToCart(variantIds['KENTE-M'], 2);
       const order = await createOrder(customerToken, 'SKU10');
@@ -178,7 +174,8 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
       });
       expect(restore).toMatchObject({ variantId: variantIds['KENTE-M'], reservedDelta: -2, refId: placed.id });
     } finally {
-      await prisma.discount.delete({ where: { id: discount.id } });
+      await prisma.redemption.deleteMany({ where: { promotionId: discount.id } });
+      await prisma.promotion.delete({ where: { id: discount.id } });
     }
   });
 

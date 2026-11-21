@@ -43,7 +43,7 @@ model User {
   pendingEmail              String?
   emailVerificationToken    String?           @unique
   emailVerificationTokenExp DateTime?
-  couponUsages              CouponUsage[]
+  redemptions               Redemption[]
   returnRequests            ReturnRequest[]
   storeMemberships          StoreMembership[]
   /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
@@ -143,10 +143,7 @@ model Category {
   subcategories SubCategory[]
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
-  discount      Discount?     @relation(fields: [discountId], references: [id])
-  discountId    String?
-
-  @@index([discountId])
+  promotions    Promotion[]
 }
 
 model SubCategory {
@@ -164,13 +161,14 @@ model SubCategory {
 }
 
 model Brand {
-  id          String    @id @default(cuid())
-  name        String    @unique @db.VarChar(255)
-  description String?   @db.Text
+  id          String      @id @default(cuid())
+  name        String      @unique @db.VarChar(255)
+  description String?     @db.Text
   logo        String?
   products    Product[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  promotions  Promotion[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 }
 
 model Tag {
@@ -204,8 +202,7 @@ model Variant {
   product           Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
   cartItem          CartItem[]
   orderItem         OrderItem[]
-  discount          Discount?          @relation(fields: [discountId], references: [id])
-  discountId        String?
+  promotions        Promotion[]
   lowStockThreshold Int?               @default(5)
   stockLevels       StockLevel[]
   stockMovements    StockMovement[]
@@ -217,7 +214,6 @@ model Variant {
 
   @@unique([productId, optionsKey], where: raw("\"isActive\""))
   @@index([productId])
-  @@index([discountId])
 }
 
 /// A kind of product (ADR-0002) owning the attribute definitions its products and variants are validated against.
@@ -325,7 +321,7 @@ model Product {
   tags          Tag[]
   reviews       Review[]
   variants      Variant[]
-  discounts     Discount[]
+  promotions    Promotion[]
   cartItem      CartItem[]
   orderItem     OrderItem[]
   wishlist      WishList[]
@@ -377,26 +373,6 @@ model Review {
   @@index([userId])
 }
 
-model Discount {
-  id              String       @id @default(cuid())
-  name            String
-  description     String?
-  type            DiscountType
-  value           Decimal      @db.Decimal(14, 2)
-  startDate       DateTime
-  endDate         DateTime
-  isActive        Boolean      @default(false)
-  products        Product[]
-  variants        Variant[]
-  categories      Category[]
-  minimumPurchase Decimal?     @db.Decimal(14, 2)
-  cartItems       CartItem[]
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-
-  @@index([startDate, endDate, isActive])
-}
-
 model Cart {
   id        String     @id @default(cuid())
   userId    String     @unique
@@ -407,25 +383,21 @@ model Cart {
 }
 
 model CartItem {
-  id              String    @id @default(cuid())
-  cartId          String
+  id            String   @id @default(cuid())
+  cartId        String
   /// The variant's product, kept for lookups by product (a variant never changes product)
-  productId       String
-  variantId       String
-  quantity        Int       @default(1)
-  cart            Cart      @relation(fields: [cartId], references: [id], onDelete: Cascade)
-  product         Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
-  variant         Variant   @relation(fields: [variantId], references: [id], onDelete: Restrict)
-  originalPrice   Decimal?  @db.Decimal(14, 2)
-  discountedPrice Decimal?  @db.Decimal(14, 2)
-  discount        Discount? @relation(fields: [discountId], references: [id])
-  discountId      String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  productId     String
+  variantId     String
+  quantity      Int      @default(1)
+  cart          Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variant       Variant  @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  originalPrice Decimal? @db.Decimal(14, 2)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([cartId, variantId])
   @@index([variantId])
-  @@index([discountId])
 }
 
 model Order {
@@ -454,8 +426,9 @@ model Order {
   pickupLocation          PickupLocation?    @relation(fields: [pickupLocationId], references: [id], onDelete: Restrict)
   shippingAddressSnapshot Json?
   pickupLocationSnapshot  Json?
-  couponId                String?
-  coupon                  Coupon?            @relation(fields: [couponId], references: [id])
+  /// The coupon code entered at checkout
+  couponCodeId            String?
+  couponCode              CouponCode?        @relation(fields: [couponCodeId], references: [id])
   paymentMethod           PaymentMethod      @default(ONLINE)
   contactEmail            String
   contactPhone            String
@@ -465,6 +438,7 @@ model Order {
   deletedAt               DateTime?
   items                   OrderItem[]
   adjustments             OrderAdjustment[]
+  redemptions             Redemption[]
   paymentIntent           PaymentIntent?
   cashCollections         CashCollection[]
   returnRequests          ReturnRequest[]
@@ -511,16 +485,17 @@ model OrderItem {
   @@index([variantId])
 }
 
-/// A discount or coupon taken off an order (ADR-0005 adjustments), signed: reductions are negative. Line-level when
-/// orderItemId is set (already reflected in that line's unitDiscount), order-level otherwise.
+/// A promotion taken off an order (ADR-0005 adjustments), signed: reductions are negative. Line-level when orderItemId
+/// is set (already reflected in that line's unitDiscount), order-level otherwise. DISCOUNT for an automatic promotion,
+/// COUPON for one a coupon code unlocked.
 model OrderAdjustment {
   id          String              @id @default(cuid())
   orderId     String
   orderItemId String?
   type        OrderAdjustmentType
-  /// The Discount or Coupon id it came from (kept when the source is later deleted)
+  /// The Promotion id it came from (kept when the promotion is later deleted)
   sourceId    String?
-  /// Coupon code or discount name when ordered
+  /// The coupon code that unlocked it, when ordered
   code        String?
   amount      Decimal             @db.Decimal(14, 2)
   createdAt   DateTime            @default(now())
@@ -806,11 +781,6 @@ model ShipmentStatusEvent {
   @@index([shipmentId, createdAt])
 }
 
-enum DiscountType {
-  PERCENTAGE
-  FLAT
-}
-
 enum FulfillmentType {
   DELIVERY
   PICKUP
@@ -822,37 +792,6 @@ enum ReturnStatus {
   REJECTED
   REFUND_PENDING
   REFUNDED
-}
-
-model Coupon {
-  id                 String        @id @default(cuid())
-  code               String        @unique @db.VarChar(50)
-  discountType       DiscountType
-  value              Decimal       @db.Decimal(14, 2)
-  usageLimit         Int?
-  usedCount          Int           @default(0)
-  expiresAt          DateTime?
-  isActive           Boolean       @default(true)
-  minimumOrderAmount Decimal?      @db.Decimal(14, 2)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
-  usages             CouponUsage[]
-  orders             Order[]
-
-  @@index([isActive, expiresAt])
-}
-
-model CouponUsage {
-  id        String   @id @default(cuid())
-  couponId  String
-  userId    String
-  orderId   String   @unique
-  coupon    Coupon   @relation(fields: [couponId], references: [id])
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-
-  @@unique([couponId, userId])
-  @@index([userId])
 }
 
 model ReturnRequest {
@@ -1095,4 +1034,114 @@ model PriceChange {
   variant   Variant           @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([variantId, createdAt])
+}
+
+/// What a promotion targets (ADR-0005 §2): one kind of target per promotion, or the whole cart.
+enum PromotionScope {
+  SKU
+  PRODUCT
+  CATEGORY
+  BRAND
+  CART
+}
+
+/// How a promotion reduces the price.
+enum PromotionType {
+  /// value is a percentage (0-100) of the price
+  PERCENT
+  /// value comes off each targeted unit, or off the cart
+  AMOUNT_OFF
+  /// each targeted unit costs value (never more than its price); not for CART
+  FIXED_PRICE
+}
+
+/// A price reduction the pricing engine (src/pricing/price.ts) applies while it is active, in its schedule and its
+/// conditions hold. With requiresCoupon, only an order that enters one of its coupon codes gets it. Targets: variants
+/// for SKU, products for PRODUCT, categories for CATEGORY, brands for BRAND, none for CART.
+model Promotion {
+  id               String         @id @default(cuid())
+  name             String
+  description      String?
+  scope            PromotionScope
+  type             PromotionType
+  value            Decimal        @db.Decimal(14, 2)
+  /// The order's merchandise must be worth at least this much (the engine says which subtotal)
+  minimumSpend     Decimal?       @db.Decimal(14, 2)
+  /// At least this many targeted units (any unit for CART) must be in the cart
+  minimumQuantity  Int?
+  startsAt         DateTime
+  /// Open-ended when null
+  endsAt           DateTime?
+  isActive         Boolean        @default(false)
+  /// Breaks ties between equal savings: the lowest number wins, then the oldest promotion
+  priority         Int            @default(0)
+  /// Within a group, per level (item or cart), only the promotion saving the most applies
+  stackingGroup    String         @default("default")
+  /// When it applies, no other promotion does
+  exclusive        Boolean        @default(false)
+  requiresCoupon   Boolean        @default(false)
+  /// Orders that may use it, across all customers; null for no limit
+  usageLimit       Int?
+  /// Reserved redemptions: taken when an order is placed, given back on cancel or expiry before payment
+  usedCount        Int            @default(0)
+  /// Orders each customer may use it on; null for no limit
+  perCustomerLimit Int?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  variants         Variant[]
+  products         Product[]
+  categories       Category[]
+  brands           Brand[]
+  couponCodes      CouponCode[]
+  redemptions      Redemption[]
+
+  @@index([isActive, startsAt, endsAt])
+}
+
+/// A code a customer enters at checkout to unlock its promotion; one per order.
+model CouponCode {
+  id          String       @id @default(cuid())
+  /// Upper case (a CHECK enforces it), so codes are unique ignoring case
+  code        String       @unique @db.VarChar(50)
+  promotionId String
+  isActive    Boolean      @default(true)
+  /// Orders that may use this code; null for no limit (the promotion's limits still apply)
+  usageLimit  Int?
+  usedCount   Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  promotion   Promotion    @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  redemptions Redemption[]
+  orders      Order[]
+
+  @@index([promotionId])
+}
+
+enum RedemptionStatus {
+  /// Counted against the limits since the order was placed
+  RESERVED
+  /// Given back: the order was cancelled or expired before payment
+  RELEASED
+}
+
+/// One promotion used by one order (ADR-0005 §5); the limits count RESERVED rows.
+model Redemption {
+  id           String           @id @default(cuid())
+  promotionId  String
+  couponCodeId String?
+  customerId   String
+  orderId      String
+  status       RedemptionStatus @default(RESERVED)
+  createdAt    DateTime         @default(now())
+  releasedAt   DateTime?
+  promotion    Promotion        @relation(fields: [promotionId], references: [id], onDelete: Restrict)
+  couponCode   CouponCode?      @relation(fields: [couponCodeId], references: [id], onDelete: Restrict)
+  customer     User             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([promotionId, customerId, orderId])
+  @@index([promotionId, customerId, status])
+  @@index([couponCodeId])
+  @@index([customerId])
+  @@index([orderId])
 }

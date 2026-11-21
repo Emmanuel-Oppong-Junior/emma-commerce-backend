@@ -94,9 +94,4 @@ export class CreateVariantInput extends VariantFieldsInput {
   @Field(() => ID, { description: 'ID of the product' })
   @IsNotEmpty({ message: 'Product ID must not be empty' })
   productId: string;
-
-  @Field(() => ID, { nullable: true, description: 'ID of a discount on this variant' })
-  @IsOptional()
-  @IsString()
-  discountId?: string;
 }

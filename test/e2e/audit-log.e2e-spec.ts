@@ -125,22 +125,22 @@ describe('Audit log for privileged mutations (e2e)', () => {
 
   it('rolls the change back when its audit row cannot be written', async () => {
     const created = await run(
-      'mutation { createCoupon(input: { code: "AUDIT10", discountType: PERCENTAGE, value: "10" }) { id } }',
+      'mutation { createPromotion(input: { name: "Audit sale", scope: CART, type: PERCENT, value: "10" }) { id } }',
       adminToken,
     );
-    const couponId = created.createCoupon.id;
+    const promotionId = created.createPromotion.id;
     jest.spyOn(app.get(AuditService), 'log').mockRejectedValueOnce(new Error('audit insert failed'));
 
     const res = await gqlRequest(
       app,
-      `mutation { updateCoupon(id: "${couponId}", input: { value: "50" }) { id } }`,
+      `mutation { updatePromotion(id: "${promotionId}", input: { value: "50" }) { id } }`,
       undefined,
       adminToken,
     ).expect(200);
 
     expect(res.body.errors).toBeDefined();
-    const coupon = await prisma.coupon.findUniqueOrThrow({ where: { id: couponId } });
-    expect(Number(coupon.value)).toBe(10);
-    expect((await auditRows('Coupon', couponId)).map((row) => row.action)).toEqual(['CREATE']);
+    const promotion = await prisma.promotion.findUniqueOrThrow({ where: { id: promotionId } });
+    expect(promotion.value.toFixed(2)).toBe('10.00');
+    expect((await auditRows('Promotion', promotionId)).map((row) => row.action)).toEqual(['CREATE']);
   });
 });

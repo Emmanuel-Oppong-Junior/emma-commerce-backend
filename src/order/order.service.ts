@@ -25,15 +25,14 @@ import { AuditService } from '../commons/audit.service';
 import { abandonedOrderWhere, OrderSnapshot, OrderSnapshotLine, OrdersRepository } from './order.repository';
 import { VariantForSale } from '../cart/cart.repository';
 import { notSellableReason } from '../variant/sellable';
-import { CouponsService } from '../coupons/coupons.service';
 import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { availableOf } from '../inventory/stock';
 import { OutboxService } from '../outbox/outbox.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
-import { DiscountService } from '../discount/discount.service';
-import { CouponNotApplicableError, price, PricingCoupon, Quote, QuoteAdjustment } from '../pricing/price';
+import { PromotionsService } from '../promotions/promotions.service';
+import { CouponNotApplicableError, price, Quote, QuoteAdjustment } from '../pricing/price';
 import { StoreService } from '../store/store.service';
 import { TaxService } from '../tax/tax.service';
 import { assertDeliverableAddress } from '../addresses/deliverable-address';
@@ -79,15 +78,22 @@ interface Fulfilment {
 interface PricedCheckout {
   cart: Cart & { items: CartItem[] };
   snapshot: OrderSnapshot;
-  couponId?: string;
+  /** The coupon code entered, when its promotion applied. */
+  couponCode?: { id: string; promotionId: string };
   fulfilment: Fulfilment;
 }
 
 function quoteChanged(): ConflictException {
   return new ConflictException({
-    message: 'The price changed since the quote (prices, discounts, coupon, tax or shipping): get a new checkoutQuote',
+    message: 'The price changed since the quote (prices, promotions, coupon, tax or shipping): get a new checkoutQuote',
     extensions: { reason: QUOTE_CHANGED },
   });
+}
+
+/** The promotions the quote takes something off with, at item or cart level. */
+function appliedPromotionIds(quote: Pick<Quote, 'lines' | 'adjustments'>): string[] {
+  const adjustments = [...quote.lines.flatMap((line) => line.adjustments), ...quote.adjustments];
+  return [...new Set(adjustments.map((adjustment) => adjustment.sourceId))];
 }
 
 @Injectable()
@@ -96,13 +102,12 @@ export class OrdersService {
     private readonly ordersRepository: OrdersRepository,
     private readonly cartService: CartService,
     private readonly auditService: AuditService,
-    private readonly couponsService: CouponsService,
     private readonly stockLedger: StockLedgerService,
     private readonly outbox: OutboxService,
     private readonly shippingZonesService: ShippingZonesService,
     private readonly pickupLocationsService: PickupLocationsService,
     private readonly returnsService: ReturnsService,
-    private readonly discountService: DiscountService,
+    private readonly promotionsService: PromotionsService,
     private readonly storeService: StoreService,
     private readonly taxService: TaxService,
   ) {}
@@ -125,7 +130,7 @@ export class OrdersService {
   }
 
   /**
-   * Creates an order from the user's cart, in one transaction: the cart, prices, discounts, coupon, tax rates and
+   * Creates an order from the user's cart, in one transaction: the cart, prices, promotions, coupon, tax rates and
    * shipping are read and priced inside it (the cart row and its variants locked), and the order is placed only if
    * that quote's hash is the `quoteHash` the customer confirmed; otherwise CONFLICT with reason QUOTE_CHANGED and
    * nothing is reserved, charged or recorded. The order stores the quote as its snapshot, so it charges the quote's
@@ -157,14 +162,14 @@ export class OrdersService {
         ? await this.deliveryTo(userId, params.shippingAddressId, tx)
         : await this.pickupAt(params.pickupLocationId, tx);
     if (tx) await this.ordersRepository.lockVariants(tx, [...new Set(cart.items.map((item) => item.variantId))]);
-    const { snapshot, couponId } = await this.buildOrderDetails(
+    const { snapshot, couponCode } = await this.buildOrderDetails(
       cart.items,
       userId,
       fulfilment.shippingFee,
       params.couponCode,
       tx,
     );
-    return { cart, snapshot, couponId, fulfilment };
+    return { cart, snapshot, couponCode, fulfilment };
   }
 
   private async deliveryTo(
@@ -482,8 +487,8 @@ export class OrdersService {
   }
 
   /**
-   * Prices the cart with the pricing engine: item discounts, the coupon off the discounted subtotal, the tax the prices
-   * include and shipping. The quote is the order snapshot, so the total charged is the quote's grand total.
+   * Prices the cart with the pricing engine: item and cart promotions (the coupon code unlocking one), the tax the
+   * prices include and shipping. The quote is the order snapshot, so the total charged is the quote's grand total.
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
@@ -491,23 +496,24 @@ export class OrdersService {
     shippingFee: Prisma.Decimal,
     couponCode: string | undefined,
     tx: Prisma.TransactionClient | undefined,
-  ): Promise<{ snapshot: OrderSnapshot; couponId?: string }> {
+  ): Promise<{ snapshot: OrderSnapshot; couponCode?: { id: string; promotionId: string } }> {
     const now = new Date();
     const currency = await this.storeService.getCurrency(tx);
     const variants: VariantForSale[] = [];
     for (const item of cartItems) variants.push(await this.checkVariantAvailability(item, currency, tx));
-    const discounts = await this.discountService.findCandidateDiscounts(
-      variants.map((variant) => ({
-        id: variant.id,
-        productId: variant.productId,
-        categoryId: variant.product.categoryId,
-        discountId: variant.discountId,
-      })),
+    const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => id !== null))];
+    const promotions = await this.promotionsService.findForPricing(
+      {
+        variantIds: unique(variants.map((variant) => variant.id)),
+        productIds: unique(variants.map((variant) => variant.productId)),
+        categoryIds: unique(variants.map((variant) => variant.product.categoryId)),
+        brandIds: unique(variants.map((variant) => variant.product.brandId)),
+      },
+      userId,
+      couponCode,
       now,
       tx,
     );
-    let coupon: PricingCoupon | undefined;
-    if (couponCode) coupon = (await this.couponsService.findForPricing(couponCode, userId, tx)).pricing;
     const taxes = await this.taxService.findActive(tx);
 
     const quote = this.priceOrThrow(() =>
@@ -517,18 +523,20 @@ export class OrdersService {
             variantId: variant.id,
             productId: variant.productId,
             categoryId: variant.product.categoryId,
+            brandId: variant.product.brandId,
             quantity: cartItems[index].quantity,
             unitListPrice: variant.price!,
             taxable: variant.product.isTaxable && variant.basePrice !== null,
           })),
-          coupon,
+          couponCode: promotions.couponCode,
           shippingFee,
         },
         {
           currency,
           now,
-          discounts,
+          promotions: promotions.promotions,
           taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
+          customer: promotions.customer,
         },
       ),
     );
@@ -541,7 +549,9 @@ export class OrdersService {
         optionValues: variants[index].optionValues,
       })),
     };
-    return { snapshot, couponId: coupon?.id };
+    const applied = appliedPromotionIds(quote);
+    const code = promotions.couponCode;
+    return { snapshot, couponCode: code && applied.includes(code.promotionId) ? code : undefined };
   }
 
   private priceOrThrow<T>(pricing: () => T): T {
@@ -577,7 +587,10 @@ export class OrdersService {
     return variant;
   }
 
-  /** Writes the order from the priced checkout, reserves its stock and records its coupon use, on the caller's tx. */
+  /**
+   * Writes the order from the priced checkout, reserves its stock and the uses of the promotions it applies (see
+   * PromotionsService.reserveRedemptions), on the caller's tx.
+   */
   private async placeOrder(
     tx: Prisma.TransactionClient,
     userId: string,
@@ -587,7 +600,7 @@ export class OrdersService {
     const { fulfilment } = checkout;
     const orderDetails = {
       snapshot: checkout.snapshot,
-      couponId: checkout.couponId,
+      couponCodeId: checkout.couponCode?.id,
       paymentMethod: params.paymentMethod ?? PaymentMethod.ONLINE,
       contactEmail: params.contactEmail,
       contactPhone: params.contactPhone,
@@ -624,9 +637,12 @@ export class OrdersService {
       }
     }
 
-    if (orderDetails.couponId) {
-      await this.couponsService.recordUsage(tx, orderDetails.couponId, userId, newOrder.id);
-    }
+    await this.promotionsService.reserveRedemptions(
+      tx,
+      { orderId: newOrder.id, customerId: userId },
+      appliedPromotionIds(checkout.snapshot),
+      checkout.couponCode,
+    );
     await this.outbox.record(tx, {
       type: 'order.placed.v1',
       aggregateId: newOrder.id,
@@ -662,7 +678,7 @@ export class OrdersService {
   /**
    * Claims the order (conditional status write with its history event, optionally narrowed by `guard`) before
    * releasing its reservations, which are themselves released conditionally, so stock comes back exactly once. The
-   * coupon use is given back and an open payment intent is cancelled in the same transaction.
+   * promotion uses are given back and an open payment intent is cancelled in the same transaction.
    */
   private async closeOrderAndRestoreStock(
     order: Order & { items: OrderItem[] },
@@ -694,7 +710,7 @@ export class OrdersService {
           tx,
         );
       }
-      if (order.couponId) await this.couponsService.releaseUsage(tx, order.id);
+      await this.promotionsService.releaseRedemptions(tx, order.id);
       await this.stockLedger.releaseOrder(tx, order.id, {
         actorId: close.actorId,
         note: close.to === OrderStatus.EXPIRED ? 'Unpaid order expired' : 'Order cancelled',

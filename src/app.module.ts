@@ -34,10 +34,9 @@ import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { GraphqlLoggingInterceptor } from './commons/interceptors/graphql-logging.interceptor';
 import { formatError } from './commons/error-formatters/grapqhl-error.formatter';
 import { LoggerService } from './commons/logger.service';
-import { DiscountModule } from './discount/discount.module';
+import { PromotionsModule } from './promotions/promotions.module';
 import { BrandModule } from './brand/brand.module';
 import { HealthModule } from './health/health.module';
-import { CouponsModule } from './coupons/coupons.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { CurrencyModule } from './currency/currency.module';
 import { TaxModule } from './tax/tax.module';
@@ -148,10 +147,9 @@ const THROTTLERS: ThrottlerOptions[] = [
     WishlistModule,
     ReviewModule,
     PaymentModule,
-    DiscountModule,
+    PromotionsModule,
     BrandModule,
     HealthModule,
-    CouponsModule,
     NotificationsModule,
     CurrencyModule,
     TaxModule,

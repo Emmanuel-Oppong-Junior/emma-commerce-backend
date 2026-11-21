@@ -314,24 +314,37 @@ input CompleteMfaSignInInput {
   code: String!
 }
 
-type Coupon {
+"""A code that unlocks a promotion at checkout (staff view)"""
+type CouponCode {
+  """Upper case; customers may enter it in any case"""
   code: String!
   createdAt: DateTime!
-  discountType: DiscountTypeEnum!
-  expiresAt: DateTime
   id: ID!
   isActive: Boolean!
-  minimumOrderAmount: Money
+  promotionId: ID!
   updatedAt: DateTime!
+
+  """Orders that may use this code; null for no limit"""
   usageLimit: Int
+
+  """Orders holding a use of this code"""
   usedCount: Int!
-  value: Decimal!
 }
 
-type CouponValidation {
-  discountAmount: Money
-  message: String
-  valid: Boolean!
+"""What a coupon code unlocks for the signed-in customer"""
+type CouponCodeValidation {
+  """The code as stored (upper case)"""
+  code: String!
+  minimumQuantity: Int
+
+  """Least merchandise total the order needs"""
+  minimumSpend: Money
+  promotion: PublicPromotion!
+  scope: PromotionScope!
+  type: PromotionType!
+
+  """A percentage (PERCENT) or an amount in the store currency"""
+  value: Decimal!
 }
 
 input CreateAddressInput {
@@ -395,49 +408,14 @@ input CreateCategoryInput {
   name: String!
 }
 
-input CreateCouponInput {
+input CreateCouponCodeInput {
+  """Stored upper case; unique ignoring case"""
   code: String!
-  discountType: DiscountTypeEnum!
-  expiresAt: DateTime
   isActive: Boolean! = true
-  minimumOrderAmount: Decimal
+  promotionId: ID!
+
+  """Orders that may use this code; null for no limit"""
   usageLimit: Int
-  value: Decimal!
-}
-
-input CreateDiscountInput {
-  """List of category IDs to which the discount applies"""
-  categories: [ID!] = []
-
-  """A detailed description of the discount"""
-  description: String
-
-  """The end date and time of the discount"""
-  endDate: DateTime!
-
-  """Whether the discount is active"""
-  isActive: Boolean! = false
-
-  """Minimum purchase amount to qualify for the discount"""
-  minimumPurchase: Decimal
-
-  """The name of the discount (e.g., "Summer Sale 2025")"""
-  name: String!
-
-  """List of product IDs to which the discount applies"""
-  products: [ID!] = []
-
-  """The start date and time of the discount"""
-  startDate: DateTime!
-
-  """The type of discount (e.g., PERCENTAGE or FIXED_AMOUNT)"""
-  type: DiscountType!
-
-  """The discount value (e.g., 20 for 20% or 10.00 for $10 off)"""
-  value: Decimal!
-
-  """List of variant IDs to which the discount applies"""
-  variants: [ID!] = []
 }
 
 input CreateOrderInput {
@@ -580,6 +558,49 @@ input CreateProductTypeInput {
   name: String!
 }
 
+"""A new promotion; it starts inactive unless isActive is true"""
+input CreatePromotionInput {
+  description: String
+
+  """Null for open-ended"""
+  endsAt: DateTime
+  exclusive: Boolean! = false
+  isActive: Boolean! = false
+
+  """Least number of targeted units (any unit for CART)"""
+  minimumQuantity: Int
+
+  """Least merchandise total the order needs"""
+  minimumSpend: Decimal
+  name: String!
+
+  """Orders each customer may use it on"""
+  perCustomerLimit: Int
+
+  """Lowest number wins a tie between equal savings"""
+  priority: Int! = 0
+
+  """Only orders entering one of its coupon codes get it"""
+  requiresCoupon: Boolean! = false
+  scope: PromotionScope!
+  stackingGroup: String! = "default"
+
+  """Defaults to now"""
+  startsAt: DateTime
+
+  """
+  Ids of the scope's kind: variants (SKU), products, categories or brands; none for CART
+  """
+  targetIds: [ID!]! = []
+  type: PromotionType!
+
+  """Orders that may use it, across all customers"""
+  usageLimit: Int
+
+  """A percentage, 0 to 100 (PERCENT), or an amount in the store currency"""
+  value: Decimal!
+}
+
 input CreateReturnRequestInput {
   orderId: ID!
   reason: String!
@@ -681,9 +702,6 @@ input CreateVariantInput {
   Price before tax, e.g. "29.99"; the selling price adds tax when the product is taxable
   """
   basePrice: Decimal!
-
-  """ID of a discount on this variant"""
-  discountId: ID
   heightMm: Int
 
   """HTTPS image shown for this variant"""
@@ -757,60 +775,6 @@ enum DeliveryOptions {
   INTERNATIONAL_DELIVERY
   LOCAL_DELIVERY
   SELECTED_REGIONS
-}
-
-type Discount {
-  """Categories to which the discount applies"""
-  categories: [Category!]
-
-  """Timestamp when the discount was created"""
-  createdAt: DateTime!
-
-  """Detailed description of the discount"""
-  description: String
-
-  """End date and time of the discount"""
-  endDate: DateTime!
-
-  """Unique identifier for the discount"""
-  id: ID!
-
-  """Whether the discount is currently active"""
-  isActive: Boolean!
-
-  """Minimum purchase amount to qualify for the discount"""
-  minimumPurchase: Money
-
-  """Name of the discount (e.g., "Summer Sale 2025")"""
-  name: String!
-
-  """Products to which the discount applies"""
-  products: [Product!]
-
-  """Start date and time of the discount"""
-  startDate: DateTime!
-
-  """Type of discount (e.g., PERCENTAGE or FIXED_AMOUNT)"""
-  type: DiscountType!
-
-  """Timestamp when the discount was last updated"""
-  updatedAt: DateTime!
-
-  """Discount value (e.g., 20 for 20% or 10.00 for $10 off)"""
-  value: Decimal!
-
-  """Variants to which the discount applies"""
-  variants: [Variant!]
-}
-
-enum DiscountType {
-  FLAT
-  PERCENTAGE
-}
-
-enum DiscountTypeEnum {
-  FLAT
-  PERCENTAGE
 }
 
 """
@@ -907,20 +871,6 @@ type MfaRecoveryCodes {
   recoveryCodes: [String!]!
 }
 
-input ModifyDiscountItemsInput {
-  """Category IDs to add or remove"""
-  categories: [ID!] = []
-
-  """The ID of the discount to modify"""
-  discountId: ID!
-
-  """Product IDs to add or remove"""
-  products: [ID!] = []
-
-  """Variant IDs to add or remove"""
-  variants: [ID!] = []
-}
-
 """An amount of money in the store currency"""
 type Money {
   """
@@ -942,7 +892,6 @@ type Mutation {
 
   """Adds a product to the user’s cart"""
   addToCart(input: AddToCartInput!): Cart!
-  addToDiscount(modifyDiscountItemsInput: ModifyDiscountItemsInput!): Discount!
 
   """Adds a product to the user’s wishlist"""
   addToWishlist(productId: String!): Wishlist!
@@ -999,9 +948,8 @@ type Mutation {
   """Creates a new category (admin only)"""
   createCategory(input: CreateCategoryInput!): Category!
 
-  """Create a new coupon (admin only)"""
-  createCoupon(input: CreateCouponInput!): Coupon!
-  createDiscount(createDiscountInput: CreateDiscountInput!): Discount!
+  """Admin: add a coupon code that unlocks a promotion"""
+  createCouponCode(input: CreateCouponCodeInput!): CouponCode!
 
   """
   Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it
@@ -1014,6 +962,9 @@ type Mutation {
 
   """Creates a product type, optionally with its attributes (admin only)"""
   createProductType(input: CreateProductTypeInput!): ProductType!
+
+  """Admin: create a promotion"""
+  createPromotion(input: CreatePromotionInput!): Promotion!
 
   """Create a return request for a delivered order"""
   createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
@@ -1054,8 +1005,8 @@ type Mutation {
   deleteAddress(addressId: String!): Address!
   deleteBrand(id: String!): Brand!
 
-  """Delete a coupon (admin only)"""
-  deleteCoupon(id: ID!): Coupon!
+  """Admin: delete a coupon code no order has used (deactivate a used one)"""
+  deleteCouponCode(id: ID!): CouponCode!
 
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
@@ -1065,6 +1016,11 @@ type Mutation {
 
   """Deletes a product type no product uses; system types are read-only"""
   deleteProductType(id: ID!): ProductType!
+
+  """
+  Admin: delete a promotion no order has used, with its coupon codes (deactivate a used one)
+  """
+  deletePromotion(id: ID!): Promotion!
 
   """Deletes the authenticated user's own review"""
   deleteReview(reviewId: String!): Review!
@@ -1119,11 +1075,9 @@ type Mutation {
     """The ID of the category to delete"""
     id: String!
   ): Category!
-  removeDiscount(id: ID!): Discount!
 
   """Removes a specific item from the user’s cart"""
   removeFromCart(cartItemId: String!): Cart!
-  removeFromDiscount(modifyDiscountItemsInput: ModifyDiscountItemsInput!): Discount!
 
   """Removes a product from the user’s wishlist"""
   removeFromWishlist(productId: String!): Wishlist!
@@ -1211,9 +1165,8 @@ type Mutation {
     input: UpdateCategoryInput!
   ): Category!
 
-  """Update a coupon (admin only)"""
-  updateCoupon(id: ID!, input: UpdateCouponInput!): Coupon!
-  updateDiscount(updateDiscountInput: UpdateDiscountInput!): Discount!
+  """Admin: change a coupon code"""
+  updateCouponCode(id: ID!, input: UpdateCouponCodeInput!): CouponCode!
 
   """
   Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.
@@ -1230,6 +1183,9 @@ type Mutation {
 
   """Renames or redescribes a product type; system types are read-only"""
   updateProductType(id: ID!, input: UpdateProductTypeInput!): ProductType!
+
+  """Admin: change a promotion"""
+  updatePromotion(id: ID!, input: UpdatePromotionInput!): Promotion!
 
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
@@ -1277,9 +1233,6 @@ type Mutation {
 
   """Updates a variant; isActive: false archives it"""
   updateVariant(input: UpdateVariantInput!): Variant!
-
-  """Validate a coupon code before applying to order"""
-  validateCoupon(input: ValidateCouponInput!): CouponValidation!
 
   """
   Verify an email address with the token from the verification email. Completes a pending email change (signing the user out everywhere) if one is in progress.
@@ -1621,7 +1574,6 @@ type Product {
 
   """Full description of the product"""
   description: String
-  discounts: [Discount!]
 
   """Expiry or best-before date"""
   expiryDate: DateTime
@@ -1810,12 +1762,112 @@ type ProductType {
   updatedAt: DateTime!
 }
 
+"""
+A promotion with its rules, targets, limits and coupon codes (staff view)
+"""
+type Promotion {
+  couponCodes: [CouponCode!]!
+  createdAt: DateTime!
+  description: String
+
+  """Null for open-ended"""
+  endsAt: DateTime
+
+  """When it applies, no other promotion does"""
+  exclusive: Boolean!
+  id: ID!
+  isActive: Boolean!
+
+  """Least number of targeted units (any unit for CART) in the cart"""
+  minimumQuantity: Int
+
+  """Least merchandise total the order needs"""
+  minimumSpend: Money
+  name: String!
+
+  """Orders each customer may use it on"""
+  perCustomerLimit: Int
+
+  """
+  Breaks ties between equal savings: the lowest number wins, then the oldest
+  """
+  priority: Int!
+
+  """Only an order that enters one of its coupon codes gets it"""
+  requiresCoupon: Boolean!
+  scope: PromotionScope!
+
+  """
+  Promotions of one group (per level: item or cart) do not combine; the best saving applies
+  """
+  stackingGroup: String!
+  startsAt: DateTime!
+
+  """
+  Ids of the scope's kind (variants, products, categories or brands); empty for CART
+  """
+  targetIds: [ID!]!
+  type: PromotionType!
+  updatedAt: DateTime!
+
+  """Orders that may use it, across all customers"""
+  usageLimit: Int
+
+  """Orders holding a use of it"""
+  usedCount: Int!
+
+  """A percentage (PERCENT) or an amount in the store currency"""
+  value: Decimal!
+}
+
+"""What a promotion targets"""
+enum PromotionScope {
+  """Products of chosen brands"""
+  BRAND
+
+  """The whole cart, after item promotions (no targets)"""
+  CART
+
+  """Products of chosen categories"""
+  CATEGORY
+
+  """Every variant of chosen products"""
+  PRODUCT
+
+  """Chosen variants (targetIds are variant ids)"""
+  SKU
+}
+
+"""How a promotion reduces the price"""
+enum PromotionType {
+  """value comes off each targeted unit, or off the cart (CART scope)"""
+  AMOUNT_OFF
+
+  """
+  each targeted unit costs value, never more than its price (not for CART)
+  """
+  FIXED_PRICE
+
+  """value is a percentage, 0 to 100"""
+  PERCENT
+}
+
 """What other customers may see about a user, e.g. on reviews"""
 type PublicProfile {
   """
   First name and last initial, e.g. "Kwame A."
   """
   displayName: String!
+}
+
+"""What a customer may see of a promotion"""
+type PublicPromotion {
+  description: String
+
+  """When it ends; null for open-ended"""
+  endsAt: DateTime
+  id: ID!
+  name: String!
 }
 
 type Query {
@@ -1860,16 +1912,8 @@ type Query {
   """
   checkoutQuote(input: CheckoutQuoteInput!): CheckoutQuote!
 
-  """Get a coupon by ID (admin only)"""
-  coupon(id: ID!): Coupon!
-
-  """Get all coupons (admin only)"""
-  coupons: [Coupon!]!
-
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
-  discount(id: ID!): Discount!
-  discounts: [Discount!]!
 
   """
   Background jobs of one queue that failed their last attempt, newest first (super admin only; audited)
@@ -1936,6 +1980,25 @@ type Query {
   Public catalogue: only active, PUBLISHED products, whatever filter is sent
   """
   products(filterArgs: ProductFilterArgs, paginationArgs: PaginationArgs, sortArgs: ProductSortArgs): ProductConnection!
+
+  """Admin: one promotion with its targets and coupon codes"""
+  promotion(id: ID!): Promotion!
+
+  """Admin: promotions, newest first, optionally filtered"""
+  promotions(isActive: Boolean, scope: PromotionScope): [Promotion!]!
+
+  """Admin: promotion uses by orders, newest first"""
+  redemptions(
+    """Id of the last redemption of the previous page"""
+    after: ID
+    customerId: ID
+
+    """1-100"""
+    first: Int! = 50
+    orderId: ID
+    promotionId: ID
+    status: RedemptionStatus
+  ): RedemptionPage!
 
   """List refunds, optionally by status, newest first (admin only)"""
   refunds(status: RefundStatusEnum): [RefundEntity!]!
@@ -2040,6 +2103,11 @@ type Query {
   """Fetch a paginated list of users"""
   users(filter: UserPaginateArgs!): UserConnection!
 
+  """
+  What a coupon code unlocks, if the signed-in customer may use it now; checkoutQuote with couponCode gives its exact effect on the cart. Fails with NOT_FOUND for an unknown code and BAD_REQUEST with the reason otherwise.
+  """
+  validateCouponCode(code: String!): CouponCodeValidation!
+
   """Admin: a variant by ID, archived or not"""
   variant(variantId: String!): Variant!
 
@@ -2136,6 +2204,33 @@ type QuoteTaxLine {
 
   """The tax rate it comes from"""
   taxId: ID!
+}
+
+"""One promotion used by one order (staff view)"""
+type Redemption {
+  couponCodeId: ID
+  createdAt: DateTime!
+  customerId: ID!
+  id: ID!
+  orderId: ID!
+  promotionId: ID!
+  releasedAt: DateTime
+  status: RedemptionStatus!
+}
+
+type RedemptionPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [Redemption!]!
+  totalCount: Int!
+}
+
+enum RedemptionStatus {
+  """Given back: the order was cancelled or expired before payment"""
+  RELEASED
+
+  """Counted against the limits since the order was placed"""
+  RESERVED
 }
 
 input RefreshTokenInput {
@@ -2676,52 +2771,13 @@ input UpdateCategoryInput {
   name: String
 }
 
-input UpdateCouponInput {
+"""
+Changes to a coupon code: omitted fields stay as they are, null clears usageLimit
+"""
+input UpdateCouponCodeInput {
   code: String
-  discountType: DiscountTypeEnum
-  expiresAt: DateTime
   isActive: Boolean
-  minimumOrderAmount: Decimal
   usageLimit: Int
-  value: Decimal
-}
-
-input UpdateDiscountInput {
-  """List of category IDs to which the discount applies"""
-  categories: [ID!] = []
-
-  """A detailed description of the discount"""
-  description: String
-
-  """The end date and time of the discount"""
-  endDate: DateTime
-
-  """The ID of the discount to update"""
-  id: ID!
-
-  """Whether the discount is active"""
-  isActive: Boolean
-
-  """Minimum purchase amount to qualify for the discount"""
-  minimumPurchase: Decimal
-
-  """The name of the discount (e.g., "Summer Sale 2025")"""
-  name: String
-
-  """List of product IDs to which the discount applies"""
-  products: [ID!] = []
-
-  """The start date and time of the discount"""
-  startDate: DateTime
-
-  """The type of discount (e.g., PERCENTAGE or FIXED_AMOUNT)"""
-  type: DiscountType
-
-  """The discount value (e.g., 20 for 20% or 10.00 for $10 off)"""
-  value: Decimal
-
-  """List of variant IDs to which the discount applies"""
-  variants: [ID!] = []
 }
 
 input UpdatePickupLocationInput {
@@ -2817,6 +2873,29 @@ input UpdateProductInput {
 input UpdateProductTypeInput {
   description: String
   name: String
+}
+
+"""
+Changes to a promotion: omitted fields stay as they are, null clears an optional one. targetIds, when given, replaces every target (an empty list clears them); it is required when the scope changes.
+"""
+input UpdatePromotionInput {
+  description: String
+  endsAt: DateTime
+  exclusive: Boolean
+  isActive: Boolean
+  minimumQuantity: Int
+  minimumSpend: Decimal
+  name: String
+  perCustomerLimit: Int
+  priority: Int
+  requiresCoupon: Boolean
+  scope: PromotionScope
+  stackingGroup: String
+  startsAt: DateTime
+  targetIds: [ID!]
+  type: PromotionType
+  usageLimit: Int
+  value: Decimal
 }
 
 input UpdateReviewInput {
@@ -2928,9 +3007,6 @@ input UpdateVariantInput {
   Price before tax, e.g. "29.99"; the selling price adds tax when the product is taxable
   """
   basePrice: Decimal
-
-  """ID of a discount on this variant"""
-  discountId: ID
   heightMm: Int
   id: String!
 
@@ -3072,14 +3148,9 @@ input UserPaginateArgs {
   role: Role
 }
 
-input ValidateCouponInput {
-  code: String!
-  orderTotal: Decimal!
-}
-
 type Variant {
-  """The discount behind discountedPrice"""
-  appliedDiscount: Discount
+  """The promotion behind discountedPrice"""
+  appliedPromotion: PublicPromotion
 
   """Units that can be bought now: on hand minus reserved for open orders"""
   available: Int!
@@ -3089,10 +3160,9 @@ type Variant {
 
   """Price before tax, as entered by an admin"""
   basePrice: Money
-  discountId: ID
 
   """
-  Price of one unit after the best active discount (its own, its product's or its category's); null without one
+  Price of one unit after the best automatic promotion on it (its own, its product, category or brand); null without one. Checkout may differ: coupons, cart minimums and cart promotions apply there.
   """
   discountedPrice: Money
   heightMm: Int

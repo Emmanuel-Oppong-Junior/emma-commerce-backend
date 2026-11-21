@@ -1,10 +1,10 @@
 import { INestApplication } from '@nestjs/common';
-import { DiscountType } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
+import { CouponFixture, createCoupon } from '../helpers/promotion.helper';
 
 describe('Reviews & Coupons (e2e)', () => {
   let app: INestApplication;
@@ -220,153 +220,84 @@ describe('Reviews & Coupons (e2e)', () => {
     });
   });
 
-  // ─── validateCoupon ───────────────────────────────────────────────────────────
+  // ─── validateCouponCode ───────────────────────────────────────────────────────
 
-  describe('validateCoupon', () => {
-    const createCoupon = (
-      overrides: Partial<{
-        code: string;
-        discountType: DiscountType;
-        value: number;
-        usageLimit: number | null;
-        usedCount: number;
-        expiresAt: Date | null;
-        isActive: boolean;
-        minimumOrderAmount: number | null;
-      }> = {},
-    ) =>
-      prisma.coupon.create({
-        data: {
-          code: `TEST-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
-          discountType: 'PERCENTAGE',
-          value: 10,
-          isActive: true,
-          usageLimit: null,
-          expiresAt: null,
-          minimumOrderAmount: null,
-          ...overrides,
-        },
-      });
+  describe('validateCouponCode', () => {
+    const create = (code: string, overrides: Partial<CouponFixture> = {}) =>
+      createCoupon(prisma, { code, type: 'PERCENT', value: 10, ...overrides });
+    const validate = (code: string) =>
+      gqlRequest(
+        app,
+        `query { validateCouponCode(code: "${code}") {
+          code scope type value minimumSpend { amount currency } promotion { name endsAt }
+        } }`,
+        undefined,
+        userToken,
+      ).expect(200);
 
-    it('succeeds with a valid, active coupon', async () => {
-      // Arrange
-      const coupon = await createCoupon({ code: 'VALID10', value: 10 });
+    it('tells the customer what a valid, active code unlocks, in any letter case', async () => {
+      await create('VALID10', { name: 'Ten percent off your order' });
 
-      const mutation = `
-        mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
-            valid
-            discountAmount { amount currency }
-            message
-          }
-        }
-      `;
+      const res = await validate('valid10');
 
-      // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
-
-      // Assert
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.data.validateCoupon.valid).toBe(true);
-      expect(res.body.data.validateCoupon.discountAmount).toEqual(ghs('20.00'));
-      expect(res.body.data.validateCoupon.message).toBe('Coupon applied. You save 20.00.');
+      expect(res.body.data.validateCouponCode).toEqual({
+        code: 'VALID10',
+        scope: 'CART',
+        type: 'PERCENT',
+        value: '10',
+        minimumSpend: null,
+        promotion: { name: 'Ten percent off your order', endsAt: null },
+      });
     });
 
     it('fails with an expired coupon', async () => {
-      // Arrange
-      const coupon = await createCoupon({
-        code: 'EXPIRED10',
-        expiresAt: new Date('2000-01-01'),
-      });
+      await create('EXPIRED10', { startsAt: new Date('1999-01-01'), endsAt: new Date('2000-01-01') });
 
-      const mutation = `
-        mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
-            valid
-          }
-        }
-      `;
+      const res = await validate('EXPIRED10');
 
-      // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
-
-      // Assert
       expect(res.body.errors).toBeDefined();
       expect(res.body.errors[0].message).toMatch(/expired/i);
     });
 
     it('fails with an inactive coupon', async () => {
-      // Arrange
-      const coupon = await createCoupon({ code: 'INACTIVE10', isActive: false });
+      await create('INACTIVE10', { isActive: false });
 
-      const mutation = `
-        mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
-            valid
-          }
-        }
-      `;
+      const res = await validate('INACTIVE10');
 
-      // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
-
-      // Assert
       expect(res.body.errors).toBeDefined();
       expect(res.body.errors[0].message).toMatch(/no longer active/i);
     });
 
     it('fails when the coupon usage limit has been reached', async () => {
-      // Arrange — usedCount equals usageLimit
-      const coupon = await createCoupon({
-        code: 'MAXUSED10',
-        usageLimit: 5,
-        usedCount: 5,
-      });
+      await create('MAXUSED10', { usageLimit: 5, usedCount: 5 });
 
-      const mutation = `
-        mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
-            valid
-          }
-        }
-      `;
+      const res = await validate('MAXUSED10');
 
-      // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
-
-      // Assert
       expect(res.body.errors).toBeDefined();
       expect(res.body.errors[0].message).toMatch(/usage limit/i);
     });
 
-    it('fails when the order total is below the minimum required amount', async () => {
-      // Arrange — minimum order is 500; order total is 100
-      const coupon = await createCoupon({
-        code: 'MINORDER10',
-        minimumOrderAmount: 500,
-      });
+    it('states the minimum spend (checkoutQuote applies it to the cart)', async () => {
+      await create('MINORDER10', { minimumSpend: 500 });
 
-      const mutation = `
-        mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: "100" }) {
-            valid
-          }
-        }
-      `;
+      const res = await validate('MINORDER10');
 
-      // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.data.validateCouponCode.minimumSpend).toEqual(ghs('500.00'));
+    });
 
-      // Assert
-      expect(res.body.errors).toBeDefined();
-      expect(res.body.errors[0].message).toMatch(/at least/i);
+    it('fails for an unknown code with NOT_FOUND', async () => {
+      const res = await validate('NO-SUCH-CODE');
+
+      expect(res.body.errors[0].extensions.code).toBe('NOT_FOUND');
     });
 
     it('fails when the user has already used the coupon', async () => {
-      // Arrange — create a valid coupon and record a prior usage for the seed user
-      const coupon = await createCoupon({ code: 'ALREADYUSED10' });
+      // Arrange — create a valid coupon and record a prior use for the seed user
+      const { promotion, couponCode } = await create('ALREADYUSED10');
 
-      // Fabricate a prior order and usage record directly in the DB
+      // Fabricate a prior order and its redemption directly in the DB
       const address = await prisma.address.create({
         data: {
           userId: 'seed_user',
@@ -392,26 +323,17 @@ describe('Reviews & Coupons (e2e)', () => {
           contactPhone: '+233244000000',
         },
       });
-      await prisma.couponUsage.create({
+      await prisma.redemption.create({
         data: {
-          couponId: coupon.id,
-          userId: 'seed_user',
+          promotionId: promotion.id,
+          couponCodeId: couponCode.id,
+          customerId: 'seed_user',
           orderId: fakeOrder.id,
         },
       });
 
-      const mutation = `
-        mutation {
-          validateCoupon(input: { code: "${coupon.code}", orderTotal: "200" }) {
-            valid
-          }
-        }
-      `;
+      const res = await validate('ALREADYUSED10');
 
-      // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
-
-      // Assert
       expect(res.body.errors).toBeDefined();
       expect(res.body.errors[0].message).toMatch(/already used/i);
     });

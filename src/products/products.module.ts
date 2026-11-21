@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { ProductsResolver } from './products.resolver';
 import { TagModule } from '../tag/tag.module';
-import { DiscountModule } from '../discount/discount.module';
-import { DiscountLoader } from './loaders/discount.loader';
+import { PromotionsModule } from '../promotions/promotions.module';
+import { PromotionLoader } from './loaders/promotion.loader';
 import { VariantsLoader } from './loaders/variants.loader';
 import { VariantSummaryLoader } from './loaders/variant-summary.loader';
 import { VariantFieldsResolver } from './variant-fields.resolver';
@@ -29,14 +29,14 @@ import {
     BrandProductsResolver,
     ProductsService,
     ProductsRepository,
-    DiscountLoader,
+    PromotionLoader,
     VariantsLoader,
     VariantSummaryLoader,
     VariantFieldsResolver,
     ReviewsLoader,
     ProductsLoader,
   ],
-  imports: [TagModule, DiscountModule, PrismaModule, TaxModule, CommonsModule, ProductTypesModule, VariantModule],
+  imports: [TagModule, PromotionsModule, PrismaModule, TaxModule, CommonsModule, ProductTypesModule, VariantModule],
   exports: [ProductsLoader],
 })
 export class ProductsModule {}

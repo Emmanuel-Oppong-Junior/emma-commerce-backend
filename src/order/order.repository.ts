@@ -114,7 +114,7 @@ export class OrdersRepository {
       pickupLocationId?: string;
       shippingAddressSnapshot?: Record<string, unknown>;
       pickupLocationSnapshot?: Record<string, unknown>;
-      couponId?: string;
+      couponCodeId?: string;
       paymentMethod?: PaymentMethod;
       contactEmail: string;
       contactPhone: string;
@@ -138,7 +138,7 @@ export class OrdersRepository {
         pickupLocationId: orderDetails.pickupLocationId,
         shippingAddressSnapshot: (orderDetails.shippingAddressSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
         pickupLocationSnapshot: (orderDetails.pickupLocationSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
-        couponId: orderDetails.couponId,
+        couponCodeId: orderDetails.couponCodeId,
         paymentMethod: orderDetails.paymentMethod ?? PaymentMethod.ONLINE,
         status: OrderStatus.PLACED,
         contactEmail: orderDetails.contactEmail,

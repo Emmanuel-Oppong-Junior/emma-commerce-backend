@@ -1,46 +1,73 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Prisma } from '../../src/generated/prisma/client';
-import { DiscountService } from '../../src/discount/discount.service';
+import { PromotionsService } from '../../src/promotions/promotions.service';
 import { OrdersService } from '../../src/order/order.service';
 import { price } from '../../src/pricing/price';
 
-const IN_DATE = { startDate: new Date(Date.now() - 86_400_000), endDate: new Date(Date.now() + 86_400_000) };
+const IN_DATE = { startsAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 86_400_000) };
 
-function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number) {
+/** An automatic promotion as the database returns it, with its targets. */
+function discount(id: string, type: 'PERCENTAGE' | 'FLAT', value: number, targets: { variantIds?: string[] } = {}) {
   return {
     id,
     name: id,
-    type,
+    description: null,
+    scope: targets.variantIds ? 'SKU' : 'PRODUCT',
+    type: type === 'PERCENTAGE' ? 'PERCENT' : 'AMOUNT_OFF',
     value: new Prisma.Decimal(value),
-    minimumPurchase: null,
+    minimumSpend: null,
+    minimumQuantity: null,
     isActive: true,
+    priority: 0,
+    stackingGroup: 'default',
+    exclusive: false,
+    requiresCoupon: false,
+    usageLimit: null,
+    usedCount: 0,
+    perCustomerLimit: null,
     createdAt: new Date(0),
     ...IN_DATE,
+    variants: (targets.variantIds ?? []).map((variantId) => ({ id: variantId })),
+    products: targets.variantIds ? [] : [{ id: 'product-1' }],
+    categories: [],
+    brands: [],
   };
 }
 
 function onProduct(...discounts: ReturnType<typeof discount>[]) {
-  return discounts.map((d) => ({ ...d, products: [{ id: 'product-1' }], categories: [] }));
+  return discounts;
 }
 
-/** Prices one unit of variant-1 (of product-1) at `price` with the discounts the DiscountService finds for it. */
+/** The PromotionsService finding `discounts` as the candidates of any cart. */
+function promotionsFinding(discounts: ReturnType<typeof discount>[]) {
+  const repository = {
+    findCandidates: jest.fn().mockResolvedValue(discounts),
+    countReservedByPromotion: jest.fn().mockResolvedValue({}),
+  };
+  return new PromotionsService(repository as never, {} as never);
+}
+
+/** Prices one unit of variant-1 (of product-1) at `price` with the promotions the PromotionsService finds for it. */
 async function priceOneUnit(unitPrice: number, discounts: ReturnType<typeof onProduct>) {
-  const repository = { findActiveDiscountsFor: jest.fn().mockResolvedValue(discounts) };
-  const service = new DiscountService(
-    repository as never,
-    { get: jest.fn(), set: jest.fn(), del: jest.fn() } as never,
-    {} as never,
-  );
   const now = new Date();
-  const candidates = await service.findCandidateDiscounts(
-    [{ id: 'variant-1', productId: 'product-1', categoryId: null, discountId: null }],
+  const { promotions, customer } = await promotionsFinding(discounts).findForPricing(
+    { variantIds: ['variant-1'], productIds: ['product-1'], categoryIds: [], brandIds: [] },
+    'user-1',
+    undefined,
     now,
   );
-  const line = { variantId: 'variant-1', productId: 'product-1', categoryId: null, quantity: 1, taxable: false };
+  const line = {
+    variantId: 'variant-1',
+    productId: 'product-1',
+    categoryId: null,
+    brandId: null,
+    quantity: 1,
+    taxable: false,
+  };
   const quote = price(
     { lines: [{ ...line, unitListPrice: new Prisma.Decimal(unitPrice) }], shippingFee: new Prisma.Decimal(0) },
-    { currency: 'GHS', now, discounts: candidates, taxRates: [] },
+    { currency: 'GHS', now, promotions, taxRates: [], customer },
   );
   const [priced] = quote.lines;
   return { unitDiscount: priced.unitDiscount, discountedUnitPrice: priced.unitListPrice.sub(priced.unitDiscount) };
@@ -81,7 +108,6 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       price: new Prisma.Decimal(500),
       stockLevels: [{ onHand: 5, reserved: 0 }],
       isActive: true,
-      discountId: null,
       product: {
         id: 'product-1',
         name: 'Kettle',
@@ -89,6 +115,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
         isActive: true,
         status: 'PUBLISHED',
         categoryId: null,
+        brandId: null,
       },
     };
     const repository = {
@@ -108,27 +135,18 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       clearCartItems: jest.fn(),
     };
     const cart = { id: 'cart-1', items: [{ productId: 'product-1', variantId: 'variant-1', quantity: 1 }] };
-    const discounts = {
-      findCandidateDiscounts: jest.fn().mockResolvedValue([
-        {
-          ...discount('pct-10', 'PERCENTAGE', 10),
-          variantIds: ['variant-1'],
-          productIds: [],
-          categoryIds: [],
-        },
-      ]),
-    };
+    const promotions = promotionsFinding([discount('pct-10', 'PERCENTAGE', 10, { variantIds: ['variant-1'] })]);
+    jest.spyOn(promotions, 'reserveRedemptions').mockResolvedValue();
     const service = new OrdersService(
       repository as never,
       { getCartOrThrow: jest.fn().mockResolvedValue(cart) } as never,
-      {} as never,
       {} as never,
       { reserve: jest.fn().mockResolvedValue(true) } as never,
       { record: jest.fn() } as never,
       { getFeeForCity: jest.fn().mockResolvedValue(new Prisma.Decimal(30)) } as never,
       {} as never,
       {} as never,
-      discounts as never,
+      promotions,
       { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
       { findActive: jest.fn().mockResolvedValue([]) } as never,
     );

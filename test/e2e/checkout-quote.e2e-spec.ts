@@ -7,6 +7,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, setStock, stockOf } from '../helpers/db.helper';
+import { createCoupon, createPromotion } from '../helpers/promotion.helper';
 
 const M = '{ amount currency }';
 const sum = (values: string[]) => values.reduce((total, value) => total.add(value), new Prisma.Decimal(0)).toFixed(2);
@@ -94,8 +95,10 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
   const placementState = async () => ({
     orders: await prisma.order.count(),
     reservations: await prisma.stockReservation.count(),
-    couponUses: await prisma.couponUsage.count(),
-    couponUsedCount: (await prisma.coupon.findUniqueOrThrow({ where: { code: couponCode } })).usedCount,
+    redemptions: await prisma.redemption.count(),
+    couponUsedCount: (
+      await prisma.couponCode.findUniqueOrThrow({ where: { code: couponCode }, include: { promotion: true } })
+    ).promotion.usedCount,
     cartItems: await prisma.cartItem.count(),
     kente: await stockOf(prisma, 'quote_kente_var'),
   });
@@ -144,23 +147,20 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
         { id: 'quote_nhil', name: 'NHIL', rate: '0.025' },
       ],
     });
-    await prisma.discount.upsert({
-      where: { id: 'quote_disc10' },
-      create: {
+    if (await prisma.promotion.findUnique({ where: { id: 'quote_disc10' } })) {
+      await prisma.promotion.update({ where: { id: 'quote_disc10' }, data: { value: 10 } });
+    } else {
+      await createPromotion(prisma, {
         id: 'quote_disc10',
         name: 'Kente week',
-        type: 'PERCENTAGE',
+        type: 'PERCENT',
         value: 10,
-        isActive: true,
-        startDate: new Date(Date.now() - 86_400_000),
-        endDate: new Date(Date.now() + 86_400_000),
-        products: { connect: { id: 'quote_kente' } },
-      },
-      update: { value: 10 },
-    });
+        targetIds: ['quote_kente'],
+      });
+    }
     couponCount += 1;
     couponCode = `QUOTE20-${couponCount}`;
-    await prisma.coupon.create({ data: { code: couponCode, discountType: 'FLAT', value: 20 } });
+    await createCoupon(prisma, { code: couponCode, type: 'AMOUNT_OFF', value: 20 });
     await fillCart();
     paystack.initializeTransaction.mockClear();
   });
@@ -221,17 +221,24 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
       available: kenteBefore.available - 2,
     });
     expect(await prisma.stockReservation.count({ where: { orderId, status: 'ACTIVE' } })).toBe(2);
-    expect(await prisma.couponUsage.findMany({ where: { orderId } })).toHaveLength(1);
-    expect((await prisma.coupon.findUniqueOrThrow({ where: { code: couponCode } })).usedCount).toBe(1);
+    expect(await prisma.redemption.findMany({ where: { orderId, couponCodeId: { not: null } } })).toHaveLength(1);
+    expect(
+      (await prisma.couponCode.findUniqueOrThrow({ where: { code: couponCode }, include: { promotion: true } }))
+        .promotion.usedCount,
+    ).toBe(1);
     expect(await prisma.cartItem.count()).toBe(0);
   });
 
   it.each([
     ['a price', () => prisma.variant.update({ where: { id: 'quote_kente_var' }, data: { price: '118.00' } })],
-    ['a discount', () => prisma.discount.update({ where: { id: 'quote_disc10' }, data: { value: 15 } })],
+    ['a discount', () => prisma.promotion.update({ where: { id: 'quote_disc10' }, data: { value: 15 } })],
     ['a tax rate', () => prisma.tax.update({ where: { id: 'quote_vat' }, data: { rate: '0.16' } })],
     ['the shipping fee', () => prisma.shippingZone.update({ where: { id: 'seed_zone_accra' }, data: { fee: 20 } })],
-    ['the coupon (stale)', () => prisma.coupon.update({ where: { code: couponCode }, data: { value: 25 } })],
+    [
+      'the coupon (stale)',
+      () =>
+        prisma.promotion.updateMany({ where: { couponCodes: { some: { code: couponCode } } }, data: { value: 25 } }),
+    ],
   ])(
     'refuses with CONFLICT QUOTE_CHANGED when %s changed after the quote, placing, reserving and recording nothing',
     async (_case, change) => {
@@ -253,7 +260,7 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
 
   it('keeps refusing a coupon that can no longer be used as BAD_REQUEST, recording nothing', async () => {
     const quoted = await quote(delivery(couponCode));
-    await prisma.coupon.update({ where: { code: couponCode }, data: { isActive: false } });
+    await prisma.couponCode.update({ where: { code: couponCode }, data: { isActive: false } });
     const before = await placementState();
 
     const res = await createOrder({ ...delivery(couponCode), quoteHash: quoted.quoteHash });

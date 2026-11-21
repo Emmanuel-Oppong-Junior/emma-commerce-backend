@@ -59,7 +59,4 @@ export class Variant {
 
   @Field(() => Product)
   product: Product;
-
-  @Field(() => ID, { nullable: true })
-  discountId?: string;
 }

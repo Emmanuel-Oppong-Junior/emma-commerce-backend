@@ -5,7 +5,6 @@ import { OrderStatus } from '../generated/prisma/client';
 import { CreateOrderParams, ORDER_EXPIRY_LOCK_KEY, OrdersService } from './order.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { AuditService } from '../commons/audit.service';
-import { CouponsService } from '../coupons/coupons.service';
 import { TaxService } from '../tax/tax.service';
 import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { OutboxService } from '../outbox/outbox.service';
@@ -14,33 +13,68 @@ import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { FulfillmentType } from '../generated/prisma/client';
 import { ReturnsService } from '../returns/returns.service';
-import { DiscountService } from '../discount/discount.service';
+import { PromotionsService } from '../promotions/promotions.service';
+import { PricingCouponCode, PricingPromotion } from '../pricing/price';
 import { StoreService } from '../store/store.service';
 
 const mockAuditService = { log: jest.fn() };
-const mockCouponsService = { findForPricing: jest.fn(), recordUsage: jest.fn(), releaseUsage: jest.fn() };
 const mockTaxService = { findActive: jest.fn() };
 const mockStockLedger = { reserve: jest.fn(), consumeOrder: jest.fn(), releaseOrder: jest.fn() };
 const mockOutbox = { record: jest.fn() };
 const mockShippingZonesService = { getFeeForCity: jest.fn().mockResolvedValue(new Decimal('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
-const mockDiscountService = { findCandidateDiscounts: jest.fn() };
-/** A discount as the pricing engine takes it, in date and active. */
-const candidate = (id: string, type: 'PERCENTAGE' | 'FLAT', value: number, targets: object) => ({
+const mockPromotionsService = {
+  findForPricing: jest.fn(),
+  reserveRedemptions: jest.fn(),
+  releaseRedemptions: jest.fn(),
+};
+/** A promotion as the pricing engine takes it, live and without limits. */
+const candidate = (
+  id: string,
+  type: PricingPromotion['type'],
+  value: number,
+  targets: Partial<PricingPromotion>,
+): PricingPromotion => ({
   id,
+  name: id,
+  description: null,
+  scope: 'PRODUCT',
   type,
   value: new Decimal(value),
-  minimumPurchase: null,
+  minimumSpend: null,
+  minimumQuantity: null,
+  startsAt: new Date(Date.now() - 86_400_000),
+  endsAt: new Date(Date.now() + 86_400_000),
   isActive: true,
-  startDate: new Date(Date.now() - 86_400_000),
-  endDate: new Date(Date.now() + 86_400_000),
+  priority: 0,
+  stackingGroup: 'default',
+  exclusive: false,
+  requiresCoupon: false,
+  usageLimit: null,
+  usedCount: 0,
+  perCustomerLimit: null,
   createdAt: new Date(0),
-  variantIds: [],
-  productIds: [],
-  categoryIds: [],
+  targetIds: [],
   ...targets,
 });
+/** What PromotionsService.findForPricing gives the order service. */
+const pricingFacts = (promotions: PricingPromotion[], couponCode?: PricingCouponCode) => ({
+  promotions,
+  couponCode,
+  customer: { redemptions: {} },
+});
+/** A coupon code unlocking a CART promotion, as a legacy coupon became. */
+const couponFacts = (
+  code: string,
+  type: PricingPromotion['type'],
+  value: number,
+  overrides: Partial<PricingPromotion> = {},
+) =>
+  pricingFacts(
+    [candidate('coupon1', type, value, { scope: 'CART', requiresCoupon: true, endsAt: null, ...overrides })],
+    { id: 'code1', code, promotionId: 'coupon1', isActive: true, usageLimit: null, usedCount: 0 },
+  );
 const mockStoreService = { getCurrency: jest.fn() };
 
 const mockOrdersRepository = {
@@ -97,7 +131,6 @@ const mockVariant = {
   basePrice: null,
   stockLevels: [{ onHand: 100, reserved: 0 }],
   isActive: true,
-  discountId: null,
   product: mockProduct,
 };
 const mockCartItem = {
@@ -197,14 +230,13 @@ describe('OrdersService', () => {
         { provide: OrdersRepository, useValue: mockOrdersRepository },
         { provide: CartService, useValue: mockCartService },
         { provide: AuditService, useValue: mockAuditService },
-        { provide: CouponsService, useValue: mockCouponsService },
         { provide: TaxService, useValue: mockTaxService },
         { provide: StockLedgerService, useValue: mockStockLedger },
         { provide: OutboxService, useValue: mockOutbox },
         { provide: ShippingZonesService, useValue: mockShippingZonesService },
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
         { provide: ReturnsService, useValue: mockReturnsService },
-        { provide: DiscountService, useValue: mockDiscountService },
+        { provide: PromotionsService, useValue: mockPromotionsService },
         { provide: StoreService, useValue: mockStoreService },
       ],
     }).compile();
@@ -236,7 +268,7 @@ describe('OrdersService', () => {
     mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CONFIRMED });
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
     mockShippingZonesService.getFeeForCity.mockResolvedValue(new Decimal('5'));
-    mockDiscountService.findCandidateDiscounts.mockResolvedValue([]);
+    mockPromotionsService.findForPricing.mockResolvedValue(pricingFacts([]));
   });
 
   describe('createOrderFromCart', () => {
@@ -375,7 +407,7 @@ describe('OrdersService', () => {
     });
 
     describe('with product discounts', () => {
-      const tenPercentOff = candidate('disc10', 'PERCENTAGE', 10, { productIds: ['prod1'] });
+      const tenPercentOff = candidate('disc10', 'PERCENT', 10, { targetIds: ['prod1'] });
 
       beforeEach(() => {
         mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
@@ -383,14 +415,16 @@ describe('OrdersService', () => {
         mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
         mockOrdersRepository.findVariant.mockResolvedValue({ ...mockVariant, price: new Decimal('100') });
         mockOrdersRepository.create.mockResolvedValue(mockOrder);
-        mockDiscountService.findCandidateDiscounts.mockResolvedValue([tenPercentOff]);
+        mockPromotionsService.findForPricing.mockResolvedValue(pricingFacts([tenPercentOff]));
       });
 
       it('charges the discounted price and records the list price and discount on each line', async () => {
         await placeOrder(deliveryParams);
 
-        expect(mockDiscountService.findCandidateDiscounts).toHaveBeenLastCalledWith(
-          [{ id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null }],
+        expect(mockPromotionsService.findForPricing).toHaveBeenLastCalledWith(
+          { variantIds: ['var1'], productIds: ['prod1'], categoryIds: ['cat1'], brandIds: [] },
+          mockUserId,
+          undefined,
           expect.any(Date),
           {},
         );
@@ -420,31 +454,26 @@ describe('OrdersService', () => {
       });
 
       it('takes the coupon off the discounted subtotal, before shipping', async () => {
-        mockCouponsService.findForPricing.mockResolvedValue({
-          coupon: { id: 'coupon1', code: 'SAVE10' },
-          pricing: {
-            id: 'coupon1',
-            code: 'SAVE10',
-            discountType: 'PERCENTAGE',
-            value: new Decimal(10),
-            minimumOrderAmount: null,
-            isActive: true,
-            expiresAt: null,
-            usageLimit: null,
-            usedCount: 0,
-            usedByCustomer: false,
-          },
-        });
+        const { promotions, couponCode } = couponFacts('SAVE10', 'PERCENT', 10);
+        mockPromotionsService.findForPricing.mockResolvedValue(
+          pricingFacts([tenPercentOff, ...promotions], couponCode),
+        );
 
         await placeOrder({ ...deliveryParams, couponCode: 'SAVE10' });
 
         // 10% of the discounted 180.
-        expect(mockCouponsService.findForPricing).toHaveBeenLastCalledWith('SAVE10', mockUserId, {});
+        expect(mockPromotionsService.findForPricing).toHaveBeenLastCalledWith(
+          expect.anything(),
+          mockUserId,
+          'SAVE10',
+          expect.any(Date),
+          {},
+        );
         expect(mockOrdersRepository.create).toHaveBeenCalledWith(
           expect.anything(),
           mockUserId,
           expect.objectContaining({
-            couponId: 'coupon1',
+            couponCodeId: 'code1',
             snapshot: expect.objectContaining({
               adjustments: [
                 {
@@ -459,6 +488,30 @@ describe('OrdersService', () => {
             }),
           }),
         );
+        expect(mockPromotionsService.reserveRedemptions).toHaveBeenCalledWith(
+          {},
+          { orderId: 'order1', customerId: mockUserId },
+          ['disc10', 'coupon1'],
+          expect.objectContaining({ id: 'code1', promotionId: 'coupon1' }),
+        );
+      });
+
+      it('records no coupon code on the order when its promotion takes nothing off', async () => {
+        const { promotions, couponCode } = couponFacts('SAVE10', 'AMOUNT_OFF', 0);
+        mockPromotionsService.findForPricing.mockResolvedValue(
+          pricingFacts([tenPercentOff, ...promotions], couponCode),
+        );
+
+        await placeOrder({ ...deliveryParams, couponCode: 'SAVE10' });
+
+        const [, , details] = mockOrdersRepository.create.mock.calls[0];
+        expect(details.couponCodeId).toBeUndefined();
+        expect(mockPromotionsService.reserveRedemptions).toHaveBeenCalledWith(
+          {},
+          expect.anything(),
+          ['disc10'],
+          undefined,
+        );
       });
     });
 
@@ -470,10 +523,9 @@ describe('OrdersService', () => {
         optionValues: { size: 'L' },
         price: new Decimal('120'),
         stockLevels: [{ onHand: 10, reserved: 0 }],
-        discountId: 'large20',
       };
-      const productTenPercent = candidate('product10', 'PERCENTAGE', 10, { productIds: ['prod1'] });
-      const largeTwentyOff = candidate('large20', 'FLAT', 20, { variantIds: ['var2'] });
+      const productTenPercent = candidate('product10', 'PERCENT', 10, { targetIds: ['prod1'] });
+      const largeTwentyOff = candidate('large20', 'AMOUNT_OFF', 20, { scope: 'SKU', targetIds: ['var2'] });
 
       beforeEach(() => {
         mockCartService.getCartOrThrow.mockResolvedValue({
@@ -495,7 +547,7 @@ describe('OrdersService', () => {
             { ...mockOrderItem, id: 'orderItem2', variantId: 'var2', sku: 'TSHIRT-L', quantity: 1 },
           ],
         });
-        mockDiscountService.findCandidateDiscounts.mockResolvedValue([productTenPercent, largeTwentyOff]);
+        mockPromotionsService.findForPricing.mockResolvedValue(pricingFacts([productTenPercent, largeTwentyOff]));
       });
 
       it('prices each line from its own variant, with a product discount on every variant and a variant discount on one', async () => {
@@ -503,11 +555,10 @@ describe('OrdersService', () => {
 
         expect(mockOrdersRepository.findVariant).toHaveBeenCalledWith('var1', {});
         expect(mockOrdersRepository.findVariant).toHaveBeenCalledWith('var2', {});
-        expect(mockDiscountService.findCandidateDiscounts).toHaveBeenLastCalledWith(
-          [
-            { id: 'var1', productId: 'prod1', categoryId: 'cat1', discountId: null },
-            { id: 'var2', productId: 'prod1', categoryId: 'cat1', discountId: 'large20' },
-          ],
+        expect(mockPromotionsService.findForPricing).toHaveBeenLastCalledWith(
+          { variantIds: ['var1', 'var2'], productIds: ['prod1'], categoryIds: ['cat1'], brandIds: [] },
+          mockUserId,
+          undefined,
           expect.any(Date),
           {},
         );
@@ -923,21 +974,7 @@ describe('OrdersService', () => {
   });
 
   describe('checkoutQuote and the quote check in createOrderFromCart', () => {
-    const coupon = {
-      coupon: { id: 'coupon1', code: 'SAVE' },
-      pricing: {
-        id: 'coupon1',
-        code: 'SAVE',
-        discountType: 'FLAT',
-        value: new Decimal(10),
-        minimumOrderAmount: null,
-        isActive: true,
-        expiresAt: null,
-        usageLimit: null,
-        usedCount: 0,
-        usedByCustomer: false,
-      },
-    };
+    const coupon = couponFacts('SAVE', 'AMOUNT_OFF', 10);
     const twoLines = {
       ...mockCart,
       items: [
@@ -958,7 +995,7 @@ describe('OrdersService', () => {
         basePrice: new Decimal('9'),
         product: { ...mockProduct, isTaxable: true },
       }));
-      mockCouponsService.findForPricing.mockResolvedValue(coupon);
+      mockPromotionsService.findForPricing.mockResolvedValue(coupon);
     });
 
     it('prices the cart without writing, naming each line and coupon share by cart item', async () => {
@@ -1033,11 +1070,7 @@ describe('OrdersService', () => {
       ],
       [
         'the coupon value',
-        () =>
-          mockCouponsService.findForPricing.mockResolvedValue({
-            ...coupon,
-            pricing: { ...coupon.pricing, value: new Decimal(9) },
-          }),
+        () => mockPromotionsService.findForPricing.mockResolvedValue(couponFacts('SAVE', 'AMOUNT_OFF', 9)),
       ],
     ])(
       'refuses with CONFLICT QUOTE_CHANGED when %s changed since the quote, reserving and recording nothing',
@@ -1054,7 +1087,7 @@ describe('OrdersService', () => {
         expect((error as ConflictException).getResponse()).toMatchObject({ extensions: { reason: 'QUOTE_CHANGED' } });
         expect(mockOrdersRepository.create).not.toHaveBeenCalled();
         expect(mockStockLedger.reserve).not.toHaveBeenCalled();
-        expect(mockCouponsService.recordUsage).not.toHaveBeenCalled();
+        expect(mockPromotionsService.reserveRedemptions).not.toHaveBeenCalled();
         expect(mockOrdersRepository.clearCartItems).not.toHaveBeenCalled();
       },
     );
@@ -1069,10 +1102,9 @@ describe('OrdersService', () => {
     it('keeps refusing a coupon that is no longer usable as a bad request, not a quote change', async () => {
       const params = { ...deliveryParams, couponCode: 'SAVE' };
       const quote = await ordersService.checkoutQuote(mockUserId, params);
-      mockCouponsService.findForPricing.mockResolvedValue({
-        ...coupon,
-        pricing: { ...coupon.pricing, isActive: false },
-      });
+      mockPromotionsService.findForPricing.mockResolvedValue(
+        couponFacts('SAVE', 'AMOUNT_OFF', 10, { isActive: false }),
+      );
 
       await expect(
         ordersService.createOrderFromCart(mockUserId, { ...params, quoteHash: quote.quoteHash }),
@@ -1450,8 +1482,8 @@ describe('OrdersService', () => {
       expect(mockAuditService.log).not.toHaveBeenCalled();
     });
 
-    it('gives the coupon use back in the same transaction when the cancelled order used a coupon', async () => {
-      const couponOrder = { ...mockOrder, couponId: 'coupon1' };
+    it('gives the promotion uses back in the same transaction when the order is cancelled', async () => {
+      const couponOrder = { ...mockOrder, couponCodeId: 'code1' };
       const stubTx = { id: 'tx' };
       mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
       mockOrdersRepository.findById.mockResolvedValue(couponOrder);
@@ -1459,15 +1491,15 @@ describe('OrdersService', () => {
 
       await ordersService.cancelOrder(mockUserId, 'order1');
 
-      expect(mockCouponsService.releaseUsage).toHaveBeenCalledWith(stubTx, 'order1');
+      expect(mockPromotionsService.releaseRedemptions).toHaveBeenCalledWith(stubTx, 'order1');
     });
 
-    it('releases no coupon use when the cancel lost the race to another request', async () => {
-      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, couponId: 'coupon1' });
+    it('releases no promotion use when the cancel lost the race to another request', async () => {
+      mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, couponCodeId: 'code1' });
       mockOrdersRepository.transitionStatus.mockResolvedValue(null);
 
       await expect(ordersService.cancelOrder(mockUserId, 'order1')).rejects.toThrow(ConflictException);
-      expect(mockCouponsService.releaseUsage).not.toHaveBeenCalled();
+      expect(mockPromotionsService.releaseRedemptions).not.toHaveBeenCalled();
     });
 
     it('releases the order reservations once when cancelling, in the cancel transaction', async () => {

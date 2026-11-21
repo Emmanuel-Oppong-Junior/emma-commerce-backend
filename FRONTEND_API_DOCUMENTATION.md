@@ -20,8 +20,7 @@
    - [Wishlist](#210-wishlist)
    - [Orders](#211-orders)
    - [Payment](#212-payment)
-   - [Coupons](#213-coupons)
-   - [Discounts](#214-discounts)
+   - [Promotions and coupon codes](#213-promotions-and-coupon-codes)
    - [Inventory](#215-inventory)
    - [Returns](#216-returns)
    - [Reviews](#217-reviews)
@@ -41,7 +40,7 @@
 7. [Order Lifecycle](#7-order-lifecycle)
 8. [Payment Integration (Paystack)](#8-payment-integration-paystack)
 9. [Inventory Rules](#9-inventory-rules)
-10. [Discounts System](#10-discounts-system)
+10. [Promotions System](#10-promotions-system)
 11. [Tax & Currency](#11-tax--currency)
 12. [Error Handling Standard](#12-error-handling-standard)
 13. [Pagination & Filtering](#13-pagination--filtering)
@@ -727,7 +726,6 @@ query {
   inStock: boolean;             // true when an active variant has stock
   currency?: Currency;          // Default GHS; only products in the store currency can be checked out
   isTaxable: boolean;           // Variant prices add tax to their basePrice
-  discounts?: Discount[];
   productTypeId: string;        // See 2.26
   productType: ProductType;
   attributes: JSONObject;       // Non-axis attribute values, keyed by attribute key (see 2.26)
@@ -833,7 +831,7 @@ query {
   // trackSerials, fulfilmentKind, unitOfMeasure)
 }
 
-// VariantFieldsInput: the CreateVariantInput fields (see 2.8) without productId and discountId
+// VariantFieldsInput: the CreateVariantInput fields (see 2.8) without productId
 {
   basePrice: Decimal;            // Required, >= 0, at most 2 decimals. The variant's price adds tax when the product is taxable.
   quantity: number;              // Required, integer 0–1,000,000: opening stock at the default location, a RECEIPT "Initial stock".
@@ -846,7 +844,7 @@ query {
 }
 ```
 
-To attach a discount to a variant, use `createVariant`/`updateVariant` (`discountId`) or `addToDiscount`; a discount on the product applies to all its variants.
+Promotions target variants, products, categories or brands from the promotion side (`createPromotion`/`updatePromotion` `targetIds`, see [2.13](#213-promotions-and-coupon-codes)).
 
 **Side effects**: the product and its variants are created in one transaction; each variant's opening stock is recorded as a `RECEIPT` stock movement ("Initial stock"); audit entry (entity `Product`, `CREATE`).
 
@@ -1175,7 +1173,7 @@ A **variant is the SKU** (ADR-0003): the unit that is priced, stocked and sold. 
 
 **Default variants and the migration (P1-V.2):** every product has at least one variant. `createProduct` creates its variants from `variants` (a product without options sends one, with no option values); existing products were given a default variant by migration, and existing size/color variants became Apparel option values. `Variant.price` is nullable: it is `null` only for the archived default variant of a product migrated without a price. Archived "Legacy" variants (`isActive: false`, zero stock, SKU `LEGACY-...`) hold order and cart lines recorded before a product had variants (including the historical lines of products that already had variants).
 
-**Variant checkout (P1-V.3):** every variant is bought on its own: the cart, checkout, stock deduction and stock restores all work on the variant (see [2.9](#29-cart), [2.11](#211-orders), [2.15](#215-inventory)). A variant can be sold when it is active, priced, and its product is active and `PUBLISHED`. **Breaking change (P1-V.3):** `Variant.discountedPrice` and `appliedDiscount` are new; a discount attached to a product applies to all its variants.
+**Variant checkout (P1-V.3):** every variant is bought on its own: the cart, checkout, stock deduction and stock restores all work on the variant (see [2.9](#29-cart), [2.11](#211-orders), [2.15](#215-inventory)). A variant can be sold when it is active, priced, and its product is active and `PUBLISHED`. **Breaking change (P1-V.3):** `Variant.discountedPrice` is new; a promotion on a product applies to all its variants (`appliedPromotion` since P2-B.1).
 
 All variant operations need a staff permission. Customers see the active variants of published products through `Product.variants` (archived variants are never listed there).
 
@@ -1195,12 +1193,11 @@ All variant operations need a staff permission. Customers see the active variant
   lowStockThreshold?: Int;    // available stock at or below which inventory.low_stock is raised (default 5)
   price?: Money;              // selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
   basePrice?: Money;          // price before tax, as entered
-  discountedPrice?: Money;    // price of one unit after the best active discount (the variant's own, its product's or its category's); null without one
-  appliedDiscount?: Discount; // the discount behind discountedPrice
+  discountedPrice?: Money;    // price of one unit after the best automatic promotion on it (on the variant, its product, category or brand); null without one. Coupons and cart minimums apply only in checkoutQuote
+  appliedPromotion?: PublicPromotion; // { id, name, description?, endsAt? } of the promotion behind discountedPrice
   isActive: boolean;          // false = archived
   weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
   image?: string;             // overrides the product images for this variant
-  discountId?: string;
   priceHistory(first?: Int = 50, after?: ID): PriceChangePage!; // staff with catalog.product.read only, else FORBIDDEN (P2-H.1)
 }
 ```
@@ -1235,12 +1232,11 @@ All variant operations need a staff permission. Customers see the active variant
   weightGrams?: Int; lengthMm?: Int; widthMm?: Int; heightMm?: Int;
   image?: string;             // HTTPS URL
   lowStockThreshold?: Int;    // default 5
-  discountId?: ID;
 }
 ```
 
 - **Side effects**: audit entry (entity `Variant`, `CREATE`); a `RECEIPT` stock movement for the opening stock; price history entries for the first `BASE_PRICE` and `PRICE` (source `VARIANT_CREATED`). `createProduct` records the same for each variant it creates.
-- **Possible Errors**: `NOT_FOUND` (product, discount), `BAD_REQUEST` (option values invalid for the type: the message lists each problem, e.g. `Invalid option values for product type "apparel": flavour is not an attribute of this product type`), `CONFLICT` (an active variant already has these options; SKU or barcode taken), `BAD_USER_INPUT`.
+- **Possible Errors**: `NOT_FOUND` (product), `BAD_REQUEST` (option values invalid for the type: the message lists each problem, e.g. `Invalid option values for product type "apparel": flavour is not an attribute of this product type`), `CONFLICT` (an active variant already has these options; SKU or barcode taken), `BAD_USER_INPUT`.
 
 #### `updateVariant`
 - **Type**: Mutation · **Auth**: `catalog.product.write`; step-up when `basePrice` is sent
@@ -1532,10 +1528,10 @@ All order operations require `Bearer` JWT.
 ```typescript
 {
   id: string;
-  orderItemId?: string;       // The line a product discount applies to (already in its unitDiscount); null for the coupon
-  type: OrderAdjustmentType;  // DISCOUNT | COUPON
-  sourceId?: string;          // The Discount or Coupon id
-  code?: string;              // Coupon code when ordered
+  orderItemId?: string;       // The line an item promotion applies to (already in its unitDiscount); null for a cart promotion
+  type: OrderAdjustmentType;  // DISCOUNT (automatic promotion) | COUPON (unlocked by a coupon code)
+  sourceId?: string;          // The Promotion id (orders placed before P2-B.1: the discount or coupon id, which the promotion kept)
+  code?: string;              // The coupon code that unlocked it
   amount: Money;              // Signed: reductions are negative, e.g. "-20.00"
 }
 ```
@@ -1649,9 +1645,9 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   currency: Currency;                // GHS
   pricingVersion: number;            // The pricing rules used (1); the order stores it
   lines: QuoteLine[];                // In cart order
-  adjustments: QuoteOrderAdjustment[]; // The coupon, if it takes anything off
+  adjustments: QuoteOrderAdjustment[]; // The cart promotions that take something off
   subtotal: Money;                   // Σ unitListPrice × quantity, before any discount, tax included
-  discountTotal: Money;              // Item discounts + coupon
+  discountTotal: Money;              // Item promotions + cart promotions
   taxTotal: Money;                   // Tax included in the line totals
   shippingTotal: Money;              // 0 for pickup
   grandTotal: Money;                 // What createOrder charges: subtotal - discountTotal + shippingTotal
@@ -1661,17 +1657,17 @@ QuoteLine {
   cartItemId: string; variantId: string; productId: string; productName: string; sku: string;
   optionValues?: JSON; quantity: number;
   unitListPrice: Money;              // Variant price, tax included
-  unitDiscount: Money;               // Best item discount on one unit
+  unitDiscount: Money;               // Item promotions taken off one unit
   unitNet: Money;                    // One discounted unit without tax
   unitTax: Money;                    // Tax included in one discounted unit
   lineTotal: Money;                  // (unitListPrice - unitDiscount) × quantity
-  adjustments: QuoteAdjustment[];    // The item discount: { type: DISCOUNT, sourceId, code: null, amount (negative) }
+  adjustments: QuoteAdjustment[];    // The item promotions: { type: DISCOUNT | COUPON, sourceId: promotion id, code, amount (negative) }
   taxLines: QuoteTaxLine[];          // { taxId, name, rate, base, amount }, one per active tax on a taxable line
 }
 
 QuoteOrderAdjustment {
-  type: OrderAdjustmentType;         // COUPON
-  sourceId: string; code?: string;
+  type: OrderAdjustmentType;         // DISCOUNT (automatic) | COUPON (unlocked by the code)
+  sourceId: string; code?: string;   // The promotion id; the coupon code when it unlocked it
   amount: Money;                     // Negative
   allocations: { cartItemId: string; amount: Money }[]; // Each line's share; they add up exactly to amount
 }
@@ -1720,11 +1716,11 @@ query {
 **What happens** (all in one database transaction):
 1. The cart row is locked (a second `createOrder` for the same cart waits, then finds the cart empty: `NOT_FOUND`). The cart must hold 1–50 items; the account must be active.
 2. `DELIVERY`: the address must belong to the caller and have a region, recipient name and phone (addresses saved before those fields existed may lack them). The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
-3. The cart's variants are share-locked, then the prices, discounts, coupon, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-discounts-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus the best active discount for that variant (its own, its product's or its category's). Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
-4. A coupon, if given, must be usable (active, not expired, under its usage limit, not used by the caller, minimum order amount reached by the lines after product discounts); it comes off those lines, before shipping, never more than them.
+3. The cart's variants are share-locked, then the prices, promotions, coupon code, the caller's redemptions, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-promotions-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus its item promotions. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
+4. A coupon code, if given, must be usable (code and promotion active, started, not expired, uses left overall and for the caller, its minimums reached); it unlocks its promotion. Cart promotions come off the lines after item promotions, before shipping, never more than them.
 5. The resulting quote's hash must equal `quoteHash`; otherwise `CONFLICT` / `QUOTE_CHANGED` and nothing is written.
-6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per discounted line and one for the coupon, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with `pricingVersion` 1.
-7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); the coupon use is recorded; the cart is emptied.
+6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with `pricingVersion` 1.
+7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); each applied promotion (and the coupon code) has one use taken with a conditional update and a `RESERVED` redemption recorded (none left: `CONFLICT`, see below); the cart is emptied.
 8. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
 9. A confirmation email goes to the account's email (not `contactEmail`) after the response.
 
@@ -1732,8 +1728,9 @@ No tax is added at checkout; tax is already inside each variant's `price`, and t
 
 **Possible Errors**:
 - `CONFLICT` with `extensions.reason: "QUOTE_CHANGED"` — the cart no longer prices to the quote (see above). Call `checkoutQuote` again.
+- `CONFLICT` with `extensions.reason: "PROMOTION_LIMIT_REACHED"` (a promotion or the coupon code has no use left) or `"PROMOTION_CUSTOMER_LIMIT_REACHED"` (the caller used up their uses) — another order took the last use meanwhile; nothing was recorded. Call `checkoutQuote` again.
 - `NOT_FOUND` — No cart, empty cart (also the second of two simultaneous submits), shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
-- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon code inactive, not started, expired, at its usage limit, already used by the caller, below its minimums, or for items not in the cart.
 - `BAD_USER_INPUT` — Missing or malformed `quoteHash`; invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:
@@ -1917,208 +1914,128 @@ mutation {
 
 ---
 
-### 2.13 Coupons
+### 2.13 Promotions and coupon codes
 
-Coupon codes are stored upper-case and matched case-insensitively.
+**Breaking change (P2-B.1, ADR-0005):** discounts and coupons are now **promotions**. A promotion is either automatic or unlocked by a **coupon code**. Every operation below needs the `promotion.manage` permission (Owner, Manager); every change also needs a recent step-up (`FORBIDDEN` + `reason: STEP_UP_REQUIRED`) and is audit-logged. Removed, with their replacements:
 
----
+| Removed | Use instead |
+|---|---|
+| `discounts`, `discount(id)` | `promotions(isActive, scope)`, `promotion(id)` |
+| `createDiscount`, `updateDiscount`, `removeDiscount` | `createPromotion`, `updatePromotion`, `deletePromotion` |
+| `addToDiscount`, `removeFromDiscount` | `updatePromotion(id, input: { targetIds })` (replaces all targets; `[]` clears them) |
+| `coupons`, `coupon(id)` | `promotion(id) { couponCodes }` (a coupon is a CART promotion with `requiresCoupon` and a code) |
+| `createCoupon`, `updateCoupon`, `deleteCoupon` | `createPromotion(... requiresCoupon: true)` + `createCouponCode`, `updateCouponCode`, `deleteCouponCode` |
+| mutation `validateCoupon(input: { code, orderTotal })` → `CouponValidation` | query `validateCouponCode(code)` → `CouponCodeValidation` (what the code unlocks; `checkoutQuote` with `couponCode` gives the exact amount) |
+| types `Discount`, `Coupon`, `CouponValidation`; enums `DiscountType`, `DiscountTypeEnum` (`PERCENTAGE`, `FLAT`) | `Promotion`, `CouponCode`, `CouponCodeValidation`, `PublicPromotion`, `Redemption`; enums `PromotionScope`, `PromotionType` (`PERCENT`, `AMOUNT_OFF`, `FIXED_PRICE`), `RedemptionStatus` |
+| `Variant.appliedDiscount: Discount`, `Variant.discountId`, `CreateVariantInput.discountId`, `UpdateVariantInput.discountId`, `Product.discounts` | `Variant.appliedPromotion: PublicPromotion`; targets are set on the promotion |
+| `Order.couponId` (never exposed) | `Order` keeps the code in its `COUPON` adjustment's `code` |
 
-#### `coupons` (ADMIN, SUPER_ADMIN)
-- **Type**: Query
-- **Response**: `[Coupon!]!`
+Existing discounts and coupons were migrated with their ids, so the `sourceId` of old order adjustments names the promotion they became.
 
-**`Coupon` Object Type**:
-
-```typescript
-{
-  id: string;
-  code: string;
-  discountType: DiscountTypeEnum; // PERCENTAGE | FLAT
-  value: Decimal;
-  usageLimit?: number;            // null = unlimited
-  usedCount: number;
-  expiresAt?: DateTime;
-  isActive: boolean;
-  minimumOrderAmount?: Money;
-  createdAt: DateTime;
-  updatedAt: DateTime;
-}
-```
-
----
-
-#### `coupon` (ADMIN, SUPER_ADMIN)
-- **Type**: Query
-- **Args**: `id: ID!`
-- **Response**: `Coupon!` (`NOT_FOUND` if unknown)
-
----
-
-#### `createCoupon` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `input: CreateCouponInput!`
-- **Response**: `Coupon!`
-
-**Input: `CreateCouponInput`**
-
-```typescript
-{
-  code: string;                   // Required. Max 50 chars. Stored upper-case; unique (CONFLICT).
-  discountType: DiscountTypeEnum; // Required. PERCENTAGE | FLAT
-  value: Decimal;                   // Required. Min 0. Percent (PERCENTAGE) or GHS amount (FLAT).
-  usageLimit?: number;            // Optional. Min 1 if provided.
-  expiresAt?: DateTime;           // Optional.
-  isActive: boolean;              // Default true.
-  minimumOrderAmount?: Decimal;     // Optional. Min 0.
-}
-```
-
----
-
-#### `updateCoupon` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `id: ID!`, `input: UpdateCouponInput!` (all `CreateCouponInput` fields optional)
-- **Response**: `Coupon!`
-
----
-
-#### `deleteCoupon` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `id: ID!`
-- **Response**: `Coupon!`
-- **Possible Errors**: `NOT_FOUND`; `CONFLICT` once the coupon has been used (deactivate it with `updateCoupon` instead).
-
----
-
-#### `validateCoupon`
-- **Type**: Mutation
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Args**: `input: ValidateCouponInput!`
-- **Response**: `CouponValidation!`
-- **Description**: Check a coupon before checkout. Checks: existence, active status, expiry, usage limit, minimum order amount, and that the caller has not used it. It does not reserve the coupon; `createOrder` checks again (a coupon that reached its limit in the meantime fails there with `BAD_REQUEST`). A use is given back when its order is cancelled or expires.
-
-**Input: `ValidateCouponInput`**
-
-```typescript
-{
-  code: string;        // Required.
-  orderTotal: Decimal;   // Required. Min 0. The subtotal after product discounts, before shipping (Σ lineTotal of a checkoutQuote without the coupon). Prefer checkoutQuote with couponCode, which shows the exact coupon amount.
-}
-```
-
-**Response: `CouponValidation`** (only returned when valid; failures are errors)
-
-```typescript
-{
-  valid: boolean;           // Always true when returned
-  discountAmount?: Money;   // PERCENTAGE: orderTotal × value / 100, rounded half-up to 2 dp; FLAT: min(value, orderTotal)
-  message?: string;         // e.g., "Coupon applied. You save 10.00."
-}
-```
-
-**Possible Errors**:
-- `NOT_FOUND` — Unknown coupon code.
-- `BAD_REQUEST` — Inactive, expired, usage limit reached, order total below minimum, already used by this user.
-
----
-
-### 2.14 Discounts
-
-Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). A discount attached to a product applies to all its variants. They are shown on each variant (`Variant.discountedPrice`, `appliedDiscount`) and in `checkoutQuote`, and `createOrder` charges the same prices (see [Section 10](#10-discounts-system)). **Breaking change (P1-V.3):** `Product.discountedPrice` / `Product.appliedDiscount` → removed; read them on `Product.variants`.
-
----
-
-#### `discounts` (ADMIN, SUPER_ADMIN)
-- **Type**: Query
-- **Response**: `[Discount!]!`
-
----
-
-#### `discount` (ADMIN, SUPER_ADMIN)
-- **Type**: Query
-- **Args**: `id: ID!`
-- **Response**: `Discount!` (`NOT_FOUND` if unknown)
-
----
-
-#### `createDiscount` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `createDiscountInput: CreateDiscountInput!`
-- **Response**: `Discount!`
-
-**Input: `CreateDiscountInput`**
-
-```typescript
-{
-  name: string;               // Required.
-  description?: string;
-  type: DiscountType;         // Required. PERCENTAGE | FLAT
-  value: Decimal;               // Required. >= 0; at most 100 for PERCENTAGE.
-  startDate: DateTime;        // Required.
-  endDate: DateTime;          // Required. Must be after startDate.
-  isActive: boolean;          // Default false.
-  products?: string[];        // Product IDs. Default [].
-  variants?: string[];        // Variant IDs. Default [].
-  categories?: string[];      // Category IDs. Default [].
-  minimumPurchase?: Decimal;    // Minimum list-price cart total (before discounts) for the discount to apply at checkout.
-}
-```
-
-**Possible Errors**: `BAD_REQUEST` (end before start, percentage over 100, negative value, unknown product/variant/category IDs).
-
-**`Discount` Object Type**:
+**`Promotion` Object Type** (staff only):
 
 ```typescript
 {
   id: string;
   name: string;
   description?: string;
-  type: DiscountType;         // PERCENTAGE | FLAT
-  value: Decimal;
-  startDate: DateTime;
-  endDate: DateTime;
+  scope: PromotionScope;      // SKU | PRODUCT | CATEGORY | BRAND | CART
+  type: PromotionType;        // PERCENT | AMOUNT_OFF | FIXED_PRICE
+  value: Decimal;             // PERCENT: 0-100; AMOUNT_OFF: amount off each targeted unit (off the cart for CART); FIXED_PRICE: the unit price (never raises a price; not for CART)
+  targetIds: ID[];            // Variant ids (SKU), product, category or brand ids; [] for CART
+  minimumSpend?: Money;       // Least merchandise total (see 10. Promotions System for which subtotal)
+  minimumQuantity?: number;   // Least number of targeted units in the cart (any unit for CART)
+  startsAt: DateTime;
+  endsAt?: DateTime;          // null = open-ended
   isActive: boolean;
-  products?: Product[];
-  variants?: Variant[];
-  categories?: Category[];
-  minimumPurchase?: Money;
+  priority: number;           // Lowest wins a tie between equal savings, then the oldest promotion
+  stackingGroup: string;      // Default "default"
+  exclusive: boolean;
+  requiresCoupon: boolean;    // Only orders entering one of its couponCodes get it
+  usageLimit?: number;        // Orders that may use it, across all customers
+  usedCount: number;          // Orders holding a use (taken at placement, given back on cancel/expiry before payment)
+  perCustomerLimit?: number;  // Orders each customer may use it on
+  couponCodes: CouponCode[];
   createdAt: DateTime;
   updatedAt: DateTime;
 }
 ```
 
----
+#### `promotions` / `promotion`
 
-#### `updateDiscount` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `updateDiscountInput: UpdateDiscountInput!`
-- **Response**: `Discount!`
-- **Input: `UpdateDiscountInput`** — `id: ID!` plus the `CreateDiscountInput` fields, all optional. An omitted `isActive` leaves the discount as it is; omitted `products`/`variants`/`categories` default to `[]`, which leaves the linked items unchanged.
+- **Args**: `promotions(isActive: Boolean, scope: PromotionScope)`, newest first; `promotion(id: ID!)` (`NOT_FOUND` if unknown).
 
----
+#### `createPromotion`
 
-#### `addToDiscount` / `removeFromDiscount` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `modifyDiscountItemsInput: ModifyDiscountItemsInput!`
-- **Response**: `Discount!`
-
-**Input: `ModifyDiscountItemsInput`**
+- **Args**: `input: CreatePromotionInput!` → `Promotion!`
 
 ```typescript
 {
-  discountId: string;        // Required.
-  products?: string[];       // Product IDs to add/remove. Default [].
-  variants?: string[];       // Variant IDs to add/remove. Default [].
-  categories?: string[];     // Category IDs to add/remove. Default [].
+  name: string;                // Required, max 255
+  description?: string;
+  scope: PromotionScope;       // Required
+  type: PromotionType;         // Required
+  value: Decimal;              // Required, >= 0, 2 dp; PERCENT at most 100
+  targetIds?: ID[];            // Default []; must exist for the scope; none for CART
+  minimumSpend?: Decimal;
+  minimumQuantity?: number;    // >= 1
+  startsAt?: DateTime;         // Default now
+  endsAt?: DateTime;           // After startsAt; omit for open-ended
+  isActive?: boolean;          // Default false
+  priority?: number;           // Default 0
+  stackingGroup?: string;      // Default "default", max 50
+  exclusive?: boolean;         // Default false
+  requiresCoupon?: boolean;    // Default false
+  usageLimit?: number;         // >= 1
+  perCustomerLimit?: number;   // >= 1
 }
 ```
 
----
+**Possible Errors**: `BAD_REQUEST` (PERCENT above 100, FIXED_PRICE on CART, targets on CART, unknown targets, `endsAt` not after `startsAt`).
 
-#### `removeDiscount` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `id: ID!`
-- **Response**: `Discount!`
+#### `updatePromotion`
+
+- **Args**: `id: ID!`, `input: UpdatePromotionInput!` (every field optional) → `Promotion!`
+- Omitted fields stay; `null` clears an optional one (`description`, `minimumSpend`, `minimumQuantity`, `endsAt`, `usageLimit`, `perCustomerLimit`). `targetIds` replaces every target (`[]` clears them) and is required when `scope` changes. The result is checked as a whole against the stored promotion (a `value` of 150 on a PERCENT promotion is refused).
+
+#### `deletePromotion`
+
+- **Args**: `id: ID!` → `Promotion!`. Deletes it with its coupon codes. A promotion an order has used cannot be deleted (`CONFLICT`): set `isActive: false` instead.
+
+#### `createCouponCode` / `updateCouponCode` / `deleteCouponCode`
+
+```typescript
+CreateCouponCodeInput { promotionId: ID; code: string /* letters, digits, - and _, max 50; stored upper case */; isActive?: boolean /* default true */; usageLimit?: number /* the code's own limit; the promotion's limits still apply */ }
+UpdateCouponCodeInput { code?: string; isActive?: boolean; usageLimit?: number | null }
+CouponCode { id; code; promotionId; isActive; usageLimit?; usedCount; createdAt; updatedAt }
+```
+
+Codes are unique ignoring case (`CONFLICT` for a taken code). A code an order has used cannot be deleted (`CONFLICT`): deactivate it.
+
+#### `redemptions`
+
+- **Args**: `promotionId`, `customerId`, `orderId`, `status: RedemptionStatus` (all optional), `first` (1-100, default 50), `after` (cursor: the last node id) → `RedemptionPage { nodes: Redemption[]; totalCount; hasNextPage }`, newest first.
+- `Redemption { id; promotionId; couponCodeId?; customerId; orderId; status: RESERVED | RELEASED; createdAt; releasedAt? }`: one row per promotion an order used.
+
+#### `validateCouponCode` (any signed-in user)
+
+- **Args**: `code: String!` (any letter case) → `CouponCodeValidation!`
+
+```typescript
+{
+  code: string;                // As stored (upper case)
+  promotion: PublicPromotion;  // { id, name, description?, endsAt? }
+  scope: PromotionScope;
+  type: PromotionType;
+  value: Decimal;
+  minimumSpend?: Money;
+  minimumQuantity?: number;
+}
+```
+
+It checks the code for the caller whatever the cart (active, started, not expired, uses left overall and for the caller). Use `checkoutQuote` with `couponCode` for its exact effect on the cart.
+
+**Possible Errors**: `NOT_FOUND` (unknown code); `BAD_REQUEST` with the reason ("This coupon is no longer active", "This coupon is not active yet", "This coupon has expired", "This coupon has reached its usage limit", "You have already used this coupon").
 
 ---
 
@@ -3517,7 +3434,7 @@ Authorization: Bearer <accessToken>
 1. Frontend calls `query products(paginationArgs, filterArgs, sortArgs)` — **no auth required**.
 2. Response includes cursor-paginated `ProductConnection` with `pageInfo.hasNextPage` and `pageInfo.totalCount`.
 3. To load next page: call again with `after: lastCursor` from previous response.
-4. Resolved fields (`priceRange`, `totalStock`, `inStock`, `variants` and their `discountedPrice`/`appliedDiscount`, `reviews`) are fetched via DataLoader only when requested.
+4. Resolved fields (`priceRange`, `totalStock`, `inStock`, `variants` and their `discountedPrice`/`appliedPromotion`, `reviews`) are fetched via DataLoader only when requested.
 5. To view a single product: call `query product(productId)` (returns `null` for anything not published). Show its `variants` (each with `optionValues`, `price`, `discountedPrice`, `available`) and let the customer pick one; a product without options has a single variant with `optionValues: {}`.
 
 ### Add to Cart Flow
@@ -3735,41 +3652,34 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
 
 ---
 
-## 10. Discounts System
+## 10. Promotions System
 
-### Discount vs. Coupon
+One pricing engine (`src/pricing/price.ts`, ADR-0005) prices `Variant.discountedPrice`, `checkoutQuote` and `createOrder`, so an order's `grandTotal` is exactly the `checkoutQuote.grandTotal` whose `quoteHash` it was sent. An order is priced once, when it is created.
 
-| | Discount | Coupon |
-|---|---|---|
-| Scope | Product / Variant / Category | Order subtotal |
-| Applied | Shown automatically on variants (`Variant.discountedPrice`) and in `checkoutQuote` | Entered as `couponCode` in `checkoutQuote` and `createOrder` |
-| Charged at checkout | Yes (`DISCOUNT` adjustments, per item `unitDiscount`) | Yes (the `COUPON` adjustment) |
-| Type | `Discount` | `Coupon` |
+### Which promotions are candidates
 
-### Discount Application
+A promotion is considered when it is `isActive`, `startsAt <= now <= endsAt` (or no `endsAt`), it has uses left (`usedCount < usageLimit`) and the customer has uses left (their reserved uses `< perCustomerLimit`), and, when it `requiresCoupon`, the order entered one of its codes.
 
-- A `Discount` applies when `isActive = true` and now is within `[startDate, endDate]`.
-- Discounts are priced per **variant**. For a variant, the candidates are its own discounts, its product's discounts (a product discount applies to every variant of the product) and its product's category's discounts. The **best** one is the one that saves the most money on one unit at the variant's current price (on a GHS 50 item, GHS 8 off beats 10% off; on GHS 1,000, 30% off beats GHS 50 off). On an equal saving the oldest discount (earliest `createdAt`, then lowest id) is taken.
-- Unit discount: `PERCENTAGE` → `Variant.price × value / 100`, `FLAT` → `value`, rounded half-up to 2 decimal places and never more than the price. `discountedPrice = price - unit discount`; line total = `discountedPrice × quantity`.
-- `minimumPurchase`: in the cart and at checkout a discount applies only when the cart's list-price `total` (all items, before discounts) reaches its minimum; otherwise it is skipped and the next best discount applies. `Variant.discountedPrice` on product pages does not check minimums.
-- **Checkout charges the quote** (P2-A, ADR-0005): one pricing engine prices `Variant.discountedPrice` (its item rule), `checkoutQuote` and `createOrder`, so the order's `grandTotal` equals the `checkoutQuote.grandTotal` whose `quoteHash` it was sent. An order is priced once, when it is created; nothing re-prices an existing order.
+### What a promotion takes off
 
-### Coupon Logic
+- Item promotions (`SKU`, `PRODUCT`, `CATEGORY`, `BRAND`) apply to each unit of the lines they target: `PERCENT` → price × value / 100, `AMOUNT_OFF` → value, `FIXED_PRICE` → price - value (nothing when the price is already lower); rounded half-up to 2 dp, never more than the unit price.
+- Cart promotions (`CART`) come off the merchandise subtotal after item promotions, before shipping: `PERCENT` of it or `AMOUNT_OFF`, never more than it. The amount is allocated to the lines by largest remainder (`checkoutQuote` `allocations`), so refunds per line are exact.
+- `minimumQuantity`: the targeted units in the cart (every unit for CART). `minimumSpend`: for a cart promotion, the subtotal after item promotions (before shipping); for an item promotion, the list-price subtotal (before any promotion).
 
-- Applied at `createOrder` via `couponCode`, against the order subtotal (after product discounts, before shipping).
-- Checks (the pricing engine, in `checkoutQuote`, `validateCoupon` and again inside the order transaction):
-  1. Coupon exists (`NOT_FOUND`) and `isActive = true`.
-  2. Not expired (`expiresAt` is null or in the future).
-  3. Usage limit not reached (`usedCount < usageLimit`, or `usageLimit` is null).
-  4. User has not already used this coupon.
-  5. Subtotal ≥ `minimumOrderAmount`.
-- Discount: `PERCENTAGE` → subtotal × value / 100 (rounded half-up); `FLAT` → value; never more than the subtotal (P2-A: a percentage over 100 no longer eats into shipping). It is allocated to the lines by largest remainder (`checkoutQuote` `allocations`), so the shares add up exactly. Saved as the order's `COUPON` adjustment; `Coupon.usedCount` increments.
-- Cancelling or expiring the order gives the use back (usage record removed, `usedCount` decremented).
+### Combining
 
-### Stacking Rules
+- Each line gets the one item promotion saving the most on it; then the one cart promotion saving the most applies. Equal savings go to the oldest promotion.
+- One coupon code per order.
 
-- One coupon per order. Product discounts are applied first; the coupon is computed on the discounted subtotal (and its `minimumOrderAmount` checked against it). Shipping is added last.
-- Only one discount is applied per variant (the best one, as above).
+### Coupon codes
+
+- Entered as `couponCode` in `checkoutQuote` and `createOrder` (any letter case); they unlock their promotion.
+- A code that cannot be used fails with `BAD_REQUEST` and the reason (inactive, not started, expired, no uses left, already used by the caller, minimum not reached, "This coupon does not apply to any item in your cart"); an unknown code with `NOT_FOUND`.
+
+### Limits and redemptions
+
+- Placing an order records one `RESERVED` redemption per promotion it applies and takes one use of each (and of the coupon code) inside the order transaction, with a conditional update: when none is left, `createOrder` fails with `CONFLICT` and `reason: PROMOTION_LIMIT_REACHED` (or `PROMOTION_CUSTOMER_LIMIT_REACHED` for the caller's own limit) and nothing is recorded. Get a new quote.
+- Cancelling or expiring an order gives its uses back (redemptions `RELEASED`, counts decremented), once.
 
 ---
 
@@ -4587,7 +4497,7 @@ query {
     variants {
       id sku optionValues available
       price { amount currency } discountedPrice { amount currency }
-      appliedDiscount { name type value }
+      appliedPromotion { name description endsAt }
     }
     reviews { score comment user { displayName } }
     category { id name }
@@ -4670,21 +4580,18 @@ query {
 }
 ```
 
-`createOrder` charges exactly `grandTotal` when it is sent this `quoteHash`; see [Section 10](#10-discounts-system).
+`createOrder` charges exactly `grandTotal` when it is sent this `quoteHash`; see [Section 10](#10-promotions-system).
 
 ---
 
-### Step 8 — Validate Coupon
+### Step 8 — Check a Coupon Code
 
 ```graphql
-mutation {
-  validateCoupon(input: {
-    code: "SAVE10"
-    orderTotal: "59.98"
-  }) {
-    valid
-    discountAmount { amount currency }
-    message
+query {
+  validateCouponCode(code: "save10") {
+    code type value scope
+    minimumSpend { amount currency }
+    promotion { name description endsAt }
   }
 }
 ```
@@ -4693,14 +4600,16 @@ mutation {
 ```json
 {
   "data": {
-    "validateCoupon": {
-      "valid": true,
-      "discountAmount": { "amount": "6.00", "currency": "GHS" },
-      "message": "Coupon applied. You save 6.00."
+    "validateCouponCode": {
+      "code": "SAVE10", "type": "PERCENT", "value": "10", "scope": "CART",
+      "minimumSpend": null,
+      "promotion": { "name": "Ten percent off", "description": null, "endsAt": null }
     }
   }
 }
 ```
+
+Then call `checkoutQuote` with `couponCode: "save10"` to show the exact saving.
 
 ---
 

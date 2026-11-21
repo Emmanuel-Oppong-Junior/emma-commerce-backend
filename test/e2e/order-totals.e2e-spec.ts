@@ -9,6 +9,7 @@ import { signInAdmin, signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, setStock } from '../helpers/db.helper';
 import { migrationSql, migrationSqlFrom, ScratchSchema } from '../helpers/migration.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { createCoupon, createPromotion } from '../helpers/promotion.helper';
 
 const M = '{ amount currency }';
 const sum = (values: Prisma.Decimal[]) => values.reduce((total, value) => total.add(value), new Prisma.Decimal(0));
@@ -93,19 +94,14 @@ describe('Order totals, line snapshots and tax lines (P1-O.1, e2e)', () => {
       },
     });
     await setStock(prisma, 'totals_kente_var', 10);
-    await prisma.discount.create({
-      data: {
-        id: 'totals_disc10',
-        name: 'Kente week',
-        type: 'PERCENTAGE',
-        value: 10,
-        isActive: true,
-        startDate: new Date(Date.now() - 86_400_000),
-        endDate: new Date(Date.now() + 86_400_000),
-        products: { connect: { id: 'totals_kente' } },
-      },
+    await createPromotion(prisma, {
+      id: 'totals_disc10',
+      name: 'Kente week',
+      type: 'PERCENT',
+      value: 10,
+      targetIds: ['totals_kente'],
     });
-    await prisma.coupon.create({ data: { id: 'totals_coupon', code: 'TOTALS20', discountType: 'FLAT', value: 20 } });
+    await createCoupon(prisma, { id: 'totals_coupon', code: 'TOTALS20', type: 'AMOUNT_OFF', value: 20 });
     userToken = await signInUser(app);
     adminToken = await signInAdmin(app);
   });

@@ -19,7 +19,6 @@ const AUDITED_VARIANT_FIELDS = [
   'basePrice',
   'price',
   'isActive',
-  'discountId',
 ] as const satisfies readonly (keyof Variant)[];
 
 /** A variant ready to insert: options validated, price computed, SKU and barcode checked. */
@@ -47,7 +46,6 @@ export class VariantService {
   /** Creates a variant; its opening stock is received as a RECEIPT in the same transaction (VAR-05). */
   async createVariant(input: CreateVariantInput, actorId: string): Promise<VariantWithProduct> {
     const product = await this.findProduct(input.productId);
-    if (input.discountId) await this.ensureDiscountExists(input.discountId);
     const [prepared] = await this.prepare(product, [input]);
     return this.auditService.record(
       async (tx) => {
@@ -71,7 +69,7 @@ export class VariantService {
    */
   async prepare(
     product: Pick<ProductForVariants, 'isTaxable' | 'productType'> & { id?: string },
-    inputs: (VariantFieldsInput & { discountId?: string })[],
+    inputs: VariantFieldsInput[],
   ): Promise<PreparedVariant[]> {
     const rate = product.isTaxable ? await this.taxService.getTotalActiveRate() : new Prisma.Decimal(0);
     const prepared: PreparedVariant[] = [];
@@ -101,7 +99,6 @@ export class VariantService {
           heightMm: input.heightMm,
           image: input.image,
           lowStockThreshold: input.lowStockThreshold,
-          discountId: input.discountId,
         },
       });
     }
@@ -157,7 +154,6 @@ export class VariantService {
   async updateVariant(variantId: string, input: UpdateVariantInput, actorId: string): Promise<VariantWithProduct> {
     const existing = await this.retrieveVariant(variantId);
     const product = await this.findProduct(existing.productId);
-    if (input.discountId) await this.ensureDiscountExists(input.discountId);
     await this.ensureCodesFree(input.sku, input.barcode, variantId);
 
     const data: Prisma.VariantUncheckedUpdateInput = {
@@ -169,7 +165,6 @@ export class VariantService {
       heightMm: input.heightMm,
       image: input.image,
       lowStockThreshold: input.lowStockThreshold,
-      discountId: input.discountId,
       isActive: input.isActive,
     };
     let optionsKey = existing.optionsKey;
@@ -263,12 +258,6 @@ export class VariantService {
     if (!taken) return;
     const what = sku && taken.sku?.toLowerCase() === sku.toLowerCase() ? `SKU "${sku}"` : `barcode "${barcode}"`;
     throw new ConflictException(`${what} is already used by variant "${taken.id}"`);
-  }
-
-  private async ensureDiscountExists(discountId: string): Promise<void> {
-    if (!(await this.variantRepository.discountExists(discountId))) {
-      throw new NotFoundException(`Discount "${discountId}" not found`);
-    }
   }
 
   private async findProduct(productId: string): Promise<ProductForVariants> {

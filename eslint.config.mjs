@@ -26,9 +26,9 @@ export default defineConfig(
     // ADR-0004: money is exact Decimal on these paths. Converting to a JS number loses cents, so it is banned;
     // a legitimate non-money use (a count, a provider's integer minor units) carries a disable comment saying why.
     files: [
-      'src/{analytics,cart,coupons,discount,order,payment,pricing,returns,shipping-zones,tax,store}/**/*.ts',
+      'src/{analytics,cart,promotions,order,payment,pricing,returns,shipping-zones,tax,store}/**/*.ts',
       'src/commons/money/**/*.ts',
-      'src/products/loaders/discount.loader.ts',
+      'src/products/loaders/promotion.loader.ts',
       'src/products/products.resolver.ts',
     ],
     ignores: ['**/*.spec.ts'],

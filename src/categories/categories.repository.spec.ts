@@ -9,7 +9,6 @@ const mockCategory: Category = {
   name: 'Electronics',
   description: null,
   image: null,
-  discountId: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

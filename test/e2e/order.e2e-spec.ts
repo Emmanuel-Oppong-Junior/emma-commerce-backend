@@ -6,6 +6,7 @@ import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, setStock, stockOf } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { createCoupon } from '../helpers/promotion.helper';
 
 describe('Orders (e2e)', () => {
   let app: INestApplication;
@@ -355,13 +356,10 @@ describe('Orders (e2e)', () => {
 
     it('applies a valid coupon discount to the order', async () => {
       // Arrange — create an active flat-amount coupon, add items to cart
-      const coupon = await prisma.coupon.create({
-        data: {
-          code: 'ORDER-FLAT-50',
-          discountType: 'FLAT',
-          value: 50,
-          isActive: true,
-        },
+      const { couponCode: coupon } = await createCoupon(prisma, {
+        code: 'ORDER-FLAT-50',
+        type: 'AMOUNT_OFF',
+        value: 50,
       });
       await addItemToCart(userToken, 'seed_var1', 1);
 

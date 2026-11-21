@@ -1,14 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { VariantFieldsResolver } from './variant-fields.resolver';
-import { DiscountLoader } from './loaders/discount.loader';
-import { DiscountService } from '../discount/discount.service';
+import { PromotionLoader } from './loaders/promotion.loader';
 import { Prisma } from '../generated/prisma/client';
-import { DiscountType } from '../discount/enums/discount-type.enum';
 import { Variant } from '../variant/entities/variant.entity';
 
-const mockDiscountService = { findOneDiscount: jest.fn() };
-const mockDiscountLoaderFn = jest.fn();
-const mockDiscountLoader = { loader: { load: mockDiscountLoaderFn } };
+const mockLoad = jest.fn();
+const mockPromotionLoader = { loader: { load: mockLoad } };
 const mockVariant = { id: 'var1', productId: 'prod1', sku: 'TSHIRT-M' } as unknown as Variant;
 
 describe('VariantFieldsResolver', () => {
@@ -16,11 +13,7 @@ describe('VariantFieldsResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        VariantFieldsResolver,
-        { provide: DiscountService, useValue: mockDiscountService },
-        { provide: DiscountLoader, useValue: mockDiscountLoader },
-      ],
+      providers: [VariantFieldsResolver, { provide: PromotionLoader, useValue: mockPromotionLoader }],
     }).compile();
 
     resolver = module.get<VariantFieldsResolver>(VariantFieldsResolver);
@@ -29,23 +22,21 @@ describe('VariantFieldsResolver', () => {
 
   describe('discountedPrice', () => {
     it("should return the variant's discounted price, loaded by variant id", async () => {
-      mockDiscountLoaderFn.mockResolvedValue({
+      mockLoad.mockResolvedValue({
         discountedPrice: new Prisma.Decimal('5.00'),
         discountAmount: new Prisma.Decimal('14.99'),
-        discountId: 'disc1',
       });
 
       const result = await resolver.discountedPrice(mockVariant);
 
-      expect(mockDiscountLoaderFn).toHaveBeenCalledWith('var1');
+      expect(mockLoad).toHaveBeenCalledWith('var1');
       expect(result).toEqual(new Prisma.Decimal('5.00'));
     });
 
     it('should return null if discounted price is equal to price', async () => {
-      mockDiscountLoaderFn.mockResolvedValue({
+      mockLoad.mockResolvedValue({
         discountedPrice: new Prisma.Decimal('19.99'),
         discountAmount: new Prisma.Decimal(0),
-        discountId: null,
       });
 
       const result = await resolver.discountedPrice(mockVariant);
@@ -54,36 +45,39 @@ describe('VariantFieldsResolver', () => {
     });
   });
 
-  describe('appliedDiscount', () => {
-    it('should return applied discount', async () => {
-      const mockDiscount = {
-        id: 'discount1',
+  describe('appliedPromotion', () => {
+    it('returns only what a customer may see of the promotion behind the price', async () => {
+      mockLoad.mockResolvedValue({
+        discountedPrice: new Prisma.Decimal(80),
+        discountAmount: new Prisma.Decimal(20),
+        promotion: {
+          id: 'promo1',
+          name: 'Summer Sale',
+          description: '20% off',
+          endsAt: new Date('2025-06-30'),
+          usageLimit: 100,
+          usedCount: 7,
+          priority: 3,
+        },
+      });
+
+      const result = await resolver.appliedPromotion(mockVariant);
+
+      expect(mockLoad).toHaveBeenCalledWith('var1');
+      expect(result).toEqual({
+        id: 'promo1',
         name: 'Summer Sale',
         description: '20% off',
-        type: DiscountType.PERCENTAGE,
-        value: new Prisma.Decimal(20),
-        startDate: new Date('2025-06-01'),
-        endDate: new Date('2025-06-30'),
-        isActive: true,
-        minimumPurchase: null,
-      };
-      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 80, discountId: mockDiscount.id });
-      mockDiscountService.findOneDiscount.mockResolvedValueOnce(mockDiscount);
-
-      const result = await resolver.appliedDiscount(mockVariant);
-
-      expect(mockDiscountLoaderFn).toHaveBeenCalledWith('var1');
-      expect(mockDiscountService.findOneDiscount).toHaveBeenCalledWith(mockDiscount.id);
-      expect(result).toEqual(mockDiscount);
+        endsAt: new Date('2025-06-30'),
+      });
     });
 
-    it('should return null without a discount', async () => {
-      mockDiscountLoaderFn.mockResolvedValue({ discountedPrice: 80, discountId: undefined });
+    it('should return null without a promotion', async () => {
+      mockLoad.mockResolvedValue({ discountedPrice: new Prisma.Decimal(80), discountAmount: new Prisma.Decimal(0) });
 
-      const result = await resolver.appliedDiscount(mockVariant);
+      const result = await resolver.appliedPromotion(mockVariant);
 
       expect(result).toBeNull();
-      expect(mockDiscountService.findOneDiscount).not.toHaveBeenCalled();
     });
   });
 });

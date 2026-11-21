@@ -4,6 +4,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, setStock } from '../helpers/db.helper';
 import { signInUser } from '../helpers/auth.helper';
+import { createPromotion } from '../helpers/promotion.helper';
 
 describe('Cart (e2e)', () => {
   let app: INestApplication;
@@ -215,16 +216,13 @@ describe('Cart (e2e)', () => {
   describe('checkoutQuote', () => {
     it('returns the cart with discount prices applied to eligible items', async () => {
       // Arrange — create an active 10 % discount and link it to seed_prod1, and a pickup point to quote for
-      await prisma.discount.create({
-        data: {
-          name: 'Test 10% Off',
-          type: 'PERCENTAGE',
-          value: 10,
-          startDate: new Date('2020-01-01'),
-          endDate: new Date('2099-12-31'),
-          isActive: true,
-          products: { connect: [{ id: 'seed_prod1' }] },
-        },
+      await createPromotion(prisma, {
+        name: 'Test 10% Off',
+        type: 'PERCENT',
+        value: 10,
+        startsAt: new Date('2020-01-01'),
+        endsAt: new Date('2099-12-31'),
+        targetIds: ['seed_prod1'],
       });
       await prisma.pickupLocation.create({
         data: { id: 'cart_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },

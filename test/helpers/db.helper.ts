@@ -44,7 +44,7 @@ export async function prepareStaffAccounts(prisma: PrismaService): Promise<void>
  */
 export async function resetDb(prisma: PrismaService): Promise<void> {
   // Leaf-level usage tables (stock levels, reservations and movements go with their variants and orders)
-  await prisma.couponUsage.deleteMany();
+  await prisma.redemption.deleteMany();
 
   // Payment and order hierarchy (refunds reference return requests)
   await clearPaymentLedger(prisma);
@@ -67,8 +67,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.productType.deleteMany({ where: { isSystem: false } });
 
   // Catalogue
-  await prisma.discount.deleteMany();
-  await prisma.coupon.deleteMany();
+  await prisma.promotion.deleteMany();
   await prisma.subCategory.deleteMany();
   await prisma.category.deleteMany();
   await prisma.brand.deleteMany();

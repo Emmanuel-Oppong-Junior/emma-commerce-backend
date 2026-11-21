@@ -28,8 +28,6 @@ const mockCartItem = {
   productId: 'prod1',
   quantity: 2,
   originalPrice: new Prisma.Decimal(50),
-  discountedPrice: null,
-  discountId: null,
   variantId: null,
   createdAt: new Date(),
   updatedAt: new Date(),

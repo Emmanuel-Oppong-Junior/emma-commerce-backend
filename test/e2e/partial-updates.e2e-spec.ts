@@ -4,6 +4,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
 import { signInAdmin } from '../helpers/auth.helper';
+import { createPromotion } from '../helpers/promotion.helper';
 
 describe('Partial updates leave omitted flags unchanged (e2e)', () => {
   let app: INestApplication;
@@ -47,24 +48,21 @@ describe('Partial updates leave omitted flags unchanged (e2e)', () => {
     expect(res.body.data.updateProduct.isActive).toBe(false);
   });
 
-  it('updateDiscount with only a name keeps the discount active', async () => {
-    const discount = await prisma.discount.create({
-      data: {
-        name: 'Ten off',
-        type: 'PERCENTAGE',
-        value: 10,
-        startDate: new Date(Date.now() - 86_400_000),
-        endDate: new Date(Date.now() + 86_400_000),
-        isActive: true,
-      },
+  it('updatePromotion with only a name keeps the promotion active and its targets', async () => {
+    const discount = await createPromotion(prisma, {
+      name: 'Ten off',
+      type: 'PERCENT',
+      value: 10,
+      targetIds: ['seed_prod1'],
     });
 
     const res = await admin(
-      `mutation { updateDiscount(updateDiscountInput: { id: "${discount.id}", name: "Ten percent off" }) { name } }`,
+      `mutation { updatePromotion(id: "${discount.id}", input: { name: "Ten percent off" }) { name targetIds } }`,
     );
 
     expect(res.body.errors).toBeUndefined();
-    const updated = await prisma.discount.findUniqueOrThrow({ where: { id: discount.id } });
+    expect(res.body.data.updatePromotion.targetIds).toEqual(['seed_prod1']);
+    const updated = await prisma.promotion.findUniqueOrThrow({ where: { id: discount.id } });
     expect(updated).toMatchObject({ name: 'Ten percent off', isActive: true });
   });
 });

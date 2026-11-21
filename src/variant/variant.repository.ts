@@ -94,10 +94,6 @@ export class VariantRepository {
     });
   }
 
-  async discountExists(discountId: string): Promise<boolean> {
-    return (await this.prisma.discount.count({ where: { id: discountId } })) > 0;
-  }
-
   /** The variant's current prices, row-locked until the transaction ends so they stay current while it reprices. */
   async lockPrices(variantId: string, tx: Prisma.TransactionClient): Promise<VariantPrices> {
     const [row] = await tx.$queryRaw<VariantPrices[]>`

@@ -13,7 +13,7 @@ export const PERMISSION_CATALOGUE = {
   'payment.view': 'Read payments and refunds of every customer',
   'payment.record': 'Record cash collected for cash-on-delivery orders',
   'payment.manage': 'Soft-delete and restore payment records',
-  'promotion.manage': 'Manage discounts and coupons',
+  'promotion.manage': 'Manage promotions, coupon codes and their redemptions',
   'tax.manage': 'Manage tax rates',
   'shipping.manage': 'Manage shipping zones and pickup locations',
   'review.moderate': 'Delete any customer review',

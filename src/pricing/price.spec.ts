@@ -1,16 +1,15 @@
 import { Decimal } from '@prisma/client/runtime/client';
 import { toMinorUnits } from '../commons/money/money';
 import {
-  bestUnitDiscount,
+  bestUnitPromotion,
   CouponNotApplicableError,
-  couponAmount,
-  price,
+  price as enginePrice,
   PRICING_VERSION,
   PricingCart,
   PricingContext,
-  PricingCoupon,
-  PricingDiscount,
+  PricingCouponCode,
   PricingLine,
+  PricingPromotion,
   PricingTaxRate,
   Quote,
 } from './price';
@@ -27,47 +26,62 @@ const line = (overrides: Partial<PricingLine> = {}): PricingLine => ({
   variantId: 'v1',
   productId: 'p1',
   categoryId: 'c1',
+  brandId: null,
   quantity: 1,
   unitListPrice: d('121.00'),
   taxable: false,
   ...overrides,
 });
 
-const discount = (
+const promotion = (
   id: string,
-  type: 'PERCENTAGE' | 'FLAT',
+  type: PricingPromotion['type'],
   value: Decimal.Value,
-  overrides: Partial<PricingDiscount> = {},
-): PricingDiscount => ({
+  overrides: Partial<PricingPromotion> = {},
+): PricingPromotion => ({
   id,
+  name: id,
+  description: null,
+  scope: 'PRODUCT',
   type,
   value: d(value),
-  minimumPurchase: null,
+  minimumSpend: null,
+  minimumQuantity: null,
+  startsAt: YESTERDAY,
+  endsAt: TOMORROW,
   isActive: true,
-  startDate: YESTERDAY,
-  endDate: TOMORROW,
-  createdAt: YESTERDAY,
-  variantIds: [],
-  productIds: ['p1'],
-  categoryIds: [],
-  ...overrides,
-});
-const pct = (id: string, value: Decimal.Value, overrides: Partial<PricingDiscount> = {}) =>
-  discount(id, 'PERCENTAGE', value, overrides);
-const flat = (id: string, value: Decimal.Value, overrides: Partial<PricingDiscount> = {}) =>
-  discount(id, 'FLAT', value, overrides);
-
-const coupon = (overrides: Partial<PricingCoupon> = {}): PricingCoupon => ({
-  id: 'cpn1',
-  code: 'SAVE',
-  discountType: 'FLAT',
-  value: d(10),
-  minimumOrderAmount: null,
-  isActive: true,
-  expiresAt: null,
+  priority: 0,
+  stackingGroup: 'default',
+  exclusive: false,
+  requiresCoupon: false,
   usageLimit: null,
   usedCount: 0,
-  usedByCustomer: false,
+  perCustomerLimit: null,
+  createdAt: YESTERDAY,
+  targetIds: ['p1'],
+  ...overrides,
+});
+const pct = (id: string, value: Decimal.Value, overrides: Partial<PricingPromotion> = {}) =>
+  promotion(id, 'PERCENT', value, overrides);
+const flat = (id: string, value: Decimal.Value, overrides: Partial<PricingPromotion> = {}) =>
+  promotion(id, 'AMOUNT_OFF', value, overrides);
+
+/** A cart promotion a coupon code unlocks (a legacy coupon: CART scope, AMOUNT_OFF 10 by default). */
+const coupon = (overrides: Partial<PricingPromotion> = {}): PricingPromotion =>
+  promotion('cpn1', 'AMOUNT_OFF', 10, {
+    scope: 'CART',
+    targetIds: [],
+    requiresCoupon: true,
+    endsAt: null,
+    ...overrides,
+  });
+const couponCode = (overrides: Partial<PricingCouponCode> = {}): PricingCouponCode => ({
+  id: 'code1',
+  code: 'SAVE',
+  promotionId: 'cpn1',
+  isActive: true,
+  usageLimit: null,
+  usedCount: 0,
   ...overrides,
 });
 
@@ -80,15 +94,30 @@ const GHANA = [VAT, NHIL, GETFUND, COVID];
 const context = (overrides: Partial<PricingContext> = {}): PricingContext => ({
   currency: 'GHS',
   now: NOW,
-  discounts: [],
+  promotions: [],
   taxRates: [],
+  customer: { redemptions: {} },
   ...overrides,
 });
-const cart = (lines: PricingLine[], overrides: Partial<PricingCart> = {}): PricingCart => ({
+
+/** A cart with, optionally, the coupon promotion its code (couponCode(), unless given) unlocks. */
+interface TestCart extends PricingCart {
+  coupon?: PricingPromotion;
+}
+const cart = (lines: PricingLine[], overrides: Partial<TestCart> = {}): TestCart => ({
   lines,
   shippingFee: d(0),
   ...overrides,
 });
+
+/** Prices a test cart: its coupon promotion joins the candidates and its code goes in the cart. */
+function price({ coupon: unlocked, ...pricingCart }: TestCart, pricingContext: PricingContext): Quote {
+  if (!unlocked) return enginePrice(pricingCart, pricingContext);
+  return enginePrice(
+    { ...pricingCart, couponCode: pricingCart.couponCode ?? couponCode({ promotionId: unlocked.id }) },
+    { ...pricingContext, promotions: [...pricingContext.promotions, unlocked] },
+  );
+}
 
 /** Deterministic pseudo-random integers, so the property loop is reproducible from its seed. */
 function sequence(seed: number) {
@@ -149,7 +178,7 @@ describe('price', () => {
       ['GHS 8 off beats 10% on GHS 50', '50', [pct('pct10', 10), flat('flat8', 8)], 'flat8', '8.00'],
       ['the larger of two percentages', '100', [pct('d1', 10), pct('d2', 20)], 'd2', '20.00'],
     ])('takes the discount that saves the most money: %s', (_case, unit, discounts, discountId, saving) => {
-      const quote = price(cart([line({ unitListPrice: d(unit) })]), context({ discounts }));
+      const quote = price(cart([line({ unitListPrice: d(unit) })]), context({ promotions: discounts }));
 
       expect(quote.lines[0].adjustments).toEqual([
         { type: 'DISCOUNT', sourceId: discountId, code: null, amount: d(saving).neg() },
@@ -167,9 +196,9 @@ describe('price', () => {
         [older, newer],
         [newer, older],
       ]) {
-        expect(bestUnitDiscount(d(100), discounts).discountId).toBe('zz-older');
+        expect(bestUnitPromotion(d(100), discounts).promotion?.id).toBe('zz-older');
       }
-      expect(bestUnitDiscount(d(100), [sameAgeB, sameAgeA]).discountId).toBe('a-same');
+      expect(bestUnitPromotion(d(100), [sameAgeB, sameAgeA]).promotion?.id).toBe('a-same');
     });
 
     it('returns the list price when no discount applies', () => {
@@ -179,8 +208,8 @@ describe('price', () => {
     });
 
     it('never takes off more than the price: a 100% or oversized discount makes the line free', () => {
-      const flatQuote = price(cart([line({ unitListPrice: d(100) })]), context({ discounts: [flat('f200', 200)] }));
-      const fullQuote = price(cart([line({ unitListPrice: d(100) })]), context({ discounts: [pct('p100', 100)] }));
+      const flatQuote = price(cart([line({ unitListPrice: d(100) })]), context({ promotions: [flat('f200', 200)] }));
+      const fullQuote = price(cart([line({ unitListPrice: d(100) })]), context({ promotions: [pct('p100', 100)] }));
 
       for (const quote of [flatQuote, fullQuote]) {
         expect(quote.lines[0]).toMatchObject({ unitDiscount: d(100), lineTotal: d(0) });
@@ -195,7 +224,7 @@ describe('price', () => {
           line({ variantId: 'v1', unitListPrice: d('19.99'), quantity: 3 }),
           line({ variantId: 'v2', productId: 'p2', unitListPrice: d('10.00') }),
         ]),
-        context({ discounts: [pct('pct15', 15)] }),
+        context({ promotions: [pct('pct15', 15)] }),
       );
 
       expect(quote.lines.map((l) => [l.variantId, money(l.unitDiscount), money(l.lineTotal)])).toEqual([
@@ -214,11 +243,11 @@ describe('price', () => {
       ];
       const discounts = [
         pct('product10', 10),
-        flat('large30', 30, { productIds: [], variantIds: ['large'] }),
-        pct('hats50', 50, { productIds: [], categoryIds: ['hats'] }),
+        flat('large30', 30, { scope: 'SKU', targetIds: ['large'] }),
+        pct('hats50', 50, { scope: 'CATEGORY', targetIds: ['hats'] }),
       ];
 
-      const quote = price(cart(lines), context({ discounts }));
+      const quote = price(cart(lines), context({ promotions: discounts }));
 
       expect(quote.lines.map((l) => [l.variantId, l.adjustments[0]?.sourceId ?? null, money(l.lineTotal)])).toEqual([
         ['small', 'product10', '90.00'],
@@ -231,22 +260,22 @@ describe('price', () => {
     it('ignores discounts that are inactive or outside their dates at `now`', () => {
       const discounts = [
         pct('off', 50, { isActive: false }),
-        pct('future', 40, { startDate: TOMORROW, endDate: TOMORROW }),
-        pct('past', 30, { startDate: YESTERDAY, endDate: new Date(NOW.getTime() - 1) }),
+        pct('future', 40, { startsAt: TOMORROW, endsAt: TOMORROW }),
+        pct('past', 30, { startsAt: YESTERDAY, endsAt: new Date(NOW.getTime() - 1) }),
         pct('current', 5),
       ];
 
-      const quote = price(cart([line({ unitListPrice: d(100) })]), context({ discounts }));
+      const quote = price(cart([line({ unitListPrice: d(100) })]), context({ promotions: discounts }));
 
       expect(quote.lines[0].adjustments[0].sourceId).toBe('current');
     });
 
     it('skips a discount whose minimum purchase the list-price subtotal does not reach', () => {
       const lines = [line({ unitListPrice: d(100), quantity: 2 })];
-      const discounts = (minimum: number) => [pct('big', 50, { minimumPurchase: d(minimum) }), pct('small', 10)];
+      const discounts = (minimum: number) => [pct('big', 50, { minimumSpend: d(minimum) }), pct('small', 10)];
 
-      const below = price(cart(lines), context({ discounts: discounts(300) }));
-      const reached = price(cart(lines), context({ discounts: discounts(200) }));
+      const below = price(cart(lines), context({ promotions: discounts(300) }));
+      const reached = price(cart(lines), context({ promotions: discounts(200) }));
 
       expect(below.lines[0].adjustments[0].sourceId).toBe('small');
       expect(money(below.grandTotal)).toBe('180.00');
@@ -273,7 +302,7 @@ describe('price', () => {
     it('takes the tax out of the discounted price', () => {
       const quote = price(
         cart([line({ taxable: true, quantity: 3 })]),
-        context({ taxRates: [VAT], discounts: [pct('disc10', 10)] }),
+        context({ taxRates: [VAT], promotions: [pct('disc10', 10)] }),
       );
 
       const [l] = quote.lines;
@@ -321,10 +350,10 @@ describe('price', () => {
     it('comes off the discounted subtotal as an order adjustment, untaxed, before shipping', () => {
       const quote = price(
         cart([line({ unitListPrice: d(100), quantity: 2 })], {
-          coupon: coupon({ discountType: 'PERCENTAGE', value: d(10) }),
+          coupon: coupon({ type: 'PERCENT', value: d(10) }),
           shippingFee: d(5),
         }),
-        context({ discounts: [flat('d', 10)] }),
+        context({ promotions: [flat('d', 10)] }),
       );
 
       expect(quote.adjustments).toEqual([
@@ -381,7 +410,7 @@ describe('price', () => {
       );
       const oversizedPercentage = price(
         cart([line({ unitListPrice: d(10) })], {
-          coupon: coupon({ discountType: 'PERCENTAGE', value: d(150) }),
+          coupon: coupon({ type: 'PERCENT', value: d(150) }),
           shippingFee: d(5),
         }),
         context(),
@@ -396,7 +425,7 @@ describe('price', () => {
 
     it('records no adjustment for a coupon worth nothing, such as on a cart made free by its discounts', () => {
       const zero = price(cart([line()], { coupon: coupon({ value: d(0) }) }), context());
-      const freeCart = price(cart([line()], { coupon: coupon() }), context({ discounts: [pct('all', 100)] }));
+      const freeCart = price(cart([line()], { coupon: coupon() }), context({ promotions: [pct('all', 100)] }));
 
       expect(zero.adjustments).toEqual([]);
       expect(freeCart.adjustments).toEqual([]);
@@ -404,26 +433,51 @@ describe('price', () => {
     });
 
     it.each([
-      ['inactive', coupon({ isActive: false }), 'This coupon is no longer active'],
-      ['expired', coupon({ expiresAt: new Date(NOW.getTime() - 1) }), 'This coupon has expired'],
-      ['used up', coupon({ usageLimit: 3, usedCount: 3 }), 'This coupon has reached its usage limit'],
+      ['inactive', coupon({ isActive: false }), 'This coupon is no longer active', undefined],
+      ['expired', coupon({ endsAt: new Date(NOW.getTime() - 1) }), 'This coupon has expired', undefined],
+      ['used up', coupon({ usageLimit: 3, usedCount: 3 }), 'This coupon has reached its usage limit', undefined],
       [
         'below its minimum after item discounts',
-        coupon({ minimumOrderAmount: d(100) }),
+        coupon({ minimumSpend: d(100) }),
         'Order total must be at least 100 to use this coupon',
+        undefined,
       ],
-      ['already used by the customer', coupon({ usedByCustomer: true }), 'You have already used this coupon'],
-    ])('refuses a coupon that is %s', (_case, refused, message) => {
-      // GHS 110 list, 10% off: the coupon's minimum is checked against the discounted 99.
+      ['already used by the customer', coupon({ perCustomerLimit: 1 }), 'You have already used this coupon', undefined],
+      ['code deactivated', coupon(), 'This coupon is no longer active', couponCode({ isActive: false })],
+      [
+        'code used up',
+        coupon(),
+        'This coupon has reached its usage limit',
+        couponCode({ usageLimit: 2, usedCount: 2 }),
+      ],
+      ['not started yet', coupon({ startsAt: TOMORROW }), 'This coupon is not active yet', undefined],
+    ])('refuses a coupon that is %s', (_case, refused, message, code: PricingCouponCode | undefined) => {
+      // GHS 110 list, 10% off: the coupon's minimum is checked against the discounted 99. The customer has used
+      // cpn1 once before (only a per-customer limit of 1 refuses it).
       const run = () =>
-        price(cart([line({ unitListPrice: d(110) })], { coupon: refused }), context({ discounts: [pct('d10', 10)] }));
+        price(
+          cart([line({ unitListPrice: d(110) })], { coupon: refused, couponCode: code }),
+          context({ promotions: [pct('d10', 10)], customer: { redemptions: { cpn1: 1 } } }),
+        );
 
       expect(run).toThrow(CouponNotApplicableError);
       expect(run).toThrow(message);
     });
 
     it('accepts a coupon expiring exactly now and one with uses left', () => {
-      expect(couponAmount(coupon({ expiresAt: NOW, usageLimit: 3, usedCount: 2 }), d(50), NOW)).toEqual(d(10));
+      const quote = price(
+        cart([line({ unitListPrice: d(50) })], { coupon: coupon({ endsAt: NOW, usageLimit: 3, usedCount: 2 }) }),
+        context(),
+      );
+
+      expect(quote.adjustments[0].amount).toEqual(d(-10));
+    });
+
+    it('refuses a code whose item promotion targets nothing in the cart', () => {
+      const run = () =>
+        price(cart([line()], { coupon: coupon({ scope: 'PRODUCT', targetIds: ['other'] }) }), context());
+
+      expect(run).toThrow('This coupon does not apply to any item in your cart');
     });
   });
 
@@ -471,10 +525,10 @@ describe('price', () => {
       line({ variantId: 'v1', unitListPrice: d('117.50'), quantity: 2, taxable: true }),
       line({ variantId: 'v2', productId: 'p2', unitListPrice: d('499.99') }),
     ];
-    const full = (overrides: Partial<PricingCart> = {}, contextOverrides: Partial<PricingContext> = {}) =>
+    const full = (overrides: Partial<TestCart> = {}, contextOverrides: Partial<PricingContext> = {}) =>
       price(
         cart(lines, { coupon: coupon({ value: d(20) }), shippingFee: d(15), ...overrides }),
-        context({ taxRates: [VAT, NHIL], discounts: [pct('disc10', 10)], ...contextOverrides }),
+        context({ taxRates: [VAT, NHIL], promotions: [pct('disc10', 10)], ...contextOverrides }),
       );
 
     it('is a SHA-256 hex digest, the same for the same input', () => {
@@ -487,7 +541,7 @@ describe('price', () => {
 
       const reordered = price(
         cart([...lines].reverse(), { coupon: coupon({ value: d(20) }), shippingFee: d(15) }),
-        context({ taxRates: [NHIL, VAT], discounts: [flat('unused', 0), pct('disc10', 10)] }),
+        context({ taxRates: [NHIL, VAT], promotions: [flat('unused', 0), pct('disc10', 10)] }),
       );
       const otherIds = price(
         cart(
@@ -499,7 +553,7 @@ describe('price', () => {
             { ...VAT, id: 'vat-2' },
             { ...NHIL, id: 'nhil-2' },
           ],
-          discounts: [pct('disc10', 10, { productIds: ['p1-x'] })],
+          promotions: [pct('disc10', 10, { targetIds: ['p1-x'] })],
           now: TOMORROW,
         }),
       );
@@ -511,12 +565,12 @@ describe('price', () => {
     it.each([
       ['a price', () => full({ lines: [{ ...lines[0], unitListPrice: d('117.60') }, lines[1]] })],
       ['a quantity', () => full({ lines: [{ ...lines[0], quantity: 3 }, lines[1]] })],
-      ['the discount taken', () => full({}, { discounts: [pct('disc11', 10)] })],
-      ['a discount value', () => full({}, { discounts: [pct('disc10', 11)] })],
+      ['the discount taken', () => full({}, { promotions: [pct('disc11', 10)] })],
+      ['a discount value', () => full({}, { promotions: [pct('disc10', 11)] })],
       ['a tax rate', () => full({}, { taxRates: [{ ...VAT, rate: d('0.16') }, NHIL] })],
       ['a tax name', () => full({}, { taxRates: [{ ...VAT, name: 'VAT-2' }, NHIL] })],
       ['the coupon value', () => full({ coupon: coupon({ value: d(21) }) })],
-      ['the coupon code', () => full({ coupon: coupon({ value: d(20), code: 'OTHER' }) })],
+      ['the coupon code', () => full({ coupon: coupon({ value: d(20) }), couponCode: couponCode({ code: 'OTHER' }) })],
       ['no coupon', () => full({ coupon: undefined })],
       ['the shipping fee', () => full({ shippingFee: d(16) })],
       ['the currency', () => full({}, { currency: 'USD' })],
@@ -549,30 +603,33 @@ describe('price', () => {
           const discounts = Array.from({ length: next(4) }, (_, index) =>
             next(2) === 0
               ? pct(`pct${index}`, next(101), {
-                  productIds: [`p${next(3)}`],
-                  minimumPurchase: next(3) === 0 ? pesewas(1_000_000) : null,
+                  targetIds: [`p${next(3)}`],
+                  minimumSpend: next(3) === 0 ? pesewas(1_000_000) : null,
                   createdAt: new Date(2026, 0, 1 + next(3)),
                 })
               : flat(`flat${index}`, pesewas(600_000), {
-                  productIds: [],
-                  categoryIds: [`c${next(2)}`],
+                  scope: 'CATEGORY',
+                  targetIds: [`c${next(2)}`],
                   createdAt: new Date(2026, 0, 1 + next(3)),
                 }),
           );
           const randomCoupon =
             next(2) === 0
               ? coupon({
-                  discountType: next(2) === 0 ? 'FLAT' : 'PERCENTAGE',
+                  type: next(2) === 0 ? 'AMOUNT_OFF' : 'PERCENT',
                   value: next(2) === 0 ? pesewas(300_000) : d(next(160)),
                 })
               : undefined;
           const taxRates = taxSets[next(taxSets.length)];
           const shippingFee = pesewas(10_000);
 
-          const quote = price(cart(lines, { coupon: randomCoupon, shippingFee }), context({ discounts, taxRates }));
+          const quote = price(
+            cart(lines, { coupon: randomCoupon, shippingFee }),
+            context({ promotions: discounts, taxRates }),
+          );
           const again = price(
             cart(shuffled(lines, next), { coupon: randomCoupon, shippingFee }),
-            context({ discounts: shuffled(discounts, next), taxRates: shuffled(taxRates, next) }),
+            context({ promotions: shuffled(discounts, next), taxRates: shuffled(taxRates, next) }),
           );
 
           expectBalanced(quote);

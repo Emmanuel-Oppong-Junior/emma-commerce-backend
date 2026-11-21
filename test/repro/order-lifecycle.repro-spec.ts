@@ -17,7 +17,6 @@ function buildOrdersService(order: Record<string, unknown>) {
     repository as never,
     {} as never,
     { log: jest.fn() } as never,
-    {} as never,
     inventory as never,
     { sendOrderStatusUpdate: jest.fn() } as never,
     {} as never,

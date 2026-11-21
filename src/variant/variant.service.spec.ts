@@ -55,7 +55,6 @@ const existingVariant = {
   price: new Decimal('100.00'),
   basePrice: new Decimal('100.00'),
   isActive: true,
-  discountId: null,
   product: { id: 'prod-shirt', name: 'Shirt' },
 };
 
@@ -91,7 +90,6 @@ describe('VariantService', () => {
       findProductForVariants: jest.fn().mockResolvedValue(shirt),
       findActiveWithOptions: jest.fn().mockResolvedValue(null),
       findBySkuOrBarcode: jest.fn().mockResolvedValue(null),
-      discountExists: jest.fn().mockResolvedValue(true),
       create: jest.fn().mockImplementation(async (data) => storedPrices({ id: 'var-new', product: shirt, ...data })),
       findById: jest.fn().mockResolvedValue(existingVariant),
       findPage: jest.fn(),
@@ -206,12 +204,7 @@ describe('VariantService', () => {
       );
     });
 
-    it('rejects an unknown product or discount with NOT_FOUND', async () => {
-      repository.discountExists.mockResolvedValue(false);
-      await expect(service.createVariant(input({ discountId: 'nope' }), 'admin-1')).rejects.toThrow(
-        new NotFoundException('Discount "nope" not found'),
-      );
-
+    it('rejects an unknown product with NOT_FOUND', async () => {
       repository.findProductForVariants.mockResolvedValue(null);
       await expect(service.createVariant(input(), 'admin-1')).rejects.toThrow(NotFoundException);
     });

@@ -2,10 +2,9 @@ import { Module } from '@nestjs/common';
 import { OrdersService } from './order.service';
 import { OrdersResolver } from './order.resolver';
 import { CartModule } from '../cart/cart.module';
-import { DiscountModule } from '../discount/discount.module';
+import { PromotionsModule } from '../promotions/promotions.module';
 import { CommonsModule } from '../commons/commons.module';
 import { OrdersRepository } from './order.repository';
-import { CouponsModule } from '../coupons/coupons.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { OutboxModule } from '../outbox/outbox.module';
 import { ShippingZonesModule } from '../shipping-zones/shipping-zones.module';
@@ -19,9 +18,8 @@ import { TaxModule } from '../tax/tax.module';
   providers: [OrdersService, OrdersResolver, OrdersRepository],
   imports: [
     CartModule,
-    DiscountModule,
+    PromotionsModule,
     CommonsModule,
-    CouponsModule,
     InventoryModule,
     OutboxModule,
     ShippingZonesModule,

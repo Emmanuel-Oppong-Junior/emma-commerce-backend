@@ -6,7 +6,6 @@ Mutation addAttributeDefinition          permission: catalog.taxonomy.write
 Mutation addProductsToTag                permission: catalog.taxonomy.write
 Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
-Mutation addToDiscount                   permission: promotion.manage; step-up
 Mutation addToWishlist                   authenticated
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
@@ -24,12 +23,12 @@ Mutation confirmMfaEnrollment            authenticated
 Mutation createAddress                   authenticated
 Mutation createBrand                     permission: catalog.taxonomy.write
 Mutation createCategory                  permission: catalog.taxonomy.write
-Mutation createCoupon                    permission: promotion.manage; step-up
-Mutation createDiscount                  permission: promotion.manage; step-up
+Mutation createCouponCode                permission: promotion.manage; step-up
 Mutation createOrder                     authenticated
 Mutation createPickupLocation            permission: shipping.manage
 Mutation createProduct                   permission: catalog.product.write
 Mutation createProductType               permission: catalog.taxonomy.write
+Mutation createPromotion                 permission: promotion.manage; step-up
 Mutation createReturnRequest             authenticated
 Mutation createReview                    customer only
 Mutation createShippingZone              permission: shipping.manage
@@ -42,10 +41,11 @@ Mutation createVariant                   permission: catalog.product.write
 Mutation deArchiveUser                   permission: user.manage
 Mutation deleteAddress                   authenticated
 Mutation deleteBrand                     permission: catalog.taxonomy.write
-Mutation deleteCoupon                    permission: promotion.manage; step-up
+Mutation deleteCouponCode                permission: promotion.manage; step-up
 Mutation deleteOrder                     permission: order.manage
 Mutation deletePickupLocation            permission: shipping.manage
 Mutation deleteProductType               permission: catalog.taxonomy.write
+Mutation deletePromotion                 permission: promotion.manage; step-up
 Mutation deleteReview                    customer only
 Mutation deleteShippingZone              permission: shipping.manage
 Mutation deleteTag                       permission: catalog.taxonomy.write
@@ -60,9 +60,7 @@ Mutation refreshToken                    public
 Mutation rejectReturn                    permission: return.manage
 Mutation removeAttributeDefinition       permission: catalog.taxonomy.write
 Mutation removeCategory                  permission: catalog.taxonomy.write
-Mutation removeDiscount                  permission: promotion.manage; step-up
 Mutation removeFromCart                  authenticated
-Mutation removeFromDiscount              permission: promotion.manage; step-up
 Mutation removeFromWishlist              authenticated
 Mutation removeProductsFromTag           permission: catalog.taxonomy.write
 Mutation removeStaffRole                 permission: staff.manage; step-up
@@ -88,12 +86,12 @@ Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
 Mutation updateCartItem                  authenticated
 Mutation updateCategory                  permission: catalog.taxonomy.write
-Mutation updateCoupon                    permission: promotion.manage; step-up
-Mutation updateDiscount                  permission: promotion.manage; step-up
+Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateMyProfile                 authenticated
 Mutation updatePickupLocation            permission: shipping.manage
 Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.isTaxable is set
 Mutation updateProductType               permission: catalog.taxonomy.write
+Mutation updatePromotion                 permission: promotion.manage; step-up
 Mutation updateReview                    customer only
 Mutation updateShipmentStatus            permission: order.fulfil
 Mutation updateShipping                  permission: order.fulfil
@@ -105,7 +103,6 @@ Mutation updateTag                       permission: catalog.taxonomy.write
 Mutation updateTax                       permission: tax.manage; step-up
 Mutation updateUser                      permission: user.manage
 Mutation updateVariant                   permission: catalog.product.write; step-up when input.basePrice is set
-Mutation validateCoupon                  authenticated
 Mutation verifyEmail                     public
 Mutation verifyPayment                   customer only
 Query activePickupLocations              public
@@ -120,11 +117,7 @@ Query cart                               authenticated
 Query categories                         public
 Query category                           authenticated
 Query checkoutQuote                      authenticated
-Query coupon                             permission: promotion.manage
-Query coupons                            permission: promotion.manage
 Query dashboardSummary                   permission: report.view
-Query discount                           permission: promotion.manage
-Query discounts                          permission: promotion.manage
 Query failedJobs                         permission: jobs.manage
 Query getMyPayments                      customer only
 Query getShippingFee                     authenticated
@@ -141,6 +134,9 @@ Query productReviews                     authenticated
 Query products                           public
 Query productType                        public
 Query productTypes                       public
+Query promotion                          permission: promotion.manage
+Query promotions                         permission: promotion.manage
+Query redemptions                        permission: promotion.manage
 Query refunds                            permission: payment.view
 Query returnRequests                     permission: return.manage
 Query revenueByCategory                  permission: report.view
@@ -168,6 +164,7 @@ Query userOrders                         authenticated
 Query userProfile                        authenticated
 Query userReviews                        authenticated
 Query users                              permission: user.view
+Query validateCouponCode                 authenticated
 Query variant                            permission: catalog.product.read
 Query variants                           permission: catalog.product.read
 Query viewOrder                          permission: order.view

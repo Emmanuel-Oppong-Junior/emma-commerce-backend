@@ -1,6 +1,5 @@
 import { Field, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
 import { Tag } from '../../tag/entities/tag.entity';
-import { Discount } from '../../discount/entities/discount.entity';
 import { Category } from '../../categories/entities/category.entity';
 import { SubCategory } from '../../sub-categories/entities/sub-category.entity';
 import { Variant } from '../../variant/entities/variant.entity';
@@ -122,9 +121,6 @@ export class Product {
 
   @Field(() => Boolean)
   inStock?: boolean;
-
-  @Field(() => [Discount], { nullable: true })
-  discounts?: Discount[];
 
   @Field(() => [Review], { nullable: true })
   reviews?: Review[];

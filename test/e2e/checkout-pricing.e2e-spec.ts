@@ -7,6 +7,7 @@ import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, setStock, stockOf as ledgerStockOf } from '../helpers/db.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { createPromotion } from '../helpers/promotion.helper';
 
 const M = '{ amount currency }';
 
@@ -32,8 +33,8 @@ describe('Checkout pricing (e2e)', () => {
 
   const activeWindow = () => ({
     isActive: true,
-    startDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    endDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    startsAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    endsAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
 
   const addToCart = (variantId: string, quantity: number) =>
@@ -97,15 +98,13 @@ describe('Checkout pricing (e2e)', () => {
   });
 
   it('charges the discounted cart total and asks Paystack for exactly that amount', async () => {
-    await prisma.discount.create({
-      data: {
-        id: 'pricing_pct10',
-        name: 'Laptop week',
-        type: 'PERCENTAGE',
-        value: 10,
-        ...activeWindow(),
-        products: { connect: { id: 'seed_prod1' } },
-      },
+    await createPromotion(prisma, {
+      id: 'pricing_pct10',
+      name: 'Laptop week',
+      type: 'PERCENT',
+      value: 10,
+      ...activeWindow(),
+      targetIds: ['seed_prod1'],
     });
     await addToCart('seed_var1', 2);
 
@@ -158,25 +157,22 @@ describe('Checkout pricing (e2e)', () => {
       },
     });
     await setStock(prisma, 'pricing_kettle_var', 10);
-    await prisma.discount.create({
-      data: {
-        id: 'pricing_flat30',
-        name: 'Kettle GHS 30 off',
-        type: 'FLAT',
-        value: 30,
-        ...activeWindow(),
-        products: { connect: { id: 'pricing_kettle' } },
-      },
+    await createPromotion(prisma, {
+      id: 'pricing_flat30',
+      name: 'Kettle GHS 30 off',
+      type: 'AMOUNT_OFF',
+      value: 30,
+      ...activeWindow(),
+      targetIds: ['pricing_kettle'],
     });
-    await prisma.discount.create({
-      data: {
-        id: 'pricing_cat25',
-        name: 'Kitchen 25% off',
-        type: 'PERCENTAGE',
-        value: 25,
-        ...activeWindow(),
-        categories: { connect: { id: 'pricing_cat' } },
-      },
+    await createPromotion(prisma, {
+      id: 'pricing_cat25',
+      name: 'Kitchen 25% off',
+      type: 'PERCENT',
+      value: 25,
+      ...activeWindow(),
+      scope: 'CATEGORY',
+      targetIds: ['pricing_cat'],
     });
     await addToCart('pricing_kettle_var', 1);
 

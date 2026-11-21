@@ -1,5 +1,5 @@
 import { Decimal } from '@prisma/client/runtime/client';
-import { Currency, DiscountType, OrderAdjustmentType } from '../generated/prisma/client';
+import { Currency, OrderAdjustmentType, PromotionScope, PromotionType } from '../generated/prisma/client';
 import { Money, roundHalfUp } from '../commons/money/money';
 import { quoteHash } from './quote-hash';
 
@@ -10,6 +10,7 @@ export interface PricingLine {
   variantId: string;
   productId: string;
   categoryId: string | null;
+  brandId: string | null;
   quantity: number;
   /** One unit, in whole pesewas. It includes the active taxes when `taxable`. */
   unitListPrice: Decimal;
@@ -17,32 +18,45 @@ export interface PricingLine {
   taxable: boolean;
 }
 
-export interface PricingDiscount {
+export interface PricingPromotion {
   id: string;
-  type: DiscountType;
+  /** Shown to customers; never changes the price. */
+  name: string;
+  description: string | null;
+  scope: PromotionScope;
+  type: PromotionType;
   value: Decimal;
-  minimumPurchase: Decimal | null;
+  minimumSpend: Decimal | null;
+  minimumQuantity: number | null;
+  startsAt: Date;
+  endsAt: Date | null;
   isActive: boolean;
-  startDate: Date;
-  endDate: Date;
-  createdAt: Date;
-  variantIds: readonly string[];
-  productIds: readonly string[];
-  categoryIds: readonly string[];
-}
-
-export interface PricingCoupon {
-  id: string;
-  code: string;
-  discountType: DiscountType;
-  value: Decimal;
-  minimumOrderAmount: Decimal | null;
-  isActive: boolean;
-  expiresAt: Date | null;
+  priority: number;
+  stackingGroup: string;
+  exclusive: boolean;
+  requiresCoupon: boolean;
   usageLimit: number | null;
   usedCount: number;
-  /** The customer already has a use of this coupon recorded. */
-  usedByCustomer: boolean;
+  perCustomerLimit: number | null;
+  createdAt: Date;
+  /** What it targets, of its scope's kind: variant ids (SKU), product, category or brand ids; none for CART. */
+  targetIds: readonly string[];
+}
+
+/** The coupon code entered at checkout; it unlocks its promotion. */
+export interface PricingCouponCode {
+  id: string;
+  code: string;
+  promotionId: string;
+  isActive: boolean;
+  usageLimit: number | null;
+  usedCount: number;
+}
+
+/** What the engine knows about the customer, read with the cart. */
+export interface PricingCustomer {
+  /** The customer's RESERVED redemptions, by promotion id. */
+  redemptions: Readonly<Record<string, number>>;
 }
 
 export interface PricingTaxRate {
@@ -54,7 +68,7 @@ export interface PricingTaxRate {
 /** What is being bought. */
 export interface PricingCart {
   lines: readonly PricingLine[];
-  coupon?: PricingCoupon;
+  couponCode?: PricingCouponCode;
   /** The fee of the chosen fulfilment: the delivery zone's fee, or 0 for pickup. */
   shippingFee: Decimal;
 }
@@ -63,13 +77,14 @@ export interface PricingCart {
 export interface PricingContext {
   currency: Currency;
   now: Date;
-  /** Candidate discounts; the engine decides which apply to which line. */
-  discounts: readonly PricingDiscount[];
+  /** Candidate promotions (the coupon code's among them); the engine decides which apply where. */
+  promotions: readonly PricingPromotion[];
   /** The active taxes, whose rates taxable prices include. */
   taxRates: readonly PricingTaxRate[];
+  customer: PricingCustomer;
 }
 
-/** A reduction with its source; amounts are negative. */
+/** A reduction with its source promotion; amounts are negative. */
 export interface QuoteAdjustment {
   type: OrderAdjustmentType;
   sourceId: string;
@@ -103,7 +118,7 @@ export interface QuoteLine {
   unitTax: Decimal;
   /** (unitListPrice - unitDiscount) × quantity = (unitNet + unitTax) × quantity. */
   lineTotal: Decimal;
-  /** The item discount taken off the line (already in unitDiscount). */
+  /** The item promotions taken off the line (already in unitDiscount). */
   adjustments: QuoteAdjustment[];
   taxLines: QuoteTaxLine[];
 }
@@ -120,7 +135,7 @@ export interface Quote {
   pricingVersion: number;
   /** In the order of the cart's lines. */
   lines: QuoteLine[];
-  /** The coupon, if it takes anything off. */
+  /** The cart promotions that take something off. */
   adjustments: QuoteOrderAdjustment[];
   /** Σ unitListPrice × quantity. */
   subtotal: Decimal;
@@ -134,19 +149,21 @@ export interface Quote {
   quoteHash: string;
 }
 
-/** The coupon cannot be used on this cart; the message says why and is safe to show the customer. */
+/** The coupon code cannot be used on this cart; the message says why and is safe to show the customer. */
 export class CouponNotApplicableError extends Error {}
 
 /**
  * Prices a cart (ADR-0005). Pure: the same cart and context always give the same quote and hash, whatever order the
- * lines, discounts or taxes come in. The rules:
- * - each line gets the applicable discount (its variant's, its product's or its category's, active and in date, and
- *   whose minimum purchase the list-price subtotal reaches) that saves the most money on one unit, capped at the price;
- *   equal savings go to the oldest discount;
- * - the coupon comes off the discounted subtotal (its minimum order amount is checked against it), never more than
- *   it, and is allocated to the lines;
+ * lines, promotions or taxes come in. A promotion is a candidate when it is active, in its schedule, within its usage
+ * limits for the customer, and unlocked by the coupon code if it requires one. The rules:
+ * - item level: each line gets the candidate item promotion (on its variant, product, category or brand) that saves
+ *   the most money on one unit, capped at the price, whose minimum spend the list-price subtotal reaches and whose
+ *   minimum quantity the targeted units in the cart reach; equal savings go to the oldest promotion;
+ * - cart level: the candidate cart promotion saving the most comes off the subtotal after item promotions (its
+ *   minimum spend is checked against that subtotal), never more than it, and is allocated to the lines;
  * - a taxable price includes the active taxes: per unit, the net is the discounted price over (1 + Σ rates), rounded
- *   half-up, the tax is the rest, split over the rates by largest remainder; the coupon and shipping are untaxed.
+ *   half-up, the tax is the rest, split over the rates by largest remainder; cart promotions and shipping are untaxed.
+ * A coupon code whose promotion cannot be used throws CouponNotApplicableError.
  */
 export function price(cart: PricingCart, context: PricingContext): Quote {
   const unhashed = priceWithoutHash(cart, context);
@@ -159,28 +176,48 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   const zero = Money.zero(currency);
   cart.lines.forEach(assertValidLine);
   const taxRates = canonicalTaxRates(context.taxRates);
+  const couponPromotion = cart.couponCode && couponPromotionOf(cart.couponCode, context);
+  const candidates = context.promotions.filter((promotion) => isCandidate(promotion, cart.couponCode, context));
 
   const grossSubtotal = cart.lines.reduce((sum, line) => sum.add(money(line.unitListPrice).times(line.quantity)), zero);
-  const lines = cart.lines.map((line) => {
-    const candidates = discountsApplyingTo(line, context.discounts, context.now).filter(
-      (discount) => discount.minimumPurchase === null || grossSubtotal.amount.gte(discount.minimumPurchase),
-    );
-    return priceLine(line, bestUnitDiscount(line.unitListPrice, candidates), taxRates, money);
-  });
+  const itemCandidates = candidates.filter(
+    (promotion) =>
+      promotion.scope !== PromotionScope.CART &&
+      reachesMinimums(promotion, grossSubtotal.amount, targetedQuantity(promotion, cart.lines)),
+  );
+  if (couponPromotion && couponPromotion.scope !== PromotionScope.CART) {
+    assertItemCouponApplies(couponPromotion, cart.lines, grossSubtotal.amount);
+  }
+  const lines = cart.lines.map((line) =>
+    priceLine(
+      line,
+      bestUnitPromotion(
+        line.unitListPrice,
+        itemCandidates.filter((promotion) => targets(promotion, line)),
+      ),
+      taxRates,
+      money,
+      cart.couponCode,
+    ),
+  );
 
   const merchandise = lines.reduce((sum, line) => sum.add(money(line.lineTotal)), zero);
+  const cartQuantity = cart.lines.reduce((sum, line) => sum + line.quantity, 0);
+  if (couponPromotion?.scope === PromotionScope.CART) {
+    const rejection = minimumsRejection(couponPromotion, merchandise.amount, cartQuantity);
+    if (rejection) throw new CouponNotApplicableError(rejection);
+  }
+  const cartCandidates = candidates.filter(
+    (promotion) =>
+      promotion.scope === PromotionScope.CART && reachesMinimums(promotion, merchandise.amount, cartQuantity),
+  );
   const adjustments: QuoteOrderAdjustment[] = [];
-  if (cart.coupon) {
-    const amount = couponAmount(cart.coupon, merchandise.amount, context.now);
-    if (amount.gt(0)) {
-      adjustments.push({
-        type: OrderAdjustmentType.COUPON,
-        sourceId: cart.coupon.id,
-        code: cart.coupon.code,
-        amount: amount.neg(),
-        allocations: allocateToLines(money(amount), cart.lines, lines).map((share) => negate(share.amount)),
-      });
-    }
+  const best = bestCartPromotion(merchandise.amount, cartCandidates);
+  if (best) {
+    adjustments.push({
+      ...adjustmentFrom(best.promotion, best.saving, cart.couponCode),
+      allocations: allocateToLines(money(best.saving), cart.lines, lines).map((share) => negate(share.amount)),
+    });
   }
 
   const shipping = money(cart.shippingFee);
@@ -205,73 +242,191 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
   };
 }
 
-/** The discounts that target the line (its variant, product or category) and are active at `now`. */
-export function discountsApplyingTo(
-  line: Pick<PricingLine, 'variantId' | 'productId' | 'categoryId'>,
-  discounts: readonly PricingDiscount[],
-  now: Date,
-): PricingDiscount[] {
-  return discounts.filter(
-    (discount) =>
-      discount.isActive &&
-      discount.startDate <= now &&
-      discount.endDate >= now &&
-      (discount.variantIds.includes(line.variantId) ||
-        discount.productIds.includes(line.productId) ||
-        (line.categoryId !== null && discount.categoryIds.includes(line.categoryId))),
+/** Active and within its schedule at `now`. */
+export function isLive(promotion: PricingPromotion, now: Date): boolean {
+  return promotion.isActive && promotion.startsAt <= now && (promotion.endsAt === null || promotion.endsAt >= now);
+}
+
+function hasUsesLeft(promotion: PricingPromotion): boolean {
+  return promotion.usageLimit === null || promotion.usedCount < promotion.usageLimit;
+}
+
+function customerHasUsesLeft(promotion: PricingPromotion, customer: PricingCustomer): boolean {
+  return promotion.perCustomerLimit === null || (customer.redemptions[promotion.id] ?? 0) < promotion.perCustomerLimit;
+}
+
+function isCandidate(
+  promotion: PricingPromotion,
+  couponCode: PricingCouponCode | undefined,
+  context: PricingContext,
+): boolean {
+  return (
+    isLive(promotion, context.now) &&
+    hasUsesLeft(promotion) &&
+    customerHasUsesLeft(promotion, context.customer) &&
+    (!promotion.requiresCoupon || couponCode?.promotionId === promotion.id)
   );
 }
 
-export interface UnitDiscount {
-  unitDiscount: Decimal;
-  /** The discount taken, when one saves anything. */
-  discountId?: string;
+/** Whether the item promotion targets the line (its variant, product, category or brand); never for CART. */
+export function targets(promotion: PricingPromotion, line: Pick<PricingLine, TargetKey>): boolean {
+  const id = targetOf(promotion.scope, line);
+  return id !== null && promotion.targetIds.includes(id);
 }
 
-/** The candidate that saves the most money on one unit, capped at the price; equal savings go to the oldest. */
-export function bestUnitDiscount(unitListPrice: Decimal, candidates: readonly PricingDiscount[]): UnitDiscount {
-  let best: { discount: PricingDiscount; saving: Decimal } | undefined;
-  for (const discount of [...candidates].sort(oldestFirst)) {
-    const saving = unitSaving(unitListPrice, discount);
-    if (saving.gt(best?.saving ?? 0)) best = { discount, saving };
+type TargetKey = 'variantId' | 'productId' | 'categoryId' | 'brandId';
+
+function targetOf(scope: PromotionScope, line: Pick<PricingLine, TargetKey>): string | null {
+  switch (scope) {
+    case PromotionScope.SKU:
+      return line.variantId;
+    case PromotionScope.PRODUCT:
+      return line.productId;
+    case PromotionScope.CATEGORY:
+      return line.categoryId;
+    case PromotionScope.BRAND:
+      return line.brandId;
+    case PromotionScope.CART:
+      return null;
   }
-  return best ? { unitDiscount: best.saving, discountId: best.discount.id } : { unitDiscount: new Decimal(0) };
 }
 
-function unitSaving(unitListPrice: Decimal, discount: PricingDiscount): Decimal {
-  const raw = discount.type === DiscountType.PERCENTAGE ? unitListPrice.mul(discount.value).div(100) : discount.value;
-  return Decimal.min(unitListPrice, Decimal.max(0, roundHalfUp(raw)));
+function targetedQuantity(promotion: PricingPromotion, lines: readonly PricingLine[]): number {
+  return lines.reduce((sum, line) => sum + (targets(promotion, line) ? line.quantity : 0), 0);
 }
 
-function oldestFirst(a: PricingDiscount, b: PricingDiscount): number {
-  return a.createdAt.getTime() - b.createdAt.getTime() || compareStrings(a.id, b.id);
+function reachesMinimums(promotion: PricingPromotion, spend: Decimal, quantity: number): boolean {
+  return minimumsRejection(promotion, spend, quantity) === null;
 }
 
-/**
- * Why the coupon cannot be used on a cart whose discounted subtotal is `subtotal`, or null when it can.
- */
-export function couponRejection(coupon: PricingCoupon, subtotal: Decimal, now: Date): string | null {
-  if (!coupon.isActive) return 'This coupon is no longer active';
-  if (coupon.expiresAt && coupon.expiresAt < now) return 'This coupon has expired';
-  if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {
-    return 'This coupon has reached its usage limit';
+function minimumsRejection(promotion: PricingPromotion, spend: Decimal, quantity: number): string | null {
+  if (promotion.minimumSpend !== null && spend.lt(promotion.minimumSpend)) {
+    return `Order total must be at least ${promotion.minimumSpend.toString()} to use this coupon`;
   }
-  if (coupon.minimumOrderAmount && subtotal.lt(coupon.minimumOrderAmount)) {
-    return `Order total must be at least ${coupon.minimumOrderAmount.toString()} to use this coupon`;
+  if (promotion.minimumQuantity !== null && quantity < promotion.minimumQuantity) {
+    return `Add at least ${promotion.minimumQuantity} eligible items to use this coupon`;
   }
-  if (coupon.usedByCustomer) return 'You have already used this coupon';
   return null;
 }
 
 /**
- * What the coupon takes off a discounted subtotal: a percentage of it rounded half-up, or a flat amount, never more
- * than the subtotal. Throws CouponNotApplicableError when the coupon cannot be used.
+ * Why the coupon code cannot be used by this customer, whatever the cart, or null when it can: the code and its
+ * promotion must be active and in date, with uses left overall and for the customer.
  */
-export function couponAmount(coupon: PricingCoupon, subtotal: Decimal, now: Date): Decimal {
-  const rejection = couponRejection(coupon, subtotal, now);
+export function couponCodeRejection(
+  couponCode: PricingCouponCode,
+  promotion: PricingPromotion,
+  customer: PricingCustomer,
+  now: Date,
+): string | null {
+  if (!couponCode.isActive || !promotion.isActive) return 'This coupon is no longer active';
+  if (promotion.startsAt > now) return 'This coupon is not active yet';
+  if (promotion.endsAt !== null && promotion.endsAt < now) return 'This coupon has expired';
+  if (!hasUsesLeft(promotion) || (couponCode.usageLimit !== null && couponCode.usedCount >= couponCode.usageLimit)) {
+    return 'This coupon has reached its usage limit';
+  }
+  if (!customerHasUsesLeft(promotion, customer)) return 'You have already used this coupon';
+  return null;
+}
+
+function couponPromotionOf(couponCode: PricingCouponCode, context: PricingContext): PricingPromotion {
+  const promotion = context.promotions.find((candidate) => candidate.id === couponCode.promotionId);
+  if (!promotion) throw new Error(`The promotion of coupon code "${couponCode.code}" is not among the candidates`);
+  const rejection = couponCodeRejection(couponCode, promotion, context.customer, context.now);
   if (rejection) throw new CouponNotApplicableError(rejection);
-  const raw = coupon.discountType === DiscountType.PERCENTAGE ? subtotal.mul(coupon.value).div(100) : coupon.value;
+  return promotion;
+}
+
+function assertItemCouponApplies(promotion: PricingPromotion, lines: readonly PricingLine[], spend: Decimal): void {
+  const quantity = targetedQuantity(promotion, lines);
+  if (quantity === 0) throw new CouponNotApplicableError('This coupon does not apply to any item in your cart');
+  const rejection = minimumsRejection(promotion, spend, quantity);
+  if (rejection) throw new CouponNotApplicableError(rejection);
+}
+
+export interface UnitPromotion {
+  unitDiscount: Decimal;
+  /** The promotion taken, when one saves anything. */
+  promotion?: PricingPromotion;
+}
+
+/** The candidate that saves the most money on one unit, capped at the price; equal savings go to the oldest. */
+export function bestUnitPromotion(unitListPrice: Decimal, candidates: readonly PricingPromotion[]): UnitPromotion {
+  let best: { promotion: PricingPromotion; saving: Decimal } | undefined;
+  for (const promotion of [...candidates].sort(oldestFirst)) {
+    const saving = unitSaving(unitListPrice, promotion);
+    if (saving.gt(best?.saving ?? 0)) best = { promotion, saving };
+  }
+  return best ? { unitDiscount: best.saving, promotion: best.promotion } : { unitDiscount: new Decimal(0) };
+}
+
+/**
+ * The item promotion a product page shows on one unit of the variant: the best automatic (no coupon) one that is live
+ * with uses left. Minimum spend and quantity are not checked (there is no cart).
+ */
+export function displayUnitPromotion(
+  line: Pick<PricingLine, TargetKey | 'unitListPrice'>,
+  promotions: readonly PricingPromotion[],
+  now: Date,
+): UnitPromotion {
+  return bestUnitPromotion(
+    line.unitListPrice,
+    promotions.filter(
+      (promotion) =>
+        !promotion.requiresCoupon && isLive(promotion, now) && hasUsesLeft(promotion) && targets(promotion, line),
+    ),
+  );
+}
+
+/**
+ * What the promotion takes off one unit priced `unitPrice`: a percentage rounded half-up, an amount, or down to a
+ * fixed price; never more than the price, never a rise.
+ */
+function unitSaving(unitPrice: Decimal, promotion: PricingPromotion): Decimal {
+  const raw =
+    promotion.type === PromotionType.PERCENT
+      ? unitPrice.mul(promotion.value).div(100)
+      : promotion.type === PromotionType.AMOUNT_OFF
+        ? promotion.value
+        : unitPrice.sub(promotion.value);
+  return Decimal.min(unitPrice, Decimal.max(0, roundHalfUp(raw)));
+}
+
+/** What a cart promotion takes off `subtotal`: a percentage rounded half-up or an amount, never more than it. */
+function cartSaving(subtotal: Decimal, promotion: PricingPromotion): Decimal {
+  const raw = promotion.type === PromotionType.PERCENT ? subtotal.mul(promotion.value).div(100) : promotion.value;
   return Decimal.min(subtotal, Decimal.max(0, roundHalfUp(raw)));
+}
+
+function bestCartPromotion(
+  subtotal: Decimal,
+  candidates: readonly PricingPromotion[],
+): { promotion: PricingPromotion; saving: Decimal } | undefined {
+  let best: { promotion: PricingPromotion; saving: Decimal } | undefined;
+  for (const promotion of [...candidates].sort(oldestFirst)) {
+    const saving = cartSaving(subtotal, promotion);
+    if (saving.gt(best?.saving ?? 0)) best = { promotion, saving };
+  }
+  return best;
+}
+
+function oldestFirst(a: PricingPromotion, b: PricingPromotion): number {
+  return a.createdAt.getTime() - b.createdAt.getTime() || compareStrings(a.id, b.id);
+}
+
+/** COUPON with its code when the coupon code unlocked the promotion, DISCOUNT otherwise. */
+function adjustmentFrom(
+  promotion: PricingPromotion,
+  saving: Decimal,
+  couponCode: PricingCouponCode | undefined,
+): QuoteAdjustment {
+  const unlocked = promotion.requiresCoupon && couponCode?.promotionId === promotion.id;
+  return {
+    type: unlocked ? OrderAdjustmentType.COUPON : OrderAdjustmentType.DISCOUNT,
+    sourceId: promotion.id,
+    code: unlocked ? couponCode.code : null,
+    amount: saving.neg(),
+  };
 }
 
 function assertValidLine(line: PricingLine): void {
@@ -297,9 +452,10 @@ function canonicalTaxRates(taxRates: readonly PricingTaxRate[]): PricingTaxRate[
 
 function priceLine(
   line: PricingLine,
-  discount: UnitDiscount,
+  discount: UnitPromotion,
   taxRates: readonly PricingTaxRate[],
   money: (value: Decimal.Value) => Money,
+  couponCode: PricingCouponCode | undefined,
 ): QuoteLine {
   const unitList = money(line.unitListPrice);
   const unitGross = unitList.subtract(money(discount.unitDiscount));
@@ -333,15 +489,8 @@ function priceLine(
     unitTax: unitTax.amount,
     lineTotal: unitGross.times(line.quantity).amount,
     adjustments:
-      discount.discountId && lineDiscount.isPositive()
-        ? [
-            {
-              type: OrderAdjustmentType.DISCOUNT,
-              sourceId: discount.discountId,
-              code: null,
-              amount: lineDiscount.amount.neg(),
-            },
-          ]
+      discount.promotion && lineDiscount.isPositive()
+        ? [adjustmentFrom(discount.promotion, lineDiscount.amount, couponCode)]
         : [],
     taxLines,
   };
