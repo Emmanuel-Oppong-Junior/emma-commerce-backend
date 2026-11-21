@@ -2,6 +2,9 @@ import { INestApplicationContext } from '@nestjs/common';
 import { Test, TestingModuleBuilder } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../../src/redis/redis.module';
+import { SENT_MARKER_PREFIX } from '../../src/notifications/notifications.processor';
 import { WorkerModule } from '../../src/worker/worker.module';
 import { WorkerHealthServer } from '../../src/worker/worker-health.server';
 import { MaintenanceScheduler } from '../../src/worker/maintenance.scheduler';
@@ -35,4 +38,19 @@ export function getQueue(app: INestApplicationContext, name: JobQueue): Queue {
 /** Empties every queue (waiting, delayed, completed, failed and job schedulers) so suites start from nothing. */
 export async function clearQueues(app: INestApplicationContext): Promise<void> {
   for (const name of Object.values(JobQueue)) await getQueue(app, name).obliterate({ force: true });
+  // obliterate restarts job ids at 1, so an earlier suite's sent marker would make a new job look already sent.
+  const redis = app.get<Redis>(REDIS_CLIENT);
+  const markers = await scanKeys(redis, `${SENT_MARKER_PREFIX}:*`);
+  if (markers.length > 0) await redis.del(...markers);
+}
+
+async function scanKeys(redis: Redis, pattern: string): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor = '0';
+  do {
+    const [next, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 500);
+    keys.push(...batch);
+    cursor = next;
+  } while (cursor !== '0');
+  return keys;
 }

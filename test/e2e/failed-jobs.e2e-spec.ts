@@ -1,5 +1,8 @@
 import { INestApplication, INestApplicationContext } from '@nestjs/common';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { Redis } from 'ioredis';
+import { REDIS_CLIENT } from '../../src/redis/redis.module';
+import { SENT_MARKER_PREFIX } from '../../src/notifications/notifications.processor';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { EmailService } from '../../src/notifications/email/email.service';
 import { JobQueue } from '../../src/jobs/job-queues';
@@ -33,6 +36,9 @@ describe('Failed background jobs (e2e)', () => {
 
   beforeAll(async () => {
     ({ app, prisma } = await createTestApp());
+    // What an earlier suite in the same run leaves behind; clearQueues must not let it skip this suite's jobs.
+    const redis = app.get<Redis>(REDIS_CLIENT);
+    for (const id of ['1', '2', '3']) await redis.set(`${SENT_MARKER_PREFIX}:${id}`, '1', 'EX', 600);
     await clearQueues(app);
     worker = await createTestWorker();
     await resetDb(prisma);
