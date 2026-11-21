@@ -5,7 +5,11 @@
 **Last checkpoint:** 2026-11-21 · **Current phase:** Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 2/11: P3-A done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: Emmanuel picks from Up next.
+Two lanes in worktrees (agents), from `f4f0781`:
+- **P3-C.1 — Partial refunds** (ADR-0007) · branch `feat/p3-c-refunds` · DB `emma_wt_refunds_test`, Redis DB 13 · **State:** in progress
+- **P3-E.1–E.2 — Velocity checks + dispute records** (ADR-0007) · branch `feat/p3-e-fraud` · DB `emma_wt_fraud_test`, Redis DB 12 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-21): staff refund lines/quantities, a free amount and the shipping fee (order.refund + step-up), reason from a fixed list + note, capped at the captured amount, money only (stock only via returns); velocity: hard limits refuse, soft limits flag the order for review, Redis counters with hashed keys, limits are store settings with safe defaults; disputes from Paystack webhooks and by hand, evidence notes and deadlines, an open dispute blocks further refunds on that payment.
+  - [ ] C.1 ← **Next step** (agent) · [ ] E.1 · [ ] E.2 (agent) · [ ] merge both (second merge re-runs gates), push
 
 **Last completed: P3-A Provider port + store-level encrypted provider config (2026-11-21)** (ADR-0007 §1; PAY-05 free-string `paymentMethod` note): A.1 `80fa66c`, A.2 `df4f233` `[breaking-api]`, fast-forwarded onto dev. P3-A ✅.
   - A.1 (no behaviour change): `PaymentProvider` port (initialize, verify, refund, parseWebhook, settlesPayment, listTransactions, capabilities) in `PaymentProvidersModule`; `PaystackAdapter` wraps the thin client (timeouts, raw-body HMAC with `timingSafeEqual` unchanged); `CashOnDeliveryAdapter`; a registry picks the adapter from the attempt's `provider`. Payments, webhooks, reconciliation and refunds go only through the port.
@@ -153,7 +157,7 @@ None. Next: Emmanuel picks from Up next.
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P3-C.1 partial refunds per line/amount, reasons, notifications ∥ P3-E velocity checks + chargeback records | ∥ | — |
+| 1 | P3-C.1 ∥ P3-E (in progress) | ∥ | — |
 | 2 | P3-B pay on delivery (SMS-OTP, risk gates, cash collection) | → | SMS provider choice + account (new dependency) |
 | 3 | P3-C.2 MoMo refunds · P3-D Flutterwave | → | Paystack MoMo-refund confirmation · Flutterwave account |
 | 4 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
@@ -209,6 +213,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-21 | P3-C.1: refund lines, amount, shipping; money only. P3-E: block hard / flag soft velocity limits (store settings, Redis, hashed keys); disputes by webhook + manual, open dispute blocks refunds | STATUS (P3-C/E) |
 | 2026-11-21 | Phase 3 started. P3-A: provider secrets in the DB (encrypted, env fallback), Owner-only `payment.settings.manage`, methods switchable per store with a provider per method | STATUS (P3-A) |
 | 2026-11-21 | P2-W.1: promotions on price-list prices per list (default off); lowest price wins; normal price below MOQ; prices on product pages via optional sign-in | STATUS (P2-W) |
 | 2026-11-21 | P2-B.4–B.6: flash cap partial by units; BXGY/tiers mix and match, cheapest units rewarded; free shipping waives or caps the fee, optional zones | STATUS (P2-B) |

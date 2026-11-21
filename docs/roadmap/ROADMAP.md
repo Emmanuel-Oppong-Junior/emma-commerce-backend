@@ -346,9 +346,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P3-B.2** Risk gates (open COD per phone/address, basket cap, area allow-list, blacklist, optional MoMo deposit)
 - [ ] **P3-B.3** Cash collection + rider remittance + discrepancy report
 
-### P3-C — Refund ops
+### P3-C — Refund ops  🔄 in progress
 > Run: → · M · 🟥
-- [ ] **P3-C.1** Partial refunds per line/amount; refund reasons; customer notifications
+- [ ] 🔄 **P3-C.1** Partial refunds per line/amount; refund reasons; customer notifications
 - [ ] **P3-C.2** MoMo refund path (confirm Paystack support)
 
 ### P3-D — Second provider
@@ -356,10 +356,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P3-D.1** Flutterwave adapter (API re-verify on every webhook)
 - [ ] **P3-D.2** Provider routing/fallback
 
-### P3-E — Fraud & chargebacks
+### P3-E — Fraud & chargebacks  🔄 in progress
 > Run: ∥ · M · 🟧
-- [ ] **P3-E.1** Velocity checks (orders/payments per phone/IP/card)
-- [ ] **P3-E.2** Chargeback/dispute records
+- [ ] 🔄 **P3-E.1** Velocity checks (orders/payments per phone/IP/card)
+- [ ] 🔄 **P3-E.2** Chargeback/dispute records
 
 ## Phase 4 — Inventory (ADR-0008)
 
