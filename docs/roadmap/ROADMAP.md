@@ -25,14 +25,14 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 0 — Stabilise | 46 / 46 | ✅ complete |
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
-| 3 — Payments & Ghana methods | 0 / 11 | 🔄 in progress |
+| 3 — Payments & Ghana methods | 2 / 11 | 🔄 in progress |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **86 / 154** | |
+| **All** | **88 / 154** | |
 
 ---
 
@@ -335,10 +335,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ## Phase 3 — Payments & Ghana payment methods (ADR-0007)
 
-### P3-A — Provider port  🔄 in progress
+### P3-A — Provider port  ✅ complete
 > Run: → · M · 🟥
-- [ ] 🔄 **P3-A.1** `PaymentProvider` interface + Paystack adapter refactor (from P0-C)
-- [ ] 🔄 **P3-A.2** Store-level encrypted provider config
+- [x] **P3-A.1** `PaymentProvider` interface + Paystack adapter refactor (from P0-C) [80fa66c]
+- [x] **P3-A.2** Store-level encrypted provider config [df4f233]
 
 ### P3-B — Pay on delivery
 > Run: B.1 → B.2; B.3 ∥ · M · 🟥 (if COD at launch)
