@@ -163,20 +163,11 @@ type Cart {
   """Timestamp when the cart was created"""
   createdAt: DateTime!
 
-  """Total discount amount applied"""
-  discountTotal: Money
-
-  """Final total after discounts; createOrder charges this for the items"""
-  finalTotal: Money
-
   """Unique identifier of the cart"""
   id: ID!
 
   """Items in the cart"""
   items: [CartItem!]!
-
-  """Total original price of all items"""
-  total: Money
 
   """Timestamp when the cart was last updated"""
   updatedAt: DateTime!
@@ -186,14 +177,8 @@ type Cart {
 }
 
 type CartItem {
-  """Discount applied to the cart item, if any"""
-  appliedDiscount: Discount
-
   """Timestamp when the item was added"""
   createdAt: DateTime!
-
-  """Discounted price per unit, if applicable"""
-  discountedPrice: Money
 
   """Unique identifier of the cart item"""
   id: ID!
@@ -257,6 +242,66 @@ input ChangeUserPasswordInput {
 
   """The current password for verification"""
   oldPassword: String!
+}
+
+"""
+The cart priced for checkout. createOrder charges exactly grandTotal when it is sent quoteHash and nothing changed
+"""
+type CheckoutQuote {
+  """The coupon, if it takes anything off"""
+  adjustments: [QuoteOrderAdjustment!]!
+  currency: Currency!
+
+  """Item discounts plus the coupon"""
+  discountTotal: Money!
+
+  """
+  The amount createOrder will charge: subtotal - discountTotal + shippingTotal
+  """
+  grandTotal: Money!
+
+  """In cart order"""
+  lines: [QuoteLine!]!
+
+  """The pricing rules that produced the quote"""
+  pricingVersion: Int!
+
+  """
+  Pass to createOrder. It covers every value that determines the charge; createOrder fails with CONFLICT (reason QUOTE_CHANGED) when any of them changed
+  """
+  quoteHash: String!
+
+  """Shipping (0 for pickup)"""
+  shippingTotal: Money!
+
+  """Sum of unit list price x quantity, before any discount, tax included"""
+  subtotal: Money!
+
+  """Tax included in the line totals"""
+  taxTotal: Money!
+}
+
+"""
+What checkout prices the cart for: the fulfilment and an optional coupon
+"""
+input CheckoutQuoteInput {
+  """Optional coupon code to apply to the order"""
+  couponCode: String
+
+  """
+  Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
+  """
+  fulfillmentType: FulfillmentType!
+
+  """
+  Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
+  """
+  pickupLocationId: ID
+
+  """
+  Required when fulfillmentType is DELIVERY — the ID of the shipping address
+  """
+  shippingAddressId: ID
 }
 
 input CompleteMfaSignInInput {
@@ -419,6 +464,11 @@ input CreateOrderInput {
   Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
   """
   pickupLocationId: ID
+
+  """
+  quoteHash from checkoutQuote for the same fulfilment and coupon. The order is placed only if the cart still prices to that quote; otherwise CONFLICT with reason QUOTE_CHANGED
+  """
+  quoteHash: String!
 
   """
   Required when fulfillmentType is DELIVERY — the ID of the shipping address
@@ -950,7 +1000,9 @@ type Mutation {
   createCoupon(input: CreateCouponInput!): Coupon!
   createDiscount(createDiscountInput: CreateDiscountInput!): Discount!
 
-  """Creates an order from the cart"""
+  """
+  Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it
+  """
   createOrder(input: CreateOrderInput!): Order!
 
   """Create a pickup location (admin only)"""
@@ -1739,11 +1791,6 @@ type Query {
   """Retrieves the current user’s cart"""
   cart: Cart
 
-  """
-  Retrieves the current user’s cart priced exactly as createOrder will charge it
-  """
-  cartWithDiscount: Cart!
-
   """Retrieves a list of all categories, sorted alphabetically by name"""
   categories: [Category!]!
 
@@ -1752,6 +1799,11 @@ type Query {
     """The ID of the category"""
     id: String!
   ): Category
+
+  """
+  Prices the current user's cart for checkout with the chosen fulfilment and coupon: the full breakdown and the quoteHash createOrder needs. Writes nothing
+  """
+  checkoutQuote(input: CheckoutQuoteInput!): CheckoutQuote!
 
   """Get a coupon by ID (admin only)"""
   coupon(id: ID!): Coupon!
@@ -1925,6 +1977,89 @@ type Query {
 
   """Retrieves the user’s wishlist"""
   wishlist: Wishlist!
+}
+
+"""
+An item discount taken off a quote line (already in the line's unitDiscount)
+"""
+type QuoteAdjustment {
+  """Signed amount: reductions are negative"""
+  amount: Money!
+  code: String
+
+  """The discount it comes from"""
+  sourceId: ID!
+  type: OrderAdjustmentType!
+}
+
+"""A cart line's share of an order-level adjustment"""
+type QuoteAllocation {
+  """Signed share: reductions are negative"""
+  amount: Money!
+  cartItemId: ID!
+}
+
+"""One cart line as checkout prices it"""
+type QuoteLine {
+  adjustments: [QuoteAdjustment!]!
+  cartItemId: ID!
+
+  """(unitListPrice - unitDiscount) x quantity, tax included"""
+  lineTotal: Money!
+
+  """Option values, e.g. { size: "M" }"""
+  optionValues: JSONObject
+  productId: ID!
+  productName: String!
+  quantity: Int!
+  sku: String!
+  taxLines: [QuoteTaxLine!]!
+
+  """Item discount taken off one unit"""
+  unitDiscount: Money!
+
+  """Catalogue price of one unit, tax included"""
+  unitListPrice: Money!
+
+  """One unit after its discount, without tax"""
+  unitNet: Money!
+
+  """Tax included in one discounted unit"""
+  unitTax: Money!
+  variantId: ID!
+}
+
+"""
+An order-level reduction (the coupon), split over the lines by largest remainder
+"""
+type QuoteOrderAdjustment {
+  """Each line's share; the shares add up exactly to amount"""
+  allocations: [QuoteAllocation!]!
+
+  """Signed amount: reductions are negative"""
+  amount: Money!
+
+  """Coupon code"""
+  code: String
+
+  """The coupon it comes from"""
+  sourceId: ID!
+  type: OrderAdjustmentType!
+}
+
+"""A tax included in a quote line"""
+type QuoteTaxLine {
+  amount: Money!
+
+  """The line amount without tax that the rate applies to"""
+  base: Money!
+  name: String!
+
+  """Rate as a decimal (e.g., 0.15 for 15%)"""
+  rate: Decimal!
+
+  """The tax rate it comes from"""
+  taxId: ID!
 }
 
 input RefreshTokenInput {

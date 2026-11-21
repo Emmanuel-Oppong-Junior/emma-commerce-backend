@@ -4,6 +4,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, stockOf as ledgerStockOf } from '../helpers/db.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 describe('Order status rules (e2e)', () => {
   let app: INestApplication;
@@ -23,7 +24,7 @@ describe('Order status rules (e2e)', () => {
     ).expect(200);
     const res = await gqlRequest(
       app,
-      `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}",
+      `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}",
         contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id status } }`,
       undefined,
       userToken,

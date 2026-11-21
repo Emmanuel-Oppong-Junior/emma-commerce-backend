@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Decimal } from '@prisma/client/runtime/client';
 import {
   assertTransition,
   CUSTOMER_CANCELLABLE,
@@ -21,7 +22,7 @@ import {
   ShipmentStatus,
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
-import { abandonedOrderWhere, OrderSnapshot, OrdersRepository } from './order.repository';
+import { abandonedOrderWhere, OrderSnapshot, OrderSnapshotLine, OrdersRepository } from './order.repository';
 import { VariantForSale } from '../cart/cart.repository';
 import { notSellableReason } from '../variant/sellable';
 import { CouponsService } from '../coupons/coupons.service';
@@ -32,7 +33,7 @@ import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
 import { DiscountService } from '../discount/discount.service';
-import { CouponNotApplicableError, price, PricingCoupon } from '../pricing/price';
+import { CouponNotApplicableError, price, PricingCoupon, Quote, QuoteAdjustment } from '../pricing/price';
 import { StoreService } from '../store/store.service';
 import { TaxService } from '../tax/tax.service';
 import { assertDeliverableAddress } from '../addresses/deliverable-address';
@@ -43,14 +44,50 @@ export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 export const UNPAID_ORDER_EXPIRY_HOURS = 1;
 const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
 
-interface CreateOrderParams {
+/** `extensions.reason` of the CONFLICT createOrder fails with when the cart no longer prices to the client's quote. */
+export const QUOTE_CHANGED = 'QUOTE_CHANGED';
+
+export interface CheckoutParams {
   fulfillmentType: FulfillmentType;
   shippingAddressId?: string;
   pickupLocationId?: string;
+  couponCode?: string;
+}
+
+export interface CreateOrderParams extends CheckoutParams {
   contactEmail: string;
   contactPhone: string;
-  couponCode?: string;
   paymentMethod?: PaymentMethod;
+  /** quoteHash of the checkoutQuote the customer confirmed. */
+  quoteHash: string;
+}
+
+/** The cart priced for checkout, with each line's cart item and each order adjustment's share per cart item. */
+export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments'> {
+  lines: (OrderSnapshotLine & { cartItemId: string })[];
+  adjustments: (QuoteAdjustment & { allocations: { cartItemId: string; amount: Decimal }[] })[];
+}
+
+interface Fulfilment {
+  shippingFee: Prisma.Decimal;
+  shippingAddressId?: string;
+  pickupLocationId?: string;
+  shippingAddressSnapshot?: Record<string, unknown>;
+  pickupLocationSnapshot?: Record<string, unknown>;
+}
+
+interface PricedCheckout {
+  cart: Cart & { items: CartItem[] };
+  snapshot: OrderSnapshot;
+  couponId?: string;
+  fulfilment: Fulfilment;
+}
+
+function quoteChanged(): ConflictException {
+  return new ConflictException({
+    message: 'The price changed since the quote (prices, discounts, coupon, tax or shipping): get a new checkoutQuote',
+    extensions: { reason: QUOTE_CHANGED },
+  });
 }
 
 @Injectable()
@@ -71,63 +108,86 @@ export class OrdersService {
   ) {}
 
   /**
-   * Creates a new order from the user's active cart.
-   * Supports DELIVERY (requires shippingAddressId, calculates shipping fee by city)
-   * and PICKUP (requires pickupLocationId, no shipping fee).
+   * Prices the user's cart for checkout with the given fulfilment and coupon, exactly as createOrder will charge it.
+   * Writes nothing.
+   */
+  async checkoutQuote(userId: string, params: CheckoutParams): Promise<CheckoutQuote> {
+    const { cart, snapshot } = await this.priceCheckout(userId, params);
+    const cartItemIds = cart.items.map((item) => item.id);
+    return {
+      ...snapshot,
+      lines: snapshot.lines.map((line, index) => ({ ...line, cartItemId: cartItemIds[index] })),
+      adjustments: snapshot.adjustments.map(({ allocations, ...adjustment }) => ({
+        ...adjustment,
+        allocations: allocations.map((amount, index) => ({ cartItemId: cartItemIds[index], amount })),
+      })),
+    };
+  }
+
+  /**
+   * Creates an order from the user's cart, in one transaction: the cart, prices, discounts, coupon, tax rates and
+   * shipping are read and priced inside it (the cart row and its variants locked), and the order is placed only if
+   * that quote's hash is the `quoteHash` the customer confirmed; otherwise CONFLICT with reason QUOTE_CHANGED and
+   * nothing is reserved, charged or recorded. The order stores the quote as its snapshot, so it charges the quote's
+   * grand total. DELIVERY needs shippingAddressId (shipping fee by city); PICKUP needs pickupLocationId (no fee).
    */
   async createOrderFromCart(userId: string, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
-    const cart = await this.ensureValidCart(userId);
-    await this.ensureUserCanOrder(userId, cart);
-
-    if (params.fulfillmentType === FulfillmentType.DELIVERY) {
-      return this.createDeliveryOrder(userId, cart, params);
-    }
-    return this.createPickupOrder(userId, cart, params);
-  }
-
-  private async createDeliveryOrder(
-    userId: string,
-    cart: Cart & { items: CartItem[] },
-    params: CreateOrderParams,
-  ): Promise<Order & { items: OrderItem[] }> {
-    if (!params.shippingAddressId) {
-      throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
-    }
-    const address = await this.ensureValidShippingAddress(userId, params.shippingAddressId);
-    assertDeliverableAddress(address);
-    const shippingFee = await this.shippingZonesService.getFeeForCity(address.city);
-    const orderDetails = await this.buildOrderDetails(cart.items, userId, shippingFee, params.couponCode);
-
-    const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
-      ...orderDetails,
-      paymentMethod: params.paymentMethod ?? PaymentMethod.ONLINE,
-      contactEmail: params.contactEmail,
-      contactPhone: params.contactPhone,
-      fulfillmentType: FulfillmentType.DELIVERY,
-      shippingAddressId: params.shippingAddressId,
-      shippingAddressSnapshot: toAddressSnapshot(address),
+    return this.ordersRepository.runTransaction(async (tx) => {
+      const checkout = await this.priceCheckout(userId, params, tx);
+      if (checkout.snapshot.quoteHash !== params.quoteHash) throw quoteChanged();
+      return this.placeOrder(tx, userId, checkout, params);
     });
-    return order;
   }
 
-  private async createPickupOrder(
+  /**
+   * Reads everything the price depends on and prices the cart. With `tx` (createOrder), the reads happen in that
+   * transaction: the cart row is locked first, so a repeated checkout of the same cart waits and then finds it empty,
+   * and the cart's variants are share-locked before their prices are read, so they cannot change until it commits.
+   */
+  private async priceCheckout(
     userId: string,
-    cart: Cart & { items: CartItem[] },
-    params: CreateOrderParams,
-  ): Promise<Order & { items: OrderItem[] }> {
-    if (!params.pickupLocationId) {
-      throw new BadRequestException('pickupLocationId is required for PICKUP orders');
-    }
-    const location = await this.pickupLocationsService.findActiveById(params.pickupLocationId);
-    const orderDetails = await this.buildOrderDetails(cart.items, userId, new Prisma.Decimal(0), params.couponCode);
+    params: CheckoutParams,
+    tx?: Prisma.TransactionClient,
+  ): Promise<PricedCheckout> {
+    if (tx) await this.ordersRepository.lockCart(tx, userId);
+    const cart = await this.ensureValidCart(userId, tx);
+    await this.ensureUserCanOrder(userId, cart, tx);
+    const fulfilment =
+      params.fulfillmentType === FulfillmentType.DELIVERY
+        ? await this.deliveryTo(userId, params.shippingAddressId, tx)
+        : await this.pickupAt(params.pickupLocationId, tx);
+    if (tx) await this.ordersRepository.lockVariants(tx, [...new Set(cart.items.map((item) => item.variantId))]);
+    const { snapshot, couponId } = await this.buildOrderDetails(
+      cart.items,
+      userId,
+      fulfilment.shippingFee,
+      params.couponCode,
+      tx,
+    );
+    return { cart, snapshot, couponId, fulfilment };
+  }
 
-    const order = await this.saveOrderAndUpdateInventory(userId, cart.id, {
-      ...orderDetails,
-      paymentMethod: params.paymentMethod ?? PaymentMethod.ONLINE,
-      contactEmail: params.contactEmail,
-      contactPhone: params.contactPhone,
-      fulfillmentType: FulfillmentType.PICKUP,
-      pickupLocationId: params.pickupLocationId,
+  private async deliveryTo(
+    userId: string,
+    shippingAddressId: string | undefined,
+    tx?: Prisma.TransactionClient,
+  ): Promise<Fulfilment> {
+    if (!shippingAddressId) throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
+    const address = await this.ensureValidShippingAddress(userId, shippingAddressId, tx);
+    assertDeliverableAddress(address);
+    return {
+      shippingFee: await this.shippingZonesService.getFeeForCity(address.city, tx),
+      shippingAddressId,
+      shippingAddressSnapshot: toAddressSnapshot(address),
+    };
+  }
+
+  private async pickupAt(pickupLocationId: string | undefined, tx?: Prisma.TransactionClient): Promise<Fulfilment> {
+    if (!pickupLocationId) throw new BadRequestException('pickupLocationId is required for PICKUP orders');
+    const location = await this.pickupLocationsService.findActiveById(pickupLocationId, tx);
+    return {
+      shippingFee: new Prisma.Decimal(0),
+      pickupLocationId,
       pickupLocationSnapshot: {
         name: location.name,
         address: location.address,
@@ -135,8 +195,7 @@ export class OrdersService {
         state: location.state,
         country: location.country,
       },
-    });
-    return order;
+    };
   }
 
   /**
@@ -398,41 +457,45 @@ export class OrdersService {
     });
   }
 
-  private async ensureValidCart(userId: string): Promise<Cart & { items: CartItem[] }> {
-    const cart = await this.cartService.getCartOrThrow(userId);
+  private async ensureValidCart(userId: string, tx?: Prisma.TransactionClient): Promise<Cart & { items: CartItem[] }> {
+    const cart = await this.cartService.getCartOrThrow(userId, tx);
     if (cart.items.length === 0) throw new NotFoundException(`Cart for user "${userId}" is empty`);
     return cart;
   }
 
-  private async ensureValidShippingAddress(userId: string, shippingAddressId: string) {
-    const address = await this.ordersRepository.findAddressForUser(shippingAddressId, userId);
+  private async ensureValidShippingAddress(userId: string, shippingAddressId: string, tx?: Prisma.TransactionClient) {
+    const address = await this.ordersRepository.findAddressForUser(shippingAddressId, userId, tx);
     if (!address) {
       throw new NotFoundException(`Shipping address "${shippingAddressId}" not found for user "${userId}"`);
     }
     return address;
   }
 
-  private async ensureUserCanOrder(userId: string, cart: Cart & { items: CartItem[] }): Promise<void> {
-    const user = await this.ordersRepository.findUserById(userId);
+  private async ensureUserCanOrder(
+    userId: string,
+    cart: Cart & { items: CartItem[] },
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const user = await this.ordersRepository.findUserById(userId, tx);
     if (!user || !user.isActive) throw new BadRequestException(`User "${userId}" is not eligible to place an order`);
     if (cart.items.length > 50) throw new BadRequestException('Order exceeds maximum item limit of 50');
   }
 
   /**
-   * Prices the cart with the pricing engine, the same as cartWithDiscount for the items: item discounts, the coupon off
-   * the discounted subtotal, the tax the prices include and shipping. The quote is the order snapshot, so the total
-   * charged is the quote's grand total.
+   * Prices the cart with the pricing engine: item discounts, the coupon off the discounted subtotal, the tax the prices
+   * include and shipping. The quote is the order snapshot, so the total charged is the quote's grand total.
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
     shippingFee: Prisma.Decimal,
-    couponCode?: string,
+    couponCode: string | undefined,
+    tx: Prisma.TransactionClient | undefined,
   ): Promise<{ snapshot: OrderSnapshot; couponId?: string }> {
     const now = new Date();
-    const currency = await this.storeService.getCurrency();
+    const currency = await this.storeService.getCurrency(tx);
     const variants: VariantForSale[] = [];
-    for (const item of cartItems) variants.push(await this.checkVariantAvailability(item, currency));
+    for (const item of cartItems) variants.push(await this.checkVariantAvailability(item, currency, tx));
     const discounts = await this.discountService.findCandidateDiscounts(
       variants.map((variant) => ({
         id: variant.id,
@@ -441,10 +504,11 @@ export class OrdersService {
         discountId: variant.discountId,
       })),
       now,
+      tx,
     );
     let coupon: PricingCoupon | undefined;
-    if (couponCode) coupon = (await this.couponsService.findForPricing(couponCode, userId)).pricing;
-    const taxes = await this.taxService.findActive();
+    if (couponCode) coupon = (await this.couponsService.findForPricing(couponCode, userId, tx)).pricing;
+    const taxes = await this.taxService.findActive(tx);
 
     const quote = this.priceOrThrow(() =>
       price(
@@ -489,8 +553,12 @@ export class OrdersService {
     }
   }
 
-  private async checkVariantAvailability(item: CartItem, currency: Currency): Promise<VariantForSale> {
-    const variant = await this.ordersRepository.findVariant(item.variantId);
+  private async checkVariantAvailability(
+    item: CartItem,
+    currency: Currency,
+    tx: Prisma.TransactionClient | undefined,
+  ): Promise<VariantForSale> {
+    const variant = await this.ordersRepository.findVariant(item.variantId, tx);
     if (!variant) throw new NotFoundException(`Variant "${item.variantId}" not found`);
     const reason = notSellableReason(variant);
     if (reason) throw new BadRequestException(`${reason}; remove it from the cart`);
@@ -509,71 +577,74 @@ export class OrdersService {
     return variant;
   }
 
-  private async saveOrderAndUpdateInventory(
+  /** Writes the order from the priced checkout, reserves its stock and records its coupon use, on the caller's tx. */
+  private async placeOrder(
+    tx: Prisma.TransactionClient,
     userId: string,
-    cartId: string,
-    orderDetails: {
-      snapshot: OrderSnapshot;
-      couponId?: string;
-      paymentMethod?: PaymentMethod;
-      contactEmail: string;
-      contactPhone: string;
-      fulfillmentType: FulfillmentType;
-      shippingAddressId?: string;
-      pickupLocationId?: string;
-      shippingAddressSnapshot?: Record<string, unknown>;
-      pickupLocationSnapshot?: Record<string, unknown>;
-    },
+    checkout: PricedCheckout,
+    params: CreateOrderParams,
   ): Promise<Order & { items: OrderItem[] }> {
-    return this.ordersRepository.runTransaction(async (tx) => {
-      const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
-      const newOrder = await this.ordersRepository.create(tx, userId, orderDetails);
+    const { fulfilment } = checkout;
+    const orderDetails = {
+      snapshot: checkout.snapshot,
+      couponId: checkout.couponId,
+      paymentMethod: params.paymentMethod ?? PaymentMethod.ONLINE,
+      contactEmail: params.contactEmail,
+      contactPhone: params.contactPhone,
+      fulfillmentType: params.fulfillmentType,
+      shippingAddressId: fulfilment.shippingAddressId,
+      shippingAddressSnapshot: fulfilment.shippingAddressSnapshot,
+      pickupLocationId: fulfilment.pickupLocationId,
+      pickupLocationSnapshot: fulfilment.pickupLocationSnapshot,
+    };
+    const cartId = checkout.cart.id;
+    const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
+    const newOrder = await this.ordersRepository.create(tx, userId, orderDetails);
 
-      // Cash on delivery holds its stock until dispatch; an online order's hold expires with the unpaid order.
-      const expiresAt = isCod ? null : new Date(Date.now() + UNPAID_ORDER_EXPIRY_HOURS * 60 * 60 * 1000);
-      for (const item of newOrder.items) {
-        const reserved =
-          (await this.ordersRepository.lockSellableVariant(tx, item.variantId)) &&
-          (await this.stockLedger.reserve(
-            tx,
-            {
-              variantId: item.variantId,
-              quantity: item.quantity,
-              orderId: newOrder.id,
-              orderItemId: item.id,
-              expiresAt,
-            },
-            userId,
-          ));
-        if (!reserved) {
-          throw new BadRequestException(
-            `Variant "${item.sku}" is out of stock or no longer on sale — please review your cart`,
-          );
-        }
+    // Cash on delivery holds its stock until dispatch; an online order's hold expires with the unpaid order.
+    const expiresAt = isCod ? null : new Date(Date.now() + UNPAID_ORDER_EXPIRY_HOURS * 60 * 60 * 1000);
+    for (const item of newOrder.items) {
+      const reserved =
+        (await this.ordersRepository.lockSellableVariant(tx, item.variantId)) &&
+        (await this.stockLedger.reserve(
+          tx,
+          {
+            variantId: item.variantId,
+            quantity: item.quantity,
+            orderId: newOrder.id,
+            orderItemId: item.id,
+            expiresAt,
+          },
+          userId,
+        ));
+      if (!reserved) {
+        throw new BadRequestException(
+          `Variant "${item.sku}" is out of stock or no longer on sale — please review your cart`,
+        );
       }
+    }
 
-      if (orderDetails.couponId) {
-        await this.couponsService.recordUsage(tx, orderDetails.couponId, userId, newOrder.id);
-      }
-      await this.outbox.record(tx, {
-        type: 'order.placed.v1',
-        aggregateId: newOrder.id,
-        payload: { orderId: newOrder.id },
-      });
-
-      await this.ordersRepository.clearCartItems(tx, cartId);
-      if (!isCod) return newOrder;
-      // Cash on delivery needs no payment before fulfilment: it is confirmed as soon as it is placed.
-      const confirmed = await this.ordersRepository.transitionStatus(
-        tx,
-        newOrder.id,
-        OrderStatus.CONFIRMED,
-        [OrderStatus.PLACED],
-        { actorId: userId, reason: 'Cash on delivery accepted' },
-      );
-      if (!confirmed) throw this.changedMeanwhile(newOrder.id);
-      return confirmed;
+    if (orderDetails.couponId) {
+      await this.couponsService.recordUsage(tx, orderDetails.couponId, userId, newOrder.id);
+    }
+    await this.outbox.record(tx, {
+      type: 'order.placed.v1',
+      aggregateId: newOrder.id,
+      payload: { orderId: newOrder.id },
     });
+
+    await this.ordersRepository.clearCartItems(tx, cartId);
+    if (!isCod) return newOrder;
+    // Cash on delivery needs no payment before fulfilment: it is confirmed as soon as it is placed.
+    const confirmed = await this.ordersRepository.transitionStatus(
+      tx,
+      newOrder.id,
+      OrderStatus.CONFIRMED,
+      [OrderStatus.PLACED],
+      { actorId: userId, reason: 'Cash on delivery accepted' },
+    );
+    if (!confirmed) throw this.changedMeanwhile(newOrder.id);
+    return confirmed;
   }
 
   private async retrieveUserOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {

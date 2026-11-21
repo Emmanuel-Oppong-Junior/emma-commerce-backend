@@ -4,6 +4,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { OrdersService } from '../../src/order/order.service';
 import { createTestApp } from '../helpers/app.helper';
 import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
+import { placeOrderFromCart } from '../helpers/checkout.helper';
 
 const PRODUCT_ID = 'seed_prod2';
 const VARIANT_ID = 'seed_var2';
@@ -28,7 +29,7 @@ describe('Coupon usage limits and release (e2e)', () => {
     await prisma.cartItem.create({
       data: { cartId: cart.id, productId: PRODUCT_ID, variantId: VARIANT_ID, quantity: 1 },
     });
-    return orders.createOrderFromCart(userId, {
+    return placeOrderFromCart(orders, userId, {
       fulfillmentType: FulfillmentType.DELIVERY,
       shippingAddressId: await addressFor(userId),
       contactEmail: 'shopper@example.com',
@@ -91,7 +92,7 @@ describe('Coupon usage limits and release (e2e)', () => {
 
     const results = await Promise.allSettled(
       Array.from({ length: SHOPPERS }, async (_, n) =>
-        orders.createOrderFromCart(shopperId(n), {
+        placeOrderFromCart(orders, shopperId(n), {
           fulfillmentType: FulfillmentType.DELIVERY,
           shippingAddressId: await addressFor(shopperId(n)),
           contactEmail: 'shopper@example.com',

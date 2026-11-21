@@ -9,6 +9,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, setStock, stockOf } from '../helpers/db.helper';
 import { signInAdmin } from '../helpers/auth.helper';
+import { placeOrderFromCart } from '../helpers/checkout.helper';
 
 const BUYERS = ['seed_user', 'ledger_buyer_2'];
 const TWO_HOURS_AGO = () => new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -52,7 +53,7 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
     await prisma.cartItem.create({
       data: { cartId: cart.id, productId: variantId.replace('var', 'prod'), variantId, quantity },
     });
-    return orders.createOrderFromCart(buyer, {
+    return placeOrderFromCart(orders, buyer, {
       fulfillmentType: FulfillmentType.DELIVERY,
       shippingAddressId: addressOf[buyer],
       contactEmail: 'buyer@example.com',

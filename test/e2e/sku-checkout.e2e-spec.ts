@@ -4,6 +4,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
 import { signInAdmin, signInUser, signUpUser } from '../helpers/auth.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 const M = '{ amount currency }';
 
@@ -23,14 +24,21 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
       `mutation { addToCart(input: { variantId: "${variantId}", quantity: ${quantity} }) { items { variantId quantity originalPrice ${M} } } }`,
       token,
     );
-  const createOrder = (token = customerToken, couponCode?: string) =>
+  const createOrder = async (token = customerToken, couponCode?: string) =>
     gql(
-      `mutation($coupon: String) { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "sku_pickup", contactEmail: "buyer@example.com", contactPhone: "+233244000000", couponCode: $coupon }) {
+      `mutation($coupon: String, $quoteHash: String!) { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "sku_pickup", contactEmail: "buyer@example.com", contactPhone: "+233244000000", couponCode: $coupon, quoteHash: $quoteHash }) {
         id subtotal ${M} discountTotal ${M} grandTotal ${M} adjustments { type amount ${M} }
         items { variantId sku optionValues quantity unitListPrice ${M} unitDiscount ${M} lineTotal ${M} variant { id } }
       } }`,
       token,
-      { coupon: couponCode ?? null },
+      {
+        coupon: couponCode ?? null,
+        quoteHash: await quoteHashFor(app, token, {
+          fulfillmentType: 'PICKUP',
+          pickupLocationId: 'sku_pickup',
+          couponCode: couponCode ?? null,
+        }),
+      },
     );
   const stock = async (variantId: string) => (await stockOf(prisma, variantId)).available;
   const clearCarts = () => prisma.cartItem.deleteMany();

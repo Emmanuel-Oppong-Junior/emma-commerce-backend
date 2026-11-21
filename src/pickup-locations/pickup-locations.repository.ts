@@ -13,8 +13,8 @@ export class PickupLocationsRepository {
     return db.pickupLocation.create({ data });
   }
 
-  async findById(id: string): Promise<PickupLocation | null> {
-    return this.prisma.pickupLocation.findUnique({ where: { id } });
+  async findById(id: string, db: Prisma.TransactionClient = this.prisma): Promise<PickupLocation | null> {
+    return db.pickupLocation.findUnique({ where: { id } });
   }
 
   async findAll(): Promise<PickupLocation[]> {

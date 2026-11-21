@@ -16,6 +16,7 @@ describe('OrdersResolver', () => {
     getUserOrders: jest.fn(),
     getOrders: jest.fn(),
     createOrderFromCart: jest.fn(),
+    checkoutQuote: jest.fn(),
     updateShipmentStatus: jest.fn(),
     cancelOrder: jest.fn(),
     deleteOrder: jest.fn(),
@@ -61,6 +62,7 @@ describe('OrdersResolver', () => {
     shippingAddressId: 'addr1',
     contactEmail: 'test@example.com',
     contactPhone: '+233244000000',
+    quoteHash: 'a'.repeat(64),
   };
   const mockUpdateShipmentStatusInput: UpdateShipmentStatusInput = {
     orderId: 'order1',
@@ -134,8 +136,30 @@ describe('OrdersResolver', () => {
         contactPhone: '+233244000000',
         couponCode: undefined,
         paymentMethod: undefined,
+        quoteHash: 'a'.repeat(64),
       });
       expect(result).toEqual(mockOrder);
+    });
+  });
+
+  describe('checkoutQuote', () => {
+    it("prices the user's cart for the chosen fulfilment and coupon", async () => {
+      const quote = { quoteHash: 'b'.repeat(64) };
+      mockOrdersService.checkoutQuote.mockResolvedValue(quote);
+
+      const result = await resolver.checkoutQuote(mockUserId, {
+        fulfillmentType: FulfillmentTypeEnum.PICKUP,
+        pickupLocationId: 'pickup1',
+        couponCode: 'SAVE',
+      });
+
+      expect(ordersService.checkoutQuote).toHaveBeenCalledWith(mockUserId, {
+        fulfillmentType: 'PICKUP',
+        shippingAddressId: undefined,
+        pickupLocationId: 'pickup1',
+        couponCode: 'SAVE',
+      });
+      expect(result).toBe(quote);
     });
   });
 

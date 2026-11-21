@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { ShippingZone } from '../generated/prisma/client';
+import { Prisma, ShippingZone } from '../generated/prisma/client';
 import { ShippingZonesRepository } from './shipping-zones.repository';
 import { CreateShippingZoneInput } from './dto/create-shipping-zone.input';
 import { UpdateShippingZoneInput } from './dto/update-shipping-zone.input';
@@ -90,8 +90,8 @@ export class ShippingZonesService {
    * Returns the shipping fee of the active zone covering the city.
    * Throws BadRequestException when no active zone covers it: delivery there is not offered.
    */
-  async getFeeForCity(city: string): Promise<Decimal> {
-    const zone = await this.repository.findByCity(normaliseCity(city));
+  async getFeeForCity(city: string, db?: Prisma.TransactionClient): Promise<Decimal> {
+    const zone = await this.repository.findByCity(normaliseCity(city), db);
     if (!zone) {
       throw new BadRequestException(`Delivery is not available to city "${city}": no active shipping zone covers it`);
     }

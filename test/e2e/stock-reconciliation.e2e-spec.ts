@@ -8,6 +8,7 @@ import { StockLedgerRepository } from '../../src/inventory/stock-ledger.reposito
 import { StockReconciliationTask } from '../../src/inventory/tasks/stock-reconciliation.task';
 import { createTestApp } from '../helpers/app.helper';
 import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
+import { placeOrderFromCart } from '../helpers/checkout.helper';
 
 const USER_ID = 'seed_user';
 const VARIANT_ID = 'seed_var2';
@@ -42,7 +43,7 @@ describe('Nightly stock reconciliation (P1-N.3, e2e)', () => {
     await prisma.cartItem.create({
       data: { cartId: cart.id, productId: 'seed_prod2', variantId: VARIANT_ID, quantity: 3 },
     });
-    await app.get(OrdersService).createOrderFromCart(USER_ID, {
+    await placeOrderFromCart(app.get(OrdersService), USER_ID, {
       fulfillmentType: FulfillmentType.DELIVERY,
       shippingAddressId: address.id,
       contactEmail: 'user@example.com',

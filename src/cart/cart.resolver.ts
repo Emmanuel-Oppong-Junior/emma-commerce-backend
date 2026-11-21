@@ -7,15 +7,11 @@ import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Cart } from './entities/cart.entity';
-import { DiscountService } from '../discount/discount.service';
 
 @Auth(AuthType.Bearer)
 @Resolver('Cart')
 export class CartResolver {
-  constructor(
-    private readonly cartService: CartService,
-    private readonly discountService: DiscountService,
-  ) {}
+  constructor(private readonly cartService: CartService) {}
 
   @Query(() => Cart, {
     nullable: true,
@@ -49,11 +45,5 @@ export class CartResolver {
   })
   async clearCart(@ActiveUser('id') userId: string) {
     return this.cartService.clearCart(userId);
-  }
-
-  @Query(() => Cart, { description: 'Retrieves the current user’s cart priced exactly as createOrder will charge it' })
-  async cartWithDiscount(@ActiveUser('id') userId: string) {
-    const cart = await this.cartService.getCartOrThrow(userId);
-    return this.discountService.applyDiscountsToCart(cart.id);
   }
 }

@@ -16,8 +16,8 @@ export const FOR_SALE = {
 export class CartRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findByUser(userId: string): Promise<CartWithItems | null> {
-    return this.prisma.cart.findUnique({
+  async findByUser(userId: string, db: Prisma.TransactionClient = this.prisma): Promise<CartWithItems | null> {
+    return db.cart.findUnique({
       where: { userId },
       include: { items: { include: { product: true, variant: true }, orderBy: { createdAt: 'asc' } } },
     });

@@ -6,6 +6,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
 import { signInAdmin, signInSuperAdmin, signInUser } from '../helpers/auth.helper';
+import { placeOrderFromCart } from '../helpers/checkout.helper';
 
 const SETTINGS_FIELDS = `id legalName tradingName tin vatRegistered pricesIncludeTax currency supportEmail supportPhone`;
 const SHOPPERS = 20;
@@ -142,7 +143,7 @@ describe('Store settings and order numbering (e2e)', () => {
 
     const placed = await Promise.all(
       shopperIds.map((userId) =>
-        orders.createOrderFromCart(userId, {
+        placeOrderFromCart(orders, userId, {
           fulfillmentType: FulfillmentType.PICKUP,
           pickupLocationId: location.id,
           contactEmail: 'shopper@example.com',

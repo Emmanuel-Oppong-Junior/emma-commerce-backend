@@ -14,6 +14,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest, MoneyValue } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 /** Computes the HMAC-SHA512 webhook signature the same way the PaymentService does. */
 function computeSignature(body: object): string {
@@ -42,7 +43,7 @@ describe('Payments & Returns (e2e)', () => {
     // Create the order
     const res = await gqlRequest(
       app,
-      `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+      `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
       undefined,
       userToken,
     ).expect(200);
@@ -256,7 +257,7 @@ describe('Payments & Returns (e2e)', () => {
       ).expect(200);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${user2AddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, user2Token, { fulfillmentType: 'DELIVERY', shippingAddressId: user2AddressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${user2AddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         user2Token,
       ).expect(200);

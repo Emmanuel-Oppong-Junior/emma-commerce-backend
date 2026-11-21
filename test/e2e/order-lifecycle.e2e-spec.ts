@@ -7,6 +7,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin, signInUser, signUpUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, setStock, stockOf } from '../helpers/db.helper';
 import { migrationSql, migrationSqlFrom, ScratchSchema } from '../helpers/migration.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 interface GqlResult {
   data?: Record<string, any>;
@@ -48,8 +49,15 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     const place = options.pickup
       ? 'fulfillmentType: PICKUP, pickupLocationId: "lifecycle_pickup"'
       : `fulfillmentType: DELIVERY, shippingAddressId: "${addressId}"`;
+    const quoteHash = await quoteHashFor(
+      app,
+      token,
+      options.pickup
+        ? { fulfillmentType: 'PICKUP', pickupLocationId: 'lifecycle_pickup' }
+        : { fulfillmentType: 'DELIVERY', shippingAddressId: addressId },
+    );
     const res = await gql(
-      `mutation { createOrder(input: { ${place}, contactEmail: "user@example.com", contactPhone: "+233244000000",
+      `mutation { createOrder(input: { ${place}, quoteHash: "${quoteHash}", contactEmail: "user@example.com", contactPhone: "+233244000000",
         paymentMethod: ${options.cod ? 'CASH_ON_DELIVERY' : 'ONLINE'} }) { id } }`,
       token,
     );

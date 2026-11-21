@@ -1269,8 +1269,10 @@ A cart line is one **variant** (SKU) of a product (see [2.8](#28-variants)). Onl
 #### `cart`
 - **Type**: Query
 - **Auth Required**: Yes
-- **Description**: Retrieve the current user's cart. Each item's `originalPrice` is the variant `price` recorded when it was last added, and totals are not filled in; use `cartWithDiscount` for the current prices and totals checkout will charge.
+- **Description**: Retrieve the current user's cart. Each item's `originalPrice` is the variant `price` recorded when it was last added. For the current price of a line show `item.variant.price` and `item.variant.discountedPrice`; for the totals checkout will charge call [`checkoutQuote`](#checkoutquote).
 - **Response**: `Cart | null` (`null` until the first item is added)
+
+**Breaking change (P2-A.2):** `Cart.total`, `Cart.discountTotal`, `Cart.finalTotal`, `CartItem.discountedPrice` and `CartItem.appliedDiscount` → removed (only `cartWithDiscount` ever filled them); use `checkoutQuote` (totals, per-line discounts and tax) or `CartItem.variant.discountedPrice` / `appliedDiscount` (per item, before the cart is checked out).
 
 **`Cart` Object Type**:
 
@@ -1279,9 +1281,6 @@ A cart line is one **variant** (SKU) of a product (see [2.8](#28-variants)). Onl
   id: string;
   userId: string;
   items: CartItem[];
-  total?: Money;           // Set by cartWithDiscount: sum of price × quantity
-  discountTotal?: Money;   // Set by cartWithDiscount: product discounts
-  finalTotal?: Money;      // Set by cartWithDiscount: total - discountTotal; what createOrder charges for the items
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -1296,9 +1295,7 @@ A cart line is one **variant** (SKU) of a product (see [2.8](#28-variants)). Onl
   variant: Variant;
   productId: string;         // The variant's product
   product: Product;
-  originalPrice?: Money;     // List price of one unit of the variant
-  discountedPrice?: Money;   // Set by cartWithDiscount
-  appliedDiscount?: Discount;
+  originalPrice?: Money;     // List price of one unit of the variant when it was last added
   quantity: number;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -1367,12 +1364,9 @@ A quantity above 0 re-checks the line's variant exactly as `addToCart` does (sti
 
 ---
 
-#### `cartWithDiscount`
-- **Type**: Query
-- **Auth Required**: Yes
-- **Description**: Returns the cart priced exactly as `createOrder` will charge it, each line from its variant: `originalPrice` (the variant's current `price`), `discountedPrice` (unit price after the best active discount for that variant) and the cart's `total`, `discountTotal`, `finalTotal`. `createOrder` charges `finalTotal` for the items, plus shipping, minus any coupon (see [Section 10](#10-discounts-system)).
-- **Response**: `Cart!`
-- **Possible Errors**: `NOT_FOUND` (no cart yet); `BAD_REQUEST` if a variant in the cart has no price (`"<product>" (<sku>) has no price and cannot be sold`). A discount whose `minimumPurchase` the cart does not reach is not applied.
+#### `cartWithDiscount` (removed)
+
+**Breaking change (P2-A.2):** `cartWithDiscount` → removed; use [`checkoutQuote`](#checkoutquote), which prices the cart exactly as `createOrder` charges it (item discounts, coupon, tax and shipping) and writes nothing (`cartWithDiscount` also rewrote the cart lines).
 
 ---
 
@@ -1600,12 +1594,84 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 
 ---
 
+#### `checkoutQuote`
+- **Type**: Query
+- **Roles**: any signed-in user (`@Auth(Bearer)`, like `createOrder`)
+- **Args**: `input: CheckoutQuoteInput!`
+- **Response**: `CheckoutQuote!`
+- **Description**: Prices the caller's cart for checkout with the chosen fulfilment and coupon, exactly as `createOrder` will charge it, and returns the full breakdown plus the `quoteHash` that `createOrder` requires. Writes nothing (no reservation, no coupon use). Show its `grandTotal` as the amount to pay and send its `quoteHash` with `createOrder`. Quote again whenever the cart, fulfilment or coupon changes. A quote does not expire: `createOrder` re-prices the cart and compares.
+
+**Input: `CheckoutQuoteInput`** (the fulfilment and coupon fields of `CreateOrderInput`)
+
+```typescript
+{
+  fulfillmentType: FulfillmentType;  // Required. DELIVERY | PICKUP
+  shippingAddressId?: string;        // Required for DELIVERY: one of the caller's addresses
+  pickupLocationId?: string;         // Required for PICKUP: an active pickup location
+  couponCode?: string;               // Optional. Case-insensitive.
+}
+```
+
+**`CheckoutQuote` Object Type**:
+
+```typescript
+{
+  quoteHash: string;                 // 64 hex chars. Send to createOrder.
+  currency: Currency;                // GHS
+  pricingVersion: number;            // The pricing rules used (1); the order stores it
+  lines: QuoteLine[];                // In cart order
+  adjustments: QuoteOrderAdjustment[]; // The coupon, if it takes anything off
+  subtotal: Money;                   // Σ unitListPrice × quantity, before any discount, tax included
+  discountTotal: Money;              // Item discounts + coupon
+  taxTotal: Money;                   // Tax included in the line totals
+  shippingTotal: Money;              // 0 for pickup
+  grandTotal: Money;                 // What createOrder charges: subtotal - discountTotal + shippingTotal
+}
+
+QuoteLine {
+  cartItemId: string; variantId: string; productId: string; productName: string; sku: string;
+  optionValues?: JSON; quantity: number;
+  unitListPrice: Money;              // Variant price, tax included
+  unitDiscount: Money;               // Best item discount on one unit
+  unitNet: Money;                    // One discounted unit without tax
+  unitTax: Money;                    // Tax included in one discounted unit
+  lineTotal: Money;                  // (unitListPrice - unitDiscount) × quantity
+  adjustments: QuoteAdjustment[];    // The item discount: { type: DISCOUNT, sourceId, code: null, amount (negative) }
+  taxLines: QuoteTaxLine[];          // { taxId, name, rate, base, amount }, one per active tax on a taxable line
+}
+
+QuoteOrderAdjustment {
+  type: OrderAdjustmentType;         // COUPON
+  sourceId: string; code?: string;
+  amount: Money;                     // Negative
+  allocations: { cartItemId: string; amount: Money }[]; // Each line's share; they add up exactly to amount
+}
+```
+
+**Possible Errors**: the same as `createOrder` steps 1–4 below (`NOT_FOUND` for no or empty cart, unknown address or coupon; `BAD_REQUEST` for an unsellable or out-of-stock line, uncovered city, inactive pickup point, unusable coupon...).
+
+**Example**:
+```graphql
+query {
+  checkoutQuote(input: { fulfillmentType: DELIVERY, shippingAddressId: "clx_address_xyz", couponCode: "SAVE10" }) {
+    quoteHash
+    lines { cartItemId sku quantity unitListPrice { amount currency } unitDiscount { amount currency } lineTotal { amount currency } }
+    adjustments { type code amount { amount currency } allocations { cartItemId amount { amount currency } } }
+    subtotal { amount currency } discountTotal { amount currency } taxTotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency }
+  }
+}
+```
+
+---
+
 #### `createOrder`
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `input: CreateOrderInput!`
 - **Response**: `Order!`
-- **Description**: Create an order from the caller's cart, for delivery to a saved address or for pickup. Each line's stock is reserved immediately (see [9](#9-inventory-rules)); the cart is emptied.
+- **Description**: Create an order from the caller's cart at the price of the `checkoutQuote` the customer confirmed, for delivery to a saved address or for pickup. Each line's stock is reserved immediately (see [9](#9-inventory-rules)); the cart is emptied.
+
+**Breaking change (P2-A.2):** `CreateOrderInput.quoteHash` is new and **required**: call `checkoutQuote` with the same fulfilment and coupon first and send its `quoteHash`. If anything that determines the charge changed in between (a price, a discount, the coupon's value, a tax rate, the shipping fee, the cart), `createOrder` fails with `CONFLICT` and `extensions.reason: "QUOTE_CHANGED"`: nothing is reserved, charged or recorded; quote again and show the new total.
 
 **Input: `CreateOrderInput`**
 
@@ -1614,29 +1680,32 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   fulfillmentType: FulfillmentType;       // Required. DELIVERY | PICKUP
   shippingAddressId?: string;             // Required for DELIVERY: one of the caller's addresses
   pickupLocationId?: string;              // Required for PICKUP: an active pickup location
+  couponCode?: string;                    // Optional. Case-insensitive.
   contactEmail: string;                   // Required. Valid email.
   contactPhone: string;                   // Required. Valid phone number in international format (e.g. +233…).
-  couponCode?: string;                    // Optional. Case-insensitive.
   paymentMethod?: OrderPaymentMethod;     // Default ONLINE (Paystack). CASH_ON_DELIVERY to pay on delivery/pickup.
+  quoteHash: string;                      // Required. checkoutQuote's quoteHash for the same fulfilment and coupon.
 }
 ```
 
-**What happens**:
-1. The cart must exist and hold 1–50 items; the account must be active.
+**What happens** (all in one database transaction):
+1. The cart row is locked (a second `createOrder` for the same cart waits, then finds the cart empty: `NOT_FOUND`). The cart must hold 1–50 items; the account must be active.
 2. `DELIVERY`: the address must belong to the caller and have a region, recipient name and phone (addresses saved before those fields existed may lack them). The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
-3. Each line is priced from its **variant** exactly as `cartWithDiscount` shows it: the variant's current `price` (tax-inclusive) minus the best active discount for that variant (its own, its product's or its category's). The sum of the `lineTotal`s equals the cart's `finalTotal`; the product discounts equal the cart's `discountTotal`. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
-4. A coupon, if given, is validated against the lines after product discounts (before shipping) and its use is recorded.
-5. `grandTotal = max(0, Σ lineTotal + shippingTotal - coupon)`. This is the amount Paystack is asked for. The order stores the breakdown (`subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`), one `OrderAdjustment` per discounted line and for the coupon, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with `pricingVersion` 1.
-6. In one transaction: the order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant is active and its product active and `PUBLISHED`, and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); the cart is emptied.
-7. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
-8. A confirmation email goes to the account's email (not `contactEmail`) after the response.
+3. The cart's variants are share-locked, then the prices, discounts, coupon, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-discounts-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus the best active discount for that variant (its own, its product's or its category's). Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
+4. A coupon, if given, must be usable (active, not expired, under its usage limit, not used by the caller, minimum order amount reached by the lines after product discounts); it comes off those lines, before shipping, never more than them.
+5. The resulting quote's hash must equal `quoteHash`; otherwise `CONFLICT` / `QUOTE_CHANGED` and nothing is written.
+6. `grandTotal = Σ lineTotal - coupon + shippingTotal`, the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per discounted line and one for the coupon, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with `pricingVersion` 1.
+7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); the coupon use is recorded; the cart is emptied.
+8. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
+9. A confirmation email goes to the account's email (not `contactEmail`) after the response.
 
 No tax is added at checkout; tax is already inside each variant's `price`, and the order records how much (see "How the totals add up").
 
 **Possible Errors**:
-- `NOT_FOUND` — No cart, empty cart, shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
+- `CONFLICT` with `extensions.reason: "QUOTE_CHANGED"` — the cart no longer prices to the quote (see above). Call `checkoutQuote` again.
+- `NOT_FOUND` — No cart, empty cart (also the second of two simultaneous submits), shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
 - `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon inactive, expired, at its usage limit, already used by the caller, or below its minimum order amount.
-- `BAD_USER_INPUT` — Invalid `contactEmail`/`contactPhone` or enum value.
+- `BAD_USER_INPUT` — Missing or malformed `quoteHash`; invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:
 ```graphql
@@ -1647,6 +1716,7 @@ mutation {
     contactEmail: "jane@example.com"
     contactPhone: "+233201234567"
     couponCode: "SAVE10"
+    quoteHash: "<checkoutQuote.quoteHash>"
   }) {
     id orderNumber status paymentMethod subtotal { amount currency } discountTotal { amount currency } taxTotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency }
     adjustments { type code amount { amount currency } }
@@ -1903,7 +1973,7 @@ Coupon codes are stored upper-case and matched case-insensitively.
 ```typescript
 {
   code: string;        // Required.
-  orderTotal: Decimal;   // Required. Min 0. Use `cartWithDiscount.finalTotal` (createOrder applies the coupon to the subtotal after product discounts, before shipping).
+  orderTotal: Decimal;   // Required. Min 0. The subtotal after product discounts, before shipping (Σ lineTotal of a checkoutQuote without the coupon). Prefer checkoutQuote with couponCode, which shows the exact coupon amount.
 }
 ```
 
@@ -1925,7 +1995,7 @@ Coupon codes are stored upper-case and matched case-insensitively.
 
 ### 2.14 Discounts
 
-Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). A discount attached to a product applies to all its variants. They are shown on each variant (`Variant.discountedPrice`, `appliedDiscount`) and in `cartWithDiscount`, and `createOrder` charges the same prices (see [Section 10](#10-discounts-system)). **Breaking change (P1-V.3):** `Product.discountedPrice` / `Product.appliedDiscount` → removed; read them on `Product.variants`.
+Discounts are admin-configured price reductions attached to products, variants or categories. They differ from coupons (codes a customer enters). A discount attached to a product applies to all its variants. They are shown on each variant (`Variant.discountedPrice`, `appliedDiscount`) and in `checkoutQuote`, and `createOrder` charges the same prices (see [Section 10](#10-discounts-system)). **Breaking change (P1-V.3):** `Product.discountedPrice` / `Product.appliedDiscount` → removed; read them on `Product.variants`.
 
 ---
 
@@ -1961,7 +2031,7 @@ Discounts are admin-configured price reductions attached to products, variants o
   products?: string[];        // Product IDs. Default [].
   variants?: string[];        // Variant IDs. Default [].
   categories?: string[];      // Category IDs. Default [].
-  minimumPurchase?: Decimal;    // Minimum cart total for cartWithDiscount.
+  minimumPurchase?: Decimal;    // Minimum list-price cart total (before discounts) for the discount to apply at checkout.
 }
 ```
 
@@ -3238,7 +3308,7 @@ type Money {
 |---|
 | `Order.subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, `grandTotal`; `OrderAdjustment.amount` |
 | `OrderItem.unitListPrice`, `unitDiscount`, `unitNet`, `unitTax`, `lineTotal`; `OrderLineTax.base`, `amount` |
-| `Cart.total`, `discountTotal`, `finalTotal`; `CartItem.originalPrice`, `discountedPrice` |
+| `CartItem.originalPrice` (`Cart.total`, `discountTotal`, `finalTotal` and `CartItem.discountedPrice` were also converted, then removed in P2-A.2) |
 | `Variant.price` (`Product.price`, `basePrice`, `currentPrice`, `discountedPrice` were also converted, then removed in P1-V.3) |
 | `Payment.amount`; `RefundEntity.amount`; `ReturnRequestEntity.refundAmount` |
 | `Coupon.minimumOrderAmount`; `CouponValidation.discountAmount`; `Discount.minimumPurchase` |
@@ -3434,16 +3504,16 @@ Authorization: Bearer <accessToken>
 1. To change quantity: `mutation updateCartItem(input: { cartItemId, quantity })`. Setting `quantity: 0` removes the item.
 2. To remove an item directly: `mutation removeFromCart(cartItemId)`.
 3. To empty the cart: `mutation clearCart`.
-4. To show prices and totals with discounts: `query cartWithDiscount` (checkout charges the same `finalTotal`).
+4. To show per-item discounted prices: `CartItem.variant.discountedPrice`. The totals checkout charges come from `checkoutQuote` once a fulfilment is chosen.
 
 ### Checkout Flow
 
 1. Choose fulfilment:
    - `DELIVERY`: the user needs a saved address (`query userAddresses` or `mutation createAddress`). Show the fee with `query getShippingFee(addressId)`; a `BAD_REQUEST` means either the address is incomplete (an address saved before P1-G without region, recipient or phone: ask the customer to complete it with `updateAddress`) or the city is not served (offer pickup or another address).
    - `PICKUP`: list locations with `query activePickupLocations` (public).
-2. Optionally validate a coupon: `mutation validateCoupon(input: { code, orderTotal: <cartWithDiscount.finalTotal> })`.
-3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, contactEmail, contactPhone, couponCode?, paymentMethod? })`.
-4. Backend checks each variant is still sellable and in stock, prices each line from its variant as `cartWithDiscount` does, applies the coupon to that subtotal, adds the shipping fee → creates the `Order` (`PLACED` for `ONLINE`, `CONFIRMED` for `CASH_ON_DELIVERY`) with each line's `sku` and `optionValues` → decrements each variant's stock → clears cart → sends confirmation email. A `BAD_REQUEST` naming a variant means the customer must remove or change that cart line.
+2. Price the checkout: `query checkoutQuote(input: { fulfillmentType, shippingAddressId | pickupLocationId, couponCode? })`. Show its lines, coupon, tax, shipping and `grandTotal`; keep its `quoteHash`. Quote again after any change to the cart, fulfilment or coupon.
+3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, couponCode?, contactEmail, contactPhone, paymentMethod?, quoteHash })`. On `CONFLICT` with `extensions.reason: "QUOTE_CHANGED"`, re-run step 2 and ask the customer to confirm the new total.
+4. Backend, in one transaction, re-prices the cart from current prices, discounts, coupon, tax rates and shipping, checks it matches `quoteHash`, checks each variant is still sellable and in stock → creates the `Order` (`PLACED` for `ONLINE`, `CONFIRMED` for `CASH_ON_DELIVERY`) with each line's `sku` and `optionValues` → decrements each variant's stock → clears cart → sends confirmation email. A `BAD_REQUEST` naming a variant means the customer must remove or change that cart line.
 5. `ONLINE`: continue with the Order Placement Flow within 1 hour, or the order expires. `CASH_ON_DELIVERY`: done; staff fulfil it (`updateShipmentStatus`) and record the cash with `recordCodPayment`.
 
 ### Order Placement Flow
@@ -3642,28 +3712,28 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
 | | Discount | Coupon |
 |---|---|---|
 | Scope | Product / Variant / Category | Order subtotal |
-| Applied | Shown automatically on variants (`Variant.discountedPrice`) and in `cartWithDiscount` | Entered as `couponCode` at checkout |
+| Applied | Shown automatically on variants (`Variant.discountedPrice`) and in `checkoutQuote` | Entered as `couponCode` in `checkoutQuote` and `createOrder` |
 | Charged at checkout | Yes (`DISCOUNT` adjustments, per item `unitDiscount`) | Yes (the `COUPON` adjustment) |
 | Type | `Discount` | `Coupon` |
 
 ### Discount Application
 
 - A `Discount` applies when `isActive = true` and now is within `[startDate, endDate]`.
-- Discounts are priced per **variant**. For a variant, the candidates are its own discounts, its product's discounts (a product discount applies to every variant of the product) and its product's category's discounts. The **best** one is the one that saves the most money on one unit at the variant's current price (on a GHS 50 item, GHS 8 off beats 10% off; on GHS 1,000, 30% off beats GHS 50 off). On an equal saving the first candidate is kept.
+- Discounts are priced per **variant**. For a variant, the candidates are its own discounts, its product's discounts (a product discount applies to every variant of the product) and its product's category's discounts. The **best** one is the one that saves the most money on one unit at the variant's current price (on a GHS 50 item, GHS 8 off beats 10% off; on GHS 1,000, 30% off beats GHS 50 off). On an equal saving the oldest discount (earliest `createdAt`, then lowest id) is taken.
 - Unit discount: `PERCENTAGE` → `Variant.price × value / 100`, `FLAT` → `value`, rounded half-up to 2 decimal places and never more than the price. `discountedPrice = price - unit discount`; line total = `discountedPrice × quantity`.
 - `minimumPurchase`: in the cart and at checkout a discount applies only when the cart's list-price `total` (all items, before discounts) reaches its minimum; otherwise it is skipped and the next best discount applies. `Variant.discountedPrice` on product pages does not check minimums.
-- **Checkout charges the same prices**: `Variant.discountedPrice`, `cartWithDiscount` and `createOrder` use one pricing function, so the sum of the order's `lineTotal`s equals `cartWithDiscount.finalTotal` at the moment of checkout. An order is priced once, when it is created; nothing re-prices an existing order.
+- **Checkout charges the quote** (P2-A, ADR-0005): one pricing engine prices `Variant.discountedPrice` (its item rule), `checkoutQuote` and `createOrder`, so the order's `grandTotal` equals the `checkoutQuote.grandTotal` whose `quoteHash` it was sent. An order is priced once, when it is created; nothing re-prices an existing order.
 
 ### Coupon Logic
 
 - Applied at `createOrder` via `couponCode`, against the order subtotal (after product discounts, before shipping).
-- Checks (`CouponsService.validateCoupon`, repeated inside the order transaction):
+- Checks (the pricing engine, in `checkoutQuote`, `validateCoupon` and again inside the order transaction):
   1. Coupon exists (`NOT_FOUND`) and `isActive = true`.
   2. Not expired (`expiresAt` is null or in the future).
   3. Usage limit not reached (`usedCount < usageLimit`, or `usageLimit` is null).
   4. User has not already used this coupon.
   5. Subtotal ≥ `minimumOrderAmount`.
-- Discount: `PERCENTAGE` → subtotal × value / 100; `FLAT` → min(value, subtotal). Saved as the order's `COUPON` adjustment; `Coupon.usedCount` increments.
+- Discount: `PERCENTAGE` → subtotal × value / 100 (rounded half-up); `FLAT` → value; never more than the subtotal (P2-A: a percentage over 100 no longer eats into shipping). It is allocated to the lines by largest remainder (`checkoutQuote` `allocations`), so the shares add up exactly. Saved as the order's `COUPON` adjustment; `Coupon.usedCount` increments.
 - Cancelling or expiring the order gives the use back (usage record removed, `usedCount` decremented).
 
 ### Stacking Rules
@@ -4553,23 +4623,24 @@ mutation {
 
 ---
 
-### Step 7 — View Cart with Discounts
+### Step 7 — Quote the Checkout
 
 ```graphql
 query {
-  cartWithDiscount {
-    id total { amount currency } discountTotal { amount currency } finalTotal { amount currency }
-    items {
-      id quantity originalPrice { amount currency } discountedPrice { amount currency }
-      product { name }
-      variant { sku optionValues }
-      appliedDiscount { name type value }
+  checkoutQuote(input: { fulfillmentType: DELIVERY, shippingAddressId: "clx_address_xyz", couponCode: "SAVE10" }) {
+    quoteHash
+    lines {
+      cartItemId sku quantity unitListPrice { amount currency } unitDiscount { amount currency } lineTotal { amount currency }
+      adjustments { sourceId amount { amount currency } }
     }
+    adjustments { type code amount { amount currency } allocations { cartItemId amount { amount currency } } }
+    subtotal { amount currency } discountTotal { amount currency } taxTotal { amount currency }
+    shippingTotal { amount currency } grandTotal { amount currency }
   }
 }
 ```
 
-`createOrder` charges `finalTotal` for these items (plus shipping, minus any coupon); see [Section 10](#10-discounts-system).
+`createOrder` charges exactly `grandTotal` when it is sent this `quoteHash`; see [Section 10](#10-discounts-system).
 
 ---
 
@@ -4613,6 +4684,7 @@ mutation {
     contactEmail: "jane@example.com"
     contactPhone: "+233201234567"
     couponCode: "SAVE10"
+    quoteHash: "<checkoutQuote.quoteHash from step 7>"
   }) {
     id orderNumber status paymentMethod
     subtotal { amount currency } discountTotal { amount currency } taxTotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency }

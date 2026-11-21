@@ -1,4 +1,4 @@
-import { Cart, CartItem, Prisma } from '../../generated/prisma/client';
+import { Prisma } from '../../generated/prisma/client';
 import { CreateDiscountInput } from '../dto/create-discount.input';
 import { UpdateDiscountInput } from '../dto/update-discount.input';
 
@@ -18,13 +18,6 @@ export interface DiscountSetInput {
   products?: { set?: { id: string }[] };
   variants?: { set?: { id: string }[] };
   categories?: { set?: { id: string }[] };
-}
-
-export interface CartWithDiscount extends Cart {
-  items: CartItem[];
-  total: Prisma.Decimal;
-  discountTotal: Prisma.Decimal;
-  finalTotal: Prisma.Decimal;
 }
 
 export type CreateOrUpdateDiscountInput = CreateDiscountInput | UpdateDiscountInput;

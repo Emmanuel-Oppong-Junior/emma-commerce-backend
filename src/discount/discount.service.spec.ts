@@ -4,13 +4,12 @@ import { DiscountService } from './discount.service';
 import { DiscountRepository } from './discount.repository';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
-import { Discount, Prisma, Product, Variant } from '../generated/prisma/client';
+import { Discount, Prisma } from '../generated/prisma/client';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { DiscountType } from './enums/discount-type.enum';
 import { AuditService } from '../commons/audit.service';
 import { AUDIT_TX, createAuditServiceMock, withoutUndefined } from '../../test/helpers/audit.helper';
 import { Decimal } from '@prisma/client/runtime/client';
-import { StoreService } from '../store/store.service';
 
 const mockCacheManager = {
   get: jest.fn(),
@@ -46,52 +45,6 @@ const mockDiscount: Discount = {
   updatedAt: new Date('2025-05-01'),
 };
 
-const mockProduct = {
-  id: 'product1',
-  name: 'T-Shirt',
-  description: null,
-  images: [],
-  isActive: true,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-  categoryId: 'category1',
-  subcategoryId: null,
-  brandId: null,
-} as unknown as Product;
-
-const mockVariant = {
-  id: 'variant1',
-  productId: 'product1',
-  sku: 'TSHIRT001',
-  price: new Prisma.Decimal(100),
-  quantity: 10,
-  isActive: true,
-  discountId: null,
-} as unknown as Variant;
-
-const mockCartItem = {
-  id: 'cartItem1',
-  cartId: 'cart1',
-  productId: 'product1',
-  variantId: 'variant1',
-  quantity: 2,
-  originalPrice: 100,
-  discountedPrice: null,
-  discountId: null,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-  product: mockProduct,
-  variant: mockVariant,
-};
-
-const mockCart = {
-  id: 'cart1',
-  userId: 'user1',
-  items: [mockCartItem],
-  createdAt: new Date(),
-  updatedAt: new Date(),
-};
-
 const mockAuditService = createAuditServiceMock();
 
 describe('DiscountService', () => {
@@ -105,7 +58,6 @@ describe('DiscountService', () => {
         { provide: DiscountRepository, useValue: mockDiscountRepository },
         { provide: CACHE_MANAGER, useValue: mockCacheManager },
         { provide: AuditService, useValue: mockAuditService },
-        { provide: StoreService, useValue: { getCurrency: jest.fn().mockResolvedValue('GHS') } },
       ],
     }).compile();
 
@@ -340,121 +292,6 @@ describe('DiscountService', () => {
 
       expect(result).toEqual([]);
       expect(discountRepository.findActiveDiscountsFor).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('applyDiscountsToCart', () => {
-    // The engine applies only discounts in date at the time of pricing.
-    const targeting = (discount: Discount, productIds: string[], categoryIds: string[] = []) => ({
-      ...discount,
-      startDate: new Date(Date.now() - 86_400_000),
-      endDate: new Date(Date.now() + 86_400_000),
-      products: productIds.map((id) => ({ id })),
-      categories: categoryIds.map((id) => ({ id })),
-    });
-
-    it('should apply discounts to cart items and compute totals', async () => {
-      mockDiscountRepository.findCartById.mockResolvedValue(mockCart);
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([targeting(mockDiscount, ['product1'])]);
-      mockDiscountRepository.updateCartItem.mockResolvedValue({
-        ...mockCartItem,
-        discountedPrice: 80,
-        discountId: 'discount1',
-      });
-
-      const result = await service.applyDiscountsToCart('cart1');
-
-      expect(result).toEqual({
-        ...mockCart,
-        items: [{ ...mockCartItem, discountedPrice: 80, discountId: 'discount1' }],
-        total: new Decimal('200'),
-        discountTotal: new Decimal('40'),
-        finalTotal: new Decimal('160'),
-      });
-      expect(discountRepository.findActiveDiscountsFor).toHaveBeenCalledWith(
-        ['product1'],
-        ['category1'],
-        [],
-        expect.any(Date),
-        undefined,
-      );
-      expect(discountRepository.updateCartItem).toHaveBeenCalledWith('cartItem1', {
-        originalPrice: new Prisma.Decimal(100),
-        discountedPrice: new Prisma.Decimal(80),
-        discountId: 'discount1',
-      });
-    });
-
-    it('applies a category discount when it saves more than the product discount', async () => {
-      const flatTen = { ...mockDiscount, id: 'flat10', type: DiscountType.FLAT, value: new Prisma.Decimal(10) };
-      mockDiscountRepository.findCartById.mockResolvedValue(mockCart);
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([
-        targeting(flatTen, ['product1']),
-        targeting(mockDiscount, [], ['category1']),
-      ]);
-      mockDiscountRepository.updateCartItem.mockResolvedValue(mockCartItem);
-
-      const result = await service.applyDiscountsToCart('cart1');
-
-      expect(result.discountTotal).toEqual(new Decimal('40'));
-      expect(discountRepository.updateCartItem).toHaveBeenCalledWith(
-        'cartItem1',
-        expect.objectContaining({ discountId: 'discount1' }),
-      );
-    });
-
-    it('should throw NotFoundException for non-existent cart', async () => {
-      mockDiscountRepository.findCartById.mockResolvedValue(null);
-
-      await expect(service.applyDiscountsToCart('cart2')).rejects.toThrow(NotFoundException);
-    });
-
-    it('does not apply a discount whose minimum purchase the cart does not reach, instead of failing the cart', async () => {
-      const discountWithMinPurchase = { ...mockDiscount, minimumPurchase: new Prisma.Decimal(300) };
-      mockDiscountRepository.findCartById.mockResolvedValue(mockCart);
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([
-        targeting(discountWithMinPurchase, ['product1']),
-      ]);
-      mockDiscountRepository.updateCartItem.mockResolvedValue(mockCartItem);
-
-      const result = await service.applyDiscountsToCart('cart1');
-
-      expect(result).toEqual(
-        expect.objectContaining({
-          total: new Decimal('200'),
-          discountTotal: new Decimal('0'),
-          finalTotal: new Decimal('200'),
-        }),
-      );
-    });
-
-    it('prices each line from its variant, not the product', async () => {
-      mockDiscountRepository.findCartById.mockResolvedValue({
-        ...mockCart,
-        items: [{ ...mockCartItem, variant: { ...mockVariant, price: new Prisma.Decimal(150) } }],
-      });
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([]);
-      mockDiscountRepository.updateCartItem.mockResolvedValue(mockCartItem);
-
-      const result = await service.applyDiscountsToCart('cart1');
-
-      expect(result.total).toEqual(new Decimal('300'));
-      expect(discountRepository.updateCartItem).toHaveBeenCalledWith('cartItem1', {
-        originalPrice: new Prisma.Decimal(150),
-        discountedPrice: new Prisma.Decimal(150),
-        discountId: null,
-      });
-    });
-
-    it('rejects a cart holding a variant without a price', async () => {
-      mockDiscountRepository.findCartById.mockResolvedValue({
-        ...mockCart,
-        items: [{ ...mockCartItem, variant: { ...mockVariant, price: null } }],
-      });
-      mockDiscountRepository.findActiveDiscountsFor.mockResolvedValue([]);
-
-      await expect(service.applyDiscountsToCart('cart1')).rejects.toThrow(BadRequestException);
-      expect(discountRepository.updateCartItem).not.toHaveBeenCalled();
     });
   });
 

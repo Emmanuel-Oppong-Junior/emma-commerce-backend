@@ -117,9 +117,9 @@ Query adminProducts                      permission: catalog.product.read
 Query brand                              public
 Query brands                             public
 Query cart                               authenticated
-Query cartWithDiscount                   authenticated
 Query categories                         public
 Query category                           authenticated
+Query checkoutQuote                      authenticated
 Query coupon                             permission: promotion.manage
 Query coupons                            permission: promotion.manage
 Query dashboardSummary                   permission: report.view

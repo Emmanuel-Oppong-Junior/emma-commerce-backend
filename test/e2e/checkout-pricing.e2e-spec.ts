@@ -6,6 +6,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, setStock, stockOf as ledgerStockOf } from '../helpers/db.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 const M = '{ amount currency }';
 
@@ -43,21 +44,24 @@ describe('Checkout pricing (e2e)', () => {
       userToken,
     ).expect(200);
 
-  const cartWithDiscount = async () => {
+  const PICKUP = { fulfillmentType: 'PICKUP', pickupLocationId: 'pricing_pickup' } as const;
+
+  const checkoutQuote = async () => {
     const res = await gqlRequest(
       app,
-      `query { cartWithDiscount { total ${M} discountTotal ${M} finalTotal ${M} items { productId originalPrice ${M} discountedPrice ${M} } } }`,
-      undefined,
+      `query($input: CheckoutQuoteInput!) { checkoutQuote(input: $input) { subtotal ${M} discountTotal ${M} grandTotal ${M}
+        lines { productId unitListPrice ${M} unitDiscount ${M} } } }`,
+      { input: PICKUP },
       userToken,
     ).expect(200);
     expect(res.body.errors).toBeUndefined();
-    return res.body.data.cartWithDiscount;
+    return res.body.data.checkoutQuote;
   };
 
-  const createPickupOrder = () =>
+  const createPickupOrder = async () =>
     gqlRequest(
       app,
-      `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "pricing_pickup", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
+      `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "pricing_pickup", contactEmail: "user@example.com", contactPhone: "+233244000000", quoteHash: "${await quoteHashFor(app, userToken, PICKUP)}" }) {
         id subtotal ${M} discountTotal ${M} shippingTotal ${M} grandTotal ${M}
         items { productId unitListPrice ${M} unitDiscount ${M} lineTotal ${M} quantity }
       } }`,
@@ -105,8 +109,8 @@ describe('Checkout pricing (e2e)', () => {
     });
     await addToCart('seed_var1', 2);
 
-    const cart = await cartWithDiscount();
-    expect(cart).toMatchObject({ total: ghs('1999.98'), discountTotal: ghs('200.00'), finalTotal: ghs('1799.98') });
+    const quote = await checkoutQuote();
+    expect(quote).toMatchObject({ subtotal: ghs('1999.98'), discountTotal: ghs('200.00'), grandTotal: ghs('1799.98') });
 
     const orderRes = await createPickupOrder();
     expect(orderRes.body.errors).toBeUndefined();
@@ -126,7 +130,7 @@ describe('Checkout pricing (e2e)', () => {
         quantity: 2,
       },
     ]);
-    expect(order.grandTotal).toEqual(cart.finalTotal);
+    expect(order.grandTotal).toEqual(quote.grandTotal);
 
     await request(app.getHttpServer())
       .post('/payment/initialize')
@@ -176,8 +180,8 @@ describe('Checkout pricing (e2e)', () => {
     });
     await addToCart('pricing_kettle_var', 1);
 
-    const cart = await cartWithDiscount();
-    expect(cart).toMatchObject({ total: ghs('200.00'), discountTotal: ghs('50.00'), finalTotal: ghs('150.00') });
+    const quote = await checkoutQuote();
+    expect(quote).toMatchObject({ subtotal: ghs('200.00'), discountTotal: ghs('50.00'), grandTotal: ghs('150.00') });
 
     const orderRes = await createPickupOrder();
     expect(orderRes.body.errors).toBeUndefined();
@@ -235,9 +239,9 @@ describe('Checkout pricing (e2e)', () => {
       const res = await addToCart('pricing_shirt_m', 1);
 
       expect(res.body.errors).toBeUndefined();
-      const cart = await cartWithDiscount();
-      expect(cart.items).toHaveLength(1);
-      expect(cart.items[0]).toMatchObject({ productId: 'pricing_shirt', originalPrice: ghs('180.00') });
+      const quote = await checkoutQuote();
+      expect(quote.lines).toHaveLength(1);
+      expect(quote.lines[0]).toMatchObject({ productId: 'pricing_shirt', unitListPrice: ghs('180.00') });
       expect(await prisma.cartItem.count({ where: { variantId: 'pricing_shirt_m' } })).toBe(1);
       expect(await prisma.cartItem.count({ where: { variantId: 'pricing_shirt_s' } })).toBe(0);
     });

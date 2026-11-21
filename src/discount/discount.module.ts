@@ -3,10 +3,9 @@ import { DiscountService } from './discount.service';
 import { DiscountResolver } from './discount.resolver';
 import { DiscountRepository } from './discount.repository';
 import { CommonsModule } from '../commons/commons.module';
-import { StoreModule } from '../store/store.module';
 
 @Module({
-  imports: [CommonsModule, StoreModule],
+  imports: [CommonsModule],
   providers: [DiscountResolver, DiscountService, DiscountRepository],
   exports: [DiscountService],
 })

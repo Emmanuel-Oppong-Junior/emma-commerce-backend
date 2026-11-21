@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CartResolver } from './cart.resolver';
 import { CartService } from './cart.service';
-import { DiscountService } from '../discount/discount.service';
 import { AddToCartInput } from './dto/add-to-cart.input';
 import { UpdateCartItemInput } from './dto/update-cart.input';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
@@ -49,11 +48,7 @@ describe('CartResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        CartResolver,
-        { provide: CartService, useValue: mockCartService },
-        { provide: DiscountService, useValue: {} },
-      ],
+      providers: [CartResolver, { provide: CartService, useValue: mockCartService }],
     }).compile();
 
     resolver = module.get<CartResolver>(CartResolver);

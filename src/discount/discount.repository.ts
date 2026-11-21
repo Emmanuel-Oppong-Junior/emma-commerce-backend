@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Cart, CartItem, Discount, Prisma, Product, Variant } from '../generated/prisma/client';
+import { Discount, Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -59,23 +59,6 @@ export class DiscountRepository {
       return ids.filter((id) => !existingIdSet.has(id));
     }
     return [];
-  }
-
-  async findCartById(
-    cartId: string,
-  ): Promise<(Cart & { items: (CartItem & { product: Product; variant: Variant })[] }) | null> {
-    return this.prisma.cart.findUnique({
-      where: { id: cartId },
-      include: { items: { include: { product: true, variant: true }, orderBy: { createdAt: 'asc' } } },
-    });
-  }
-
-  async updateCartItem(
-    id: string,
-    data: Prisma.CartItemUncheckedUpdateInput,
-    tx: PrismaService = this.prisma,
-  ): Promise<CartItem> {
-    return tx.cartItem.update({ where: { id }, data });
   }
 
   async addItemsToDiscount(

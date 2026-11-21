@@ -6,6 +6,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 import { signInAdmin, signInSuperAdmin, signInUser } from '../helpers/auth.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 describe('Audit log for privileged mutations (e2e)', () => {
   let app: INestApplication;
@@ -71,7 +72,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
     );
     await run('mutation { addToCart(input: { variantId: "seed_var1", quantity: 1 }) { id } }', userToken);
     const order = await run(
-      `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${address.createAddress.id}",
+      `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: address.createAddress.id })}", fulfillmentType: DELIVERY, shippingAddressId: "${address.createAddress.id}",
         contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
       userToken,
     );

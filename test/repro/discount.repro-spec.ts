@@ -31,7 +31,6 @@ async function priceOneUnit(unitPrice: number, discounts: ReturnType<typeof onPr
     repository as never,
     { get: jest.fn(), set: jest.fn(), del: jest.fn() } as never,
     {} as never,
-    {} as never,
   );
   const now = new Date();
   const candidates = await service.findCandidateDiscounts(
@@ -79,7 +78,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       productId: 'product-1',
       sku: 'KETTLE',
       optionValues: {},
-      price: 500,
+      price: new Prisma.Decimal(500),
       stockLevels: [{ onHand: 5, reserved: 0 }],
       isActive: true,
       discountId: null,
@@ -103,6 +102,8 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       findVariant: jest.fn().mockResolvedValue(variant),
       runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
       lockSellableVariant: jest.fn().mockResolvedValue(true),
+      lockCart: jest.fn(),
+      lockVariants: jest.fn(),
       create: jest.fn().mockImplementation((_tx, _userId, details) => ({ id: 'order-1', ...details, items: [] })),
       clearCartItems: jest.fn(),
     };
@@ -132,12 +133,14 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       { findActive: jest.fn().mockResolvedValue([]) } as never,
     );
 
-    await service.createOrderFromCart('user-1', {
+    const params = {
       fulfillmentType: 'DELIVERY',
       shippingAddressId: 'address-1',
       contactEmail: 'customer@test.local',
       contactPhone: '+233200000000',
-    });
+    } as const;
+    const { quoteHash } = await service.checkoutQuote('user-1', params);
+    await service.createOrderFromCart('user-1', { ...params, quoteHash });
 
     const [, , details] = repository.create.mock.calls[0];
     expect(Number(details.snapshot.grandTotal)).toBe(480);

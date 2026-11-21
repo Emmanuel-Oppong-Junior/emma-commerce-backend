@@ -4,9 +4,8 @@ import { Cache } from 'cache-manager';
 import { CreateDiscountInput } from './dto/create-discount.input';
 import { UpdateDiscountInput } from './dto/update-discount.input';
 import { ModifyDiscountItemsInput } from './dto/modify-discount-items.input';
-import { CartItem, Discount, Prisma } from '../generated/prisma/client';
+import { Discount, Prisma } from '../generated/prisma/client';
 import {
-  CartWithDiscount,
   CreateOrUpdateDiscountInput,
   DiscountConnectInput,
   DiscountConnectionOperation,
@@ -15,8 +14,7 @@ import {
 } from './types';
 import { DiscountRepository } from './discount.repository';
 import { AuditEntry, AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
-import { price, PricingDiscount } from '../pricing/price';
-import { StoreService } from '../store/store.service';
+import { PricingDiscount } from '../pricing/price';
 
 const DISCOUNT_ALL_KEY = 'discount:all';
 const discountKey = (id: string) => `discount:${id}`;
@@ -60,23 +58,12 @@ export interface DiscountableVariant {
   discountId: string | null;
 }
 
-function requirePrice(
-  product: { name: string },
-  variant: { id: string; sku: string; price: Prisma.Decimal | null },
-): Prisma.Decimal {
-  if (variant.price === null) {
-    throw new BadRequestException(`"${product.name}" (${variant.sku}) has no price and cannot be sold`);
-  }
-  return variant.price;
-}
-
 @Injectable()
 export class DiscountService {
   constructor(
     private readonly discountRepository: DiscountRepository,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     private readonly auditService: AuditService,
-    private readonly storeService: StoreService,
   ) {}
 
   /**
@@ -265,61 +252,6 @@ export class DiscountService {
   }
 
   /**
-   * Prices the cart's items with the pricing engine (no coupon, shipping or tax), the same item pricing createOrder
-   * charges, and records each line's price on the cart item.
-   * @throws NotFoundException if the cart is not found.
-   * @throws BadRequestException if a variant in the cart has no price.
-   */
-  async applyDiscountsToCart(cartId: string): Promise<CartWithDiscount> {
-    const cart = await this.findCartOrThrow(cartId);
-    const now = new Date();
-    const variants = cart.items.map((item) => ({
-      id: item.variantId,
-      productId: item.productId,
-      categoryId: item.product.categoryId,
-      discountId: item.variant.discountId,
-    }));
-    const quote = price(
-      {
-        lines: cart.items.map((item) => ({
-          variantId: item.variantId,
-          productId: item.productId,
-          categoryId: item.product.categoryId,
-          quantity: item.quantity,
-          unitListPrice: requirePrice(item.product, item.variant),
-          taxable: false,
-        })),
-        shippingFee: new Prisma.Decimal(0),
-      },
-      {
-        currency: await this.storeService.getCurrency(),
-        now,
-        discounts: await this.findCandidateDiscounts(variants, now),
-        taxRates: [],
-      },
-    );
-
-    const updatedItems: CartItem[] = [];
-    for (const [index, item] of cart.items.entries()) {
-      const line = quote.lines[index];
-      updatedItems.push(
-        await this.discountRepository.updateCartItem(item.id, {
-          originalPrice: line.unitListPrice,
-          discountedPrice: line.unitListPrice.sub(line.unitDiscount),
-          discountId: line.adjustments[0]?.sourceId ?? null,
-        }),
-      );
-    }
-    return {
-      ...cart,
-      items: updatedItems,
-      total: quote.subtotal,
-      discountTotal: quote.discountTotal,
-      finalTotal: quote.grandTotal,
-    };
-  }
-
-  /**
    * The discounts that may apply to the variants at `now`, as the pricing engine takes them: active, in date, and
    * targeting one of the variants (its own discount), their products or their categories. Which applies to which
    * line is the engine's decision.
@@ -379,12 +311,6 @@ export class DiscountService {
     const discount = await this.discountRepository.findById(id);
     if (!discount) throw new NotFoundException(`Discount with ID ${id} not found`);
     return discount;
-  }
-
-  private async findCartOrThrow(cartId: string) {
-    const cart = await this.discountRepository.findCartById(cartId);
-    if (!cart) throw new NotFoundException(`Cart with ID ${cartId} not found`);
-    return cart;
   }
 
   private ensureEndDateComeAfter(input: CreateOrUpdateDiscountInput) {

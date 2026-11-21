@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Currency, Store } from '../generated/prisma/client';
+import { Currency, Prisma, Store } from '../generated/prisma/client';
 import { AuditService, fieldChanges } from '../commons/audit.service';
 import { StoreRepository } from './store.repository';
 import { UpdateStoreSettingsInput } from './dto/update-store-settings.input';
@@ -26,8 +26,8 @@ export class StoreService {
   }
 
   /** The currency every price, charge and refund of this store is in. */
-  async getCurrency(): Promise<Currency> {
-    return this.storeRepository.findCurrency();
+  async getCurrency(db?: Prisma.TransactionClient): Promise<Currency> {
+    return this.storeRepository.findCurrency(db);
   }
 
   async updateSettings(input: UpdateStoreSettingsInput, actorId: string): Promise<Store> {

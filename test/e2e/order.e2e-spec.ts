@@ -5,6 +5,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, setStock, stockOf } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 describe('Orders (e2e)', () => {
   let app: INestApplication;
@@ -65,7 +66,7 @@ describe('Orders (e2e)', () => {
       // Arrange — cart already has seed_prod1 (added in beforeAll)
       const mutation = `
         mutation {
-          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
+          createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
             status
             subtotal { amount currency }
@@ -127,7 +128,7 @@ describe('Orders (e2e)', () => {
       // Arrange — cart was consumed by the previous test; no items remain
       const mutation = `
         mutation {
-          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
+          createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
           }
         }
@@ -146,7 +147,7 @@ describe('Orders (e2e)', () => {
 
       const mutation = `
         mutation {
-          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "nonexistent-address-id", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
+          createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: 'nonexistent-address-id' })}", fulfillmentType: DELIVERY, shippingAddressId: "nonexistent-address-id", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
           }
         }
@@ -177,7 +178,7 @@ describe('Orders (e2e)', () => {
 
       const res = await gqlRequest(
         app,
-        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${uncoveredAddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: uncoveredAddressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${uncoveredAddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);
@@ -202,7 +203,7 @@ describe('Orders (e2e)', () => {
 
       const order = await gqlRequest(
         app,
-        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${legacy.id}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: legacy.id })}", fulfillmentType: DELIVERY, shippingAddressId: "${legacy.id}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);
@@ -226,10 +227,10 @@ describe('Orders (e2e)', () => {
     });
 
     describe('pickup', () => {
-      const createPickupOrder = (pickupLocationId: string) =>
+      const createPickupOrder = async (pickupLocationId: string) =>
         gqlRequest(
           app,
-          `mutation { createOrder(input: { fulfillmentType: PICKUP, pickupLocationId: "${pickupLocationId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id subtotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency } pickupLocationId pickupLocationSnapshot } }`,
+          `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'PICKUP', pickupLocationId: pickupLocationId })}", fulfillmentType: PICKUP, pickupLocationId: "${pickupLocationId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id subtotal { amount currency } shippingTotal { amount currency } grandTotal { amount currency } pickupLocationId pickupLocationSnapshot } }`,
           undefined,
           userToken,
         ).expect(200);
@@ -318,7 +319,7 @@ describe('Orders (e2e)', () => {
 
       const res = await gqlRequest(
         app,
-        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);
@@ -338,7 +339,7 @@ describe('Orders (e2e)', () => {
 
       const mutation = `
         mutation {
-          createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
+          createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) {
             id
           }
         }
@@ -367,6 +368,7 @@ describe('Orders (e2e)', () => {
       const mutation = `
         mutation {
           createOrder(input: {
+            quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId, couponCode: coupon.code })}"
             fulfillmentType: DELIVERY
             shippingAddressId: "${addressId}"
             contactEmail: "user@example.com"
@@ -469,7 +471,7 @@ describe('Orders (e2e)', () => {
       await addItemToCart(user2Token);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${user2AddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, user2Token, { fulfillmentType: 'DELIVERY', shippingAddressId: user2AddressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${user2AddressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         user2Token,
       ).expect(200);
@@ -500,7 +502,7 @@ describe('Orders (e2e)', () => {
       await addItemToCart(userToken, 'seed_var1', 1);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);
@@ -534,7 +536,7 @@ describe('Orders (e2e)', () => {
       await addItemToCart(userToken, 'seed_var1', 1);
       const orderRes = await gqlRequest(
         app,
-        `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
+        `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: addressId })}", fulfillmentType: DELIVERY, shippingAddressId: "${addressId}", contactEmail: "user@example.com", contactPhone: "+233244000000" }) { id } }`,
         undefined,
         userToken,
       ).expect(200);

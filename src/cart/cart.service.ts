@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AddToCartInput } from './dto/add-to-cart.input';
-import { Cart, CartItem } from '../generated/prisma/client';
+import { Cart, CartItem, Prisma } from '../generated/prisma/client';
 import { UpdateCartItemInput } from './dto/update-cart.input';
 import { CartRepository, VariantForSale } from './cart.repository';
 import { notSellableReason } from '../variant/sellable';
@@ -66,8 +66,8 @@ export class CartService {
     return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
   }
 
-  async getCartOrThrow(userId: string): Promise<Cart & { items: CartItem[] }> {
-    const cart = await this.cartRepository.findByUser(userId);
+  async getCartOrThrow(userId: string, db?: Prisma.TransactionClient): Promise<Cart & { items: CartItem[] }> {
+    const cart = await this.cartRepository.findByUser(userId, db);
     if (!cart) throw new NotFoundException(`Cart for user "${userId}" not found`);
     return cart;
   }

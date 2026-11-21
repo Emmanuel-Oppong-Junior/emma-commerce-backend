@@ -210,11 +210,11 @@ describe('Cart (e2e)', () => {
     });
   });
 
-  // ─── cartWithDiscount ─────────────────────────────────────────────────────────
+  // ─── checkoutQuote (replaces cartWithDiscount) ──────────────────────────────
 
-  describe('cartWithDiscount', () => {
+  describe('checkoutQuote', () => {
     it('returns the cart with discount prices applied to eligible items', async () => {
-      // Arrange — create an active 10 % discount and link it to seed_prod1
+      // Arrange — create an active 10 % discount and link it to seed_prod1, and a pickup point to quote for
       await prisma.discount.create({
         data: {
           name: 'Test 10% Off',
@@ -226,20 +226,22 @@ describe('Cart (e2e)', () => {
           products: { connect: [{ id: 'seed_prod1' }] },
         },
       });
+      await prisma.pickupLocation.create({
+        data: { id: 'cart_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      });
 
       // seed_prod1 is already in the cart from the tests above
       const query = `
         query {
-          cartWithDiscount {
-            id
-            items {
-              id
+          checkoutQuote(input: { fulfillmentType: PICKUP, pickupLocationId: "cart_pickup" }) {
+            lines {
+              cartItemId
               productId
-              originalPrice { amount currency }
-              discountedPrice { amount currency }
+              unitListPrice { amount currency }
+              unitDiscount { amount currency }
             }
             discountTotal { amount currency }
-            finalTotal { amount currency }
+            grandTotal { amount currency }
           }
         }
       `;
@@ -249,13 +251,12 @@ describe('Cart (e2e)', () => {
 
       // Assert
       expect(res.body.errors).toBeUndefined();
-      const cart = res.body.data.cartWithDiscount;
-      expect(cart).not.toBeNull();
-      const discountedItem = cart.items.find((i: { productId: string }) => i.productId === 'seed_prod1');
-      expect(discountedItem).toBeDefined();
+      const quote = res.body.data.checkoutQuote;
+      const discountedLine = quote.lines.find((l: { productId: string }) => l.productId === 'seed_prod1');
+      expect(discountedLine).toBeDefined();
       // 10% off 999.99 is 100.00 (99.999 rounded half-up), so the unit price drops to 899.99
-      expect(discountedItem.originalPrice).toEqual(ghs('999.99'));
-      expect(discountedItem.discountedPrice).toEqual(ghs('899.99'));
+      expect(discountedLine.unitListPrice).toEqual(ghs('999.99'));
+      expect(discountedLine.unitDiscount).toEqual(ghs('100.00'));
     });
   });
 

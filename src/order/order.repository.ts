@@ -319,12 +319,37 @@ export class OrdersRepository {
     }) as unknown as OrderWithItems;
   }
 
-  async findAddressForUser(addressId: string, userId: string): Promise<Address | null> {
-    return this.prisma.address.findFirst({ where: { id: addressId, userId } });
+  async findAddressForUser(
+    addressId: string,
+    userId: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<Address | null> {
+    return db.address.findFirst({ where: { id: addressId, userId } });
   }
 
-  async findUserById(id: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { id } });
+  async findUserById(id: string, db: Prisma.TransactionClient = this.prisma): Promise<User | null> {
+    return db.user.findUnique({ where: { id } });
+  }
+
+  /**
+   * Locks the user's cart row until the order transaction ends, so two checkouts of the same cart run one after the
+   * other (the second then finds the cart empty). NO KEY UPDATE does not block adding items to the cart meanwhile.
+   */
+  async lockCart(tx: Prisma.TransactionClient, userId: string): Promise<void> {
+    await tx.$queryRaw`SELECT 1 FROM "Cart" WHERE "userId" = ${userId} FOR NO KEY UPDATE`;
+  }
+
+  /**
+   * Share-locks the variants and their products, in id order (so concurrent checkouts cannot deadlock), before their
+   * prices are read: a price change waits for the order to commit, so the order is priced at what it reads.
+   */
+  async lockVariants(tx: Prisma.TransactionClient, variantIds: string[]): Promise<void> {
+    if (variantIds.length === 0) return;
+    await tx.$queryRaw`
+      SELECT v.id FROM "Variant" v JOIN "Product" p ON p.id = v."productId"
+      WHERE v.id = ANY(${variantIds}::text[])
+      ORDER BY v.id
+      FOR SHARE OF v, p`;
   }
 
   /**
@@ -340,8 +365,8 @@ export class OrdersRepository {
     return rows.length === 1;
   }
 
-  async findVariant(variantId: string): Promise<VariantForSale | null> {
-    return this.prisma.variant.findUnique({ where: { id: variantId }, include: FOR_SALE });
+  async findVariant(variantId: string, db: Prisma.TransactionClient = this.prisma): Promise<VariantForSale | null> {
+    return db.variant.findUnique({ where: { id: variantId }, include: FOR_SALE });
   }
 
   async clearCartItems(tx: Prisma.TransactionClient, cartId: string): Promise<void> {

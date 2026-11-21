@@ -2,6 +2,8 @@ import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/g
 import { Order } from './entities/order.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateOrderInput } from './dto/create-order.input';
+import { CheckoutQuoteInput } from './dto/checkout-quote.input';
+import { CheckoutQuote } from './entities/checkout-quote.entity';
 import { UpdateShipmentStatusInput } from './dto/update-shipment-status.input';
 import { OrderStatusEvent } from './entities/order-status-event.entity';
 import { Shipment } from './entities/shipment.entity';
@@ -60,9 +62,26 @@ export class OrdersResolver {
   }
 
   @Auth(AuthType.Bearer)
+  @Query(() => CheckoutQuote, {
+    description:
+      "Prices the current user's cart for checkout with the chosen fulfilment and coupon: the full breakdown and the " +
+      'quoteHash createOrder needs. Writes nothing',
+  })
+  async checkoutQuote(@ActiveUser('id') userId: string, @Args('input') input: CheckoutQuoteInput) {
+    return this.ordersService.checkoutQuote(userId, {
+      fulfillmentType: input.fulfillmentType as unknown as FulfillmentType,
+      shippingAddressId: input.shippingAddressId,
+      pickupLocationId: input.pickupLocationId,
+      couponCode: input.couponCode,
+    });
+  }
+
+  @Auth(AuthType.Bearer)
   @Mutation(() => Order, {
     name: 'createOrder',
-    description: 'Creates an order from the cart',
+    description:
+      'Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with ' +
+      'reason QUOTE_CHANGED if the cart no longer prices to it',
   })
   async createOrder(@ActiveUser('id') userId: string, @Args('input') input: CreateOrderInput) {
     return this.ordersService.createOrderFromCart(userId, {
@@ -73,6 +92,7 @@ export class OrdersResolver {
       contactPhone: input.contactPhone,
       couponCode: input.couponCode,
       paymentMethod: input.paymentMethod as PaymentMethod,
+      quoteHash: input.quoteHash,
     });
   }
 

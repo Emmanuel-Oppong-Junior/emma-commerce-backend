@@ -12,6 +12,7 @@ import {
   stockOf,
   stockReturnsFor,
 } from '../helpers/db.helper';
+import { placeOrderFromCart } from '../helpers/checkout.helper';
 
 const PRODUCT_ID = 'seed_prod2';
 const VARIANT_ID = 'seed_var2';
@@ -32,7 +33,7 @@ describe('Abandoned order expiry (e2e)', () => {
   const placeOrder = async (quantity: number): Promise<string> => {
     const cart = await prisma.cart.upsert({ where: { userId: USER_ID }, create: { userId: USER_ID }, update: {} });
     await prisma.cartItem.create({ data: { cartId: cart.id, productId: PRODUCT_ID, variantId: VARIANT_ID, quantity } });
-    const order = await orders.createOrderFromCart(USER_ID, {
+    const order = await placeOrderFromCart(orders, USER_ID, {
       fulfillmentType: FulfillmentType.DELIVERY,
       shippingAddressId: addressId,
       contactEmail: 'user@example.com',

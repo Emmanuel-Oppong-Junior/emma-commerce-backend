@@ -25,8 +25,8 @@ export class TaxRepository {
     return this.prisma.tax.findMany({ orderBy: { name: 'asc' } });
   }
 
-  async findActive(): Promise<Tax[]> {
-    return this.prisma.tax.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
+  async findActive(db: Prisma.TransactionClient = this.prisma): Promise<Tax[]> {
+    return db.tax.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
   }
 
   async getTotalActiveRate(db: Prisma.TransactionClient = this.prisma): Promise<Prisma.Decimal> {

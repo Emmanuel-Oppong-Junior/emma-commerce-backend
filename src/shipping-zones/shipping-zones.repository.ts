@@ -33,8 +33,8 @@ export class ShippingZonesRepository {
   }
 
   /** Expects an already-normalised city. The orderBy keeps the result stable if legacy rows overlap. */
-  async findByCity(city: string): Promise<ShippingZone | null> {
-    return this.prisma.shippingZone.findFirst({
+  async findByCity(city: string, db: Prisma.TransactionClient = this.prisma): Promise<ShippingZone | null> {
+    return db.shippingZone.findFirst({
       where: { isActive: true, cities: { has: city } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });

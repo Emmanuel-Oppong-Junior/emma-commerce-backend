@@ -50,7 +50,7 @@ describe('ShippingZonesService', () => {
 
       await service.getFeeForCity('  ACCRA   Central ');
 
-      expect(repository.findByCity).toHaveBeenCalledWith('accra central');
+      expect(repository.findByCity).toHaveBeenCalledWith('accra central', undefined);
     });
 
     it('rejects a city no active zone covers instead of charging nothing', async () => {
@@ -85,7 +85,7 @@ describe('ShippingZonesService', () => {
       repository.findByCity.mockResolvedValue(greaterAccra);
 
       await expect(service.getFeeForAddress('addr1', 'user1')).resolves.toEqual(new Decimal('15'));
-      expect(repository.findByCity).toHaveBeenCalledWith('accra');
+      expect(repository.findByCity).toHaveBeenCalledWith('accra', undefined);
     });
 
     it.each(['region', 'recipientName', 'phone'])(

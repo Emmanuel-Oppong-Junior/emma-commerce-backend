@@ -8,6 +8,7 @@ import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, setStock } from '../helpers/db.helper';
 import { migrationSql, migrationSqlFrom, ScratchSchema } from '../helpers/migration.helper';
+import { quoteHashFor } from '../helpers/checkout.helper';
 
 const M = '{ amount currency }';
 const sum = (values: Prisma.Decimal[]) => values.reduce((total, value) => total.add(value), new Prisma.Decimal(0));
@@ -54,7 +55,7 @@ describe('Order totals, line snapshots and tax lines (P1-O.1, e2e)', () => {
     }
     const res = await gqlRequest(
       app,
-      `mutation { createOrder(input: { fulfillmentType: DELIVERY, shippingAddressId: "${address.id}", contactEmail: "user@example.com", contactPhone: "+233244000000", couponCode: "TOTALS20" }) {
+      `mutation { createOrder(input: { quoteHash: "${await quoteHashFor(app, userToken, { fulfillmentType: 'DELIVERY', shippingAddressId: address.id, couponCode: 'TOTALS20' })}", fulfillmentType: DELIVERY, shippingAddressId: "${address.id}", contactEmail: "user@example.com", contactPhone: "+233244000000", couponCode: "TOTALS20" }) {
         id currency pricingVersion subtotal ${M} discountTotal ${M} taxTotal ${M} shippingTotal ${M} grandTotal ${M}
         adjustments { type orderItemId sourceId code amount ${M} }
         items { id productName sku unitListPrice ${M} unitDiscount ${M} unitNet ${M} unitTax ${M} lineTotal ${M}

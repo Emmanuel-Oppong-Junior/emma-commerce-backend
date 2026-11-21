@@ -1,7 +1,5 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { CartItem } from './cart-item.entity';
-import { MoneyObject } from '../../commons/money/money.object';
-import { Decimal } from '@prisma/client/runtime/client';
 
 @ObjectType()
 export class Cart {
@@ -13,18 +11,6 @@ export class Cart {
 
   @Field(() => [CartItem], { description: 'Items in the cart' })
   items: CartItem[];
-
-  @Field(() => MoneyObject, { description: 'Total original price of all items', nullable: true })
-  total: Decimal;
-
-  @Field(() => MoneyObject, { description: 'Total discount amount applied', nullable: true })
-  discountTotal: Decimal;
-
-  @Field(() => MoneyObject, {
-    description: 'Final total after discounts; createOrder charges this for the items',
-    nullable: true,
-  })
-  finalTotal?: Decimal;
 
   @Field(() => Date, { description: 'Timestamp when the cart was created' })
   createdAt: Date;

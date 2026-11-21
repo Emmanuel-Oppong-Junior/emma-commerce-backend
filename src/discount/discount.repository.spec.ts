@@ -35,16 +35,12 @@ const mockPrismaProduct = {
 
 const mockPrismaVariant = { findUnique: jest.fn(), findMany: jest.fn() };
 const mockPrismaCategory = { findMany: jest.fn() };
-const mockPrismaCart = { findUnique: jest.fn() };
-const mockPrismaCartItem = { update: jest.fn() };
 
 const mockPrisma = {
   discount: mockPrismaDiscount,
   product: mockPrismaProduct,
   variant: mockPrismaVariant,
   category: mockPrismaCategory,
-  cart: mockPrismaCart,
-  cartItem: mockPrismaCartItem,
 };
 
 describe('DiscountRepository', () => {
@@ -194,37 +190,6 @@ describe('DiscountRepository', () => {
       const result = await repository.getInvalidIds(['prod1', 'invalid'], 'product');
 
       expect(result).toEqual(['invalid']);
-    });
-  });
-
-  describe('updateCartItem', () => {
-    it('should update a cart item', async () => {
-      const cartItem = { id: 'ci1', discountedPrice: 80 };
-      mockPrismaCartItem.update.mockResolvedValue(cartItem);
-
-      const result = await repository.updateCartItem('ci1', { discountedPrice: 80 } as any);
-
-      expect(result).toEqual(cartItem);
-    });
-  });
-
-  describe('findCartById', () => {
-    it('should return a cart with items', async () => {
-      const mockCart = { id: 'cart1', items: [] };
-      mockPrismaCart.findUnique.mockResolvedValue(mockCart);
-
-      const result = await repository.findCartById('cart1');
-
-      expect(result).toEqual(mockCart);
-      expect(mockPrismaCart.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'cart1' } }));
-    });
-
-    it('should return null if cart not found', async () => {
-      mockPrismaCart.findUnique.mockResolvedValue(null);
-
-      const result = await repository.findCartById('nonexistent');
-
-      expect(result).toBeNull();
     });
   });
 
