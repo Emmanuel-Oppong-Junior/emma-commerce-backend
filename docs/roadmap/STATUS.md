@@ -5,7 +5,7 @@
 **Last checkpoint:** 2026-11-21 · **Current phase:** Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 2/11: P3-A done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-Two lanes in worktrees (agents), from `f4f0781`:
+Two lanes in worktrees (agents), from `0daafa9`:
 - **P3-C.1 — Partial refunds** (ADR-0007) · branch `feat/p3-c-refunds` · DB `emma_wt_refunds_test`, Redis DB 13 · **State:** in progress
 - **P3-E.1–E.2 — Velocity checks + dispute records** (ADR-0007) · branch `feat/p3-e-fraud` · DB `emma_wt_fraud_test`, Redis DB 12 · **State:** in progress
   - Decisions (Emmanuel, 2026-11-21): staff refund lines/quantities, a free amount and the shipping fee (order.refund + step-up), reason from a fixed list + note, capped at the captured amount, money only (stock only via returns); velocity: hard limits refuse, soft limits flag the order for review, Redis counters with hashed keys, limits are store settings with safe defaults; disputes from Paystack webhooks and by hand, evidence notes and deadlines, an open dispute blocks further refunds on that payment.
