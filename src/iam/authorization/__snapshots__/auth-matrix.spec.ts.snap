@@ -91,12 +91,12 @@ Mutation updateCategory                  permission: catalog.taxonomy.write
 Mutation updateCoupon                    permission: promotion.manage; step-up
 Mutation updateDiscount                  permission: promotion.manage; step-up
 Mutation updateMyProfile                 authenticated
-Mutation updateOrderStatus               permission: order.manage
 Mutation updatePickupLocation            permission: shipping.manage
 Mutation updateProduct                   permission: catalog.product.write; step-up when updateProductInput.isTaxable is set
 Mutation updateProductType               permission: catalog.taxonomy.write
 Mutation updateReview                    customer only
-Mutation updateShipping                  permission: order.manage
+Mutation updateShipmentStatus            permission: order.fulfil
+Mutation updateShipping                  permission: order.fulfil
 Mutation updateShippingZone              permission: shipping.manage
 Mutation updateStaffRole                 permission: staff.manage; step-up
 Mutation updateStoreSettings             permission: store.settings.manage

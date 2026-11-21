@@ -15,7 +15,7 @@ const success = (reference: string, amount = 10000, currency = 'GHS') => ({
 
 const attempt = (reference: string, overrides: Partial<LedgerAttempt> = {}): LedgerAttempt => ({
   reference,
-  status: 'COMPLETED',
+  status: 'CAPTURED',
   amount: new Prisma.Decimal(100),
   currency: 'GHS',
   reviewReason: null,
@@ -61,7 +61,7 @@ describe('payment reconciliation rules', () => {
       ]);
     });
 
-    it.each(['PENDING', 'ABANDONED'] as const)('reports a success whose attempt is still %s as unsettled', (status) => {
+    it.each(['PENDING', 'CANCELLED'] as const)('reports a success whose attempt is still %s as unsettled', (status) => {
       const open = attempt('r1', { status });
 
       expect(diffSuccessfulTransactions([success('r1')], [open])).toEqual([

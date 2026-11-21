@@ -115,7 +115,7 @@ describe('Paystack webhook (e2e)', () => {
     expect(processed).toMatchObject({ attempts: 1, lastError: null });
     expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
     expect(paystack.verifyTransaction).toHaveBeenCalledWith(reference);
-    expect(await orderStatus(orderId)).toBe(OrderStatus.PROCESSING);
+    expect(await orderStatus(orderId)).toBe(OrderStatus.CONFIRMED);
   });
 
   it('rejects the same event re-serialised differently under the original signature, storing nothing', async () => {
@@ -126,7 +126,7 @@ describe('Paystack webhook (e2e)', () => {
 
     expect(await prisma.webhookEvent.count()).toBe(0);
     expect(paystack.verifyTransaction).not.toHaveBeenCalled();
-    expect(await orderStatus(orderId)).toBe(OrderStatus.PENDING);
+    expect(await orderStatus(orderId)).toBe(OrderStatus.PLACED);
   });
 
   it.each([
@@ -138,7 +138,7 @@ describe('Paystack webhook (e2e)', () => {
     await deliver(chargeSuccess(1003, reference), signature).expect(401);
 
     expect(await prisma.webhookEvent.count()).toBe(0);
-    expect(await orderStatus(orderId)).toBe(OrderStatus.PENDING);
+    expect(await orderStatus(orderId)).toBe(OrderStatus.PLACED);
   });
 
   it('treats a second delivery of a processed event as a no-op', async () => {
@@ -153,8 +153,8 @@ describe('Paystack webhook (e2e)', () => {
     expect(await prisma.webhookEvent.count()).toBe(1);
     expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
     const attempts = await prisma.paymentAttempt.findMany({ where: { reference } });
-    expect(attempts).toEqual([expect.objectContaining({ status: PaymentStatus.COMPLETED })]);
-    expect(await orderStatus(orderId)).toBe(OrderStatus.PROCESSING);
+    expect(attempts).toEqual([expect.objectContaining({ status: PaymentStatus.CAPTURED })]);
+    expect(await orderStatus(orderId)).toBe(OrderStatus.CONFIRMED);
   });
 
   it('settles once when two deliveries of the same event race', async () => {
@@ -167,7 +167,7 @@ describe('Paystack webhook (e2e)', () => {
     expect(await prisma.webhookEvent.count()).toBe(1);
     await eventuallyStored((event) => event.processedAt !== null);
     expect(await prisma.refund.count({ where: { attempt: { reference } } })).toBe(0);
-    expect(await orderStatus(orderId)).toBe(OrderStatus.PROCESSING);
+    expect(await orderStatus(orderId)).toBe(OrderStatus.CONFIRMED);
   });
 
   // Contract change (P1-J.4): a processing failure no longer answers 503. The event is stored, Paystack gets 200,
@@ -180,7 +180,7 @@ describe('Paystack webhook (e2e)', () => {
 
     const failed = await eventuallyStored((event) => event.attempts >= 1);
     expect(failed).toMatchObject({ processedAt: null, lastError: 'Paystack verify failed with HTTP 503' });
-    expect(await orderStatus(orderId)).toBe(OrderStatus.PENDING);
+    expect(await orderStatus(orderId)).toBe(OrderStatus.PLACED);
     const job = await getQueue(app, JobQueue.WEBHOOKS).getJob(failed.id);
     expect(await job?.getState()).toBe('delayed');
 
@@ -189,7 +189,7 @@ describe('Paystack webhook (e2e)', () => {
     const processed = await eventuallyStored((event) => event.processedAt !== null);
     expect(processed.id).toBe(failed.id);
     expect(processed).toMatchObject({ attempts: 2, lastError: null });
-    expect(await orderStatus(orderId)).toBe(OrderStatus.PROCESSING);
+    expect(await orderStatus(orderId)).toBe(OrderStatus.CONFIRMED);
   });
 
   it('stores and acknowledges an event type it does not handle, without contacting Paystack', async () => {

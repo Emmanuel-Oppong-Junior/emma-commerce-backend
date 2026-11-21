@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { OrderStatus, PaymentIntentStatus, PaymentMethod, PaymentStatus } from '../generated/prisma/client';
+import { PAID_INTENT_STATUSES } from './payment-intent-status';
 
 /**
  * What initiation needs to know about an order to decide whether it can be paid. Without `paymentIntent` the
@@ -32,12 +33,12 @@ export function assertOrderPayable<T extends PayableOrder>(
   }
   const intent = order.paymentIntent;
   if (
-    intent?.status === PaymentIntentStatus.PAID ||
-    intent?.attempts.some((attempt) => attempt.status === PaymentStatus.COMPLETED)
+    (intent && PAID_INTENT_STATUSES.includes(intent.status)) ||
+    intent?.attempts.some((attempt) => attempt.status === PaymentStatus.CAPTURED)
   ) {
     throw new BadRequestException('Payment for this order has already been completed');
   }
-  if (order.status !== OrderStatus.PENDING) {
+  if (order.status !== OrderStatus.PLACED) {
     throw new BadRequestException(`Order "${orderId}" is ${order.status} and can no longer be paid`);
   }
 }

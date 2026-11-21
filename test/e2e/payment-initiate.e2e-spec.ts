@@ -98,7 +98,7 @@ describe('Payment initiation (e2e)', () => {
 
   it.each([
     ['a cancelled order', { status: OrderStatus.CANCELLED }, 400],
-    ['a processing order', { status: OrderStatus.PROCESSING }, 400],
+    ['a processing order', { status: OrderStatus.CONFIRMED }, 400],
     ['a cash-on-delivery order', { paymentMethod: PaymentMethod.CASH_ON_DELIVERY }, 400],
     ['a soft-deleted order', { deleted: true, deletedAt: new Date() }, 404],
   ])('refuses to open a checkout for %s', async (_label, data, statusCode) => {
@@ -116,7 +116,7 @@ describe('Payment initiation (e2e)', () => {
     await initiate({ orderId, idempotencyKey: 'second' }).expect(201);
 
     const [first, second] = await attemptsOf(orderId);
-    expect(first.status).toBe(PaymentStatus.ABANDONED);
+    expect(first.status).toBe(PaymentStatus.CANCELLED);
     expect(second.status).toBe(PaymentStatus.PENDING);
 
     const verified = await gqlRequest(
@@ -125,7 +125,7 @@ describe('Payment initiation (e2e)', () => {
       undefined,
       userToken,
     ).expect(200);
-    expect(verified.body.data.verifyPayment).toEqual({ id: first.id, status: PaymentStatus.COMPLETED });
+    expect(verified.body.data.verifyPayment).toEqual({ id: first.id, status: PaymentStatus.CAPTURED });
 
     await initiate({ orderId, idempotencyKey: 'third' }).expect(400);
     expect(await attemptsOf(orderId)).toHaveLength(2);

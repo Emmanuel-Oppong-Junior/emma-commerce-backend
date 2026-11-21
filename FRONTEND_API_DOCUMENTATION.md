@@ -1430,9 +1430,9 @@ All wishlist operations require `Bearer` JWT (any role).
 
 ### 2.11 Orders
 
-> **Status rules:** an order can only move `PENDING → PROCESSING | CANCELLED`, `PROCESSING → SHIPPED | CANCELLED`, `SHIPPED → DELIVERED`. `DELIVERED` and `CANCELLED` are final. Any other change, including cancelling an order twice, fails with `CONFLICT`. If two requests change the same order at once, one succeeds and the other gets `CONFLICT` ("was changed by another request; reload it and try again"). An unpaid `ONLINE` order leaves `PENDING` only through a confirmed payment. Cash-on-delivery orders start in `PROCESSING`.
+> **Status rules (P1-O.2, ADR-0014):** `PLACED → CONFIRMED → IN_FULFILMENT → COMPLETED`, with `CANCELLED` (from `PLACED`, `CONFIRMED`, or `IN_FULFILMENT` while the goods are still in the shop), `EXPIRED` (unpaid `PLACED` online order after 1 hour) and `PAYMENT_REVIEW` (a payment arrived after the order was cancelled or expired; back to `CANCELLED` once that payment is refunded). `COMPLETED` is final. Staff never set the status directly: payment confirms an online order (cash-on-delivery orders are confirmed when placed), the first fulfilment step (`updateShipmentStatus`) moves it to `IN_FULFILMENT`, and delivery (or `recordCodPayment`) completes it. Any other change fails with `CONFLICT`. If two requests change the same order at once, one succeeds and the other gets `CONFLICT` ("was changed by another request; reload it and try again"). Every change is written to the order's `timeline` in the same transaction.
 
-> **Unpaid orders expire:** every hour, `PENDING` `ONLINE` orders older than 1 hour are cancelled (each line's reserved stock and the coupon use given back) if they have no payment attempt, or only pending/failed/abandoned attempts untouched for 1 hour.
+> **Unpaid orders expire:** every hour, `PLACED` `ONLINE` orders older than 1 hour become `EXPIRED` (each line's reserved stock and the coupon use given back) if they have no payment attempt, or only pending/failed/cancelled attempts untouched for 1 hour.
 
 All order operations require `Bearer` JWT.
 
@@ -1453,7 +1453,10 @@ All order operations require `Bearer` JWT.
   orderNumber: number;                         // Store order number from 10001 up; unique, may have gaps
   userId: string;
   user?: User;                                 // Owner or admin only (FORBIDDEN otherwise)
-  status: OrderStatus;                         // PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
+  status: OrderStatus;                         // PLACED | CONFIRMED | IN_FULFILMENT | COMPLETED | CANCELLED | EXPIRED | PAYMENT_REVIEW
+  paymentStatus?: OrderPaymentStatus;          // PENDING | CAPTURED | PARTIALLY_REFUNDED | REFUNDED | FAILED | CANCELLED; null before any payment
+  timeline: OrderStatusEvent[];                // Status history, oldest first (the customer's tracking timeline)
+  shipments: Shipment[];                       // One per order for now; empty until the first fulfilment step
   fulfillmentType: FulfillmentType;            // DELIVERY | PICKUP
   paymentMethod: OrderPaymentMethod;           // ONLINE | CASH_ON_DELIVERY
   contactEmail: string;
@@ -1470,8 +1473,6 @@ All order operations require `Bearer` JWT.
   shippingAddressSnapshot?: JSON;              // DELIVERY: { recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country } at order time; orders placed before Ghana addresses (P1-G) hold { street, city, state, zipCode, country } instead
   pickupLocationId?: string;                   // Set for PICKUP orders
   pickupLocationSnapshot?: JSON;               // PICKUP: { name, address, city, state, country } at order time
-  trackingNumber?: string;
-  carrier?: string;
   createdAt: DateTime;
   updatedAt: DateTime;
   items: OrderItem[];
@@ -1540,15 +1541,39 @@ All order operations require `Bearer` JWT.
 
 **Breaking change (P1-V.3):** `OrderItem.variantId` is now non-null and always set; `variant: Variant!`, `sku` and `optionValues` are new. Lines recorded before this release have `sku`/`optionValues` null and point at the product's default variant or, for a product that already had variants then, at its archived "Legacy" variant (`isActive: false`, zero stock, SKU `LEGACY-...`).
 
-**`OrderStatus` Enum**:
+**`OrderStatus` Enum** (P1-O.2):
 
 ```
-PENDING       — Order created, awaiting online payment
-PROCESSING    — Paid online, or a cash-on-delivery order being prepared
-SHIPPED       — Dispatched, or ready at the pickup counter
-DELIVERED     — Delivered or collected (for COD: cash recorded)
-CANCELLED     — Cancelled (by the customer, an admin, or expiry)
+PLACED          — Order created, stock reserved; an ONLINE order awaits payment
+CONFIRMED       — Paid online, or a cash-on-delivery order (confirmed when placed); ready to fulfil
+IN_FULFILMENT   — Fulfilment started (picking, packing, out for delivery or ready for pickup)
+COMPLETED       — Delivered or collected (for COD: cash recorded). Final
+CANCELLED       — Cancelled by the customer or staff
+EXPIRED         — An unpaid ONLINE order expired after 1 hour
+PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it is refunded (processPendingRefund), then CANCELLED
 ```
+
+**`OrderStatusEvent` Object Type**: `{ id, from?: OrderStatus (null for the first event), to: OrderStatus, reason?: string, actorId?: ID (staff with order.view only; FORBIDDEN for customers), createdAt }`. Orders migrated from before P1-O.2 start with one event for their status at migration.
+
+**`Shipment` Object Type** (P1-O.2):
+
+```typescript
+{
+  id: string;
+  status: ShipmentStatus;     // PENDING | PICKING | PACKED | READY_FOR_PICKUP | OUT_FOR_DELIVERY | DELIVERED | FAILED_DELIVERY | RETURNED
+  carrier?: string;
+  trackingNumber?: string;
+  dispatchedAt?: DateTime;    // When it went out for delivery or became ready for pickup
+  deliveredAt?: DateTime;
+  events: ShipmentStatusEvent[]; // { id, from?, to, reason?, actorId? (staff only), createdAt }, oldest first
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+```
+
+**`OrderPaymentStatus` Enum**: the order's payment machine. `PENDING` (awaiting payment), `CAPTURED` (paid; Paystack captures at once, there is no authorised step), `PARTIALLY_REFUNDED` / `REFUNDED` (processed refunds of that payment), `FAILED` (the last attempt failed; a new attempt reopens it), `CANCELLED` (the order closed before payment).
+
+**Breaking change (P1-O.2):** `OrderStatus` values `PENDING`/`PROCESSING`/`SHIPPED`/`DELIVERED` → `PLACED`/`CONFIRMED`/`IN_FULFILMENT`/`COMPLETED`; new `EXPIRED` and `PAYMENT_REVIEW` (an expiry is now `EXPIRED`, not `CANCELLED`). `Order.trackingNumber` and `Order.carrier` → `Order.shipments[0].trackingNumber` / `.carrier`. `updateOrderStatus` and `UpdateOrderStatusInput` removed: use `updateShipmentStatus` for fulfilment and `adminCancelOrder` to cancel. New: `Order.timeline`, `Order.shipments`, `Order.paymentStatus`, `ShipmentStatus`, `OrderPaymentStatus`.
 
 ---
 
@@ -1603,7 +1628,7 @@ CANCELLED     — Cancelled (by the customer, an admin, or expiry)
 4. A coupon, if given, is validated against the lines after product discounts (before shipping) and its use is recorded.
 5. `grandTotal = max(0, Σ lineTotal + shippingTotal - coupon)`. This is the amount Paystack is asked for. The order stores the breakdown (`subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`), one `OrderAdjustment` per discounted line and for the coupon, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with `pricingVersion` 1.
 6. In one transaction: the order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant is active and its product active and `PUBLISHED`, and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); the cart is emptied.
-7. Status: `PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`.
+7. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
 8. A confirmation email goes to the account's email (not `contactEmail`) after the response.
 
 No tax is added at checkout; tax is already inside each variant's `price`, and the order records how much (see "How the totals add up").
@@ -1634,47 +1659,39 @@ mutation {
 #### `cancelOrder`
 - **Type**: Mutation
 - **Roles**: `USER` only (admins use `adminCancelOrder`; an ADMIN token gets `FORBIDDEN`)
-- **Args**: `orderId: String!`
-- **Description**: Cancel one of the caller's own orders. Only `PENDING` or `PROCESSING` orders can be cancelled; otherwise `CONFLICT`. Each line's stock (its reservation: `RELEASE`, or `RETURN_RESTOCK` if it was already paid) and the coupon use are given back exactly once. If the order was paid online, a refund request (return request) is opened automatically for staff to process.
+- **Args**: `orderId: String!`, `reason?: String` (shown in the timeline)
+- **Description**: Cancel one of the caller's own orders before fulfilment starts: only `PLACED` or `CONFIRMED` orders; otherwise `CONFLICT`. Each line's stock (its reservation: `RELEASE`, or `RETURN_RESTOCK` if it was already paid) and the coupon use are given back exactly once, and an open payment is cancelled. If the order was paid online, a refund request (return request) is opened automatically for staff to process.
 - **Response**: `Order!`
 - **Possible Errors**: `NOT_FOUND` (not the caller's order), `CONFLICT`.
 
 ---
 
-#### `adminCancelOrder` (ADMIN, SUPER_ADMIN)
+#### `adminCancelOrder` (permission `order.manage`)
 - **Type**: Mutation
-- **Args**: `orderId: String!`
-- **Description**: Cancel any order. Same rules and effects as `cancelOrder` (only `PENDING`/`PROCESSING`, stock and coupon restored once, refund request for paid online orders), plus an audit entry.
+- **Args**: `orderId: String!`, `reason?: String` (timeline and audit log)
+- **Description**: Cancel any `PLACED`, `CONFIRMED` or `IN_FULFILMENT` order. During fulfilment only while the goods are still in the shop (shipment `PENDING`, `PICKING`, `PACKED` or `RETURNED`); once dispatched (`OUT_FOR_DELIVERY`, `READY_FOR_PICKUP`) or `DELIVERED` → `CONFLICT`. Same effects as `cancelOrder`, plus an audit entry with the actor and reason.
 - **Response**: `Order!`
 - **Possible Errors**: `NOT_FOUND`, `CONFLICT`.
 
 ---
 
-#### `updateOrderStatus` (ADMIN, SUPER_ADMIN)
+#### `updateShipmentStatus` (permission `order.fulfil`)
 - **Type**: Mutation
-- **Args**: `input: UpdateOrderStatusInput!`
+- **Args**: `input: UpdateShipmentStatusInput!` — `{ orderId: ID!, status: ShipmentStatus!, reason?: String (max 500) }`
 - **Response**: `Order!`
+- **Description**: Moves the order's shipment to its next fulfilment step; the shipment is created (`PENDING`) on the first step. Only `CONFIRMED` or `IN_FULFILMENT` orders (an unpaid online order cannot be fulfilled) → otherwise `CONFLICT`.
 
-**Input: `UpdateOrderStatusInput`**
+**Shipment steps** (`src/order/shipment-status.ts`): `PENDING → PICKING → PACKED → READY_FOR_PICKUP | OUT_FOR_DELIVERY → DELIVERED | FAILED_DELIVERY`; `FAILED_DELIVERY → OUT_FOR_DELIVERY | READY_FOR_PICKUP` (retry) `| RETURNED`. Steps before dispatch may be skipped forward (e.g. `PENDING → PACKED`). A `PICKUP` order is dispatched to `READY_FOR_PICKUP`, a `DELIVERY` order to `OUT_FOR_DELIVERY`; any other step → `CONFLICT`.
 
-```typescript
-{
-  orderId: string;        // Required.
-  status: OrderStatus;    // Required. PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
-}
-```
-
-**Rules**: the change must follow the status rules above, otherwise `CONFLICT`. Admins cannot move an unpaid `ONLINE` order to `PROCESSING` (only a confirmed payment can); cash-on-delivery orders are not affected. Setting `CANCELLED` performs a full cancel (stock restored, refund request for paid online orders), the same as `adminCancelOrder`. Setting `SHIPPED` consumes the order's stock reservations (the sale, for cash on delivery; an online order's were consumed at payment). For cash-on-delivery orders use `recordCodPayment` to reach `DELIVERED`.
-
-**Side effects**: When status transitions to `SHIPPED` or `DELIVERED`, a status update email is sent to the customer.
+**In the same transaction**: the first step moves a `CONFIRMED` order to `IN_FULFILMENT`; dispatch consumes a cash-on-delivery order's reserved stock (once: a retried delivery does not consume again) and emails the customer; `DELIVERED` completes the order (`COMPLETED`) and emails the customer. A cash-on-delivery order is delivered by recording its cash (`recordCodPayment`): `DELIVERED` here → `BAD_REQUEST`. Each step is written to the shipment's `events`, the order's `timeline` when the order moves, and the audit log (actor, reason). Concurrent steps: one wins, the other gets `CONFLICT`.
 
 ---
 
-#### `updateShipping` (ADMIN, SUPER_ADMIN)
+#### `updateShipping` (permission `order.fulfil`)
 - **Type**: Mutation
 - **Args**: `input: UpdateShippingInput!`
 - **Response**: `Order!`
-- **Description**: Sets carrier and tracking number. Does not change the status. When a `trackingNumber` is sent, a "shipped" email with the tracking number goes to the customer.
+- **Description**: Sets carrier and tracking number on the order's shipment (created if needed) of a `CONFIRMED` or `IN_FULFILMENT` order (otherwise `CONFLICT`). Does not change any status. When a `trackingNumber` is sent, a "shipped" email with the tracking number goes to the customer.
 
 **Input: `UpdateShippingInput`**
 
@@ -1692,7 +1709,7 @@ mutation {
 - **Type**: Mutation
 - **Args**: `orderId: String!`
 - **Response**: `Order!`
-- **Description**: Soft-delete a finished order (`DELIVERED` or `CANCELLED` only). Sets `deleted = true`, `deletedAt = now()`. **Never moves stock.** An open order returns `CONFLICT` (cancel it first, which restores its stock); deleting twice also returns `CONFLICT`.
+- **Description**: Soft-delete a closed order (`COMPLETED`, `CANCELLED` or `EXPIRED` only). Sets `deleted = true`, `deletedAt = now()`. **Never moves stock.** An open order returns `CONFLICT` (cancel it first, which restores its stock); deleting twice also returns `CONFLICT`.
 
 ---
 
@@ -1709,9 +1726,9 @@ mutation {
 - **Response**: `Payment!`
 - **Description**: Verify a Paystack payment by reference and update status. Only the order owner can verify (`FORBIDDEN` otherwise).
 - **Behaviour**:
-  - The payment counts only if Paystack reports `success` for exactly the attempt's amount and currency (GHS). Then the attempt becomes `COMPLETED` and the order moves `PENDING → PROCESSING`.
-  - A success for a different amount or currency returns `status: FAILED`; the order stays `PENDING` and can be paid again. The captured money is queued for refund.
-  - A success that arrives after the order was cancelled (or already paid by another attempt) returns `status: COMPLETED` but the order is **not** changed; the money is queued for refund and the payment flagged for staff. Read the order's own `status` to decide what to show.
+  - The payment counts only if Paystack reports `success` for exactly the attempt's amount and currency (GHS). Then the attempt becomes `CAPTURED`, the order's payment `CAPTURED` and the order moves `PLACED → CONFIRMED`.
+  - A success for a different amount or currency returns `status: FAILED`; the order stays `PLACED` and can be paid again. The captured money is queued for refund.
+  - A success that arrives after the order was cancelled (or already paid by another attempt) returns `status: CAPTURED`; the money is queued for refund and the payment flagged for staff. A cancelled or expired order moves to `PAYMENT_REVIEW` until that refund is processed (then `CANCELLED`); an already-paid order is not changed. Read the order's own `status` to decide what to show.
   - While Paystack has not decided yet (e.g. MoMo approval pending) the attempt stays `PENDING`; call again later.
   - Verifying an attempt that is already `COMPLETED` or `FAILED` returns it unchanged (safe to repeat).
 
@@ -1735,7 +1752,7 @@ mutation {
   amount: Money;
   currency: string;          // "GHS"
   paymentMethod: string;     // Channel sent at initialize (e.g. "card"), or "CASH_ON_DELIVERY"
-  status: PaymentStatus;     // PENDING | COMPLETED | FAILED | ABANDONED
+  status: PaymentStatus;     // PENDING | CAPTURED | FAILED | CANCELLED
   transactionId?: string;    // Paystack reference of this attempt
   paymentDetails?: JSON;     // Sanitised provider data: { reference, access_code } after initialize; { reference, status, amount, currency, channel, paid_at, gateway_response } after verification
   createdAt: DateTime;
@@ -1743,7 +1760,7 @@ mutation {
 }
 ```
 
-**`PaymentStatus` Enum**: `PENDING`, `COMPLETED`, `FAILED`, `ABANDONED` (an attempt replaced by a retry before it was paid; a late payment on its reference is still accepted)
+**`PaymentStatus` Enum** (one payment attempt): `PENDING`, `CAPTURED`, `FAILED` (refused by Paystack), `CANCELLED` (replaced by a retry before it was paid; a late payment on its reference is still accepted). **Breaking change (P1-O.2):** `COMPLETED` → `CAPTURED`, `ABANDONED` → `CANCELLED`. The order-level payment state is `Order.paymentStatus`.
 
 ---
 
@@ -1781,14 +1798,14 @@ mutation {
 #### `recordCodPayment` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `orderId: String!`
-- **Description**: Records that the order total was collected in cash. In one step it marks the payment `COMPLETED` (provider `CASH_ON_DELIVERY`, amount = order total, GHS), stores who recorded it, moves the order to `DELIVERED` and writes an audit entry.
-- **Rules**: only a non-deleted cash-on-delivery order in `SHIPPED` (out for delivery, or ready at the pickup counter). A pickup order must be moved to `SHIPPED` with `updateOrderStatus` before cash is recorded; `PROCESSING` → `DELIVERED` is not an allowed step. Repeating the call for the same order (double click) records nothing more.
+- **Description**: Records that the grand total was collected in cash. In one step it captures the payment (attempt `CAPTURED`, provider `CASH_ON_DELIVERY`, amount = `grandTotal`, GHS), stores who recorded it, delivers the shipment (`DELIVERED`), completes the order (`COMPLETED`, customer emailed) and writes an audit entry.
+- **Rules**: only a non-deleted cash-on-delivery order in `IN_FULFILMENT` whose shipment has been dispatched (`OUT_FOR_DELIVERY`, or `READY_FOR_PICKUP` at the counter). Repeating the call for the same order (double click) records nothing more.
 - **Response**: `Payment!`
 
 **Possible Errors**:
 - `NOT_FOUND` — order does not exist or is deleted.
 - `BAD_REQUEST` — the order is an `ONLINE` order.
-- `CONFLICT` — the order is not `SHIPPED` (e.g. `PENDING`, `PROCESSING`, `CANCELLED`, already `DELIVERED`), or its payment was already recorded.
+- `CONFLICT` — the order is not `IN_FULFILMENT` (e.g. `PLACED`, `CONFIRMED`, `CANCELLED`, already `COMPLETED`), its shipment has not been dispatched, or its payment was already recorded.
 
 ---
 
@@ -2090,7 +2107,7 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 - **Type**: Mutation
 - **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
 - **Args**: `input: CreateReturnRequestInput!`
-- **Description**: Submit a return request for one of the caller's own orders. Order must be in `DELIVERED` status. A new request is allowed only if every earlier request for the order was rejected.
+- **Description**: Submit a return request for one of the caller's own orders. Order must be `COMPLETED` (delivered or collected). A new request is allowed only if every earlier request for the order was rejected.
 - **Possible Errors**: `NOT_FOUND` (not the caller's order), `BAD_REQUEST` (not delivered, or an open request exists).
 
 **Input: `CreateReturnRequestInput`**
@@ -2838,7 +2855,8 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `inventory.view` | `stockMovements`; the `Variant.onHand` and `Variant.reserved` fields |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
 | `order.view` | `getOrders`, `viewOrder` |
-| `order.manage` | `updateOrderStatus`, `updateShipping`, `adminCancelOrder`, `deleteOrder` |
+| `order.manage` | `adminCancelOrder`, `deleteOrder` |
+| `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |
 | `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund` |
 | `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
 | `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment` |
@@ -3059,7 +3077,7 @@ The amount is always the order total at the first initialization; any other fiel
 **Rules**:
 
 - Only the owner's `PENDING`, non-deleted, online-payment order can be paid. A cancelled, processing, shipped or delivered order returns 400, a cash-on-delivery order returns 400, an already paid order returns 400 (`Payment for this order has already been completed`), a missing or deleted order returns 404, and another user's order returns 403.
-- Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `ABANDONED`; it is kept, and if the customer still completes that older checkout the payment is matched.
+- Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `CANCELLED`; it is kept, and if the customer still completes that older checkout the payment is matched.
 - Repeating an `idempotencyKey` for the same order returns the same attempt and the same `authorizationUrl` without opening a new checkout. It returns **409** if that attempt is still being set up (retry shortly) or is no longer `PENDING` (use a new key).
 - If Paystack cannot open the checkout the request fails and the same key may be retried.
 - Paystack's `callback_url` is `PAYSTACK_CALLBACK_URL` (a frontend page; see [Section 8](#8-payment-integration-paystack)).
@@ -3108,7 +3126,7 @@ The amount is always the order total at the first initialization; any other fiel
 The endpoint no longer answers `503` when processing fails: the stored event is retried by the queue, and the 5-minute payment sweep reprocesses any stored event still unprocessed.
 
 **Handled Events** (each delivery is stored once per event type and Paystack `data.id`, or `data.reference` when there is no id; repeats are no-ops):
-- `charge.success` → re-verifies the reference with Paystack; marks payment `COMPLETED`, order status → `PROCESSING` (same rule as `verifyPayment`).
+- `charge.success` → re-verifies the reference with Paystack; marks payment `CAPTURED`, order status → `CONFIRMED` (same rule as `verifyPayment`).
 - `charge.failed` → re-verifies; marks payment `FAILED`.
 - All other events: stored and acknowledged (`200 OK`) but not processed.
 
@@ -3249,11 +3267,14 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | Enum | Values | Used by |
 |---|---|---|
 | `Role` | `USER`, `ADMIN`, `SUPER_ADMIN` | `CreateUserInput.role`, `UserPaginateArgs.role` (`User.role` is a plain `String`) |
-| `OrderStatus` | `PENDING`, `PROCESSING`, `SHIPPED`, `DELIVERED`, `CANCELLED` | `Order.status`, `UpdateOrderStatusInput.status` |
+| `OrderStatus` | `PLACED`, `CONFIRMED`, `IN_FULFILMENT`, `COMPLETED`, `CANCELLED`, `EXPIRED`, `PAYMENT_REVIEW` | `Order.status`, `OrderStatusEvent.from/to` |
+| `ShipmentStatus` | `PENDING`, `PICKING`, `PACKED`, `READY_FOR_PICKUP`, `OUT_FOR_DELIVERY`, `DELIVERED`, `FAILED_DELIVERY`, `RETURNED` | `Shipment.status`, `UpdateShipmentStatusInput.status` |
+| `OrderPaymentStatus` | `PENDING`, `CAPTURED`, `PARTIALLY_REFUNDED`, `REFUNDED`, `FAILED`, `CANCELLED` | `Order.paymentStatus` |
+| `OrderAdjustmentType` | `DISCOUNT`, `COUPON` | `OrderAdjustment.type` |
 | `FulfillmentType` | `DELIVERY`, `PICKUP` | `Order`, `CreateOrderInput` |
 | `GhanaRegion` | `AHAFO`, `ASHANTI`, `BONO`, `BONO_EAST`, `CENTRAL`, `EASTERN`, `GREATER_ACCRA`, `NORTH_EAST`, `NORTHERN`, `OTI`, `SAVANNAH`, `UPPER_EAST`, `UPPER_WEST`, `VOLTA`, `WESTERN`, `WESTERN_NORTH` | `Address.region`, address inputs |
 | `OrderPaymentMethod` | `ONLINE`, `CASH_ON_DELIVERY` | `Order`, `CreateOrderInput` |
-| `PaymentStatus` | `PENDING`, `COMPLETED`, `FAILED`, `ABANDONED` | `Payment.status` |
+| `PaymentStatus` | `PENDING`, `CAPTURED`, `FAILED`, `CANCELLED` | `Payment.status` |
 | `ReturnStatusEnum` | `PENDING`, `APPROVED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED` | `ReturnRequestEntity.status` |
 | `RefundStatusEnum` | `PENDING` (recorded, not sent), `SENDING` (sent, outcome unknown if it stays), `PROCESSED` (accepted by Paystack), `FAILED` (refused, can be resent) | `RefundEntity.status`, `refunds(status)` |
 | `StockMovementReason` | `OPENING_BALANCE`, `RECEIPT`, `SALE`, `RETURN_RESTOCK`, `ADJUSTMENT`, `TRANSFER`, `RESERVE`, `RELEASE` | `StockMovement.reason`, `stockMovements(reason)` |
@@ -3422,14 +3443,14 @@ Authorization: Bearer <accessToken>
    - `PICKUP`: list locations with `query activePickupLocations` (public).
 2. Optionally validate a coupon: `mutation validateCoupon(input: { code, orderTotal: <cartWithDiscount.finalTotal> })`.
 3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, contactEmail, contactPhone, couponCode?, paymentMethod? })`.
-4. Backend checks each variant is still sellable and in stock, prices each line from its variant as `cartWithDiscount` does, applies the coupon to that subtotal, adds the shipping fee → creates the `Order` (`PENDING` for `ONLINE`, `PROCESSING` for `CASH_ON_DELIVERY`) with each line's `sku` and `optionValues` → decrements each variant's stock → clears cart → sends confirmation email. A `BAD_REQUEST` naming a variant means the customer must remove or change that cart line.
-5. `ONLINE`: continue with the Order Placement Flow within 1 hour, or the order expires. `CASH_ON_DELIVERY`: done; staff ship it and record the cash with `recordCodPayment`.
+4. Backend checks each variant is still sellable and in stock, prices each line from its variant as `cartWithDiscount` does, applies the coupon to that subtotal, adds the shipping fee → creates the `Order` (`PLACED` for `ONLINE`, `CONFIRMED` for `CASH_ON_DELIVERY`) with each line's `sku` and `optionValues` → decrements each variant's stock → clears cart → sends confirmation email. A `BAD_REQUEST` naming a variant means the customer must remove or change that cart line.
+5. `ONLINE`: continue with the Order Placement Flow within 1 hour, or the order expires. `CASH_ON_DELIVERY`: done; staff fulfil it (`updateShipmentStatus`) and record the cash with `recordCodPayment`.
 
 ### Order Placement Flow
 
 1. Order is created (see Checkout Flow above).
 2. Frontend initiates payment: `POST /payment/initialize` with `{ orderId, paymentMethod, idempotencyKey }` (`currency` may be omitted; if sent it must be `"GHS"`). Only `PENDING` online orders can be paid.
-3. Backend opens a new payment attempt with `status = PENDING` (any earlier pending attempt becomes `ABANDONED`) and returns `authorizationUrl`.
+3. Backend opens a new payment attempt with `status = PENDING` (any earlier pending attempt becomes `CANCELLED`) and returns `authorizationUrl`.
 4. Frontend redirects user to `authorizationUrl`.
 5. After payment, Paystack redirects the browser to the frontend page configured as `PAYSTACK_CALLBACK_URL`, with `?reference=…` (and `trxref`) in the query string.
 6. That page calls `mutation verifyPayment(verifyPaymentInput: { reference })` and shows the result, reading the order's `status` too.
@@ -3444,7 +3465,7 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 2. Backend verifies the HMAC-SHA512 signature over the raw body using `PAYSTACK_SECRET_KEY` (constant-time compare). A bad signature gets `401` and nothing is stored.
 3. The event is stored in the webhook inbox (`WebhookEvent`). A repeat of an event already processed gets `200` and changes nothing.
 4. A settling event is queued for the background worker and the backend answers `200 OK` at once. The order may therefore still be `PENDING` for a moment after Paystack's call.
-5. On `charge.success` the worker runs the same verification as `verifyPayment` (amount and currency must match; a payment for a cancelled or already-paid order never moves the order and is queued for refund). On a valid payment: payment `status → COMPLETED`, order `status → PROCESSING`, confirmation email queued once.
+5. On `charge.success` the worker runs the same verification as `verifyPayment` (amount and currency must match; a payment for a cancelled or expired order moves it to `PAYMENT_REVIEW`, one for an already-paid order changes nothing; both are queued for refund). On a valid payment: payment `status → CAPTURED`, order `status → CONFIRMED`, confirmation email queued once.
 6. On `charge.failed`: payment `status → FAILED`.
 7. Unhandled events are stored and answered `200 OK`.
 8. If processing fails (for example Paystack's verify API is down), the worker retries the stored event with exponential backoff; the 5-minute payment sweep is the safety net for anything still unprocessed.
@@ -3452,13 +3473,13 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 ### Inventory Deduction Flow
 
 - On `createOrder`: each line's quantity is **reserved** on its variant's stock with a conditional update inside the order transaction (only while enough is available, the variant is active and its product active and `PUBLISHED`), recorded as a `RESERVE` stock movement.
-- On online payment success, or `updateOrderStatus(SHIPPED)` for cash on delivery: the reservations are consumed (`SALE`).
-- On `cancelOrder`, `adminCancelOrder`, `updateOrderStatus(CANCELLED)` or expiry: each reservation is released once (`RELEASE`, or `RETURN_RESTOCK` for a paid order not yet dispatched). `deleteOrder` never moves stock.
+- On online payment success, or dispatch (`updateShipmentStatus` to `OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`) for cash on delivery: the reservations are consumed (`SALE`).
+- On `cancelOrder`, `adminCancelOrder` or expiry: each reservation is released once (`RELEASE`, or `RETURN_RESTOCK` for a paid order not yet dispatched). `deleteOrder` never moves stock.
 - Low stock: when a change takes a variant's available stock down to its `lowStockThreshold` (default 5), an `inventory.low_stock.v1` event is raised once; the worker logs it as a warning.
 
 ### Return Request Flow
 
-1. User submits: `mutation createReturnRequest(input: { orderId, reason })`. Order must be `DELIVERED`.
+1. User submits: `mutation createReturnRequest(input: { orderId, reason })`. Order must be `COMPLETED`.
 2. `ReturnRequest` created with `status = PENDING`.
 3. Admin reviews: `mutation approveReturn(input: { returnRequestId, refundAmount, adminNote? })` → status → `APPROVED`.
 4. Admin rejects: `mutation rejectReturn(input: { returnRequestId, adminNote? })` → status → `REJECTED`.
@@ -3479,45 +3500,44 @@ Cancelling a paid online order creates a return request automatically ("Automati
 ## 7. Order Lifecycle
 
 ```
-                createOrder()
-          ONLINE ↓          ↓ CASH_ON_DELIVERY
-            PENDING ─────────┼────────────────────────────→ CANCELLED
-               |             |       (customer, admin, or 1-hour expiry)
-   payment confirmed         |
- (verifyPayment / webhook /  |
-  reconciliation sweep)      |
-               ↓             ↓
-            PROCESSING ────────────────────────────────────→ CANCELLED
-               |                                (customer or admin)
-     updateOrderStatus(SHIPPED)
-               ↓
-             SHIPPED
-               |
-     updateOrderStatus(DELIVERED)  — or recordCodPayment for COD
-               ↓
-            DELIVERED
-               |
-       createReturnRequest()
-               ↓
+                createOrder()  →  PLACED (stock reserved)
+                   |  payment confirmed (ONLINE) or at once (CASH_ON_DELIVERY)
+                   ↓
+               CONFIRMED  ── 1 hour unpaid (ONLINE, from PLACED) ──→ EXPIRED
+                   |      ── cancelOrder / adminCancelOrder ──────→ CANCELLED
+     first updateShipmentStatus step
+                   ↓
+             IN_FULFILMENT ── adminCancelOrder (goods still in the shop) → CANCELLED
+                   |
+     shipment DELIVERED (or recordCodPayment for COD)
+                   ↓
+               COMPLETED
+                   |
+           createReturnRequest()
+                   ↓
     ReturnRequest: PENDING → APPROVED → REFUND_PENDING → REFUNDED
                      |
                   REJECTED
+
+    CANCELLED / EXPIRED ── payment arrives anyway ──→ PAYMENT_REVIEW ── its refund processed ──→ CANCELLED
 ```
 
 ### Status Transitions
 
 | From | To | Trigger | Actor |
 |---|---|---|---|
-| *(none)* | `PENDING` | `createOrder` with `ONLINE` | Customer |
-| *(none)* | `PROCESSING` | `createOrder` with `CASH_ON_DELIVERY` | Customer |
-| `PENDING` | `PROCESSING` | Confirmed online payment (`verifyPayment`, webhook, or the 5-minute reconciliation sweep) | System |
-| `PENDING` | `CANCELLED` | `cancelOrder` / `adminCancelOrder` / `updateOrderStatus(CANCELLED)` / hourly expiry | Customer, admin, system |
-| `PROCESSING` | `SHIPPED` | `updateOrderStatus` | Admin |
-| `PROCESSING` | `CANCELLED` | `cancelOrder` / `adminCancelOrder` / `updateOrderStatus(CANCELLED)` | Customer or admin |
-| `SHIPPED` | `DELIVERED` | `updateOrderStatus`, or `recordCodPayment` for COD | Admin |
-| `DELIVERED`, `CANCELLED` | — | Final | — |
+| *(none)* | `PLACED` | `createOrder` | Customer |
+| `PLACED` | `CONFIRMED` | Confirmed online payment (`verifyPayment`, webhook, or the 5-minute reconciliation sweep); `createOrder` with `CASH_ON_DELIVERY` | System |
+| `PLACED` | `EXPIRED` | Hourly expiry of unpaid `ONLINE` orders | System |
+| `PLACED`, `CONFIRMED` | `CANCELLED` | `cancelOrder` / `adminCancelOrder` | Customer or staff (`order.manage`) |
+| `CONFIRMED` | `IN_FULFILMENT` | First `updateShipmentStatus` step | Staff (`order.fulfil`) |
+| `IN_FULFILMENT` | `COMPLETED` | `updateShipmentStatus(DELIVERED)`, or `recordCodPayment` for COD | Staff (`order.fulfil` / `payment.record`) |
+| `IN_FULFILMENT` | `CANCELLED` | `adminCancelOrder` while the shipment is `PENDING`/`PICKING`/`PACKED`/`RETURNED` | Staff (`order.manage`) |
+| `CANCELLED`, `EXPIRED` | `PAYMENT_REVIEW` | A payment captured after the order closed (refund queued) | System |
+| `PAYMENT_REVIEW` | `CANCELLED` | That payment's refund processed (`processPendingRefund`) | Staff (`order.refund`) |
+| `COMPLETED` | — | Final | — |
 
-The table is enforced (`src/order/order-status.ts`): any other change returns `CONFLICT`, and concurrent changes to the same order let exactly one succeed. A `SHIPPED` order cannot be cancelled. An admin cannot move an unpaid `ONLINE` order to `PROCESSING`.
+The tables are enforced in code (`src/order/order-status.ts`, `src/order/shipment-status.ts`, `src/payment/payment-intent-status.ts`): every change is a conditional write in one transaction with its side effects and history event; any other change returns `CONFLICT`, and concurrent changes to the same order let exactly one succeed.
 
 ---
 
@@ -3566,7 +3586,7 @@ The comparison is constant-time and uses the exact request bytes, so the body mu
 
 | Event | Action |
 |---|---|
-| `charge.success` | Re-verified with Paystack; on a valid payment `Payment.status → COMPLETED`, `Order.status → PROCESSING` |
+| `charge.success` | Re-verified with Paystack; on a valid payment `Payment.status → CAPTURED`, `Order.status → CONFIRMED` |
 | `charge.failed` | Re-verified; `Payment.status → FAILED` |
 | All others | Stored, acknowledged (200 OK), not processed |
 
@@ -3590,9 +3610,9 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
 
 - `createOrder` **reserves** each line (`RESERVE`): the units stay on hand but stop being available. The order fails (`BAD_REQUEST`, nothing written) if any line cannot be reserved, so the last unit is sold once.
 - An `ONLINE` order's reservation is **consumed** (`SALE`: on-hand and reserved both go down) when its payment succeeds (verify, webhook or the reconciliation sweep).
-- A `CASH_ON_DELIVERY` order's reservation is consumed when the order is dispatched (`updateOrderStatus` to `SHIPPED`). It does not expire.
+- A `CASH_ON_DELIVERY` order's reservation is consumed when its shipment is dispatched (`updateShipmentStatus` to `OUT_FOR_DELIVERY` or `READY_FOR_PICKUP`), once. It does not expire.
 - Cancelling an order (customer, admin, or the hourly expiry of unpaid `ONLINE` orders) **releases** each reservation exactly once: an unconsumed hold is given back (`RELEASE`); a paid order cancelled before dispatch puts its units back on hand (`RETURN_RESTOCK`), since they never left the store. Cancel is not possible after dispatch.
-- A payment that arrives after its order expired does not take stock: the order stays `CANCELLED` and the payment is flagged for review (`ORDER_NOT_PAYABLE`) and refunded.
+- A payment that arrives after its order expired does not take stock: the order moves to `PAYMENT_REVIEW` and the payment is flagged for review (`ORDER_NOT_PAYABLE`) and refunded.
 
 ### Other stock changes
 
@@ -3936,11 +3956,11 @@ All notifications are **email-only** via Resend. There are no in-app notificatio
 | First successful `verifyEmail` of an account | Welcome email | User |
 | Email change requested (`updateMyProfile` / `updateUser` with a new email) | Verification token to the new address, and a notice to the current address | Both addresses |
 | Order created | Order confirmation | Account email (not `contactEmail`) |
-| Order status → `SHIPPED` or `DELIVERED` (`updateOrderStatus`), or `updateShipping` with a tracking number | Status update (with tracking number when set) | Account email |
+| Shipment dispatched (`OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`), order `COMPLETED` (`updateShipmentStatus(DELIVERED)` or `recordCodPayment`), or `updateShipping` with a tracking number | Status update (with tracking number when set) | Account email |
 | Online payment confirmed (webhook, `verifyPayment` or sweep), once per order | Payment confirmation | Account email |
 | `forgotPassword` for an existing account | Password reset token | Requesting address |
 
-Not emailed: cash-on-delivery collection (`recordCodPayment`), cancellations, refunds.
+Not emailed: cancellations, expiries, refunds, other fulfilment steps.
 
 ### Asynchronous, queued and retried
 
@@ -4249,12 +4269,12 @@ const { data } = await client.mutate({
   variables: { verifyPaymentInput: { reference } },
 });
 const payment = data.verifyPayment;
-if (payment.status === 'COMPLETED' && payment.order.status === 'PROCESSING') {
+if (payment.status === 'CAPTURED' && payment.order.status === 'CONFIRMED') {
   // Paid: show the order confirmation
 } else if (payment.status === 'PENDING') {
   // Not decided yet (e.g. MoMo approval): retry verifyPayment shortly
 } else {
-  // FAILED/ABANDONED, or paid after the order was cancelled (refund queued): show the order status
+  // FAILED/CANCELLED, or paid after the order was cancelled (PAYMENT_REVIEW, refund queued): show the order status
 }
 ```
 
@@ -4330,10 +4350,14 @@ Prefer generating these from `schema.gql`. Hand-written equivalents:
 ```typescript
 // Enums (mirror schema.gql exactly)
 export type Role = 'USER' | 'ADMIN' | 'SUPER_ADMIN';
-export type OrderStatus = 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
+export type OrderStatus =
+  | 'PLACED' | 'CONFIRMED' | 'IN_FULFILMENT' | 'COMPLETED' | 'CANCELLED' | 'EXPIRED' | 'PAYMENT_REVIEW';
+export type ShipmentStatus =
+  | 'PENDING' | 'PICKING' | 'PACKED' | 'READY_FOR_PICKUP' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'FAILED_DELIVERY' | 'RETURNED';
+export type OrderPaymentStatus = 'PENDING' | 'CAPTURED' | 'PARTIALLY_REFUNDED' | 'REFUNDED' | 'FAILED' | 'CANCELLED';
 export type FulfillmentType = 'DELIVERY' | 'PICKUP';
 export type OrderPaymentMethod = 'ONLINE' | 'CASH_ON_DELIVERY';
-export type PaymentStatus = 'PENDING' | 'COMPLETED' | 'FAILED' | 'ABANDONED';
+export type PaymentStatus = 'PENDING' | 'CAPTURED' | 'FAILED' | 'CANCELLED';
 export type DiscountType = 'PERCENTAGE' | 'FLAT';      // also DiscountTypeEnum (coupons)
 export type ReturnStatusEnum = 'PENDING' | 'APPROVED' | 'REJECTED' | 'REFUND_PENDING' | 'REFUNDED';
 export type RefundStatusEnum = 'PENDING' | 'SENDING' | 'PROCESSED' | 'FAILED';
@@ -4655,7 +4679,7 @@ Content-Type: application/json
 
 ### Step 11 — User Pays on Paystack
 
-User completes payment. Paystack fires the webhook to `POST /payment/webhook` → backend marks the payment `COMPLETED`, order → `PROCESSING`.
+User completes payment. Paystack fires the webhook to `POST /payment/webhook` → backend marks the payment `CAPTURED`, order → `CONFIRMED`.
 
 Paystack redirects the browser to the frontend callback page (`PAYSTACK_CALLBACK_URL`), e.g. `https://shop.example.com/checkout/callback?trxref=clx_order_789-1731900000000-a1b2c3d4&reference=clx_order_789-1731900000000-a1b2c3d4`.
 
@@ -4687,7 +4711,7 @@ mutation {
       "currency": "GHS",
       "order": {
         "id": "clx_order_789",
-        "status": "PROCESSING",
+        "status": "CONFIRMED",
         "grandTotal": { "amount": "68.98", "currency": "GHS" }
       }
     }
@@ -4699,23 +4723,23 @@ mutation {
 
 ### Step 13 — User Receives Order (Admin updates status)
 
-Admin sets the tracking details (`updateShipping`, emails the customer) and then the status:
+Staff set the tracking details (`updateShipping`, emails the customer) and move the shipment; the order follows (`IN_FULFILMENT`, then `COMPLETED`):
 ```graphql
 mutation {
-  updateOrderStatus(input: {
+  updateShipmentStatus(input: {
     orderId: "clx_order_789"
-    status: SHIPPED
-  }) { id status trackingNumber }
+    status: OUT_FOR_DELIVERY
+  }) { id status shipments { status trackingNumber } }
 }
 ```
 
 Then:
 ```graphql
 mutation {
-  updateOrderStatus(input: {
+  updateShipmentStatus(input: {
     orderId: "clx_order_789"
     status: DELIVERED
-  }) { id status }
+  }) { id status timeline { from to createdAt } }
 }
 ```
 

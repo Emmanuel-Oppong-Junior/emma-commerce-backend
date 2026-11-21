@@ -6,8 +6,10 @@ import {
   PaymentAttempt,
   PaymentIntentStatus,
   PaymentProvider,
+  PaymentReviewReason,
   PaymentStatus,
   Prisma,
+  ShipmentStatus,
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
@@ -22,6 +24,8 @@ import {
   VerificationOutcome,
 } from './payment-verification';
 import { LedgerAttempt } from './payment-reconciliation';
+import { intentAllowedFrom } from './payment-intent-status';
+import { collectableShipment } from './cash-on-delivery';
 
 /** A payment attempt in the shape the GraphQL `Payment` type exposes. */
 export interface PaymentRecord {
@@ -67,6 +71,7 @@ export type OrderForPayment = Prisma.OrderGetPayload<{ include: typeof PAYABLE_O
 
 const COLLECTABLE_ORDER = {
   paymentIntent: { select: { status: true, attempts: { select: { status: true } } } },
+  shipments: { select: { id: true, status: true } },
 } as const;
 
 export type OrderForCollection = Prisma.OrderGetPayload<{ include: typeof COLLECTABLE_ORDER }>;
@@ -111,8 +116,8 @@ export class PaymentRepository {
   ) {}
 
   /**
-   * Opens a new pending attempt for the order and abandons any other pending one, or returns the attempt already
-   * opened under the same idempotency key. `assertPayable` re-checks the order under the lock and throws to refuse.
+   * Opens a new pending attempt for the order and cancels any other pending one (reopening a FAILED intent), or
+   * returns the attempt already opened under the same idempotency key. `assertPayable` re-checks the order under the lock and throws to refuse.
    */
   async openAttempt(
     request: AttemptRequest,
@@ -140,9 +145,13 @@ export class PaymentRepository {
         create: { orderId: request.orderId, amount: order.grandTotal, currency },
         update: {},
       });
+      await tx.paymentIntent.updateMany({
+        where: { id: intent.id, status: PaymentIntentStatus.FAILED },
+        data: { status: PaymentIntentStatus.PENDING },
+      });
       await tx.paymentAttempt.updateMany({
         where: { intentId: intent.id, status: PaymentStatus.PENDING },
-        data: { status: PaymentStatus.ABANDONED },
+        data: { status: PaymentStatus.CANCELLED },
       });
       const attempt = await tx.paymentAttempt.create({
         data: {
@@ -174,10 +183,11 @@ export class PaymentRepository {
   }
 
   /**
-   * Records the order total as cash collected and moves the order to DELIVERED, in one transaction: the intent is
-   * marked PAID, a COMPLETED cash-on-delivery attempt and its cash collection are created, and `onRecorded` runs on
-   * the same transaction (for the audit row). `assertCollectable` re-checks the order under its row lock and throws
-   * to refuse, so a repeated call finds the order already DELIVERED and writes nothing.
+   * Records the grand total as cash collected and completes the order, in one transaction: the intent is captured, a
+   * CAPTURED cash-on-delivery attempt and its cash collection are created, the dispatched shipment is DELIVERED, the
+   * order moves IN_FULFILMENT -> COMPLETED (recording `order.status_changed.v2`), and `onRecorded` runs on the same
+   * transaction (for the audit row). `assertCollectable` re-checks the order under its row lock and throws to refuse,
+   * so a repeated call finds the order already COMPLETED and writes nothing.
    */
   async recordCashCollection(
     orderId: string,
@@ -189,14 +199,20 @@ export class PaymentRepository {
       await tx.$queryRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
       const order = await tx.order.findUnique({ where: { id: orderId }, include: COLLECTABLE_ORDER });
       assertCollectable(order);
+      const changed = () => new ConflictException(`Order "${orderId}" changed while its cash collection was recorded`);
 
       const amount = order.grandTotal;
       const currency = await this.storeRepository.findCurrency(tx);
       const intent = await tx.paymentIntent.upsert({
         where: { orderId },
-        create: { orderId, amount, currency, status: PaymentIntentStatus.PAID },
-        update: { status: PaymentIntentStatus.PAID },
+        create: { orderId, amount, currency, status: PaymentIntentStatus.PENDING },
+        update: {},
       });
+      const { count: captured } = await tx.paymentIntent.updateMany({
+        where: { id: intent.id, status: { in: intentAllowedFrom(PaymentIntentStatus.CAPTURED) } },
+        data: { status: PaymentIntentStatus.CAPTURED },
+      });
+      if (captured === 0) throw changed();
       const attempt = await tx.paymentAttempt.create({
         data: {
           intentId: intent.id,
@@ -204,16 +220,35 @@ export class PaymentRepository {
           amount,
           currency,
           channel: PaymentProvider.CASH_ON_DELIVERY,
-          status: PaymentStatus.COMPLETED,
+          status: PaymentStatus.CAPTURED,
         },
       });
       const collection = await tx.cashCollection.create({
         data: { orderId, attemptId: attempt.id, amount, currency, recordedById },
       });
-      const delivered = await this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.DELIVERED, [
-        order.status,
-      ]);
-      if (!delivered) throw new ConflictException(`Order "${orderId}" changed while its cash collection was recorded`);
+      const shipment = collectableShipment(order);
+      const context = { actorId: recordedById, reason: 'Cash collected on delivery' };
+      const delivered = await this.ordersRepository.transitionShipment(
+        tx,
+        shipment.id,
+        shipment.status,
+        ShipmentStatus.DELIVERED,
+        context,
+      );
+      if (!delivered) throw changed();
+      const completed = await this.ordersRepository.transitionStatus(
+        tx,
+        orderId,
+        OrderStatus.COMPLETED,
+        [order.status],
+        context,
+      );
+      if (!completed) throw changed();
+      await this.outbox.record(tx, {
+        type: 'order.status_changed.v2',
+        aggregateId: orderId,
+        payload: { orderId, from: order.status, to: OrderStatus.COMPLETED },
+      });
 
       const settled = await tx.paymentAttempt.findUniqueOrThrow({ where: { id: attempt.id }, include: WITH_ORDER });
       const recorded = { attempt: toPaymentRecord(settled), collection, from: order.status };
@@ -248,7 +283,7 @@ export class PaymentRepository {
       include: WITH_ORDER_ID,
       orderBy: { createdAt: 'desc' },
     });
-    const current = attempts.find((a) => a.status === PaymentStatus.COMPLETED) ?? attempts[0];
+    const current = attempts.find((a) => a.status === PaymentStatus.CAPTURED) ?? attempts[0];
     return current ? toPaymentRecord(current) : null;
   }
 
@@ -257,7 +292,7 @@ export class PaymentRepository {
     const attempts = await this.prisma.paymentAttempt.findMany({
       where: {
         provider: PaymentProvider.PAYSTACK,
-        status: { in: [PaymentStatus.PENDING, PaymentStatus.ABANDONED] },
+        status: { in: [PaymentStatus.PENDING, PaymentStatus.CANCELLED] },
         reference: { not: null },
         deleted: false,
         createdAt: { gte: createdFrom, lt: createdBefore },
@@ -359,12 +394,12 @@ export class PaymentRepository {
 
       const status =
         outcome.kind === 'paid'
-          ? PaymentStatus.COMPLETED
+          ? PaymentStatus.CAPTURED
           : outcome.kind === 'failed'
             ? PaymentStatus.FAILED
             : outcome.attemptStatus;
       const { count } = await tx.paymentAttempt.updateMany({
-        where: { id: attemptId, status: { in: [PaymentStatus.PENDING, PaymentStatus.ABANDONED] } },
+        where: { id: attemptId, status: { in: [PaymentStatus.PENDING, PaymentStatus.CANCELLED] } },
         data: {
           status,
           rawStatus: verified.status,
@@ -376,21 +411,46 @@ export class PaymentRepository {
 
       let refundId: string | undefined;
       if (outcome.kind === 'paid') {
-        await tx.paymentIntent.update({ where: { id: attempt.intentId }, data: { status: PaymentIntentStatus.PAID } });
-        const moved = await this.ordersRepository.transitionStatus(tx, intent.orderId, OrderStatus.PROCESSING, [
-          OrderStatus.PENDING,
-        ]);
-        if (!moved) throw new ConflictException(`Order "${intent.orderId}" left PENDING while its payment settled`);
+        const { count: captured } = await tx.paymentIntent.updateMany({
+          where: { id: attempt.intentId, status: { in: intentAllowedFrom(PaymentIntentStatus.CAPTURED) } },
+          data: { status: PaymentIntentStatus.CAPTURED },
+        });
+        if (captured === 0)
+          throw new ConflictException(`Payment of order "${intent.orderId}" changed while it settled`);
+        const moved = await this.ordersRepository.transitionStatus(
+          tx,
+          intent.orderId,
+          OrderStatus.CONFIRMED,
+          [OrderStatus.PLACED],
+          { reason: 'Payment captured' },
+        );
+        if (!moved) throw new ConflictException(`Order "${intent.orderId}" left PLACED while its payment settled`);
         // The captured payment is the sale. A payment for an order that already expired (its stock released) never
         // gets here: decideVerification flags it ORDER_NOT_PAYABLE for review and refund, so nothing is oversold.
         await this.stockLedger.consumeOrder(tx, intent.orderId);
-        // Recorded only on this PENDING -> PROCESSING transition, so repeat webhooks and re-verifies email nobody.
+        // Recorded only on this PLACED -> CONFIRMED transition, so repeat webhooks and re-verifies email nobody.
         await this.outbox.record(tx, {
           type: 'payment.succeeded.v1',
           aggregateId: intent.orderId,
           payload: { orderId: intent.orderId, paymentId: attemptId, amount: attempt.amount.toFixed(2) },
         });
+      } else if (outcome.kind === 'failed') {
+        // A failed attempt marks the intent FAILED only while nothing else has paid it; a new attempt reopens it.
+        await tx.paymentIntent.updateMany({
+          where: { id: attempt.intentId, status: { in: intentAllowedFrom(PaymentIntentStatus.FAILED) } },
+          data: { status: PaymentIntentStatus.FAILED },
+        });
       } else if (outcome.kind === 'review') {
+        if (outcome.reason === PaymentReviewReason.ORDER_NOT_PAYABLE) {
+          // Money arrived for a cancelled or expired order: it waits in PAYMENT_REVIEW until the refund is processed.
+          await this.ordersRepository.transitionStatus(
+            tx,
+            intent.orderId,
+            OrderStatus.PAYMENT_REVIEW,
+            [OrderStatus.CANCELLED, OrderStatus.EXPIRED],
+            { reason: `Payment ${attemptId} captured after the order closed; refund queued` },
+          );
+        }
         const refund = await tx.refund.create({
           data: {
             attemptId,

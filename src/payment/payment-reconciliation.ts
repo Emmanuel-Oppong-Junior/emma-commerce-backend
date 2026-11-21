@@ -69,7 +69,7 @@ function classify(transaction: ListedTransaction, attempt: LedgerAttempt | undef
   if (!attempt) return 'PAYSTACK_ONLY';
   if (!isSettled(attempt.status)) return 'UNSETTLED';
   if (attempt.reviewReason) return null;
-  if (attempt.status !== PaymentStatus.COMPLETED) return 'STATUS_MISMATCH';
+  if (attempt.status !== PaymentStatus.CAPTURED) return 'STATUS_MISMATCH';
   if (attempt.currency !== transaction.currency || !attempt.amount.mul(100).equals(transaction.amount)) {
     return 'AMOUNT_MISMATCH';
   }

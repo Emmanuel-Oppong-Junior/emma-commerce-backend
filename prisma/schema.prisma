@@ -445,7 +445,7 @@ model Order {
   shippingTotal           Decimal?           @db.Decimal(14, 2)
   /// The amount charged: subtotal - discountTotal + shippingTotal
   grandTotal              Decimal            @db.Decimal(14, 2)
-  status                  OrderStatus        @default(PENDING)
+  status                  OrderStatus        @default(PLACED)
   fulfillmentType         FulfillmentType    @default(DELIVERY)
   shippingAddressId       String?
   shippingAddress         Address?           @relation(fields: [shippingAddressId], references: [id], onDelete: Restrict)
@@ -453,8 +453,6 @@ model Order {
   pickupLocation          PickupLocation?    @relation(fields: [pickupLocationId], references: [id], onDelete: Restrict)
   shippingAddressSnapshot Json?
   pickupLocationSnapshot  Json?
-  trackingNumber          String?
-  carrier                 String?
   couponId                String?
   coupon                  Coupon?            @relation(fields: [couponId], references: [id])
   paymentMethod           PaymentMethod      @default(ONLINE)
@@ -470,6 +468,8 @@ model Order {
   cashCollections         CashCollection[]
   returnRequests          ReturnRequest[]
   stockReservations       StockReservation[]
+  shipments               Shipment[]
+  statusEvents            OrderStatusEvent[]
 
   @@index([userId, status])
   @@index([createdAt])
@@ -691,16 +691,23 @@ enum Role {
   SUPER_ADMIN
 }
 
+/// A payment attempt: CANCELLED when superseded by a newer attempt or its order closed (a late provider verdict can
+/// still settle it), FAILED when the provider refused it.
 enum PaymentStatus {
   PENDING
-  COMPLETED
+  CAPTURED
   FAILED
-  ABANDONED
+  CANCELLED
 }
 
+/// The order's payment machine (src/payment/payment-intent-status.ts).
 enum PaymentIntentStatus {
   PENDING
-  PAID
+  CAPTURED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+  CANCELLED
 }
 
 enum PaymentReviewReason {
@@ -727,12 +734,75 @@ enum PaymentMethod {
   CASH_ON_DELIVERY
 }
 
+/// The order machine (src/order/order-status.ts).
 enum OrderStatus {
-  PENDING
-  PROCESSING
-  SHIPPED
-  DELIVERED
+  PLACED
+  CONFIRMED
+  IN_FULFILMENT
+  COMPLETED
   CANCELLED
+  EXPIRED
+  PAYMENT_REVIEW
+}
+
+/// The fulfilment machine of a shipment (src/order/shipment-status.ts).
+enum ShipmentStatus {
+  PENDING
+  PICKING
+  PACKED
+  READY_FOR_PICKUP
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED_DELIVERY
+  RETURNED
+}
+
+/// Goods of an order on their way to the customer. One per order for now (created on the first fulfilment step); the
+/// schema allows several for partial fulfilment later.
+model Shipment {
+  id             String                @id @default(cuid())
+  orderId        String
+  status         ShipmentStatus        @default(PENDING)
+  carrier        String?
+  trackingNumber String?
+  /// When it went out for delivery or became ready for pickup (null on shipments migrated without that date)
+  dispatchedAt   DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  order          Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  events         ShipmentStatusEvent[]
+
+  @@index([orderId])
+}
+
+/// The order's status history, written in the same transaction as every transition; the customer's tracking timeline.
+model OrderStatusEvent {
+  id        String       @id @default(cuid())
+  orderId   String
+  /// Null for the first event (the order was placed, or migrated)
+  from      OrderStatus?
+  to        OrderStatus
+  /// The staff member or customer who caused it; null for the system (payment, expiry)
+  actorId   String?
+  reason    String?
+  createdAt DateTime     @default(now())
+  order     Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+}
+
+model ShipmentStatusEvent {
+  id         String          @id @default(cuid())
+  shipmentId String
+  from       ShipmentStatus?
+  to         ShipmentStatus
+  actorId    String?
+  reason     String?
+  createdAt  DateTime        @default(now())
+  shipment   Shipment        @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, createdAt])
 }
 
 enum DiscountType {

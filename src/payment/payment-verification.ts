@@ -6,6 +6,7 @@ import {
   PaymentStatus,
   Prisma,
 } from '../generated/prisma/client';
+import { PAID_INTENT_STATUSES } from './payment-intent-status';
 
 /** The provider's verdict on one transaction, checked at the boundary. `amount` is in subunits (pesewas). */
 export interface ProviderVerification {
@@ -31,12 +32,12 @@ export type VerificationOutcome =
   | { kind: 'paid' }
   | { kind: 'review'; reason: PaymentReviewReason; attemptStatus: ReviewedAttemptStatus };
 
-/** A wrong amount or currency never counts as payment; a correct charge the order cannot take stays COMPLETED. */
-export type ReviewedAttemptStatus = typeof PaymentStatus.COMPLETED | typeof PaymentStatus.FAILED;
+/** A wrong amount or currency never counts as payment; a correct charge the order cannot take stays CAPTURED. */
+export type ReviewedAttemptStatus = typeof PaymentStatus.CAPTURED | typeof PaymentStatus.FAILED;
 
 const PROVIDER_SUCCESS = 'success';
 const PROVIDER_FAILED = 'failed';
-const OPEN_ATTEMPT_STATUSES: PaymentStatus[] = [PaymentStatus.PENDING, PaymentStatus.ABANDONED];
+const OPEN_ATTEMPT_STATUSES: PaymentStatus[] = [PaymentStatus.PENDING, PaymentStatus.CANCELLED];
 
 export function isSettled(status: PaymentStatus): boolean {
   return !OPEN_ATTEMPT_STATUSES.includes(status);
@@ -68,7 +69,7 @@ export function parseProviderVerification(
 
 /**
  * Decides what a provider verdict means for an attempt. Money is accepted as payment for the order only when the
- * provider reports success for exactly the attempt's amount and currency, the order is still PENDING and nothing
+ * provider reports success for exactly the attempt's amount and currency, the order is still PLACED and nothing
  * else has paid it. Any other captured charge is kept on the ledger and flagged for review and refund.
  */
 export function decideVerification(state: AttemptState, verified: ProviderVerification): VerificationOutcome {
@@ -82,11 +83,11 @@ export function decideVerification(state: AttemptState, verified: ProviderVerifi
   if (!toSubunits(state.amount).equals(verified.amount)) {
     return { kind: 'review', reason: PaymentReviewReason.AMOUNT_MISMATCH, attemptStatus: PaymentStatus.FAILED };
   }
-  if (state.intentStatus === PaymentIntentStatus.PAID) {
-    return { kind: 'review', reason: PaymentReviewReason.ALREADY_PAID, attemptStatus: PaymentStatus.COMPLETED };
+  if (PAID_INTENT_STATUSES.includes(state.intentStatus)) {
+    return { kind: 'review', reason: PaymentReviewReason.ALREADY_PAID, attemptStatus: PaymentStatus.CAPTURED };
   }
-  if (state.order.deleted || state.order.status !== OrderStatus.PENDING) {
-    return { kind: 'review', reason: PaymentReviewReason.ORDER_NOT_PAYABLE, attemptStatus: PaymentStatus.COMPLETED };
+  if (state.order.deleted || state.order.status !== OrderStatus.PLACED) {
+    return { kind: 'review', reason: PaymentReviewReason.ORDER_NOT_PAYABLE, attemptStatus: PaymentStatus.CAPTURED };
   }
   return { kind: 'paid' };
 }

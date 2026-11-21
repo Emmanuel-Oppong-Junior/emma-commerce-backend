@@ -9,6 +9,8 @@ function buildOrdersService(order: Record<string, unknown>) {
     softDelete: jest.fn().mockResolvedValue({ ...order, deleted: true }),
     hasCompletedPayment: jest.fn().mockResolvedValue(false),
     findUserById: jest.fn().mockResolvedValue({ email: 'customer@test.local' }),
+    lockForFulfilment: jest.fn().mockResolvedValue({ ...order, deleted: false }),
+    transitionShipment: jest.fn(),
   };
   const inventory = { logInventoryChange: jest.fn() };
   const service = new OrdersService(
@@ -47,7 +49,7 @@ describe('Order lifecycle (audit repro: ORD-01, ORD-03, ORD-04)', () => {
     const order = {
       id: 'order-1',
       userId: 'user-1',
-      status: 'DELIVERED',
+      status: 'COMPLETED',
       paymentMethod: 'ONLINE',
       items: [{ productId: 'product-1', quantity: 2 }],
     };
@@ -62,7 +64,8 @@ describe('Order lifecycle (audit repro: ORD-01, ORD-03, ORD-04)', () => {
     const order = { id: 'order-1', userId: 'user-1', status: 'CANCELLED', paymentMethod: 'ONLINE', items: [] };
     const { service, repository } = buildOrdersService(order);
 
-    await expect(service.updateOrderStatus('order-1', 'SHIPPED' as never, 'admin-1')).rejects.toThrow();
+    await expect(service.updateShipmentStatus('order-1', 'OUT_FOR_DELIVERY' as never, 'admin-1')).rejects.toThrow();
     expect(repository.updateStatus).not.toHaveBeenCalled();
+    expect(repository.transitionShipment).not.toHaveBeenCalled();
   });
 });

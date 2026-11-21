@@ -1,5 +1,16 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Refund, RefundStatus, ReturnRequest, ReturnStatus } from '../generated/prisma/client';
+import {
+  OrderStatus,
+  PaymentStatus,
+  Prisma,
+  Refund,
+  RefundStatus,
+  ReturnRequest,
+  ReturnStatus,
+} from '../generated/prisma/client';
+import { autoRefundKey } from '../payment/payment-verification';
+import { intentAllowedFrom, statusAfterRefunds } from '../payment/payment-intent-status';
+import { transitionOrder } from '../order/order-transition';
 import { PrismaService } from '../prisma/prisma.service';
 import { RefundLedger } from './refund-cap';
 import { OrderTaxSnapshot, refundTax } from './refund-tax';
@@ -100,7 +111,12 @@ export class RefundRepository {
     });
   }
 
-  /** Records the provider's acceptance of a SENDING refund and completes its return request, if any. */
+  /**
+   * Records the provider's acceptance of a SENDING refund and completes its return request, if any. In the same
+   * transaction the payment machine follows: a refund of the order's accepted capture moves its intent to
+   * PARTIALLY_REFUNDED or REFUNDED, and once every auto-refund of a late payment is processed an order in
+   * PAYMENT_REVIEW is CANCELLED.
+   */
   async recordProcessed(
     refundId: string,
     providerRef: string,
@@ -121,6 +137,7 @@ export class RefundRepository {
         }
         returnRequest = await tx.returnRequest.findUniqueOrThrow({ where: { id: refund.returnRequestId } });
       }
+      await this.followRefund(tx, refund);
       const recorded = { refund, returnRequest };
       await onRecorded(tx, recorded);
       return recorded;
@@ -152,6 +169,43 @@ export class RefundRepository {
     const { count } = await tx.refund.updateMany({ where: { id: refundId, status: RefundStatus.SENDING }, data });
     if (count === 0) throw new ConflictException(`Refund "${refundId}" is no longer SENDING`);
     return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
+  }
+
+  private async followRefund(tx: Tx, refund: Refund): Promise<void> {
+    const attempt = await tx.paymentAttempt.findUniqueOrThrow({
+      where: { id: refund.attemptId },
+      select: {
+        id: true,
+        status: true,
+        amount: true,
+        reviewReason: true,
+        intentId: true,
+        intent: { select: { orderId: true } },
+        refunds: { select: { amount: true, status: true, idempotencyKey: true } },
+      },
+    });
+    if (attempt.status === PaymentStatus.CAPTURED && attempt.reviewReason === null) {
+      const refunded = attempt.refunds
+        .filter((other) => other.status === RefundStatus.PROCESSED)
+        .reduce((total, other) => total.add(other.amount), new Prisma.Decimal(0));
+      const to = statusAfterRefunds(attempt.amount, refunded);
+      await tx.paymentIntent.updateMany({
+        where: { id: attempt.intentId, status: { in: intentAllowedFrom(to) } },
+        data: { status: to },
+      });
+    }
+    if (refund.idempotencyKey !== autoRefundKey(attempt.id)) return;
+    const unrefunded = await tx.refund.count({
+      where: {
+        attempt: { intent: { orderId: attempt.intent.orderId } },
+        idempotencyKey: { startsWith: 'auto-refund:' },
+        status: { not: RefundStatus.PROCESSED },
+      },
+    });
+    if (unrefunded > 0) return;
+    await transitionOrder(tx, attempt.intent.orderId, OrderStatus.CANCELLED, [OrderStatus.PAYMENT_REVIEW], {
+      reason: 'Payment received after the order closed was refunded',
+    });
   }
 
   /** The order's stored tax snapshot and the tax its earlier refunds already returned. */

@@ -1,6 +1,6 @@
 import { INestApplicationContext } from '@nestjs/common';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { OrderStatus } from '../../src/generated/prisma/client';
+import { OrderStatus, ShipmentStatus } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { OrdersService } from '../../src/order/order.service';
 import { EmailService } from '../../src/notifications/email/email.service';
@@ -25,7 +25,7 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
   let email: EmailService;
   let orderCount = 0;
 
-  const createOrder = async (status: OrderStatus = OrderStatus.PROCESSING) => {
+  const createOrder = async (status: OrderStatus = OrderStatus.CONFIRMED) => {
     orderCount += 1;
     const order = await prisma.order.create({
       data: {
@@ -43,7 +43,7 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
   };
 
   const shipmentEvent = (orderId: string) =>
-    prisma.outboxEvent.findFirstOrThrow({ where: { type: 'order.shipment_updated.v1', aggregateId: orderId } });
+    prisma.outboxEvent.findFirstOrThrow({ where: { type: 'shipment.tracking_updated.v1', aggregateId: orderId } });
 
   beforeAll(async () => {
     worker = await createTestWorker();
@@ -101,8 +101,8 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
     const orderId = await createOrder(OrderStatus.CANCELLED);
 
     await expect(
-      worker.get(OrdersService).updateOrderStatus(orderId, OrderStatus.SHIPPED, 'seed_admin'),
-    ).rejects.toThrow('cannot move from CANCELLED to SHIPPED');
+      worker.get(OrdersService).updateShipmentStatus(orderId, ShipmentStatus.OUT_FOR_DELIVERY, 'seed_admin'),
+    ).rejects.toThrow('only CONFIRMED or IN_FULFILMENT orders can be fulfilled');
     await sleep(1_500);
 
     expect(await prisma.outboxEvent.count({ where: { aggregateId: orderId } })).toBe(0);

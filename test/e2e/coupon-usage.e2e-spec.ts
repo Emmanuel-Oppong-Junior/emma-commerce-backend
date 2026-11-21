@@ -138,7 +138,7 @@ describe('Coupon usage limits and release (e2e)', () => {
 
     await orders.expireAbandonedOrders(1);
 
-    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('CANCELLED');
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe('EXPIRED');
     expect(await couponState('EXPIRE5')).toEqual({ usedCount: 0, usages: 0 });
   });
 });

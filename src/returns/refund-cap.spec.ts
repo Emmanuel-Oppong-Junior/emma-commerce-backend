@@ -10,7 +10,7 @@ const ledgerWith = (
 ): RefundLedger => ({
   attempt: {
     id: 'attempt1',
-    status: PaymentStatus.COMPLETED,
+    status: PaymentStatus.CAPTURED,
     provider: PaymentProvider.PAYSTACK,
     reference: 'ref1',
     amount: d('100.00'),

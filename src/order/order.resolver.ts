@@ -2,12 +2,15 @@ import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/g
 import { Order } from './entities/order.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateOrderInput } from './dto/create-order.input';
-import { UpdateOrderStatusInput } from './dto/update-order-status.input';
+import { UpdateShipmentStatusInput } from './dto/update-shipment-status.input';
+import { OrderStatusEvent } from './entities/order-status-event.entity';
+import { Shipment } from './entities/shipment.entity';
+import { PaymentIntentStatusEnum } from './enums/order.enum';
 import { UpdateShippingInput } from './dto/update-shipping.input';
 import { OrdersService } from './order.service';
 import { UsersLoader } from '../users/loaders/users.loader';
 import { User } from '../users/entities/user.entity';
-import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
+import { FulfillmentType, PaymentMethod, ShipmentStatus } from '../generated/prisma/client';
 import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
@@ -73,22 +76,28 @@ export class OrdersResolver {
     });
   }
 
-  @RequirePermission('order.manage')
+  @RequirePermission('order.fulfil')
   @Mutation(() => Order, {
     name: 'updateShipping',
-    description: 'Update tracking number and carrier for an order (admin only)',
+    description: "Set the carrier and tracking number on a confirmed or in-fulfilment order's shipment (staff)",
   })
   async updateShipping(@ActiveUser('id') adminId: string, @Args('input') input: UpdateShippingInput) {
     return this.ordersService.updateShipping(input.orderId, input.trackingNumber, input.carrier, adminId);
   }
 
-  @RequirePermission('order.manage')
+  @RequirePermission('order.fulfil')
   @Mutation(() => Order, {
-    name: 'updateOrderStatus',
-    description: 'Updates the status of an order',
+    name: 'updateShipmentStatus',
+    description:
+      "Move an order's shipment to its next fulfilment step (staff); the order follows: IN_FULFILMENT on the first step, COMPLETED on delivery",
   })
-  async updateOrderStatus(@ActiveUser('id') adminId: string, @Args('input') input: UpdateOrderStatusInput) {
-    return this.ordersService.updateOrderStatus(input.orderId, input.status, adminId);
+  async updateShipmentStatus(@ActiveUser('id') actorId: string, @Args('input') input: UpdateShipmentStatusInput) {
+    return this.ordersService.updateShipmentStatus(
+      input.orderId,
+      input.status as unknown as ShipmentStatus,
+      actorId,
+      input.reason,
+    );
   }
 
   @CustomerOnly()
@@ -96,8 +105,12 @@ export class OrdersResolver {
     name: 'cancelOrder',
     description: "Cancels the authenticated user's own order and restores stock",
   })
-  async cancelOrder(@ActiveUser('id') userId: string, @Args('orderId', { type: () => String }) orderId: string) {
-    return this.ordersService.cancelOrder(userId, orderId);
+  async cancelOrder(
+    @ActiveUser('id') userId: string,
+    @Args('orderId', { type: () => String }) orderId: string,
+    @Args('reason', { type: () => String, nullable: true }) reason?: string,
+  ) {
+    return this.ordersService.cancelOrder(userId, orderId, reason);
   }
 
   @RequirePermission('order.manage')
@@ -105,8 +118,12 @@ export class OrdersResolver {
     name: 'adminCancelOrder',
     description: 'Admin: cancel any order by ID and restore its stock',
   })
-  async adminCancelOrder(@ActiveUser('id') adminId: string, @Args('orderId', { type: () => String }) orderId: string) {
-    return this.ordersService.adminCancelOrder(orderId, adminId);
+  async adminCancelOrder(
+    @ActiveUser('id') adminId: string,
+    @Args('orderId', { type: () => String }) orderId: string,
+    @Args('reason', { type: () => String, nullable: true }) reason?: string,
+  ) {
+    return this.ordersService.adminCancelOrder(orderId, adminId, reason);
   }
 
   @RequirePermission('order.manage')
@@ -116,6 +133,23 @@ export class OrdersResolver {
   })
   async deleteOrder(@ActiveUser('id') adminId: string, @Args('orderId', { type: () => String }) orderId: string) {
     return this.ordersService.deleteOrder(orderId, adminId);
+  }
+
+  // Every order query already limits customers to their own orders, so the timeline needs no extra check.
+  @ResolveField(() => [OrderStatusEvent], { description: 'Status history (tracking timeline), oldest first' })
+  async timeline(@Parent() order: Order & { statusEvents?: OrderStatusEvent[] }) {
+    return order.statusEvents ?? this.ordersService.getTimeline(order.id);
+  }
+
+  @ResolveField(() => [Shipment])
+  async shipments(@Parent() order: Order) {
+    return order.shipments ?? this.ordersService.getShipments(order.id);
+  }
+
+  @ResolveField(() => PaymentIntentStatusEnum, { nullable: true })
+  async paymentStatus(@Parent() order: Order & { paymentIntent?: { status: string } | null }) {
+    if (order.paymentIntent !== undefined) return order.paymentIntent?.status ?? null;
+    return this.ordersService.getPaymentStatus(order.id);
   }
 
   @ResolveField(() => User, { nullable: true, middleware: [ownerOrAdmin<Order>((order) => order.userId)] })

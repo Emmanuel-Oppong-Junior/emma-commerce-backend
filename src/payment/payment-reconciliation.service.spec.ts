@@ -98,7 +98,7 @@ describe('PaymentReconciliationService', () => {
     it('re-verifies each stale attempt, counting settled, still open and failed ones', async () => {
       paymentRepository.findOpenPaystackReferences.mockResolvedValue(['r1', 'r2', 'r3']);
       paymentService.verifyPayment
-        .mockResolvedValueOnce({ status: 'COMPLETED' })
+        .mockResolvedValueOnce({ status: 'CAPTURED' })
         .mockRejectedValueOnce(new BadGatewayException('Paystack verify failed with HTTP 503'))
         .mockResolvedValueOnce({ status: 'PENDING' });
 
@@ -135,7 +135,7 @@ describe('PaymentReconciliationService', () => {
       paystack.listTransactions
         .mockResolvedValueOnce({ transactions: [tx('r1')], pageCount: 2 })
         .mockResolvedValueOnce({ transactions: [tx('r2')], pageCount: 2 });
-      paymentRepository.findLedgerAttempts.mockResolvedValue([ledger('r1', 'COMPLETED'), ledger('r2', 'COMPLETED')]);
+      paymentRepository.findLedgerAttempts.mockResolvedValue([ledger('r1', 'CAPTURED'), ledger('r2', 'CAPTURED')]);
 
       const summary = await service.diffPreviousDay(NOW);
 
@@ -158,7 +158,7 @@ describe('PaymentReconciliationService', () => {
         pageCount: DIFF_MAX_PAGES + 5,
       }));
       paymentRepository.findLedgerAttempts.mockImplementation(async (references: string[]) =>
-        references.map((reference) => ledger(reference, 'COMPLETED')),
+        references.map((reference) => ledger(reference, 'CAPTURED')),
       );
 
       const summary = await service.diffPreviousDay(NOW);
@@ -179,9 +179,9 @@ describe('PaymentReconciliationService', () => {
       paymentRepository.findLedgerAttempts.mockResolvedValue([
         ledger('missed', 'PENDING'),
         ledger('failed', 'FAILED'),
-        ledger('short', 'COMPLETED'),
+        ledger('short', 'CAPTURED'),
       ]);
-      paymentService.verifyPayment.mockResolvedValue({ status: 'COMPLETED' });
+      paymentService.verifyPayment.mockResolvedValue({ status: 'CAPTURED' });
 
       const summary = await service.diffPreviousDay(NOW);
 
@@ -194,7 +194,7 @@ describe('PaymentReconciliationService', () => {
         'Payment reconciliation mismatch | kind: PAYSTACK_ONLY | reference: unknown | paystack: 10000 GHS | ledger: none',
         'Payment reconciliation mismatch | kind: UNSETTLED | reference: missed | paystack: 10000 GHS | ledger: PENDING 10000 GHS',
         'Payment reconciliation mismatch | kind: STATUS_MISMATCH | reference: failed | paystack: 10000 GHS | ledger: FAILED 10000 GHS',
-        'Payment reconciliation mismatch | kind: AMOUNT_MISMATCH | reference: short | paystack: 9000 GHS | ledger: COMPLETED 10000 GHS',
+        'Payment reconciliation mismatch | kind: AMOUNT_MISMATCH | reference: short | paystack: 9000 GHS | ledger: CAPTURED 10000 GHS',
         expect.stringContaining(
           'PAYSTACK_ONLY: 1 | UNSETTLED: 1 | STATUS_MISMATCH: 1 | AMOUNT_MISMATCH: 1 | recovered: 1 | complete: true',
         ),
@@ -203,10 +203,10 @@ describe('PaymentReconciliationService', () => {
 
     it('keeps diffing when a missed success cannot be settled', async () => {
       paystack.listTransactions.mockResolvedValue({ transactions: [tx('m1'), tx('m2')], pageCount: 1 });
-      paymentRepository.findLedgerAttempts.mockResolvedValue([ledger('m1', 'PENDING'), ledger('m2', 'ABANDONED')]);
+      paymentRepository.findLedgerAttempts.mockResolvedValue([ledger('m1', 'PENDING'), ledger('m2', 'CANCELLED')]);
       paymentService.verifyPayment
         .mockRejectedValueOnce(new Error('timeout'))
-        .mockResolvedValueOnce({ status: 'COMPLETED' });
+        .mockResolvedValueOnce({ status: 'CAPTURED' });
 
       const summary = await service.diffPreviousDay(NOW);
 

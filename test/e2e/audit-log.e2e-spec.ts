@@ -76,8 +76,8 @@ describe('Audit log for privileged mutations (e2e)', () => {
       userToken,
     );
     const orderId = order.createOrder.id;
-    await seedPaymentAttempt(prisma, { orderId, status: 'COMPLETED', reference: `ref-${orderId}` });
-    await prisma.order.update({ where: { id: orderId }, data: { status: 'DELIVERED' } });
+    await seedPaymentAttempt(prisma, { orderId, status: 'CAPTURED', reference: `ref-${orderId}` });
+    await prisma.order.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
     const request = await run(
       `mutation { createReturnRequest(input: { orderId: "${orderId}", reason: "Arrived damaged" }) { id } }`,
       userToken,

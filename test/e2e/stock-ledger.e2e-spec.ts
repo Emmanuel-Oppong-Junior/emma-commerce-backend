@@ -163,20 +163,27 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
     await expectLedgerToAddUp(variantId);
   });
 
-  it('holds cash-on-delivery stock without expiry and consumes it when the order is dispatched', async () => {
+  it('holds cash-on-delivery stock without expiry and consumes it once when the order is dispatched', async () => {
     const variantId = await newVariant(5);
     const order = await placeOrder(variantId, 2, { paymentMethod: PaymentMethod.CASH_ON_DELIVERY });
     const [held] = await prisma.stockReservation.findMany({ where: { orderId: order.id } });
+    const move = (status: string) =>
+      gqlRequest(
+        app,
+        `mutation { updateShipmentStatus(input: { orderId: "${order.id}", status: ${status} }) { status } }`,
+        undefined,
+        adminToken,
+      ).expect(200);
 
-    const shipped = await gqlRequest(
-      app,
-      `mutation { updateOrderStatus(input: { orderId: "${order.id}", status: SHIPPED }) { status } }`,
-      undefined,
-      adminToken,
-    ).expect(200);
+    const packed = await move('PACKED');
+    expect(await reservationsOf(order.id)).toEqual([{ status: 'ACTIVE', quantity: 2 }]);
+    const shipped = await move('OUT_FOR_DELIVERY');
+    // A failed delivery retried goes out again without consuming the stock a second time.
+    await move('FAILED_DELIVERY');
+    const retried = await move('OUT_FOR_DELIVERY');
 
     expect(held).toMatchObject({ status: 'ACTIVE', expiresAt: null });
-    expect(shipped.body.errors).toBeUndefined();
+    expect([packed, shipped, retried].map((res) => res.body.errors)).toEqual([undefined, undefined, undefined]);
     expect(await reservationsOf(order.id)).toEqual([{ status: 'CONSUMED', quantity: 2 }]);
     expect(await stockOf(prisma, variantId)).toEqual({ onHand: 3, reserved: 0, available: 3 });
     expect(await movements(variantId, 'SALE')).toHaveLength(1);
@@ -247,7 +254,10 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
     const settled = await settleSuccessfully(order.id, Number(order.grandTotal));
 
     expect(settled.outcome).toMatchObject({ kind: 'review', reason: 'ORDER_NOT_PAYABLE' });
-    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: 'CANCELLED' });
+    // The late payment parks the order in PAYMENT_REVIEW until its refund is processed (P1-O.2).
+    expect(await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({
+      status: 'PAYMENT_REVIEW',
+    });
     expect(await reservationsOf(order.id)).toEqual([{ status: 'RELEASED', quantity: 2 }]);
     expect(await reservationsOf(other.id)).toEqual([{ status: 'ACTIVE', quantity: 2 }]);
     expect(await stockOf(prisma, variantId)).toEqual({ onHand: 2, reserved: 2, available: 0 });
@@ -280,7 +290,7 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
         grandTotal: 10,
         currency: 'GHS',
         pricingVersion: 0,
-        status: 'DELIVERED',
+        status: 'COMPLETED',
         contactEmail: 'buyer@example.com',
         contactPhone: '+233244000000',
       },

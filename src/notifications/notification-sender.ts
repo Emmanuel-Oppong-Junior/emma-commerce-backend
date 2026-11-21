@@ -4,8 +4,12 @@ import { LoggerService } from '../commons/logger.service';
 import { EmailService } from './email/email.service';
 import { EmailJobData } from './email-jobs';
 import { DomainEventJobData } from '../outbox/domain-events';
+import { OrderStatus, ShipmentStatus } from '../generated/prisma/client';
 
 const CONTEXT = 'NotificationSender';
+/** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
+const EMAILED_ORDER_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED];
+const EMAILED_SHIPMENT_STATUSES: ShipmentStatus[] = [ShipmentStatus.READY_FOR_PICKUP, ShipmentStatus.OUT_FOR_DELIVERY];
 
 /**
  * Turns one notifications-queue job into the email it stands for. Outbox events carry ids only, so the recipient is
@@ -50,6 +54,44 @@ export class NotificationSender {
       }
       case 'order.shipment_updated.v1': {
         const { payload } = data as DomainEventJobData<'order.shipment_updated.v1'>;
+        const order = await this.findOrder(payload.orderId, jobName);
+        if (order) {
+          await this.email.sendOrderStatusEmail(
+            order.user.email,
+            order.id,
+            'SHIPPED',
+            payload.trackingNumber,
+            idempotencyKey,
+          );
+        }
+        return;
+      }
+      case 'order.status_changed.v2': {
+        const { payload } = data as DomainEventJobData<'order.status_changed.v2'>;
+        if (!EMAILED_ORDER_STATUSES.includes(payload.to)) return;
+        const order = await this.findOrder(payload.orderId, jobName);
+        if (order) {
+          await this.email.sendOrderStatusEmail(order.user.email, order.id, payload.to, undefined, idempotencyKey);
+        }
+        return;
+      }
+      case 'shipment.status_changed.v1': {
+        const { payload } = data as DomainEventJobData<'shipment.status_changed.v1'>;
+        if (!EMAILED_SHIPMENT_STATUSES.includes(payload.status)) return;
+        const order = await this.findOrder(payload.orderId, jobName);
+        if (order) {
+          await this.email.sendOrderStatusEmail(
+            order.user.email,
+            order.id,
+            payload.status,
+            payload.trackingNumber ?? undefined,
+            idempotencyKey,
+          );
+        }
+        return;
+      }
+      case 'shipment.tracking_updated.v1': {
+        const { payload } = data as DomainEventJobData<'shipment.tracking_updated.v1'>;
         const order = await this.findOrder(payload.orderId, jobName);
         if (order) {
           await this.email.sendOrderStatusEmail(

@@ -2,8 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersResolver } from './order.resolver';
 import { OrdersService } from './order.service';
 import { CreateOrderInput } from './dto/create-order.input';
-import { UpdateOrderStatusInput } from './dto/update-order-status.input';
-import { FulfillmentTypeEnum, OrderStatusEnum } from './enums/order.enum';
+import { UpdateShipmentStatusInput } from './dto/update-shipment-status.input';
+import { FulfillmentTypeEnum, OrderStatusEnum, ShipmentStatusEnum } from './enums/order.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { UsersLoader } from '../users/loaders/users.loader';
 
@@ -16,7 +16,7 @@ describe('OrdersResolver', () => {
     getUserOrders: jest.fn(),
     getOrders: jest.fn(),
     createOrderFromCart: jest.fn(),
-    updateOrderStatus: jest.fn(),
+    updateShipmentStatus: jest.fn(),
     cancelOrder: jest.fn(),
     deleteOrder: jest.fn(),
   };
@@ -27,7 +27,7 @@ describe('OrdersResolver', () => {
     id: 'order1',
     userId: mockUserId,
     totalAmount: 44.978,
-    status: OrderStatusEnum.PENDING,
+    status: OrderStatusEnum.PLACED,
     shippingAddressId: 'addr1',
     createdAt: fixedDate,
     updatedAt: fixedDate,
@@ -62,9 +62,10 @@ describe('OrdersResolver', () => {
     contactEmail: 'test@example.com',
     contactPhone: '+233244000000',
   };
-  const mockUpdateOrderStatusInput: UpdateOrderStatusInput = {
+  const mockUpdateShipmentStatusInput: UpdateShipmentStatusInput = {
     orderId: 'order1',
-    status: OrderStatusEnum.SHIPPED,
+    status: ShipmentStatusEnum.OUT_FOR_DELIVERY,
+    reason: 'Rider Kofi',
   };
 
   const mockActiveUser = (id: string) => ({ id });
@@ -138,14 +139,19 @@ describe('OrdersResolver', () => {
     });
   });
 
-  describe('updateOrderStatus', () => {
-    it('should update the order status', async () => {
-      const updatedOrder = { ...mockOrder, status: OrderStatusEnum.SHIPPED };
-      mockOrdersService.updateOrderStatus.mockResolvedValue(updatedOrder);
+  describe('updateShipmentStatus', () => {
+    it('should move the shipment and return the order', async () => {
+      const updatedOrder = { ...mockOrder, status: OrderStatusEnum.IN_FULFILMENT };
+      mockOrdersService.updateShipmentStatus.mockResolvedValue(updatedOrder);
 
-      const result = await resolver.updateOrderStatus(mockUserId, mockUpdateOrderStatusInput);
+      const result = await resolver.updateShipmentStatus(mockUserId, mockUpdateShipmentStatusInput);
 
-      expect(ordersService.updateOrderStatus).toHaveBeenCalledWith('order1', OrderStatusEnum.SHIPPED, mockUserId);
+      expect(ordersService.updateShipmentStatus).toHaveBeenCalledWith(
+        'order1',
+        ShipmentStatusEnum.OUT_FOR_DELIVERY,
+        mockUserId,
+        'Rider Kofi',
+      );
       expect(result).toEqual(updatedOrder);
     });
   });
@@ -160,7 +166,7 @@ describe('OrdersResolver', () => {
 
       const result = await resolver.cancelOrder(mockUserId, 'order1');
 
-      expect(ordersService.cancelOrder).toHaveBeenCalledWith(mockUserId, 'order1');
+      expect(ordersService.cancelOrder).toHaveBeenCalledWith(mockUserId, 'order1', undefined);
       expect(result).toEqual(cancelledOrder);
     });
   });

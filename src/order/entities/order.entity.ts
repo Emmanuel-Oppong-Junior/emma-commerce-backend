@@ -1,6 +1,13 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { FulfillmentTypeEnum, OrderPaymentMethodEnum, OrderStatusEnum } from '../enums/order.enum';
-import { Currency, FulfillmentType, OrderStatus, PaymentMethod } from '../../generated/prisma/client';
+import {
+  Currency,
+  FulfillmentType,
+  OrderStatus,
+  PaymentIntentStatus,
+  PaymentMethod,
+} from '../../generated/prisma/client';
+import { Shipment } from './shipment.entity';
 import { CurrencyEnum } from '../../products/enums/product.enum';
 import { OrderAdjustment } from './order-adjustment.entity';
 import { OrderItem } from './order-item.entity';
@@ -94,11 +101,11 @@ export class Order {
   })
   pickupLocationSnapshot?: Record<string, unknown>;
 
-  @Field({ nullable: true, description: 'Shipment tracking number' })
-  trackingNumber?: string;
+  /** Resolved by OrdersResolver: shipments with carrier, tracking and history; empty until fulfilment. */
+  shipments?: Shipment[];
 
-  @Field({ nullable: true, description: 'Carrier name' })
-  carrier?: string;
+  /** Resolved by OrdersResolver: the order payment's status; null before any payment. */
+  paymentStatus?: PaymentIntentStatus | null;
 
   @Field()
   createdAt: Date;

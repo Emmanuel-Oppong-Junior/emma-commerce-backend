@@ -86,7 +86,7 @@ describe('Orders (e2e)', () => {
 
       // Assert
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.data.createOrder.status).toBe('PENDING');
+      expect(res.body.data.createOrder.status).toBe('PLACED');
       expect(res.body.data.createOrder.shippingAddressSnapshot).toEqual({
         recipientName: 'Test Customer',
         phone: '+233244000000',
@@ -541,7 +541,7 @@ describe('Orders (e2e)', () => {
       const deliveredOrderId = orderRes.body.data.createOrder.id;
       await prisma.order.update({
         where: { id: deliveredOrderId },
-        data: { status: OrderStatus.DELIVERED },
+        data: { status: OrderStatus.COMPLETED },
       });
 
       const mutation = `

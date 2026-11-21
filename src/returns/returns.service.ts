@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { PaymentStatus, Prisma, ReturnRequest, ReturnStatus } from '../generated/prisma/client';
+import { OrderStatus, PaymentStatus, Prisma, ReturnRequest, ReturnStatus } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReturnsRepository } from './returns.repository';
 import { CreateReturnRequestInput } from './dto/create-return-request.input';
@@ -19,7 +19,7 @@ export class ReturnsService {
   ) {}
 
   /**
-   * Submits a return request for a delivered order owned by the user.
+   * Submits a return request for a completed (delivered or collected) order owned by the user.
    * @param userId - The ID of the user making the request.
    * @param input - Return request data including the order ID and reason.
    * @returns The created return request.
@@ -31,7 +31,7 @@ export class ReturnsService {
     if (order?.userId !== userId) {
       throw new NotFoundException(`Order "${input.orderId}" not found`);
     }
-    if (order.status !== 'DELIVERED') {
+    if (order.status !== OrderStatus.COMPLETED) {
       throw new BadRequestException('Return requests can only be made for delivered orders');
     }
     const existing = await this.returnsRepository.findByOrder(input.orderId);
@@ -127,7 +127,7 @@ export class ReturnsService {
     }
     // The attempt that paid the order comes first; a late duplicate charge flagged for review is refunded on its own.
     const payment = await this.prisma.paymentAttempt.findFirst({
-      where: { intent: { orderId: returnRequest.orderId }, status: PaymentStatus.COMPLETED, reference: { not: null } },
+      where: { intent: { orderId: returnRequest.orderId }, status: PaymentStatus.CAPTURED, reference: { not: null } },
       orderBy: [{ reviewReason: { sort: 'asc', nulls: 'first' } }, { createdAt: 'desc' }],
     });
     if (!payment?.reference) {

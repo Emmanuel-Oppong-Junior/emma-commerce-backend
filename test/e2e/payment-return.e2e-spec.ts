@@ -127,7 +127,7 @@ describe('Payments & Returns (e2e)', () => {
   describe('verifyPayment', () => {
     it('returns the updated payment record when the reference is valid and owned by the user', async () => {
       // Arrange — mock PaymentService to avoid real Paystack verification calls
-      const mockPayment = { id: 'mock-payment-id', status: 'COMPLETED' };
+      const mockPayment = { id: 'mock-payment-id', status: 'CAPTURED' };
       const moduleFixture = await Test.createTestingModule({ imports: [AppModule] })
         .overrideProvider(GqlThrottlerGuard)
         .useValue({ canActivate: () => true })
@@ -321,7 +321,7 @@ describe('Payments & Returns (e2e)', () => {
     it('succeeds on a DELIVERED order', async () => {
       // Arrange — create an order and forcibly mark it as DELIVERED in the DB
       const orderId = await createOrderForUser();
-      await prisma.order.update({ where: { id: orderId }, data: { status: OrderStatus.DELIVERED } });
+      await prisma.order.update({ where: { id: orderId }, data: { status: OrderStatus.COMPLETED } });
 
       const mutation = `
         mutation {
@@ -371,7 +371,7 @@ describe('Payments & Returns (e2e)', () => {
     it('fails when an active return request already exists for the order', async () => {
       // Arrange — create a DELIVERED order with an existing PENDING return request
       const orderId = await createOrderForUser();
-      await prisma.order.update({ where: { id: orderId }, data: { status: OrderStatus.DELIVERED } });
+      await prisma.order.update({ where: { id: orderId }, data: { status: OrderStatus.COMPLETED } });
 
       // Submit the first return request
       await gqlRequest(

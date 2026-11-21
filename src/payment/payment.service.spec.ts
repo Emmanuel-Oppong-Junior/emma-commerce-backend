@@ -90,7 +90,7 @@ describe('PaymentService', () => {
     const order = {
       id: 'order1',
       userId: 'user1',
-      status: 'PENDING',
+      status: 'PLACED',
       deleted: false,
       paymentMethod: 'ONLINE',
       grandTotal: new Prisma.Decimal(1000),
@@ -200,7 +200,7 @@ describe('PaymentService', () => {
       expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
     });
 
-    it.each(['CANCELLED', 'PROCESSING', 'SHIPPED', 'DELIVERED'])(
+    it.each(['CANCELLED', 'CONFIRMED', 'IN_FULFILMENT', 'COMPLETED'])(
       'refuses a %s order before contacting Paystack',
       async (status) => {
         mockPaymentRepository.findOrderWithUser.mockResolvedValue({ ...order, status });
@@ -222,7 +222,7 @@ describe('PaymentService', () => {
 
     it('refuses an order found already paid when the attempt is opened', async () => {
       openAttemptAgainst(
-        { ...order, paymentIntent: { status: 'PAID', attempts: [{ status: PaymentStatus.COMPLETED }] } },
+        { ...order, paymentIntent: { status: 'CAPTURED', attempts: [{ status: PaymentStatus.CAPTURED }] } },
         { created: true, attempt: payment },
       );
 
@@ -245,7 +245,7 @@ describe('PaymentService', () => {
     it('rejects a repeated idempotency key whose attempt is no longer pending', async () => {
       openAttemptAgainst(order, {
         created: false,
-        attempt: { ...payment, status: PaymentStatus.ABANDONED },
+        attempt: { ...payment, status: PaymentStatus.CANCELLED },
         authorizationUrl: 'http://paystack.test/first',
       });
 
@@ -277,13 +277,13 @@ describe('PaymentService', () => {
       deleted: false,
     };
     const verification = { status: 'success', reference: 'ref1', amount: 25000, currency: 'GHS' };
-    const completed = { ...payment, status: PaymentStatus.COMPLETED };
+    const completed = { ...payment, status: PaymentStatus.CAPTURED };
     const lockedState = {
       status: PaymentStatus.PENDING,
       amount: new Prisma.Decimal(250),
       currency: 'GHS',
       intentStatus: 'PENDING',
-      order: { status: 'PENDING', deleted: false },
+      order: { status: 'PLACED', deleted: false },
     };
 
     /** Runs the service's decision against `state`, as the repository does under the order lock. */
@@ -319,7 +319,7 @@ describe('PaymentService', () => {
       expect(result).toEqual(completed);
     });
 
-    it.each([PaymentStatus.COMPLETED, PaymentStatus.FAILED])(
+    it.each([PaymentStatus.CAPTURED, PaymentStatus.FAILED])(
       'returns a %s attempt unchanged without asking Paystack again',
       async (status) => {
         mockPaymentRepository.findByReference.mockResolvedValue({ ...payment, status });
@@ -332,7 +332,7 @@ describe('PaymentService', () => {
       },
     );
 
-    it('warns and leaves the order alone when a success arrives for an order that is no longer PENDING', async () => {
+    it('warns and leaves the order alone when a success arrives for an order that is no longer PLACED', async () => {
       settleAgainst({ ...lockedState, order: { status: 'CANCELLED', deleted: false } }, completed, 'refund1');
 
       const result = await service.verifyPayment(reference);
@@ -530,17 +530,18 @@ describe('PaymentService', () => {
 
   describe('recordCodPayment', () => {
     const tx = { tx: true };
-    const attempt = { id: 'pay1', orderId: 'order1', status: PaymentStatus.COMPLETED };
+    const attempt = { id: 'pay1', orderId: 'order1', status: PaymentStatus.CAPTURED };
     const recorded = {
       attempt,
       collection: { id: 'cc1', amount: new Prisma.Decimal(250), currency: 'GHS' },
-      from: 'SHIPPED',
+      from: 'IN_FULFILMENT',
     };
     const shippedCod = {
-      status: 'SHIPPED',
+      status: 'IN_FULFILMENT',
       deleted: false,
       paymentMethod: 'CASH_ON_DELIVERY',
       paymentIntent: null,
+      shipments: [{ id: 'ship1', status: 'OUT_FOR_DELIVERY' }],
     };
 
     const runRecording = (order: unknown) =>
@@ -578,8 +579,8 @@ describe('PaymentService', () => {
           action: 'STATUS_CHANGE',
           userId: 'admin1',
           details: {
-            from: 'SHIPPED',
-            to: 'DELIVERED',
+            from: 'IN_FULFILMENT',
+            to: 'COMPLETED',
             cashCollectionId: 'cc1',
             paymentId: 'pay1',
             amount: '250.00',
@@ -590,7 +591,7 @@ describe('PaymentService', () => {
       );
     });
 
-    it.each(['PENDING', 'PROCESSING', 'CANCELLED', 'DELIVERED'])(
+    it.each(['PLACED', 'CONFIRMED', 'CANCELLED', 'COMPLETED'])(
       'refuses an order in %s under the lock and audits nothing',
       async (status) => {
         runRecording({ ...shippedCod, status });
@@ -607,7 +608,7 @@ describe('PaymentService', () => {
     });
 
     it('refuses a second collection for an order whose payment is already recorded', async () => {
-      runRecording({ ...shippedCod, paymentIntent: { status: 'PAID', attempts: [{ status: 'COMPLETED' }] } });
+      runRecording({ ...shippedCod, paymentIntent: { status: 'CAPTURED', attempts: [{ status: 'CAPTURED' }] } });
 
       await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(
         new ConflictException('Payment for order "order1" has already been recorded'),

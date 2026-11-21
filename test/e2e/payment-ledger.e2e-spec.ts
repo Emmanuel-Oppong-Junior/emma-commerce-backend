@@ -88,7 +88,7 @@ describe('Payment ledger schema (e2e)', () => {
 
   it('records a refund once per idempotency key', async () => {
     const orderId = await createOrder();
-    const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.COMPLETED });
+    const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
     const refund = { attemptId: paymentId, amount: 40, idempotencyKey: `return-request:${orderId}` };
     await prisma.refund.create({ data: refund });
 
@@ -97,7 +97,7 @@ describe('Payment ledger schema (e2e)', () => {
 
   it('refuses to delete an order that has payment history instead of cascading it away', async () => {
     const orderId = await createOrder();
-    const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.COMPLETED });
+    const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
 
     await expect(prisma.order.delete({ where: { id: orderId } })).rejects.toBeDefined();
 
@@ -107,7 +107,7 @@ describe('Payment ledger schema (e2e)', () => {
 
   it('forbids hard-deleting ledger rows', async () => {
     const orderId = await createOrder();
-    const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.COMPLETED });
+    const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
     const refund = await prisma.refund.create({
       data: { attemptId: paymentId, amount: 10, idempotencyKey: `delete-test:${orderId}` },
     });

@@ -111,20 +111,20 @@ describe('Payment verification (e2e)', () => {
     await app.close();
   });
 
-  it('pays a PENDING order once and ignores a replayed verify on the PROCESSING order', async () => {
+  it('pays a PLACED order once and ignores a replayed verify on the CONFIRMED order', async () => {
     const orderId = await createOrder();
     const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.PENDING });
 
     const first = await verify(reference).expect(200);
     const second = await verify(reference).expect(200);
 
-    expect(first.body.data.verifyPayment.status).toBe(PaymentStatus.COMPLETED);
-    expect(second.body.data.verifyPayment.status).toBe(PaymentStatus.COMPLETED);
+    expect(first.body.data.verifyPayment.status).toBe(PaymentStatus.CAPTURED);
+    expect(second.body.data.verifyPayment.status).toBe(PaymentStatus.CAPTURED);
     const ledger = await ledgerOf(orderId);
-    expect(ledger.orderStatus).toBe(OrderStatus.PROCESSING);
-    expect(ledger.intentStatus).toBe(PaymentIntentStatus.PAID);
+    expect(ledger.orderStatus).toBe(OrderStatus.CONFIRMED);
+    expect(ledger.intentStatus).toBe(PaymentIntentStatus.CAPTURED);
     expect(ledger.attempts[0]).toMatchObject({
-      status: PaymentStatus.COMPLETED,
+      status: PaymentStatus.CAPTURED,
       rawStatus: 'success',
       reviewReason: null,
     });
@@ -133,20 +133,20 @@ describe('Payment verification (e2e)', () => {
     expect(await confirmationEmailsQueued(orderId)).toBe(1);
   });
 
-  it('changes nothing when a paid reference is verified again after the order was DELIVERED', async () => {
-    const orderId = await createOrder({ status: OrderStatus.DELIVERED });
-    const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.COMPLETED });
+  it('changes nothing when a paid reference is verified again after the order was COMPLETED', async () => {
+    const orderId = await createOrder({ status: OrderStatus.COMPLETED });
+    const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
 
     await verify(reference).expect(200);
     expect((await webhook(reference)).status).toBe(200);
 
     const ledger = await ledgerOf(orderId);
-    expect(ledger.orderStatus).toBe(OrderStatus.DELIVERED);
+    expect(ledger.orderStatus).toBe(OrderStatus.COMPLETED);
     expect(ledger.refunds).toHaveLength(0);
     expect(paystack.verifyTransaction).not.toHaveBeenCalled();
   });
 
-  it('keeps a cancelled order CANCELLED, flags the late payment and queues exactly one refund across replays', async () => {
+  it('moves a cancelled order to PAYMENT_REVIEW, flags the late payment and queues exactly one refund across replays', async () => {
     const orderId = await createOrder();
     const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.PENDING });
     await gqlRequest(app, `mutation { cancelOrder(orderId: "${orderId}") { id status } }`, undefined, userToken).expect(
@@ -158,9 +158,9 @@ describe('Payment verification (e2e)', () => {
     await verify(reference).expect(200);
 
     const ledger = await ledgerOf(orderId);
-    expect(ledger.orderStatus).toBe(OrderStatus.CANCELLED);
-    expect(ledger.intentStatus).toBe(PaymentIntentStatus.PENDING);
-    expect(ledger.attempts[0]).toMatchObject({ status: PaymentStatus.COMPLETED, reviewReason: 'ORDER_NOT_PAYABLE' });
+    expect(ledger.orderStatus).toBe(OrderStatus.PAYMENT_REVIEW);
+    expect(ledger.intentStatus).toBe(PaymentIntentStatus.CANCELLED);
+    expect(ledger.attempts[0]).toMatchObject({ status: PaymentStatus.CAPTURED, reviewReason: 'ORDER_NOT_PAYABLE' });
     expect(ledger.refunds).toHaveLength(1);
     expect(ledger.refunds[0]).toMatchObject({
       status: 'PENDING',
@@ -184,7 +184,7 @@ describe('Payment verification (e2e)', () => {
 
     expect(res.body.data.verifyPayment.status).toBe(PaymentStatus.FAILED);
     const ledger = await ledgerOf(orderId);
-    expect(ledger.orderStatus).toBe(OrderStatus.PENDING);
+    expect(ledger.orderStatus).toBe(OrderStatus.PLACED);
     expect(ledger.intentStatus).toBe(PaymentIntentStatus.PENDING);
     expect(ledger.attempts[0]).toMatchObject({
       status: PaymentStatus.FAILED,
@@ -201,7 +201,7 @@ describe('Payment verification (e2e)', () => {
     const orderId = await createOrder();
     const first = await seedPaymentAttempt(prisma, {
       orderId,
-      status: PaymentStatus.ABANDONED,
+      status: PaymentStatus.CANCELLED,
       reference: `${orderId}-a`,
     });
     const second = await seedPaymentAttempt(prisma, {
@@ -214,9 +214,9 @@ describe('Payment verification (e2e)', () => {
     await verify(first.reference).expect(200);
 
     const ledger = await ledgerOf(orderId);
-    expect(ledger.orderStatus).toBe(OrderStatus.PROCESSING);
+    expect(ledger.orderStatus).toBe(OrderStatus.CONFIRMED);
     const late = ledger.attempts.find((attempt) => attempt.id === first.paymentId)!;
-    expect(late).toMatchObject({ status: PaymentStatus.COMPLETED, reviewReason: 'ALREADY_PAID' });
+    expect(late).toMatchObject({ status: PaymentStatus.CAPTURED, reviewReason: 'ALREADY_PAID' });
     expect(ledger.refunds).toEqual([expect.objectContaining({ attemptId: first.paymentId, status: 'PENDING' })]);
     expect(await confirmationEmailsQueued(orderId)).toBe(1);
   });
@@ -230,8 +230,8 @@ describe('Payment verification (e2e)', () => {
     expect(verified.status).toBe(200);
     expect(hooked.status).toBe(200);
     const ledger = await ledgerOf(orderId);
-    expect(ledger.orderStatus).toBe(OrderStatus.PROCESSING);
-    expect(ledger.attempts[0]).toMatchObject({ status: PaymentStatus.COMPLETED, reviewReason: null });
+    expect(ledger.orderStatus).toBe(OrderStatus.CONFIRMED);
+    expect(ledger.attempts[0]).toMatchObject({ status: PaymentStatus.CAPTURED, reviewReason: null });
     expect(ledger.refunds).toHaveLength(0);
     expect(await confirmationEmailsQueued(orderId)).toBe(1);
   });

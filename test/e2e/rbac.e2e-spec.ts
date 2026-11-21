@@ -141,7 +141,7 @@ describe('Permission-based RBAC (e2e)', () => {
     it('stops a staff manager from granting Owner or a role with permissions they lack (no escalation)', async () => {
       const created = await gql(
         `mutation { createStaffRole(input: { key: "STAFF_ADMIN", name: "Staff admin",
-          permissions: ["staff.manage", "staff.view", "order.view", "payment.view", "payment.record", "catalog.product.read"] }) { key } }`,
+          permissions: ["staff.manage", "staff.view", "order.view", "payment.view", "payment.record", "catalog.product.read", "order.fulfil"] }) { key } }`,
         ownerToken,
       );
       expect(created.body.errors).toBeUndefined();

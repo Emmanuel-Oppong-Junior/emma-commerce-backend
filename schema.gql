@@ -900,7 +900,7 @@ type Mutation {
   adjustVariantStock(input: AdjustVariantStockInput!): StockMovement!
 
   """Admin: cancel any order by ID and restore its stock"""
-  adminCancelOrder(orderId: String!): Order!
+  adminCancelOrder(orderId: String!, reason: String): Order!
 
   """Admin: permanently delete any review for moderation purposes"""
   adminDeleteReview(reviewId: String!): Review!
@@ -918,7 +918,7 @@ type Mutation {
   assignStaffRole(roleKey: String!, userId: ID!): StaffMember!
 
   """Cancels the authenticated user's own order and restores stock"""
-  cancelOrder(orderId: String!): Order!
+  cancelOrder(orderId: String!, reason: String): Order!
 
   """Change the password of the active user"""
   changeUserPassword(input: ChangeUserPasswordInput!): User!
@@ -1164,9 +1164,6 @@ type Mutation {
     updateMyProfileInput: UpdateUserInput!
   ): User!
 
-  """Updates the status of an order"""
-  updateOrderStatus(input: UpdateOrderStatusInput!): Order!
-
   """Update a pickup location (admin only)"""
   updatePickupLocation(id: ID!, input: UpdatePickupLocationInput!): PickupLocationEntity!
   updateProduct(productId: String!, updateProductInput: UpdateProductInput!): Product!
@@ -1177,7 +1174,14 @@ type Mutation {
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
 
-  """Update tracking number and carrier for an order (admin only)"""
+  """
+  Move an order's shipment to its next fulfilment step (staff); the order follows: IN_FULFILMENT on the first step, COMPLETED on delivery
+  """
+  updateShipmentStatus(input: UpdateShipmentStatusInput!): Order!
+
+  """
+  Set the carrier and tracking number on a confirmed or in-fulfilment order's shipment (staff)
+  """
   updateShipping(input: UpdateShippingInput!): Order!
 
   """Update a shipping zone (admin only)"""
@@ -1228,9 +1232,6 @@ type Order {
   """Product discounts (per line) and the coupon, as placed"""
   adjustments: [OrderAdjustment!]!
 
-  """Carrier name"""
-  carrier: String
-
   """Contact email for order notifications"""
   contactEmail: String!
 
@@ -1257,6 +1258,7 @@ type Order {
 
   """Payment method chosen at order creation"""
   paymentMethod: OrderPaymentMethod!
+  paymentStatus: OrderPaymentStatus
 
   """Set when fulfillmentType is PICKUP"""
   pickupLocationId: ID
@@ -1268,6 +1270,7 @@ type Order {
   1 for orders with a full price and tax snapshot; 0 for orders placed before it, whose breakdown may be partly null
   """
   pricingVersion: Int!
+  shipments: [Shipment!]!
 
   """Set when fulfillmentType is DELIVERY"""
   shippingAddressId: ID
@@ -1291,8 +1294,8 @@ type Order {
   """
   taxTotal: Money
 
-  """Shipment tracking number"""
-  trackingNumber: String
+  """Status history (tracking timeline), oldest first"""
+  timeline: [OrderStatusEvent!]!
   updatedAt: DateTime!
   user: User
   userId: ID!
@@ -1390,12 +1393,38 @@ enum OrderPaymentMethod {
   ONLINE
 }
 
+enum OrderPaymentStatus {
+  CANCELLED
+  CAPTURED
+  FAILED
+  PARTIALLY_REFUNDED
+  PENDING
+  REFUNDED
+}
+
 enum OrderStatus {
   CANCELLED
-  DELIVERED
-  PENDING
-  PROCESSING
-  SHIPPED
+  COMPLETED
+  CONFIRMED
+  EXPIRED
+  IN_FULFILMENT
+  PAYMENT_REVIEW
+  PLACED
+}
+
+"""One step in the order status history (its tracking timeline)"""
+type OrderStatusEvent {
+  """
+  Who caused it; null for the system (payment, expiry). Staff with order.view only
+  """
+  actorId: ID
+  createdAt: DateTime!
+
+  """Null for the first event (placed, or migrated)"""
+  from: OrderStatus
+  id: ID!
+  reason: String
+  to: OrderStatus!
 }
 
 type PageInfo {
@@ -1434,8 +1463,8 @@ type Payment {
 }
 
 enum PaymentStatus {
-  ABANDONED
-  COMPLETED
+  CANCELLED
+  CAPTURED
   FAILED
   PENDING
 }
@@ -2058,6 +2087,49 @@ type SalesReport {
   totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
 }
 
+"""
+The goods of an order on their way to the customer (one per order for now)
+"""
+type Shipment {
+  carrier: String
+  createdAt: DateTime!
+  deliveredAt: DateTime
+
+  """When it went out for delivery or became ready for pickup"""
+  dispatchedAt: DateTime
+
+  """Status history, oldest first"""
+  events: [ShipmentStatusEvent!]!
+  id: ID!
+  status: ShipmentStatus!
+  trackingNumber: String
+  updatedAt: DateTime!
+}
+
+enum ShipmentStatus {
+  DELIVERED
+  FAILED_DELIVERY
+  OUT_FOR_DELIVERY
+  PACKED
+  PENDING
+  PICKING
+  READY_FOR_PICKUP
+  RETURNED
+}
+
+"""One step in a shipment status history"""
+type ShipmentStatusEvent {
+  """Who caused it. Staff with order.view only"""
+  actorId: ID
+  createdAt: DateTime!
+
+  """Null for the first event"""
+  from: ShipmentStatus
+  id: ID!
+  reason: String
+  to: ShipmentStatus!
+}
+
 type ShippingZoneEntity {
   """List of cities covered by this zone (case-insensitive)"""
   cities: [String!]!
@@ -2441,14 +2513,6 @@ input UpdateDiscountInput {
   variants: [ID!] = []
 }
 
-input UpdateOrderStatusInput {
-  """The ID of the order to update"""
-  orderId: ID!
-
-  """The new status for the order"""
-  status: OrderStatus!
-}
-
 input UpdatePickupLocationInput {
   address: String
   city: String
@@ -2548,6 +2612,17 @@ input UpdateReviewInput {
 
   """Rate number 1 - 5"""
   score: Int
+}
+
+input UpdateShipmentStatusInput {
+  """The order whose shipment moves (one shipment per order for now)"""
+  orderId: ID!
+
+  """Shown in the history and audit log, e.g. why a delivery failed"""
+  reason: String
+
+  """The next fulfilment step"""
+  status: ShipmentStatus!
 }
 
 input UpdateShippingInput {

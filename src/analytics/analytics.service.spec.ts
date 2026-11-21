@@ -98,7 +98,7 @@ describe('AnalyticsService', () => {
       });
       const call = mockPrisma.$queryRaw.mock.calls[0];
       const sql = sqlOf(call);
-      expect(sql).toContain(`pa.status = 'COMPLETED' AND pa."reviewReason" IS NULL AND pa.deleted = false`);
+      expect(sql).toContain(`pa.status = 'CAPTURED' AND pa."reviewReason" IS NULL AND pa.deleted = false`);
       expect(sql).toContain(`r.status = 'PROCESSED'`);
       expect(sql).not.toContain('"Order"');
       expect(call.slice(1)).toEqual(expect.arrayContaining([start, end]));

@@ -23,7 +23,7 @@ const COMMITTED_REFUND_STATUSES: RefundStatus[] = [RefundStatus.PENDING, RefundS
  * (wrong amount or currency) never completed; the only money it can return is what its auto-refund recorded.
  */
 export function capturedAmount(ledger: RefundLedger): Prisma.Decimal {
-  if (ledger.attempt.status === PaymentStatus.COMPLETED) return ledger.attempt.amount;
+  if (ledger.attempt.status === PaymentStatus.CAPTURED) return ledger.attempt.amount;
   const autoRefund = ledger.refunds.find((refund) => refund.idempotencyKey === autoRefundKey(ledger.attempt.id));
   return autoRefund?.amount ?? new Prisma.Decimal(0);
 }

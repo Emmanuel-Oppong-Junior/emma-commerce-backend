@@ -16,7 +16,7 @@ function buildPaymentService(
     findOrderById: jest.fn().mockResolvedValue(order),
     findByOrderId: jest.fn().mockResolvedValue(payment),
     findOrderWithUser: jest.fn().mockResolvedValue({ ...order, user: { email: 'customer@test.local' } }),
-    updatePaymentWithStatus: jest.fn().mockResolvedValue({ ...payment, status: 'COMPLETED' }),
+    updatePaymentWithStatus: jest.fn().mockResolvedValue({ ...payment, status: 'CAPTURED' }),
     updateOrderStatus: jest.fn(),
     delete: jest.fn(),
     create: jest.fn().mockResolvedValue({ id: 'payment-2' }),
@@ -47,15 +47,15 @@ describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
       orderId: 'order-1',
       amount: 500,
       currency: 'GHS',
-      status: 'COMPLETED',
+      status: 'CAPTURED',
       transactionId: 'ref-1',
     };
-    const order = { id: 'order-1', userId: 'user-1', status: 'DELIVERED', totalAmount: 500, paymentMethod: 'ONLINE' };
+    const order = { id: 'order-1', userId: 'user-1', status: 'COMPLETED', totalAmount: 500, paymentMethod: 'ONLINE' };
     const { service, repository } = buildPaymentService(payment, order);
 
     await service.verifyPaymentAsUser('ref-1', 'user-1').catch(() => undefined);
 
-    expect(repository.updateOrderStatus).not.toHaveBeenCalledWith('order-1', 'PROCESSING');
+    expect(repository.updateOrderStatus).not.toHaveBeenCalledWith('order-1', 'CONFIRMED');
   });
 
   it('PAY-05: a Paystack success for a smaller amount than the order total does not complete the payment', async () => {
@@ -76,7 +76,7 @@ describe('Payments (audit repro: PAY-01, PAY-02, PAY-03, PAY-05)', () => {
 
     await service.verifyPaymentAsUser('ref-1', 'user-1').catch(() => undefined);
 
-    expect(repository.updatePaymentWithStatus).not.toHaveBeenCalledWith('payment-1', 'COMPLETED', expect.anything());
+    expect(repository.updatePaymentWithStatus).not.toHaveBeenCalledWith('payment-1', 'CAPTURED', expect.anything());
     expect(repository.updateOrderStatus).not.toHaveBeenCalled();
   });
 

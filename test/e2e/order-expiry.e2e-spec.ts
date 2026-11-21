@@ -92,13 +92,13 @@ describe('Abandoned order expiry (e2e)', () => {
 
     expect(expired).toBe(3);
     for (const orderId of [noAttempt, pendingAttempt, failedAttempt]) {
-      expect(await statusOf(orderId)).toBe('CANCELLED');
+      expect(await statusOf(orderId)).toBe('EXPIRED');
     }
     expect(await stock()).toBe(100);
   });
 
   it('leaves alone a paid order, a fresh order and an order whose payment was started within the window', async () => {
-    const paid = await placeAbandonedOrder(1, PaymentStatus.COMPLETED);
+    const paid = await placeAbandonedOrder(1, PaymentStatus.CAPTURED);
     const fresh = await placeOrder(1);
     const payingNow = await placeAbandonedOrder(1);
     await addPayment(payingNow, PaymentStatus.PENDING, new Date());
@@ -107,7 +107,7 @@ describe('Abandoned order expiry (e2e)', () => {
 
     expect(expired).toBe(0);
     for (const orderId of [paid, fresh, payingNow]) {
-      expect(await statusOf(orderId)).toBe('PENDING');
+      expect(await statusOf(orderId)).toBe('PLACED');
     }
     expect(await stock()).toBe(97);
   });
@@ -125,7 +125,7 @@ describe('Abandoned order expiry (e2e)', () => {
     expect(runs.reduce<number>((sum, run) => sum + (run ?? 0), 0)).toBe(3);
     expect(await stock()).toBe(100);
     for (const orderId of orderIds) {
-      expect(await statusOf(orderId)).toBe('CANCELLED');
+      expect(await statusOf(orderId)).toBe('EXPIRED');
       expect(await restoreLogsFor(orderId)).toBe(1);
     }
   });
@@ -142,8 +142,8 @@ describe('Abandoned order expiry (e2e)', () => {
 
     expect(held).toBe(true);
     expect(whileLocked).toBeNull();
-    expect(await statusOf(orderId)).toBe('PENDING');
+    expect(await statusOf(orderId)).toBe('PLACED');
     expect(await orders.expireAbandonedOrders(1)).toBe(1);
-    expect(await statusOf(orderId)).toBe('CANCELLED');
+    expect(await statusOf(orderId)).toBe('EXPIRED');
   });
 });

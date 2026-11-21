@@ -46,7 +46,7 @@ const mockReturnRequest = {
 const mockOrder = {
   id: 'order1',
   userId: 'user1',
-  status: 'DELIVERED',
+  status: 'COMPLETED',
 };
 
 describe('ReturnsService', () => {
@@ -265,7 +265,7 @@ describe('ReturnsService', () => {
 
       expect(result).toBe(refundedReturn);
       expect(mockPrisma.paymentAttempt.findFirst).toHaveBeenCalledWith({
-        where: { intent: { orderId: 'order1' }, status: 'COMPLETED', reference: { not: null } },
+        where: { intent: { orderId: 'order1' }, status: 'CAPTURED', reference: { not: null } },
         orderBy: [{ reviewReason: { sort: 'asc', nulls: 'first' } }, { createdAt: 'desc' }],
       });
       expect(mockRefundsService.openForReturn).toHaveBeenCalledWith(approvedReturn, 'attempt1', 'admin1');

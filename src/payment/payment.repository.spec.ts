@@ -65,6 +65,7 @@ const mockPrismaAttempt = {
 const mockPrismaIntent = {
   upsert: jest.fn(),
   update: jest.fn(),
+  updateMany: jest.fn(),
 };
 
 const mockPrismaRefund = {
@@ -73,6 +74,7 @@ const mockPrismaRefund = {
 
 const mockOrdersRepository = {
   transitionStatus: jest.fn(),
+  transitionShipment: jest.fn(),
 };
 
 const mockStoreRepository = {
@@ -171,7 +173,7 @@ describe('PaymentRepository', () => {
       );
       expect(mockPrismaAttempt.updateMany).toHaveBeenCalledWith({
         where: { intentId: 'intent1', status: 'PENDING' },
-        data: { status: 'ABANDONED' },
+        data: { status: 'CANCELLED' },
       });
       expect(mockPrismaAttempt.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -232,13 +234,19 @@ describe('PaymentRepository', () => {
 
   describe('recordCashCollection', () => {
     const amount = new Prisma.Decimal(100);
-    const shippedCod = { ...mockOrder, status: 'SHIPPED', paymentMethod: 'CASH_ON_DELIVERY', paymentIntent: null };
+    const shippedCod = {
+      ...mockOrder,
+      status: 'IN_FULFILMENT',
+      paymentMethod: 'CASH_ON_DELIVERY',
+      paymentIntent: null,
+      shipments: [{ id: 'ship1', status: 'OUT_FOR_DELIVERY' }],
+    };
     const collection = { id: 'cc1', orderId: 'order1', attemptId: 'pay1', amount, currency: 'GHS' };
     const completed = {
       ...mockAttempt,
       provider: 'CASH_ON_DELIVERY',
       channel: 'CASH_ON_DELIVERY',
-      status: 'COMPLETED',
+      status: 'CAPTURED',
     };
     const allowAll = jest.fn();
     const onRecorded = jest.fn();
@@ -249,7 +257,9 @@ describe('PaymentRepository', () => {
       mockPrismaAttempt.create.mockResolvedValue({ id: 'pay1' });
       mockPrismaCashCollection.create.mockResolvedValue(collection);
       mockPrismaAttempt.findUniqueOrThrow.mockResolvedValue(completed);
-      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...shippedCod, status: 'DELIVERED' });
+      mockPrismaIntent.updateMany.mockResolvedValue({ count: 1 });
+      mockOrdersRepository.transitionShipment.mockResolvedValue({ id: 'ship1', status: 'DELIVERED' });
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...shippedCod, status: 'COMPLETED' });
     });
 
     it('locks the order and re-checks it before writing anything', async () => {
@@ -269,13 +279,17 @@ describe('PaymentRepository', () => {
       expect(onRecorded).not.toHaveBeenCalled();
     });
 
-    it('marks the intent PAID and records a completed cash attempt with its collection for the order total', async () => {
+    it('captures the intent and records a captured cash attempt with its collection for the grand total', async () => {
       await repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded);
 
       expect(mockPrismaIntent.upsert).toHaveBeenCalledWith({
         where: { orderId: 'order1' },
-        create: { orderId: 'order1', amount, currency: 'GHS', status: 'PAID' },
-        update: { status: 'PAID' },
+        create: { orderId: 'order1', amount, currency: 'GHS', status: 'PENDING' },
+        update: {},
+      });
+      expect(mockPrismaIntent.updateMany).toHaveBeenCalledWith({
+        where: { id: 'intent1', status: { in: ['PENDING', 'FAILED'] } },
+        data: { status: 'CAPTURED' },
       });
       expect(mockPrismaAttempt.create).toHaveBeenCalledWith({
         data: {
@@ -284,7 +298,7 @@ describe('PaymentRepository', () => {
           amount,
           currency: 'GHS',
           channel: 'CASH_ON_DELIVERY',
-          status: 'COMPLETED',
+          status: 'CAPTURED',
         },
       });
       expect(mockPrismaCashCollection.create).toHaveBeenCalledWith({
@@ -292,14 +306,33 @@ describe('PaymentRepository', () => {
       });
     });
 
-    it('moves the order to DELIVERED only from the status it was locked in and hands the result to onRecorded', async () => {
+    it('delivers the shipment and completes the order only from the status it was locked in, then hands the result to onRecorded', async () => {
       const result = await repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded);
 
-      expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(mockTx, 'order1', 'DELIVERED', ['SHIPPED']);
+      const context = { actorId: 'admin1', reason: 'Cash collected on delivery' };
+      expect(mockOrdersRepository.transitionShipment).toHaveBeenCalledWith(
+        mockTx,
+        'ship1',
+        'OUT_FOR_DELIVERY',
+        'DELIVERED',
+        context,
+      );
+      expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(
+        mockTx,
+        'order1',
+        'COMPLETED',
+        ['IN_FULFILMENT'],
+        context,
+      );
+      expect(mockOutbox.record).toHaveBeenCalledWith(mockTx, {
+        type: 'order.status_changed.v2',
+        aggregateId: 'order1',
+        payload: { orderId: 'order1', from: 'IN_FULFILMENT', to: 'COMPLETED' },
+      });
       expect(result).toEqual({
-        attempt: expect.objectContaining({ id: 'pay1', status: 'COMPLETED' }),
+        attempt: expect.objectContaining({ id: 'pay1', status: 'CAPTURED' }),
         collection,
-        from: 'SHIPPED',
+        from: 'IN_FULFILMENT',
       });
       expect(onRecorded).toHaveBeenCalledWith(mockTx, result);
     });
@@ -361,7 +394,7 @@ describe('PaymentRepository', () => {
     it('returns the newest attempt of the order', async () => {
       mockPrismaAttempt.findMany.mockResolvedValue([
         { ...mockAttempt, id: 'pay2' },
-        { ...mockAttempt, id: 'pay1', status: 'ABANDONED' },
+        { ...mockAttempt, id: 'pay1', status: 'CANCELLED' },
       ]);
 
       const result = await repository.findByOrderId('order1');
@@ -375,7 +408,7 @@ describe('PaymentRepository', () => {
     it('prefers a completed attempt over newer ones', async () => {
       mockPrismaAttempt.findMany.mockResolvedValue([
         { ...mockAttempt, id: 'pay2', status: 'PENDING' },
-        { ...mockAttempt, id: 'pay1', status: 'COMPLETED' },
+        { ...mockAttempt, id: 'pay1', status: 'CAPTURED' },
       ]);
 
       const result = await repository.findByOrderId('order1');
@@ -486,9 +519,10 @@ describe('PaymentRepository', () => {
       mockPrismaAttempt.findUniqueOrThrow
         .mockResolvedValueOnce({ intent: { orderId: 'order1' } })
         .mockResolvedValueOnce(locked)
-        .mockResolvedValue({ ...mockAttempt, status: 'COMPLETED' });
+        .mockResolvedValue({ ...mockAttempt, status: 'CAPTURED' });
       mockPrismaAttempt.updateMany.mockResolvedValue({ count: 1 });
-      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: 'PROCESSING' });
+      mockPrismaIntent.updateMany.mockResolvedValue({ count: 1 });
+      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: 'CONFIRMED' });
       mockPrismaRefund.create.mockResolvedValue({ id: 'refund1' });
     });
 
@@ -517,20 +551,25 @@ describe('PaymentRepository', () => {
       expect(mockPrismaRefund.create).not.toHaveBeenCalled();
     });
 
-    it('claims the open attempt, marks the intent PAID and moves the order only from PENDING to PROCESSING', async () => {
+    it('claims the open attempt, captures the open intent and moves the order only from PLACED to CONFIRMED', async () => {
       const result = await repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }));
 
       expect(mockPrismaAttempt.updateMany).toHaveBeenCalledWith({
-        where: { id: 'pay1', status: { in: ['PENDING', 'ABANDONED'] } },
-        data: { status: 'COMPLETED', rawStatus: 'success', providerDetails: details },
+        where: { id: 'pay1', status: { in: ['PENDING', 'CANCELLED'] } },
+        data: { status: 'CAPTURED', rawStatus: 'success', providerDetails: details },
       });
-      expect(mockPrismaIntent.update).toHaveBeenCalledWith({ where: { id: 'intent1' }, data: { status: 'PAID' } });
-      expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(mockTx, 'order1', 'PROCESSING', ['PENDING']);
+      expect(mockPrismaIntent.updateMany).toHaveBeenCalledWith({
+        where: { id: 'intent1', status: { in: ['PENDING', 'FAILED'] } },
+        data: { status: 'CAPTURED' },
+      });
+      expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(mockTx, 'order1', 'CONFIRMED', ['PLACED'], {
+        reason: 'Payment captured',
+      });
       expect(mockPrismaRefund.create).not.toHaveBeenCalled();
-      expect(result.attempt.status).toBe('COMPLETED');
+      expect(result.attempt.status).toBe('CAPTURED');
     });
 
-    it('consumes the order stock reservations in the settlement transaction, after the order moved to PROCESSING', async () => {
+    it('consumes the order stock reservations in the settlement transaction, after the order moved to CONFIRMED', async () => {
       await repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }));
 
       expect(mockStockLedger.consumeOrder).toHaveBeenCalledWith(mockTx, 'order1');
@@ -544,7 +583,7 @@ describe('PaymentRepository', () => {
       ['failed', { kind: 'failed' }],
       [
         'sent to review (a payment for an expired order)',
-        { kind: 'review', reason: 'ORDER_NOT_PAYABLE', attemptStatus: 'COMPLETED' },
+        { kind: 'review', reason: 'ORDER_NOT_PAYABLE', attemptStatus: 'CAPTURED' },
       ],
     ])('consumes no stock when the attempt is %s', async (_label, outcome) => {
       await repository.settleAttempt('pay1', success, details, () => outcome as never);
@@ -552,7 +591,7 @@ describe('PaymentRepository', () => {
       expect(mockStockLedger.consumeOrder).not.toHaveBeenCalled();
     });
 
-    it('records payment.succeeded.v1 in the settlement transaction, after the order moved to PROCESSING', async () => {
+    it('records payment.succeeded.v1 in the settlement transaction, after the order moved to CONFIRMED', async () => {
       await repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }));
 
       expect(mockOutbox.record).toHaveBeenCalledTimes(1);
@@ -579,7 +618,7 @@ describe('PaymentRepository', () => {
       expect(mockOutbox.record).not.toHaveBeenCalled();
     });
 
-    it('records no payment event when the order left PENDING, so the rollback leaves nothing to send', async () => {
+    it('records no payment event when the order left PLACED, so the rollback leaves nothing to send', async () => {
       mockOrdersRepository.transitionStatus.mockResolvedValue(null);
 
       await expect(repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }))).rejects.toThrow(
@@ -588,7 +627,7 @@ describe('PaymentRepository', () => {
       expect(mockOutbox.record).not.toHaveBeenCalled();
     });
 
-    it('rolls back if the order left PENDING under the lock', async () => {
+    it('rolls back if the order left PLACED under the lock', async () => {
       mockOrdersRepository.transitionStatus.mockResolvedValue(null);
 
       await expect(repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }))).rejects.toThrow(
@@ -602,17 +641,20 @@ describe('PaymentRepository', () => {
       await expect(repository.settleAttempt('pay1', success, details, () => ({ kind: 'paid' }))).rejects.toThrow(
         ConflictException,
       );
-      expect(mockPrismaIntent.update).not.toHaveBeenCalled();
+      expect(mockPrismaIntent.updateMany).not.toHaveBeenCalled();
       expect(mockOrdersRepository.transitionStatus).not.toHaveBeenCalled();
     });
 
-    it('fails the attempt without touching the intent or the order', async () => {
+    it('fails the attempt and marks the intent FAILED only while it is open, without touching the order', async () => {
       await repository.settleAttempt('pay1', { ...success, status: 'failed' }, details, () => ({ kind: 'failed' }));
 
       expect(mockPrismaAttempt.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({ data: { status: 'FAILED', rawStatus: 'failed', providerDetails: details } }),
       );
-      expect(mockPrismaIntent.update).not.toHaveBeenCalled();
+      expect(mockPrismaIntent.updateMany).toHaveBeenCalledWith({
+        where: { id: 'intent1', status: { in: ['PENDING'] } },
+        data: { status: 'FAILED' },
+      });
       expect(mockOrdersRepository.transitionStatus).not.toHaveBeenCalled();
     });
 
@@ -664,27 +706,33 @@ describe('PaymentRepository', () => {
           idempotencyKey: 'auto-refund:pay1',
         },
       });
-      expect(mockPrismaIntent.update).not.toHaveBeenCalled();
+      expect(mockPrismaIntent.updateMany).not.toHaveBeenCalled();
       expect(mockOrdersRepository.transitionStatus).not.toHaveBeenCalled();
       expect(result.refundId).toBe('refund1');
     });
 
-    it('keeps a correct charge for an order that cannot take it as COMPLETED, flagged', async () => {
+    it('keeps a correct charge for a closed order as CAPTURED, flagged, and moves the order to PAYMENT_REVIEW', async () => {
       await repository.settleAttempt('pay1', success, details, () => ({
         kind: 'review',
         reason: 'ORDER_NOT_PAYABLE',
-        attemptStatus: 'COMPLETED',
+        attemptStatus: 'CAPTURED',
       }));
 
       expect(mockPrismaAttempt.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ status: 'COMPLETED', reviewReason: 'ORDER_NOT_PAYABLE' }),
+          data: expect.objectContaining({ status: 'CAPTURED', reviewReason: 'ORDER_NOT_PAYABLE' }),
         }),
       );
       expect(mockPrismaRefund.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ amount: new Prisma.Decimal(100), idempotencyKey: 'auto-refund:pay1' }),
       });
-      expect(mockOrdersRepository.transitionStatus).not.toHaveBeenCalled();
+      expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(
+        mockTx,
+        'order1',
+        'PAYMENT_REVIEW',
+        ['CANCELLED', 'EXPIRED'],
+        { reason: 'Payment pay1 captured after the order closed; refund queued' },
+      );
     });
   });
 });

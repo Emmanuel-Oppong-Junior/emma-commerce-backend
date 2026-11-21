@@ -51,7 +51,7 @@ const AUDITED: Record<string, string> = {
   deletePickupLocation: 'pickup-locations.service.spec (audit trail)',
   restockVariant: 'inventory.service.spec (audit trail)',
   adjustVariantStock: 'inventory.service.spec (audit trail)',
-  updateOrderStatus: 'order.service.spec',
+  updateShipmentStatus: 'order.service.spec (updateShipmentStatus)',
   adminCancelOrder: 'order.service.spec',
   deleteOrder: 'order.service.spec',
   updateShipping: 'order.service.spec',

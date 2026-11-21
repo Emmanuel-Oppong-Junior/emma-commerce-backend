@@ -1,5 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { allowedFrom, assertTransition, FINAL_STATUSES, isFinal } from './order-status';
+import {
+  assertTransition,
+  CUSTOMER_CANCELLABLE,
+  DELETABLE_STATUSES,
+  FULFILLABLE_STATUSES,
+  STAFF_CANCELLABLE,
+} from './order-status';
+import { CANCELLABLE_SHIPMENT_STATUSES, canShipmentTransition, isDispatch } from './shipment-status';
 import { CartService } from '../cart/cart.service';
 import {
   Cart,
@@ -11,6 +18,7 @@ import {
   OrderStatus,
   PaymentMethod,
   Prisma,
+  ShipmentStatus,
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
@@ -153,6 +161,18 @@ export class OrdersService {
     return this.ordersRepository.findByUser(userId);
   }
 
+  async getTimeline(orderId: string) {
+    return this.ordersRepository.findTimeline(orderId);
+  }
+
+  async getShipments(orderId: string) {
+    return this.ordersRepository.findShipments(orderId);
+  }
+
+  async getPaymentStatus(orderId: string) {
+    return this.ordersRepository.findPaymentStatus(orderId);
+  }
+
   /**
    * Retrieves all orders in the system (admin only).
    */
@@ -161,8 +181,8 @@ export class OrdersService {
   }
 
   /**
-   * Cancels PENDING online orders older than the window that have no payment attempt, or only pending,
-   * failed or abandoned ones untouched for the window. Returns null when another instance is already running the job.
+   * Expires PLACED online orders older than the window that have no payment attempt, or only pending, failed or
+   * cancelled ones untouched for the window. Returns null when another instance is already running the job.
    */
   async expireAbandonedOrders(expiryHours: number): Promise<number | null> {
     return this.ordersRepository.runWithAdvisoryLock(ORDER_EXPIRY_LOCK_KEY, ORDER_EXPIRY_MAX_RUN_MS, async () => {
@@ -171,7 +191,12 @@ export class OrdersService {
       let expired = 0;
       for (const order of orders) {
         try {
-          await this.cancelOrderAndRestoreStock(order, abandonedOrderWhere(cutoff));
+          await this.closeOrderAndRestoreStock(order, {
+            to: OrderStatus.EXPIRED,
+            from: [OrderStatus.PLACED],
+            guard: abandonedOrderWhere(cutoff),
+            reason: 'Unpaid order expired',
+          });
           expired += 1;
         } catch (error) {
           // Paid, payment restarted or cancelled since it was selected: leave it alone and expire the rest.
@@ -183,83 +208,129 @@ export class OrdersService {
   }
 
   /**
-   * Updates the status of an order. SHIPPED and DELIVERED also record `order.status_changed.v1` in the same
-   * transaction, which the worker turns into the customer email.
+   * Moves the order's shipment one step through the fulfilment machine (staff, order.fulfil), creating the shipment on
+   * the first step. In the same transaction: the first step moves a CONFIRMED order to IN_FULFILMENT; dispatch
+   * (READY_FOR_PICKUP / OUT_FOR_DELIVERY) consumes a cash-on-delivery order's reserved stock (once: only ACTIVE
+   * reservations are consumed) and records `shipment.status_changed.v1`; DELIVERED completes the order and records
+   * `order.status_changed.v2`. A cash-on-delivery shipment is delivered by recording its cash (recordCodPayment).
    */
-  async updateOrderStatus(
+  async updateShipmentStatus(
     orderId: string,
-    status: OrderStatus,
-    adminUserId?: string,
+    to: ShipmentStatus,
+    actorId: string,
+    reason?: string,
   ): Promise<Order & { items: OrderItem[] }> {
-    if (status === OrderStatus.CANCELLED) return this.adminCancelOrder(orderId, adminUserId);
-    const order = await this.retrieveOrder(orderId);
-    assertTransition(orderId, order.status, status);
-    if (status === OrderStatus.PROCESSING && order.paymentMethod === PaymentMethod.ONLINE) {
-      throw new ConflictException(
-        `Order "${orderId}" is awaiting online payment; only a confirmed payment can move it to PROCESSING`,
-      );
-    }
-    const updated = await this.ordersRepository.runTransaction(async (tx) => {
-      const transitioned = await this.ordersRepository.transitionStatus(tx, orderId, status, [order.status]);
-      if (!transitioned) throw this.changedMeanwhile(orderId);
+    return this.ordersRepository.runTransaction(async (tx) => {
+      const order = await this.ordersRepository.lockForFulfilment(tx, orderId);
+      if (!order || order.deleted) throw new NotFoundException(`Order "${orderId}" not found`);
+      if (!FULFILLABLE_STATUSES.includes(order.status)) {
+        throw new ConflictException(
+          `Order "${orderId}" is ${order.status}; only ${FULFILLABLE_STATUSES.join(' or ')} orders can be fulfilled`,
+        );
+      }
+      if (to === ShipmentStatus.DELIVERED && order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
+        throw new BadRequestException(
+          `Order "${orderId}" is paid on delivery; record the cash collected (recordCodPayment) to deliver it`,
+        );
+      }
+      const shipment = await this.ordersRepository.findOrCreateShipment(tx, orderId, actorId);
+      if (!canShipmentTransition(shipment.status, to, order.fulfillmentType)) {
+        throw new ConflictException(
+          `Shipment of order "${orderId}" cannot move from ${shipment.status} to ${to} (${order.fulfillmentType})`,
+        );
+      }
+      const moved = await this.ordersRepository.transitionShipment(tx, shipment.id, shipment.status, to, {
+        actorId,
+        reason,
+      });
+      if (!moved) throw this.changedMeanwhile(orderId);
       await this.auditService.log(
         {
-          entity: 'Order',
-          entityId: orderId,
+          entity: 'Shipment',
+          entityId: shipment.id,
           action: 'STATUS_CHANGE',
-          userId: adminUserId,
-          details: { from: order.status as string, to: status as string },
+          userId: actorId,
+          details: { orderId, from: shipment.status, to, ...(reason && { reason }) },
         },
         tx,
       );
-      // Dispatch is the sale for cash on delivery; an online order's reservations were consumed at payment.
-      if (status === OrderStatus.SHIPPED) await this.stockLedger.consumeOrder(tx, orderId, adminUserId);
-      if (status === OrderStatus.SHIPPED || status === OrderStatus.DELIVERED) {
+
+      if (order.status === OrderStatus.CONFIRMED) {
+        await this.moveOrder(tx, orderId, OrderStatus.CONFIRMED, OrderStatus.IN_FULFILMENT, actorId, reason);
+      }
+      if (isDispatch(to)) {
+        if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
+          await this.stockLedger.consumeOrder(tx, orderId, actorId);
+        }
         await this.outbox.record(tx, {
-          type: 'order.status_changed.v1',
+          type: 'shipment.status_changed.v1',
           aggregateId: orderId,
-          payload: { orderId, status, trackingNumber: transitioned.trackingNumber ?? null },
+          payload: { orderId, shipmentId: shipment.id, status: to, trackingNumber: moved.trackingNumber ?? null },
         });
       }
-      return transitioned;
+      if (to === ShipmentStatus.DELIVERED) {
+        await this.moveOrder(tx, orderId, OrderStatus.IN_FULFILMENT, OrderStatus.COMPLETED, actorId, reason);
+        await this.outbox.record(tx, {
+          type: 'order.status_changed.v2',
+          aggregateId: orderId,
+          payload: { orderId, from: OrderStatus.IN_FULFILMENT, to: OrderStatus.COMPLETED },
+        });
+      }
+      return this.ordersRepository.findForTransaction(tx, orderId);
     });
-    return updated;
   }
 
   /**
-   * Cancels an order owned by the requesting user and restores the reserved stock.
+   * Cancels an order owned by the requesting user before fulfilment starts, and restores the reserved stock.
    */
-  async cancelOrder(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
+  async cancelOrder(userId: string, orderId: string, reason?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
-    assertTransition(orderId, order.status, OrderStatus.CANCELLED);
-    const cancelled = await this.cancelOrderAndRestoreStock(order);
+    this.assertCancellable(order, CUSTOMER_CANCELLABLE);
+    const cancelled = await this.closeOrderAndRestoreStock(order, {
+      to: OrderStatus.CANCELLED,
+      from: CUSTOMER_CANCELLABLE,
+      actorId: userId,
+      reason: reason ?? 'Cancelled by the customer',
+    });
     await this.requestReturnIfPaidOnline(order);
     return cancelled;
   }
 
   /**
-   * Cancels any order without an ownership check (admin only) and restores the reserved stock.
+   * Cancels any order without an ownership check (staff), and restores the reserved stock. During fulfilment only
+   * while the goods are still in the shop (shipment pending, picking, packed or returned).
    */
-  async adminCancelOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
+  async adminCancelOrder(
+    orderId: string,
+    adminUserId?: string,
+    reason?: string,
+  ): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
-    assertTransition(orderId, order.status, OrderStatus.CANCELLED);
-    const cancelled = await this.cancelOrderAndRestoreStock(order, undefined, { userId: adminUserId });
+    this.assertCancellable(order, STAFF_CANCELLABLE);
+    const cancelled = await this.closeOrderAndRestoreStock(order, {
+      to: OrderStatus.CANCELLED,
+      from: STAFF_CANCELLABLE,
+      guard: { shipments: { every: { status: { in: CANCELLABLE_SHIPMENT_STATUSES } } } },
+      actorId: adminUserId,
+      reason,
+      audit: true,
+    });
     await this.requestReturnIfPaidOnline(order);
     return cancelled;
   }
 
   /**
-   * Transitions a pending order to PROCESSING status after confirming the user owns it.
+   * Confirms a placed online order for its owner without a payment. Not exposed by any resolver.
    */
   async markOrderAsPaid(userId: string, orderId: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
     if ((order as Order & { paymentMethod: PaymentMethod }).paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
       throw new BadRequestException(`Order "${orderId}" uses cash on delivery and cannot be marked as paid online`);
     }
-    assertTransition(orderId, order.status, OrderStatus.PROCESSING);
+    assertTransition(orderId, order.status, OrderStatus.CONFIRMED);
     return this.ordersRepository.runTransaction(async (tx) => {
-      const paid = await this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.PROCESSING, [
-        OrderStatus.PENDING,
+      const paid = await this.ordersRepository.transitionStatus(tx, orderId, OrderStatus.CONFIRMED, [
+        OrderStatus.PLACED,
       ]);
       if (!paid) throw this.changedMeanwhile(orderId);
       await this.stockLedger.consumeOrder(tx, orderId, userId);
@@ -268,18 +339,18 @@ export class OrdersService {
   }
 
   /**
-   * Soft-deletes a finished (DELIVERED or CANCELLED) order (admin only). Never moves stock.
+   * Soft-deletes a closed (COMPLETED, CANCELLED or EXPIRED) order (admin only). Never moves stock.
    */
   async deleteOrder(orderId: string, adminUserId?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveOrder(orderId);
-    if (!isFinal(order.status)) {
+    if (!DELETABLE_STATUSES.includes(order.status)) {
       throw new ConflictException(
-        `Order "${orderId}" is ${order.status}; only ${FINAL_STATUSES.join(' or ')} orders can be deleted (cancel it first)`,
+        `Order "${orderId}" is ${order.status}; only ${DELETABLE_STATUSES.join(', ')} orders can be deleted (cancel it first)`,
       );
     }
     if (order.deleted) throw new ConflictException(`Order "${orderId}" is already deleted`);
     return this.ordersRepository.runTransaction(async (tx) => {
-      const deleted = await this.ordersRepository.softDelete(tx, orderId, FINAL_STATUSES);
+      const deleted = await this.ordersRepository.softDelete(tx, orderId, DELETABLE_STATUSES);
       if (!deleted) throw this.changedMeanwhile(orderId);
       await this.auditService.log({ entity: 'Order', entityId: orderId, action: 'DELETE', userId: adminUserId }, tx);
       return deleted;
@@ -287,8 +358,9 @@ export class OrdersService {
   }
 
   /**
-   * Updates the shipping carrier and tracking number for an order. A tracking number also records
-   * `order.shipment_updated.v1` in the same transaction, which the worker turns into the customer email.
+   * Sets the carrier and tracking number on the order's shipment (created if this is its first fulfilment step) of a
+   * confirmed or in-fulfilment order. A tracking number also records `shipment.tracking_updated.v1` in the same
+   * transaction, which the worker turns into the customer email.
    */
   async updateShipping(
     orderId: string,
@@ -296,29 +368,35 @@ export class OrdersService {
     carrier?: string,
     adminUserId?: string,
   ): Promise<Order & { items: OrderItem[] }> {
-    await this.retrieveOrder(orderId);
-    const updated = await this.ordersRepository.runTransaction(async (tx) => {
-      const shipped = await this.ordersRepository.updateShipping(orderId, trackingNumber, carrier, tx);
+    return this.ordersRepository.runTransaction(async (tx) => {
+      const order = await this.ordersRepository.lockForFulfilment(tx, orderId);
+      if (!order || order.deleted) throw new NotFoundException(`Order "${orderId}" not found`);
+      if (!FULFILLABLE_STATUSES.includes(order.status)) {
+        throw new ConflictException(
+          `Order "${orderId}" is ${order.status}; only ${FULFILLABLE_STATUSES.join(' or ')} orders can be shipped`,
+        );
+      }
+      const shipment = await this.ordersRepository.findOrCreateShipment(tx, orderId, adminUserId);
+      await this.ordersRepository.updateShipmentTracking(tx, shipment.id, { trackingNumber, carrier });
       await this.auditService.log(
         {
-          entity: 'Order',
-          entityId: orderId,
+          entity: 'Shipment',
+          entityId: shipment.id,
           action: 'UPDATE',
           userId: adminUserId,
-          details: { trackingNumber, carrier },
+          details: { orderId, trackingNumber, carrier },
         },
         tx,
       );
       if (trackingNumber) {
         await this.outbox.record(tx, {
-          type: 'order.shipment_updated.v1',
+          type: 'shipment.tracking_updated.v1',
           aggregateId: orderId,
-          payload: { orderId, trackingNumber },
+          payload: { orderId, shipmentId: shipment.id, trackingNumber },
         });
       }
-      return shipped;
+      return this.ordersRepository.findForTransaction(tx, orderId);
     });
-    return updated;
   }
 
   private async ensureValidCart(userId: string): Promise<Cart & { items: CartItem[] }> {
@@ -439,10 +517,7 @@ export class OrdersService {
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
       const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
-      const newOrder = await this.ordersRepository.create(tx, userId, {
-        ...orderDetails,
-        initialStatus: isCod ? OrderStatus.PROCESSING : OrderStatus.PENDING,
-      });
+      const newOrder = await this.ordersRepository.create(tx, userId, orderDetails);
 
       // Cash on delivery holds its stock until dispatch; an online order's hold expires with the unpaid order.
       const expiresAt = isCod ? null : new Date(Date.now() + UNPAID_ORDER_EXPIRY_HOURS * 60 * 60 * 1000);
@@ -477,7 +552,17 @@ export class OrdersService {
       });
 
       await this.ordersRepository.clearCartItems(tx, cartId);
-      return newOrder;
+      if (!isCod) return newOrder;
+      // Cash on delivery needs no payment before fulfilment: it is confirmed as soon as it is placed.
+      const confirmed = await this.ordersRepository.transitionStatus(
+        tx,
+        newOrder.id,
+        OrderStatus.CONFIRMED,
+        [OrderStatus.PLACED],
+        { actorId: userId, reason: 'Cash on delivery accepted' },
+      );
+      if (!confirmed) throw this.changedMeanwhile(newOrder.id);
+      return confirmed;
     });
   }
 
@@ -494,43 +579,78 @@ export class OrdersService {
   }
 
   /**
-   * Claims the order (conditional status write, optionally narrowed by `claimGuard`) before releasing its
-   * reservations, which are themselves released conditionally, so stock comes back exactly once.
+   * Claims the order (conditional status write with its history event, optionally narrowed by `guard`) before
+   * releasing its reservations, which are themselves released conditionally, so stock comes back exactly once. The
+   * coupon use is given back and an open payment intent is cancelled in the same transaction.
    */
-  private async cancelOrderAndRestoreStock(
+  private async closeOrderAndRestoreStock(
     order: Order & { items: OrderItem[] },
-    claimGuard?: Prisma.OrderWhereInput,
-    auditAs?: { userId?: string },
+    close: {
+      to: typeof OrderStatus.CANCELLED | typeof OrderStatus.EXPIRED;
+      from: readonly OrderStatus[];
+      guard?: Prisma.OrderWhereInput;
+      actorId?: string;
+      reason?: string;
+      audit?: boolean;
+    },
   ): Promise<Order & { items: OrderItem[] }> {
     return this.ordersRepository.runTransaction(async (tx) => {
-      const cancelled = await this.ordersRepository.transitionStatus(
-        tx,
-        order.id,
-        OrderStatus.CANCELLED,
-        allowedFrom(OrderStatus.CANCELLED),
-        claimGuard,
-      );
-      if (!cancelled) throw this.changedMeanwhile(order.id);
-      if (auditAs) {
+      const closed = await this.ordersRepository.transitionStatus(tx, order.id, close.to, close.from, {
+        actorId: close.actorId,
+        reason: close.reason,
+        guard: close.guard,
+      });
+      if (!closed) throw this.changedMeanwhile(order.id);
+      if (close.audit) {
         await this.auditService.log(
           {
             entity: 'Order',
             entityId: order.id,
             action: 'STATUS_CHANGE',
-            userId: auditAs.userId,
-            details: { from: order.status as string, to: OrderStatus.CANCELLED as string },
+            userId: close.actorId,
+            details: { from: order.status, to: close.to, ...(close.reason && { reason: close.reason }) },
           },
           tx,
         );
       }
       if (order.couponId) await this.couponsService.releaseUsage(tx, order.id);
       await this.stockLedger.releaseOrder(tx, order.id, {
-        // The expiry job acts for nobody; a cancel without an admin is the customer's own.
-        actorId: claimGuard ? undefined : (auditAs?.userId ?? order.userId),
-        note: claimGuard ? 'Unpaid order expired' : 'Order cancelled',
+        actorId: close.actorId,
+        note: close.to === OrderStatus.EXPIRED ? 'Unpaid order expired' : 'Order cancelled',
       });
-      return cancelled;
+      await this.ordersRepository.cancelOpenPaymentIntent(tx, order.id);
+      return closed;
     });
+  }
+
+  private async moveOrder(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    from: OrderStatus,
+    to: OrderStatus,
+    actorId: string,
+    reason?: string,
+  ): Promise<void> {
+    const moved = await this.ordersRepository.transitionStatus(tx, orderId, to, [from], { actorId, reason });
+    if (!moved) throw this.changedMeanwhile(orderId);
+    await this.auditService.log(
+      {
+        entity: 'Order',
+        entityId: orderId,
+        action: 'STATUS_CHANGE',
+        userId: actorId,
+        details: { from, to, ...(reason && { reason }) },
+      },
+      tx,
+    );
+  }
+
+  private assertCancellable(order: Order, allowed: readonly OrderStatus[]): void {
+    if (!allowed.includes(order.status)) {
+      throw new ConflictException(
+        `Order "${order.id}" is ${order.status}; it can be cancelled only while ${allowed.join(', ')}`,
+      );
+    }
   }
 
   private async retrieveOrder(orderId: string): Promise<Order & { items: OrderItem[] }> {
@@ -541,7 +661,7 @@ export class OrdersService {
 
   private async requestReturnIfPaidOnline(order: Order & { items: OrderItem[] }): Promise<void> {
     if (order.paymentMethod !== PaymentMethod.ONLINE) return;
-    if (!(await this.ordersRepository.hasCompletedPayment(order.id))) return;
+    if (!(await this.ordersRepository.hasCapturedPayment(order.id))) return;
     await this.returnsService.createSystemReturnRequest(
       order.id,
       order.userId,

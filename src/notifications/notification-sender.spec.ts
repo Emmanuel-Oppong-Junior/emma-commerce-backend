@@ -68,6 +68,66 @@ describe('NotificationSender', () => {
     expect(email.sendOrderStatusEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order1', 'SHIPPED', 'TRK9', 'evt1');
   });
 
+  it('emails a completed order for order.status_changed.v2 and nobody for other statuses', async () => {
+    const { sender, email, prisma } = buildSender();
+
+    await sender.send(
+      'order.status_changed.v2',
+      event({ orderId: 'order1', from: 'IN_FULFILMENT', to: 'COMPLETED' }),
+      'evt1',
+    );
+    await sender.send('order.status_changed.v2', event({ orderId: 'order1', from: 'PLACED', to: 'CANCELLED' }), 'evt2');
+
+    expect(email.sendOrderStatusEmail).toHaveBeenCalledTimes(1);
+    expect(email.sendOrderStatusEmail).toHaveBeenCalledWith(
+      'kwame@gmail.com',
+      'order1',
+      'COMPLETED',
+      undefined,
+      'evt1',
+    );
+    expect(prisma.order.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['OUT_FOR_DELIVERY', 'READY_FOR_PICKUP'])(
+    'emails the dispatch for shipment.status_changed.v1 (%s) with its tracking number',
+    async (status) => {
+      const { sender, email } = buildSender();
+
+      await sender.send(
+        'shipment.status_changed.v1',
+        event({ orderId: 'order1', shipmentId: 'ship1', status, trackingNumber: 'TRK1' }),
+        'evt1',
+      );
+
+      expect(email.sendOrderStatusEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order1', status, 'TRK1', 'evt1');
+    },
+  );
+
+  it('emails nobody for a shipment step that is not a dispatch', async () => {
+    const { sender, email } = buildSender();
+
+    await sender.send(
+      'shipment.status_changed.v1',
+      event({ orderId: 'order1', shipmentId: 'ship1', status: 'FAILED_DELIVERY', trackingNumber: null }),
+      'evt1',
+    );
+
+    expect(email.sendOrderStatusEmail).not.toHaveBeenCalled();
+  });
+
+  it('sends the SHIPPED email for shipment.tracking_updated.v1', async () => {
+    const { sender, email } = buildSender();
+
+    await sender.send(
+      'shipment.tracking_updated.v1',
+      event({ orderId: 'order1', shipmentId: 'ship1', trackingNumber: 'TRK9' }),
+      'evt1',
+    );
+
+    expect(email.sendOrderStatusEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order1', 'SHIPPED', 'TRK9', 'evt1');
+  });
+
   it('sends the payment confirmation for payment.succeeded.v1 with the settled amount', async () => {
     const { sender, email } = buildSender();
 

@@ -32,10 +32,10 @@ describe('Order status rules (e2e)', () => {
     return res.body.data.createOrder.id;
   };
 
-  const setStatus = (orderId: string, status: string) =>
+  const moveShipment = (orderId: string, status: string) =>
     gqlRequest(
       app,
-      `mutation { updateOrderStatus(input: { orderId: "${orderId}", status: ${status} }) { id status } }`,
+      `mutation { updateShipmentStatus(input: { orderId: "${orderId}", status: ${status} }) { id status } }`,
       undefined,
       adminToken,
     ).expect(200);
@@ -78,33 +78,56 @@ describe('Order status rules (e2e)', () => {
     expect(await stockOf()).toBe(before);
   });
 
-  it('rejects moving a cancelled order to SHIPPED', async () => {
+  it('rejects dispatching a cancelled order', async () => {
     const orderId = await placeOrder();
     await gqlRequest(app, `mutation { cancelOrder(orderId: "${orderId}") { id } }`, undefined, userToken).expect(200);
 
-    const res = await setStatus(orderId, 'SHIPPED');
+    const res = await moveShipment(orderId, 'OUT_FOR_DELIVERY');
 
     expect(codeOf(res)).toBe('CONFLICT');
-    expect(res.body.errors[0].message).toBe(`Order "${orderId}" cannot move from CANCELLED to SHIPPED`);
+    expect(res.body.errors[0].message).toBe(
+      `Order "${orderId}" is CANCELLED; only CONFIRMED or IN_FULFILMENT orders can be fulfilled`,
+    );
   });
 
-  it('does not let an admin mark an unpaid online order as PROCESSING', async () => {
+  it('does not let staff fulfil an unpaid online order', async () => {
     const orderId = await placeOrder();
 
-    const res = await setStatus(orderId, 'PROCESSING');
+    const res = await moveShipment(orderId, 'PICKING');
 
     expect(codeOf(res)).toBe('CONFLICT');
-    expect(res.body.errors[0].message).toMatch(/awaiting online payment/);
+    expect(res.body.errors[0].message).toMatch(/is PLACED; only CONFIRMED or IN_FULFILMENT/);
   });
 
-  it('returns stock when an admin cancels through updateOrderStatus', async () => {
+  it('no longer offers updateOrderStatus: order status follows payment, cancellation and the shipment', async () => {
+    const res = await gqlRequest(
+      app,
+      `mutation { updateOrderStatus(input: { orderId: "any", status: CANCELLED }) { id } }`,
+      undefined,
+      adminToken,
+    ).expect(400);
+
+    expect(codeOf(res)).toBe('GRAPHQL_VALIDATION_FAILED');
+  });
+
+  it('returns stock when an admin cancels with a reason, recorded in the timeline', async () => {
     const before = await stockOf();
     const orderId = await placeOrder();
 
-    const res = await setStatus(orderId, 'CANCELLED');
+    const res = await gqlRequest(
+      app,
+      `mutation { adminCancelOrder(orderId: "${orderId}", reason: "Customer called") {
+        status timeline { from to reason actorId } } }`,
+      undefined,
+      adminToken,
+    ).expect(200);
 
     expect(res.body.errors).toBeUndefined();
-    expect(res.body.data.updateOrderStatus.status).toBe('CANCELLED');
+    expect(res.body.data.adminCancelOrder.status).toBe('CANCELLED');
+    expect(res.body.data.adminCancelOrder.timeline).toEqual([
+      { from: null, to: 'PLACED', reason: null, actorId: 'seed_user' },
+      { from: 'PLACED', to: 'CANCELLED', reason: 'Customer called', actorId: 'seed_admin' },
+    ]);
     expect(await stockOf()).toBe(before);
   });
 });

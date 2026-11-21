@@ -20,7 +20,7 @@ const open: AttemptState = {
   amount: new Prisma.Decimal('150.25'),
   currency: 'GHS',
   intentStatus: PaymentIntentStatus.PENDING,
-  order: { status: OrderStatus.PENDING, deleted: false },
+  order: { status: OrderStatus.PLACED, deleted: false },
 };
 
 const success: ProviderVerification = { reference: 'ref1', status: 'success', amount: 15025, currency: 'GHS' };
@@ -31,10 +31,10 @@ describe('decideVerification', () => {
   });
 
   it('pays the order from a late success on an abandoned attempt', () => {
-    expect(decideVerification({ ...open, status: PaymentStatus.ABANDONED }, success)).toEqual({ kind: 'paid' });
+    expect(decideVerification({ ...open, status: PaymentStatus.CANCELLED }, success)).toEqual({ kind: 'paid' });
   });
 
-  it.each([PaymentStatus.COMPLETED, PaymentStatus.FAILED])('leaves a %s attempt alone', (status) => {
+  it.each([PaymentStatus.CAPTURED, PaymentStatus.FAILED])('leaves a %s attempt alone', (status) => {
     expect(decideVerification({ ...open, status }, success)).toEqual({ kind: 'settled' });
   });
 
@@ -71,33 +71,33 @@ describe('decideVerification', () => {
   it('flags a second full payment for an order another attempt already paid', () => {
     const paidElsewhere = {
       ...open,
-      intentStatus: PaymentIntentStatus.PAID,
-      order: { status: OrderStatus.PROCESSING, deleted: false },
+      intentStatus: PaymentIntentStatus.CAPTURED,
+      order: { status: OrderStatus.CONFIRMED, deleted: false },
     };
 
     expect(decideVerification(paidElsewhere, success)).toEqual({
       kind: 'review',
       reason: PaymentReviewReason.ALREADY_PAID,
-      attemptStatus: PaymentStatus.COMPLETED,
+      attemptStatus: PaymentStatus.CAPTURED,
     });
   });
 
-  it.each([OrderStatus.CANCELLED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED])(
+  it.each([OrderStatus.CANCELLED, OrderStatus.CONFIRMED, OrderStatus.IN_FULFILMENT, OrderStatus.COMPLETED])(
     'flags a success for a %s order instead of moving it',
     (status) => {
       expect(decideVerification({ ...open, order: { status, deleted: false } }, success)).toEqual({
         kind: 'review',
         reason: PaymentReviewReason.ORDER_NOT_PAYABLE,
-        attemptStatus: PaymentStatus.COMPLETED,
+        attemptStatus: PaymentStatus.CAPTURED,
       });
     },
   );
 
   it('flags a success for a deleted order', () => {
-    expect(decideVerification({ ...open, order: { status: OrderStatus.PENDING, deleted: true } }, success)).toEqual({
+    expect(decideVerification({ ...open, order: { status: OrderStatus.PLACED, deleted: true } }, success)).toEqual({
       kind: 'review',
       reason: PaymentReviewReason.ORDER_NOT_PAYABLE,
-      attemptStatus: PaymentStatus.COMPLETED,
+      attemptStatus: PaymentStatus.CAPTURED,
     });
   });
 });

@@ -77,7 +77,7 @@ describe('Payment reconciliation (e2e)', () => {
 
   it('settles a 20-minute-old attempt Paystack reports paid and leaves fresh and day-old attempts alone', async () => {
     const stale = await openAttempt(minutesAgo(20));
-    const superseded = await openAttempt(minutesAgo(60), PaymentStatus.ABANDONED);
+    const superseded = await openAttempt(minutesAgo(60), PaymentStatus.CANCELLED);
     const fresh = await openAttempt(minutesAgo(5));
     const dayOld = await openAttempt(minutesAgo(25 * 60));
 
@@ -85,9 +85,9 @@ describe('Payment reconciliation (e2e)', () => {
 
     expect(summary?.attempts).toEqual({ checked: 2, settled: 2, stillOpen: 0, failed: 0 });
     expect(verifiedReferences().sort()).toEqual([stale.reference, superseded.reference].sort());
-    expect(await orderStatus(stale.orderId)).toBe(OrderStatus.PROCESSING);
-    expect(await attemptStatus(stale.paymentId)).toBe(PaymentStatus.COMPLETED);
-    expect(await orderStatus(superseded.orderId)).toBe(OrderStatus.PROCESSING);
+    expect(await orderStatus(stale.orderId)).toBe(OrderStatus.CONFIRMED);
+    expect(await attemptStatus(stale.paymentId)).toBe(PaymentStatus.CAPTURED);
+    expect(await orderStatus(superseded.orderId)).toBe(OrderStatus.CONFIRMED);
     expect(await attemptStatus(fresh.paymentId)).toBe(PaymentStatus.PENDING);
     expect(await attemptStatus(dayOld.paymentId)).toBe(PaymentStatus.PENDING);
   });
@@ -109,7 +109,7 @@ describe('Payment reconciliation (e2e)', () => {
     expect(second?.attempts).toEqual({ checked: 1, settled: 0, stillOpen: 1, failed: 0 });
     expect(afterFirst).toMatchObject({ status: PaymentStatus.PENDING, rawStatus: 'abandoned' });
     expect(afterSecond.updatedAt).toEqual(afterFirst.updatedAt);
-    expect(await orderStatus(stale.orderId)).toBe(OrderStatus.PENDING);
+    expect(await orderStatus(stale.orderId)).toBe(OrderStatus.PLACED);
   });
 
   it('reprocesses a stored, unprocessed webhook event once', async () => {
@@ -138,7 +138,7 @@ describe('Payment reconciliation (e2e)', () => {
       attempts: 4,
       lastError: null,
     });
-    expect(await orderStatus(fresh.orderId)).toBe(OrderStatus.PROCESSING);
+    expect(await orderStatus(fresh.orderId)).toBe(OrderStatus.CONFIRMED);
   });
 
   it('nightly diff logs a Paystack-only success and settles a success whose webhook was missed', async () => {
@@ -159,8 +159,8 @@ describe('Payment reconciliation (e2e)', () => {
       mismatches: { PAYSTACK_ONLY: 1, UNSETTLED: 1, STATUS_MISMATCH: 0, AMOUNT_MISMATCH: 0 },
       recovered: 1,
     });
-    expect(await orderStatus(missed.orderId)).toBe(OrderStatus.PROCESSING);
-    expect(await attemptStatus(missed.paymentId)).toBe(PaymentStatus.COMPLETED);
+    expect(await orderStatus(missed.orderId)).toBe(OrderStatus.CONFIRMED);
+    expect(await attemptStatus(missed.paymentId)).toBe(PaymentStatus.CAPTURED);
     const messages = loggedErrors.mock.calls.map(([message]) => message as string);
     expect(messages).toContain(
       'Payment reconciliation mismatch | kind: PAYSTACK_ONLY | reference: paystack-only-ref | paystack: 5000 GHS | ledger: none',
@@ -179,6 +179,6 @@ describe('Payment reconciliation (e2e)', () => {
 
     expect(runs.filter((run) => run === null)).toHaveLength(1);
     expect(paystack.verifyTransaction).toHaveBeenCalledTimes(1);
-    expect(await orderStatus(stale.orderId)).toBe(OrderStatus.PROCESSING);
+    expect(await orderStatus(stale.orderId)).toBe(OrderStatus.CONFIRMED);
   });
 });

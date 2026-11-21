@@ -23,7 +23,7 @@ const refund = {
 const ledger: RefundLedger = {
   attempt: {
     id: 'attempt1',
-    status: PaymentStatus.COMPLETED,
+    status: PaymentStatus.CAPTURED,
     provider: PaymentProvider.PAYSTACK,
     reference: 'txn_123',
     amount: new Prisma.Decimal(100),

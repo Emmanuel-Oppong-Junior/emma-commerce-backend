@@ -5,7 +5,7 @@ import { assertOrderPayable, checkoutUrlForReplay, PayableOrder } from './paymen
 const payable: PayableOrder = {
   id: 'order1',
   userId: 'user1',
-  status: OrderStatus.PENDING,
+  status: OrderStatus.PLACED,
   deleted: false,
   paymentMethod: PaymentMethod.ONLINE,
   paymentIntent: null,
@@ -23,7 +23,7 @@ describe('assertOrderPayable', () => {
       ...payable,
       paymentIntent: {
         status: PaymentIntentStatus.PENDING,
-        attempts: [{ status: PaymentStatus.FAILED }, { status: PaymentStatus.ABANDONED }],
+        attempts: [{ status: PaymentStatus.FAILED }, { status: PaymentStatus.CANCELLED }],
       },
     };
 
@@ -43,7 +43,7 @@ describe('assertOrderPayable', () => {
     expect(check({ ...payable, paymentMethod: PaymentMethod.CASH_ON_DELIVERY })).toThrow(BadRequestException);
   });
 
-  it.each([OrderStatus.CANCELLED, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED])(
+  it.each([OrderStatus.CANCELLED, OrderStatus.CONFIRMED, OrderStatus.IN_FULFILMENT, OrderStatus.COMPLETED])(
     'refuses a %s order',
     (status) => {
       expect(check({ ...payable, status })).toThrow(
@@ -55,11 +55,11 @@ describe('assertOrderPayable', () => {
   it('refuses an order that is already paid, by intent status or by a completed attempt', () => {
     const paid = new BadRequestException('Payment for this order has already been completed');
 
-    expect(check({ ...payable, paymentIntent: { status: PaymentIntentStatus.PAID, attempts: [] } })).toThrow(paid);
+    expect(check({ ...payable, paymentIntent: { status: PaymentIntentStatus.CAPTURED, attempts: [] } })).toThrow(paid);
     expect(
       check({
         ...payable,
-        paymentIntent: { status: PaymentIntentStatus.PENDING, attempts: [{ status: PaymentStatus.COMPLETED }] },
+        paymentIntent: { status: PaymentIntentStatus.PENDING, attempts: [{ status: PaymentStatus.CAPTURED }] },
       }),
     ).toThrow(paid);
   });
@@ -78,7 +78,7 @@ describe('checkoutUrlForReplay', () => {
     );
   });
 
-  it.each([PaymentStatus.ABANDONED, PaymentStatus.FAILED, PaymentStatus.COMPLETED])(
+  it.each([PaymentStatus.CANCELLED, PaymentStatus.FAILED, PaymentStatus.CAPTURED])(
     'refuses an attempt that is %s, so a superseded checkout is never handed out again',
     (status) => {
       expect(() => checkoutUrlForReplay({ status, authorizationUrl: 'https://checkout.test/x' })).toThrow(

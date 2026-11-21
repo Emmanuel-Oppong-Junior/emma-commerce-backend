@@ -121,8 +121,9 @@ export class PaymentService {
   }
 
   /**
-   * Records the order total as cash collected for a SHIPPED cash-on-delivery order (admin only) and moves the order
-   * to DELIVERED, with an audit row, in one transaction. Any other order is refused and nothing is written.
+   * Records the grand total as cash collected for a dispatched cash-on-delivery order (staff, payment.record): the
+   * payment is captured, the shipment DELIVERED and the order COMPLETED, with an audit row, in one transaction. Any
+   * other order is refused and nothing is written.
    */
   async recordCodPayment(orderId: string, adminId: string): Promise<PaymentRecord> {
     const { attempt, collection } = await this.paymentRepository.recordCashCollection(
@@ -138,7 +139,7 @@ export class PaymentService {
             userId: adminId,
             details: {
               from: recorded.from,
-              to: OrderStatus.DELIVERED,
+              to: OrderStatus.COMPLETED,
               cashCollectionId: recorded.collection.id,
               paymentId: recorded.attempt.id,
               amount: recorded.collection.amount.toFixed(2),

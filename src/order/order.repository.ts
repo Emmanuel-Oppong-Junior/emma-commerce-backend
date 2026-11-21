@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   Address,
   FulfillmentType,
@@ -9,27 +9,41 @@ import {
   PaymentMethod,
   PaymentStatus,
   Prisma,
+  Shipment,
+  ShipmentStatus,
   User,
 } from '../generated/prisma/client';
 import { FOR_SALE, VariantForSale } from '../cart/cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrderSnapshot } from './order-totals';
+import { TransitionContext, transitionOrder } from './order-transition';
+import { isDispatch } from './shipment-status';
+import { intentAllowedFrom } from '../payment/payment-intent-status';
 
 type OrderWithItems = Order & { items: OrderItem[] };
 
-/** What an order is read with everywhere: its lines with their tax lines, and its adjustments. */
+/** What an order is read with everywhere: lines with tax lines, adjustments, shipments, history and payment status. */
 export const ORDER_INCLUDE = {
   items: { include: { product: true, variant: true, taxLines: { orderBy: { name: 'asc' } } } },
   adjustments: { orderBy: { createdAt: 'asc' } },
+  shipments: { include: { events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } }, orderBy: { createdAt: 'asc' } },
+  statusEvents: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
+  paymentIntent: { select: { status: true } },
 } satisfies Prisma.OrderInclude;
+
+/** An order as fulfilment reads it under its row lock. */
+export type OrderForFulfilment = Pick<
+  Order,
+  'id' | 'userId' | 'status' | 'deleted' | 'fulfillmentType' | 'paymentMethod'
+>;
 
 /**
  * Unpaid online orders older than `cutoff` with no payment attempt, or whose attempts are all pending, failed
- * or abandoned and were last touched before `cutoff`. Never matches an order with a completed payment.
+ * or cancelled and were last touched before `cutoff`. Never matches an order with a captured payment.
  */
 export function abandonedOrderWhere(cutoff: Date): Prisma.OrderWhereInput {
   return {
-    status: OrderStatus.PENDING,
+    status: OrderStatus.PLACED,
     paymentMethod: PaymentMethod.ONLINE,
     createdAt: { lt: cutoff },
     deleted: false,
@@ -38,10 +52,10 @@ export function abandonedOrderWhere(cutoff: Date): Prisma.OrderWhereInput {
       {
         paymentIntent: {
           is: {
-            status: PaymentIntentStatus.PENDING,
+            status: { in: [PaymentIntentStatus.PENDING, PaymentIntentStatus.FAILED] },
             attempts: {
               every: {
-                status: { in: [PaymentStatus.PENDING, PaymentStatus.FAILED, PaymentStatus.ABANDONED] },
+                status: { in: [PaymentStatus.PENDING, PaymentStatus.FAILED, PaymentStatus.CANCELLED] },
                 updatedAt: { lt: cutoff },
               },
             },
@@ -78,7 +92,7 @@ export class OrdersRepository {
     }) as unknown as Promise<Order[]>;
   }
 
-  /** Writes the order with its line, tax and adjustment snapshot (see snapshotOrder). */
+  /** Writes the PLACED order with its line, tax and adjustment snapshot (see snapshotOrder) and first history event. */
   async create(
     tx: Prisma.TransactionClient,
     userId: string,
@@ -91,7 +105,6 @@ export class OrdersRepository {
       pickupLocationSnapshot?: Record<string, unknown>;
       couponId?: string;
       paymentMethod?: PaymentMethod;
-      initialStatus?: OrderStatus;
       contactEmail: string;
       contactPhone: string;
     },
@@ -116,9 +129,10 @@ export class OrdersRepository {
         pickupLocationSnapshot: (orderDetails.pickupLocationSnapshot as Prisma.JsonObject) ?? Prisma.JsonNull,
         couponId: orderDetails.couponId,
         paymentMethod: orderDetails.paymentMethod ?? PaymentMethod.ONLINE,
-        status: orderDetails.initialStatus ?? OrderStatus.PENDING,
+        status: OrderStatus.PLACED,
         contactEmail: orderDetails.contactEmail,
         contactPhone: orderDetails.contactPhone,
+        statusEvents: { create: { from: null, to: OrderStatus.PLACED, actorId: userId } },
       },
     });
     for (const line of snapshot.lines) {
@@ -166,49 +180,115 @@ export class OrdersRepository {
     return this.prisma.address.findUnique({ where: { id: addressId } });
   }
 
-  async updateShipping(
-    orderId: string,
-    trackingNumber?: string,
-    carrier?: string,
-    db: Prisma.TransactionClient = this.prisma,
-  ): Promise<OrderWithItems> {
-    try {
-      return (await db.order.update({
-        where: { id: orderId },
-        data: { trackingNumber, carrier },
-        include: ORDER_INCLUDE,
-      })) as unknown as OrderWithItems;
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
-        throw new NotFoundException(`Order "${orderId}" not found`);
-      }
-      throw e;
-    }
-  }
-
   /**
-   * Moves the order to `to` only if it is still in one of `from` (and not deleted) and matches `guard`.
-   * Returns null when another request changed it first, so callers can report a conflict.
+   * Moves the order to `to` if it is still in one of `from` (and not deleted) and matches `context.guard`, and writes
+   * its history event (see transitionOrder). Returns null when another request changed it first, so callers can
+   * report a conflict.
    */
   async transitionStatus(
     tx: Prisma.TransactionClient,
     orderId: string,
     to: OrderStatus,
-    from: OrderStatus[],
-    guard?: Prisma.OrderWhereInput,
+    from: readonly OrderStatus[],
+    context?: TransitionContext,
   ): Promise<OrderWithItems | null> {
-    const { count } = await tx.order.updateMany({
-      where: { id: orderId, status: { in: from }, deleted: false, ...(guard && { AND: [guard] }) },
-      data: { status: to },
+    const left = await transitionOrder(tx, orderId, to, from, context);
+    return left === null ? null : this.findInTransaction(tx, orderId);
+  }
+
+  /** Locks the order row for a fulfilment change, so shipment and order move together; null if it does not exist. */
+  async lockForFulfilment(tx: Prisma.TransactionClient, orderId: string): Promise<OrderForFulfilment | null> {
+    await tx.$queryRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+    return tx.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, userId: true, status: true, deleted: true, fulfillmentType: true, paymentMethod: true },
+    });
+  }
+
+  /** The order's shipment, created PENDING on the first fulfilment step. Call with the order row locked. */
+  async findOrCreateShipment(tx: Prisma.TransactionClient, orderId: string, actorId?: string): Promise<Shipment> {
+    const existing = await tx.shipment.findFirst({ where: { orderId }, orderBy: { createdAt: 'asc' } });
+    if (existing) return existing;
+    return tx.shipment.create({
+      data: { orderId, events: { create: { from: null, to: ShipmentStatus.PENDING, actorId } } },
+    });
+  }
+
+  /**
+   * Moves a shipment from `from` to `to` with a conditional write, stamps dispatch and delivery times, and writes
+   * its history event. Returns null when another request moved it first.
+   */
+  async transitionShipment(
+    tx: Prisma.TransactionClient,
+    shipmentId: string,
+    from: ShipmentStatus,
+    to: ShipmentStatus,
+    context: { actorId?: string; reason?: string } = {},
+  ): Promise<Shipment | null> {
+    const now = new Date();
+    const { count } = await tx.shipment.updateMany({
+      where: { id: shipmentId, status: from },
+      data: {
+        status: to,
+        ...(isDispatch(to) && { dispatchedAt: now }),
+        ...(to === ShipmentStatus.DELIVERED && { deliveredAt: now }),
+      },
     });
     if (count === 0) return null;
+    await tx.shipmentStatusEvent.create({
+      data: { shipmentId, from, to, actorId: context.actorId, reason: context.reason },
+    });
+    return tx.shipment.findUniqueOrThrow({ where: { id: shipmentId } });
+  }
+
+  async updateShipmentTracking(
+    tx: Prisma.TransactionClient,
+    shipmentId: string,
+    tracking: { trackingNumber?: string; carrier?: string },
+  ): Promise<Shipment> {
+    return tx.shipment.update({ where: { id: shipmentId }, data: tracking });
+  }
+
+  async findTimeline(orderId: string) {
+    return this.prisma.orderStatusEvent.findMany({
+      where: { orderId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+  }
+
+  async findShipments(orderId: string) {
+    return this.prisma.shipment.findMany({
+      where: { orderId },
+      include: ORDER_INCLUDE.shipments.include,
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async findPaymentStatus(orderId: string): Promise<PaymentIntentStatus | null> {
+    const intent = await this.prisma.paymentIntent.findUnique({ where: { orderId }, select: { status: true } });
+    return intent?.status ?? null;
+  }
+
+  /** Cancels the order's payment intent if it is still open (pending or failed); a captured one is left alone. */
+  async cancelOpenPaymentIntent(tx: Prisma.TransactionClient, orderId: string): Promise<void> {
+    await tx.paymentIntent.updateMany({
+      where: { orderId, status: { in: intentAllowedFrom(PaymentIntentStatus.CANCELLED) } },
+      data: { status: PaymentIntentStatus.CANCELLED },
+    });
+  }
+
+  async findForTransaction(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems> {
     return this.findInTransaction(tx, orderId);
   }
 
   /** Hides a finished order; returns null if it is not in one of `from` or is already deleted. */
-  async softDelete(tx: Prisma.TransactionClient, orderId: string, from: OrderStatus[]): Promise<OrderWithItems | null> {
+  async softDelete(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    from: readonly OrderStatus[],
+  ): Promise<OrderWithItems | null> {
     const { count } = await tx.order.updateMany({
-      where: { id: orderId, deleted: false, status: { in: from } },
+      where: { id: orderId, deleted: false, status: { in: [...from] } },
       data: { deleted: true, deletedAt: new Date() },
     });
     if (count === 0) return null;
@@ -255,9 +335,9 @@ export class OrdersRepository {
     return this.prisma.$transaction(fn);
   }
 
-  async hasCompletedPayment(orderId: string): Promise<boolean> {
+  async hasCapturedPayment(orderId: string): Promise<boolean> {
     const completed = await this.prisma.paymentAttempt.count({
-      where: { intent: { orderId }, status: PaymentStatus.COMPLETED },
+      where: { intent: { orderId }, status: PaymentStatus.CAPTURED },
     });
     return completed > 0;
   }

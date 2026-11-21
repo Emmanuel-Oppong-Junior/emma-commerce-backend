@@ -1,5 +1,4 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { OrderSnapshot } from './order-totals';
 import { ORDER_INCLUDE, OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
@@ -190,40 +189,85 @@ describe('OrdersRepository', () => {
     });
   });
 
-  describe('updateShipping', () => {
-    it('should update shipping info', async () => {
-      const updated = { ...mockOrder, trackingNumber: 'TRK123', carrier: 'DHL' };
-      mockPrismaOrder.update.mockResolvedValue(updated);
+  describe('shipments', () => {
+    const tx = {
+      shipment: {
+        findFirst: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+        updateMany: jest.fn(),
+        findUniqueOrThrow: jest.fn(),
+      },
+      shipmentStatusEvent: { create: jest.fn() },
+    };
 
-      const result = await repository.updateShipping('order1', 'TRK123', 'DHL');
+    beforeEach(() => jest.resetAllMocks());
+
+    it('updates the carrier and tracking number on the shipment', async () => {
+      const updated = { id: 'ship1', trackingNumber: 'TRK123', carrier: 'DHL' };
+      tx.shipment.update.mockResolvedValue(updated);
+
+      const result = await repository.updateShipmentTracking(tx as any, 'ship1', {
+        trackingNumber: 'TRK123',
+        carrier: 'DHL',
+      });
 
       expect(result).toEqual(updated);
-    });
-
-    it('should throw NotFoundException on P2025', async () => {
-      const prismaError = new Prisma.PrismaClientKnownRequestError('Not found', {
-        code: 'P2025',
-        clientVersion: '5.0',
+      expect(tx.shipment.update).toHaveBeenCalledWith({
+        where: { id: 'ship1' },
+        data: { trackingNumber: 'TRK123', carrier: 'DHL' },
       });
-      mockPrismaOrder.update.mockRejectedValue(prismaError);
-
-      await expect(repository.updateShipping('nonexistent', 'TRK123')).rejects.toThrow(NotFoundException);
     });
 
-    it('should rethrow unknown errors', async () => {
-      mockPrismaOrder.update.mockRejectedValue(new Error('DB error'));
+    it('returns the existing shipment or creates a PENDING one with its first history event', async () => {
+      tx.shipment.findFirst.mockResolvedValueOnce({ id: 'ship1' }).mockResolvedValueOnce(null);
+      tx.shipment.create.mockResolvedValue({ id: 'ship2' });
 
-      await expect(repository.updateShipping('order1', 'TRK123')).rejects.toThrow('DB error');
+      expect(await repository.findOrCreateShipment(tx as any, 'order1')).toEqual({ id: 'ship1' });
+      expect(await repository.findOrCreateShipment(tx as any, 'order1', 'admin1')).toEqual({ id: 'ship2' });
+      expect(tx.shipment.create).toHaveBeenCalledWith({
+        data: { orderId: 'order1', events: { create: { from: null, to: 'PENDING', actorId: 'admin1' } } },
+      });
+    });
+
+    it('moves a shipment with a conditional write, stamps dispatch and records the event', async () => {
+      tx.shipment.updateMany.mockResolvedValue({ count: 1 });
+      tx.shipment.findUniqueOrThrow.mockResolvedValue({ id: 'ship1', status: 'OUT_FOR_DELIVERY' });
+
+      await repository.transitionShipment(tx as any, 'ship1', 'PACKED' as any, 'OUT_FOR_DELIVERY' as any, {
+        actorId: 'admin1',
+        reason: 'Rider Kofi',
+      });
+
+      expect(tx.shipment.updateMany).toHaveBeenCalledWith({
+        where: { id: 'ship1', status: 'PACKED' },
+        data: { status: 'OUT_FOR_DELIVERY', dispatchedAt: expect.any(Date) },
+      });
+      expect(tx.shipmentStatusEvent.create).toHaveBeenCalledWith({
+        data: { shipmentId: 'ship1', from: 'PACKED', to: 'OUT_FOR_DELIVERY', actorId: 'admin1', reason: 'Rider Kofi' },
+      });
+    });
+
+    it('writes no event when another request moved the shipment first', async () => {
+      tx.shipment.updateMany.mockResolvedValue({ count: 0 });
+
+      expect(await repository.transitionShipment(tx as any, 'ship1', 'PACKED' as any, 'DELIVERED' as any)).toBeNull();
+      expect(tx.shipmentStatusEvent.create).not.toHaveBeenCalled();
     });
   });
 
   describe('transitionStatus', () => {
-    const tx = { order: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() } };
+    const tx = {
+      $queryRaw: jest.fn(),
+      order: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
+      orderStatusEvent: { create: jest.fn() },
+    };
 
     beforeEach(() => jest.resetAllMocks());
 
-    it('moves the order only from the allowed statuses and returns it', async () => {
+    it('moves the order only from the allowed statuses, records the event and returns it', async () => {
       const updated = { ...mockOrder, status: 'CANCELLED' };
+      tx.$queryRaw.mockResolvedValue([{ status: 'CONFIRMED' }]);
       tx.order.updateMany.mockResolvedValue({ count: 1 });
       tx.order.findUniqueOrThrow.mockResolvedValue(updated);
 
@@ -231,31 +275,45 @@ describe('OrdersRepository', () => {
         tx as any,
         'order1',
         'CANCELLED' as any,
-        ['PENDING', 'PROCESSING'] as any,
+        ['PLACED', 'CONFIRMED'] as any,
+        { actorId: 'admin1', reason: 'Out of stock' },
       );
 
       expect(tx.order.updateMany).toHaveBeenCalledWith({
-        where: { id: 'order1', status: { in: ['PENDING', 'PROCESSING'] }, deleted: false },
+        where: { id: 'order1', status: 'CONFIRMED', deleted: false },
         data: { status: 'CANCELLED' },
+      });
+      expect(tx.orderStatusEvent.create).toHaveBeenCalledWith({
+        data: { orderId: 'order1', from: 'CONFIRMED', to: 'CANCELLED', actorId: 'admin1', reason: 'Out of stock' },
       });
       expect(result).toEqual(updated);
     });
 
-    it('returns null and reads nothing when the order was no longer in an allowed status', async () => {
-      tx.order.updateMany.mockResolvedValue({ count: 0 });
+    it('returns null and writes nothing when the order was no longer in an allowed status', async () => {
+      tx.$queryRaw.mockResolvedValue([{ status: 'COMPLETED' }]);
 
-      const result = await repository.transitionStatus(tx as any, 'order1', 'CANCELLED' as any, ['PENDING'] as any);
+      const result = await repository.transitionStatus(tx as any, 'order1', 'CANCELLED' as any, ['PLACED'] as any);
 
       expect(result).toBeNull();
+      expect(tx.order.updateMany).not.toHaveBeenCalled();
+      expect(tx.orderStatusEvent.create).not.toHaveBeenCalled();
       expect(tx.order.findUniqueOrThrow).not.toHaveBeenCalled();
     });
 
+    it('refuses a move the order table does not have, before touching the database', async () => {
+      await expect(
+        repository.transitionStatus(tx as any, 'order1', 'IN_FULFILMENT' as any, ['CANCELLED'] as any),
+      ).rejects.toThrow('Order table has no CANCELLED -> IN_FULFILMENT transition');
+      expect(tx.$queryRaw).not.toHaveBeenCalled();
+    });
+
     it('rethrows database errors', async () => {
+      tx.$queryRaw.mockResolvedValue([{ status: 'CONFIRMED' }]);
       tx.order.updateMany.mockRejectedValue(new Error('DB error'));
 
-      await expect(repository.transitionStatus(tx as any, 'order1', 'SHIPPED' as any, [] as any)).rejects.toThrow(
-        'DB error',
-      );
+      await expect(
+        repository.transitionStatus(tx as any, 'order1', 'IN_FULFILMENT' as any, ['CONFIRMED'] as any),
+      ).rejects.toThrow('DB error');
     });
   });
 
@@ -269,12 +327,12 @@ describe('OrdersRepository', () => {
       tx.order.updateMany.mockResolvedValue({ count: 1 });
       tx.order.findUniqueOrThrow.mockResolvedValue(deleted);
 
-      const result = await repository.softDelete(tx as any, 'order1', ['DELIVERED', 'CANCELLED'] as any);
+      const result = await repository.softDelete(tx as any, 'order1', ['COMPLETED', 'CANCELLED'] as any);
 
       expect(result).toEqual(deleted);
       expect(tx.order.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'order1', deleted: false, status: { in: ['DELIVERED', 'CANCELLED'] } },
+          where: { id: 'order1', deleted: false, status: { in: ['COMPLETED', 'CANCELLED'] } },
           data: expect.objectContaining({ deleted: true }),
         }),
       );
@@ -283,7 +341,7 @@ describe('OrdersRepository', () => {
     it('returns null when the order was already deleted or is not finished', async () => {
       tx.order.updateMany.mockResolvedValue({ count: 0 });
 
-      expect(await repository.softDelete(tx as any, 'order1', ['DELIVERED'] as any)).toBeNull();
+      expect(await repository.softDelete(tx as any, 'order1', ['COMPLETED'] as any)).toBeNull();
     });
   });
 

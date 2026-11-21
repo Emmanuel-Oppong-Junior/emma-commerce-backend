@@ -9,11 +9,11 @@ import { DEFAULT_LOW_STOCK_THRESHOLD } from '../inventory/stock';
 
 /**
  * A payment accepted for its order: a settled online attempt or a recorded cash collection (which also writes a
- * COMPLETED cash-on-delivery attempt). Captured payments held for review are excluded; they are queued for refund.
+ * CAPTURED cash-on-delivery attempt). Captured payments held for review are excluded; they are queued for refund.
  */
 // A variant's available stock over all locations; 0 when it has no stock level yet.
 const AVAILABLE_STOCK = Prisma.sql`COALESCE((SELECT sum(sl."onHand" - sl."reserved") FROM "StockLevel" sl WHERE sl."variantId" = v.id), 0)`;
-const ACCEPTED_ATTEMPT = Prisma.sql`pa.status = 'COMPLETED' AND pa."reviewReason" IS NULL AND pa.deleted = false`;
+const ACCEPTED_ATTEMPT = Prisma.sql`pa.status = 'CAPTURED' AND pa."reviewReason" IS NULL AND pa.deleted = false`;
 
 // An attempt has no settled-at column: updatedAt is written by the settling update and only touched again by an
 // admin soft delete or restore. Cash is recognised when it was collected.

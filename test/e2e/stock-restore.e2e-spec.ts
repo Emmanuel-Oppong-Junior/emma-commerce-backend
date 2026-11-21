@@ -67,8 +67,8 @@ describe('Stock is restored exactly once (e2e)', () => {
   it('cancelling a paid online order and refunding it returns stock once, with one log per item', async () => {
     const before = await stockOf();
     const orderId = await placeOrder();
-    await seedPaymentAttempt(prisma, { orderId, status: 'COMPLETED', reference: `ref-${orderId}` });
-    await prisma.order.update({ where: { id: orderId }, data: { status: 'PROCESSING' } });
+    await seedPaymentAttempt(prisma, { orderId, status: 'CAPTURED', reference: `ref-${orderId}` });
+    await prisma.order.update({ where: { id: orderId }, data: { status: 'CONFIRMED' } });
 
     const cancel = await gqlRequest(
       app,
@@ -95,7 +95,7 @@ describe('Stock is restored exactly once (e2e)', () => {
 
   it('deleting a delivered order leaves stock unchanged', async () => {
     const orderId = await placeOrder();
-    await prisma.order.update({ where: { id: orderId }, data: { status: 'DELIVERED' } });
+    await prisma.order.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
     const afterSale = await stockOf();
 
     const res = await admin(`mutation { deleteOrder(orderId: "${orderId}") { id } }`);

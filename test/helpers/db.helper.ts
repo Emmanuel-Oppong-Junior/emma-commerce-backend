@@ -122,9 +122,9 @@ export async function seedPaymentAttempt(
     create: {
       orderId: attempt.orderId,
       amount,
-      status: attempt.status === PaymentStatus.COMPLETED ? 'PAID' : 'PENDING',
+      status: attempt.status === PaymentStatus.CAPTURED ? 'CAPTURED' : 'PENDING',
     },
-    update: attempt.status === PaymentStatus.COMPLETED ? { status: 'PAID' } : {},
+    update: attempt.status === PaymentStatus.CAPTURED ? { status: 'CAPTURED' } : {},
   });
   const created = await prisma.paymentAttempt.create({
     data: {

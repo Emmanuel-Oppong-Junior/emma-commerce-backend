@@ -203,9 +203,9 @@ describe('Order totals, line snapshots and tax lines (P1-O.1, e2e)', () => {
     });
 
     it('refunds the tax read from the stored tax lines, even after the rates changed', async () => {
-      await prisma.order.update({ where: { id: orderId }, data: { status: 'DELIVERED' } });
+      await prisma.order.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
       await prisma.tax.update({ where: { id: 'totals_vat' }, data: { rate: '0.2' } });
-      await seedPaymentAttempt(prisma, { orderId, status: 'COMPLETED', amount: 706.49 });
+      await seedPaymentAttempt(prisma, { orderId, status: 'CAPTURED', amount: 706.49 });
       const returned = await prisma.returnRequest.create({
         data: { orderId, userId: 'seed_user', reason: 'Wrong colour', status: 'APPROVED', refundAmount: 100 },
       });

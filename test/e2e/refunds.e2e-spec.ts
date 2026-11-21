@@ -45,7 +45,7 @@ describe('Refunds (e2e)', () => {
     gql(`mutation { processPendingRefund(refundId: "${refundId}") { id status } }`, token);
   const codeOf = (result: GqlResult) => result.errors?.[0]?.extensions.code;
 
-  const createOrder = async (status: OrderStatus = OrderStatus.DELIVERED): Promise<string> => {
+  const createOrder = async (status: OrderStatus = OrderStatus.COMPLETED): Promise<string> => {
     orderCount += 1;
     const order = await prisma.order.create({
       data: {
@@ -68,7 +68,7 @@ describe('Refunds (e2e)', () => {
     refundAmount: Decimal.Value | null = 100,
   ): Promise<{ orderId: string; returnId: string; reference: string }> => {
     const orderId = await createOrder();
-    const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.COMPLETED });
+    const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
     const returnRequest = await prisma.returnRequest.create({
       data: { orderId, userId: 'seed_user', reason: 'Arrived damaged', status, refundAmount },
     });
@@ -184,7 +184,7 @@ describe('Refunds (e2e)', () => {
   });
 
   it('sends a queued auto-refund once, and then caps a return refund on the same payment', async () => {
-    const orderId = await createOrder(OrderStatus.PENDING);
+    const orderId = await createOrder(OrderStatus.PLACED);
     const { reference } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.PENDING });
     await gql(`mutation { cancelOrder(orderId: "${orderId}") { id } }`, userToken);
     await gql(`mutation { verifyPayment(verifyPaymentInput: { reference: "${reference}" }) { id } }`, userToken);

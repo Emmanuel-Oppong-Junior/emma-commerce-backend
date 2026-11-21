@@ -121,7 +121,7 @@ describe('Analytics revenue (e2e)', () => {
 
     // Unpaid online checkout: an open attempt, no money.
     const pendingId = await createOrder({
-      status: OrderStatus.PENDING,
+      status: OrderStatus.PLACED,
       items: [[LAPTOP, 1, 100]],
       shippingFee: 10,
       totalAmount: 110,
@@ -133,7 +133,7 @@ describe('Analytics revenue (e2e)', () => {
 
     // Paid online today, with shipping and a coupon: 230 items + 20 shipping - 10 coupon.
     const paidId = await createOrder({
-      status: OrderStatus.PROCESSING,
+      status: OrderStatus.CONFIRMED,
       items: [
         [LAPTOP, 2, 100],
         [NOVEL, 1, 30],
@@ -142,18 +142,18 @@ describe('Analytics revenue (e2e)', () => {
       couponDiscount: 10,
       totalAmount: 240,
     });
-    await seedPaymentAttempt(prisma, { orderId: paidId, status: PaymentStatus.COMPLETED, amount: 240 });
+    await seedPaymentAttempt(prisma, { orderId: paidId, status: PaymentStatus.CAPTURED, amount: 240 });
 
     // Cash on delivery, collected today.
     const collectedId = await createOrder({
-      status: OrderStatus.DELIVERED,
+      status: OrderStatus.COMPLETED,
       paymentMethod: PaymentMethod.CASH_ON_DELIVERY,
       items: [[PHONE, 1, 50]],
       shippingFee: 15,
       totalAmount: 65,
     });
     const codIntent = await prisma.paymentIntent.create({
-      data: { orderId: collectedId, amount: 65, status: PaymentIntentStatus.PAID },
+      data: { orderId: collectedId, amount: 65, status: PaymentIntentStatus.CAPTURED },
     });
     const codAttempt = await prisma.paymentAttempt.create({
       data: {
@@ -161,7 +161,7 @@ describe('Analytics revenue (e2e)', () => {
         provider: PaymentProvider.CASH_ON_DELIVERY,
         channel: PaymentProvider.CASH_ON_DELIVERY,
         amount: 65,
-        status: PaymentStatus.COMPLETED,
+        status: PaymentStatus.CAPTURED,
       },
     });
     await prisma.cashCollection.create({
@@ -170,7 +170,7 @@ describe('Analytics revenue (e2e)', () => {
 
     // Cash on delivery, shipped but not collected.
     await createOrder({
-      status: OrderStatus.SHIPPED,
+      status: OrderStatus.IN_FULFILMENT,
       paymentMethod: PaymentMethod.CASH_ON_DELIVERY,
       items: [[PHONE, 3, 50]],
       totalAmount: 150,
@@ -178,14 +178,14 @@ describe('Analytics revenue (e2e)', () => {
 
     // Paid online today, then partly refunded today through a return.
     const returnedId = await createOrder({
-      status: OrderStatus.DELIVERED,
+      status: OrderStatus.COMPLETED,
       items: [[NOVEL, 2, 30]],
       shippingFee: 10,
       totalAmount: 70,
     });
     const { paymentId: returnedAttemptId } = await seedPaymentAttempt(prisma, {
       orderId: returnedId,
-      status: PaymentStatus.COMPLETED,
+      status: PaymentStatus.CAPTURED,
       amount: 70,
     });
     const returnRequest = await prisma.returnRequest.create({
@@ -218,7 +218,7 @@ describe('Analytics revenue (e2e)', () => {
         reference: 'ref-analytics-late',
         channel: 'card',
         amount: 100,
-        status: PaymentStatus.COMPLETED,
+        status: PaymentStatus.CAPTURED,
         reviewReason: PaymentReviewReason.ORDER_NOT_PAYABLE,
       },
     });
@@ -235,14 +235,14 @@ describe('Analytics revenue (e2e)', () => {
     // Paid online in 2020: outside today's window, inside all time.
     const oldPaidAt = new Date('2020-06-01T12:00:00Z');
     const oldId = await createOrder({
-      status: OrderStatus.DELIVERED,
+      status: OrderStatus.COMPLETED,
       items: [[NOVEL, 1, 30]],
       totalAmount: 30,
       createdAt: oldPaidAt,
     });
     await seedPaymentAttempt(prisma, {
       orderId: oldId,
-      status: PaymentStatus.COMPLETED,
+      status: PaymentStatus.CAPTURED,
       amount: 30,
       updatedAt: oldPaidAt,
     });

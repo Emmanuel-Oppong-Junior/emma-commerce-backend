@@ -1,7 +1,7 @@
 import { Permission } from '../../src/iam/authorization/permissions';
 import { StaffAccess, staffAccessFor } from '../../src/iam/authorization/staff-access';
 
-/** The Manager role as the staff_roles migration seeds it: exactly what the legacy ADMIN role could do. */
+/** The Manager role as the migrations seed it: what the legacy ADMIN role could do, plus order.fulfil (P1-O.2). */
 export const MANAGER_PERMISSIONS: Permission[] = [
   'catalog.product.read',
   'catalog.product.write',
@@ -11,6 +11,7 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'inventory.adjust',
   'order.view',
   'order.manage',
+  'order.fulfil',
   'order.refund',
   'return.manage',
   'payment.view',
