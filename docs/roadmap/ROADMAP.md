@@ -313,9 +313,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P2-B.1** `Promotion`/`CouponCode`/`Redemption` (M10) replacing Discount/Coupon [6fa614d]
 - [x] **P2-B.2** Stacking groups, exclusivity, priority, best-saving [40a3acc]
 - [x] **P2-B.3** Per-user/global limits, first-order, segment [41a7e69]
-- [ ] **P2-B.4** Flash sales (time window + quantity cap)
-- [ ] **P2-B.5** BXGY, tiered/volume, spend-X-save-Y
-- [ ] **P2-B.6** Free-shipping promos
+- [ ] 🔄 **P2-B.4** Flash sales (time window + quantity cap)
+- [ ] 🔄 **P2-B.5** BXGY, tiered/volume, spend-X-save-Y
+- [ ] 🔄 **P2-B.6** Free-shipping promos
 
 ### P2-T — Tax
 > Run: T.1 → T.2 → (T.3 ∥ T.4); T.5 later · L · 🟥 T.1–T.4 / ⬜ T.5

@@ -5,7 +5,9 @@
 **Last checkpoint:** 2026-11-21 · **Current phase:** Phase 2 — Pricing & tax engine (started 2026-11-21, Emmanuel; 6/15: P2-A, P2-H, P2-B.1–B.3 done); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: P2-B.4–B.6 (flash sales, BXGY/tiered/spend-X-save-Y, free-shipping promos), waiting on Emmanuel's go-ahead.
+**P2-B.4–B.6 — Flash sales, BXGY/tiered/spend-X-save-Y, free-shipping promos** (ADR-0005) · branch `feat/p2-b-promotions-2` from `ecdf9b7` · agent in a worktree · DB `emma_wt_promo2_test`, Redis DB 13 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-21): flash cap counts units, partial (units left get the sale price, rest normal; reserved at placement, released on cancel/expiry); BXGY and tiers mix and match across all targeted units (BXGY rewards the cheapest qualifying units, repeats, optional max repeats); free shipping is a shipping-level promotion that waives or takes a fixed amount off the fee, optionally per zone, min spend after item and cart promotions.
+  - [ ] B.4 ← **Next step** (agent) · [ ] B.5 · [ ] B.6 · [ ] merge, push
 
 **Last completed: P2-B.1–B.3 Promotions model, stacking, limits (2026-11-21)** (ADR-0005; DISC-03, DISC-07, DISC-09, DISC-10, CPN-02, CPN-03, CPN-08, CPN-09; CPN-10 partly): B.1 `6fa614d` `[breaking-api]`, B.2 `40a3acc`, B.3 `41a7e69`, fast-forwarded onto dev.
   - B.1: migrations `20261126000000_promotions` (expand + re-runnable backfill; ids kept, so adjustment `sourceId`s need no rewrite; a discount with several target kinds splits into `<id>_product`/`<id>_category`; Coupon → CART promotion with `requiresCoupon` + upper-case `CouponCode`, `perCustomerLimit` 1; CouponUsage → RESERVED `Redemption`; >100% percentages clamped to 100, charge unchanged) and `_contract` (refuses while anything is unmigrated; drops Discount, Coupon, CouponUsage, DiscountType, `Variant`/`Category.discountId`, `CartItem.discountedPrice`/`discountId`, `Order.couponId` → `couponCodeId`). Report: `scripts/reports/promotions-migration-report.sql`. Admin API under `promotion.manage` with step-up, audited; `validateCouponCode(code)` (signed in) replaces `validateCoupon`; `Variant.appliedPromotion: PublicPromotion`. Rules unchanged (`PRICING_VERSION` 1).
@@ -132,7 +134,7 @@ None. Next: P2-B.4–B.6 (flash sales, BXGY/tiered/spend-X-save-Y, free-shipping
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P2-B.4–B.6 flash sales, BXGY/tiered, free-shipping promos | B.4 ∥ B.5 ∥ B.6 (one run) | Emmanuel's go-ahead |
+| 1 | P2-B.4–B.6 (in progress) | one run | — |
 | 2 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
 | 3 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
 
@@ -185,6 +187,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-21 | P2-B.4–B.6: flash cap partial by units; BXGY/tiers mix and match, cheapest units rewarded; free shipping waives or caps the fee, optional zones | STATUS (P2-B) |
 | 2026-11-21 | P2-B: segments = generic `CustomerGroup`; run B.1–B.3 first, B.4–B.6 next | STATUS (P2-B) |
 | 2026-11-21 | Phase 2 started. P2-A: required `quoteHash`, CONFLICT `QUOTE_CHANGED` on mismatch. P2-B: min spend after item discounts; refunds keep promotion uses | STATUS (P2-A) |
 | 2026-11-21 | P1-O: snapshot current tax as `OrderLineTax` (no engine), legacy pricingVersion 0; payment machine on `PaymentIntent`, ABANDONED → CANCELLED; shipment created on first fulfilment step, forward skips allowed before dispatch; COD orders start CONFIRMED, delivered only via `recordCodPayment`; `order.fulfil` for Owner/Manager/InventoryClerk/Cashier | STATUS (P1-O) |
