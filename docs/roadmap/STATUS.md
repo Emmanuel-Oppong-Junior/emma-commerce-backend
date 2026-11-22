@@ -2,10 +2,14 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-22 · **Current phase:** Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-22 · **Current phase:** Phase 4 — Inventory (started 2026-11-22, Emmanuel; 0/7); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: see **Up next**.
+Two lanes in worktrees (agents), from the commit that records this start:
+- **P4-A.1→A.2 — Multi-location stock + fulfilment rule, then transfers** (ADR-0008) · branch `feat/p4-a-locations` · DB `emma_wt_locations_test`, Redis DB 13 · **State:** in progress
+- **P4-B.1–B.2 — Adjustments + stock-take, low-stock staff digest** (ADR-0008, ADR-0015) · branch `feat/p4-b-stockops` · DB `emma_wt_stockops_test`, Redis DB 12 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-22): one fulfilment location per order, chosen by priority per delivery zone / pickup point (default: the store's default location), the first that can fill every line; customers see availability summed over the locations that can serve them; transfers two-step with in-transit stock and partial receipt as variance; stock-take as count sessions (expected hidden while counting) with Manager approval posting ADJUSTMENT/STOCK_TAKE movements, ad-hoc adjustments with fixed reasons (+ note); low-stock alerts as an email digest per location to staff with a new `inventory.alerts` permission, deduplicated, no scan job.
+  - [ ] A.1 ← **Next step** (agent) · [ ] A.2 (agent) · [ ] B.1 · [ ] B.2 (agent) · [ ] merge both (second merge re-runs gates), push
 
 **Last completed: P3-B Pay on delivery (2026-11-22)** (ADR-0015, ADR-0007; PAY-09, ORD-07 touched): B.1+B.2 `582ab6c` (one commit: shared migration), B.3 `f13dd43` `[breaking-api]`, merged into dev (`d328bf7`; conflicts in CLAUDE.md, FRONTEND_API_DOCUMENTATION.md, metrics.ts: kept both; schema.gql and auth-matrix snapshot regenerated, delta = the 9 OTP operations). P3-B ✅.
   - B.1: `SmsProvider` port + Hubtel adapter (built-in fetch, 10 s timeout, `POST https://smsc.hubtel.com/v1/messages/send` Basic auth `{From, To, Content}`: **unverified**, Hubtel docs unreachable); optional all-or-none `HUBTEL_CLIENT_ID`/`HUBTEL_CLIENT_SECRET`/`HUBTEL_SENDER_ID` (without them: skipped + masked log outside production, 503 in production). SMS job `sms.phone_otp.v1` on the notifications queue. OTP in Redis under SHA-256 keys, HMAC with a key derived from `MFA_ENCRYPTION_KEY` (no new secret): 10 min TTL, 5 attempts, 60 s cooldown, 5/day per phone, 10/day per account. `myPhoneVerification`, `requestPhoneVerification`, `verifyPhone`. The account's phone is checked; a trigger clears verification when `phoneNumber` changes. COD `createOrder` → BAD_REQUEST `PHONE_NOT_VERIFIED`.
@@ -167,9 +171,11 @@ None. Next: see **Up next**.
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P3-C.2 MoMo refunds · P3-D Flutterwave | → | Paystack MoMo-refund confirmation · Flutterwave account |
-| 2 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
-| 3 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
+| 1 | P4-A ∥ P4-B (in progress) | ∥ | — |
+| 2 | P4-C.1 lots/expiry ∥ P4-D.1 serials, then P4-E.1 purchasing | ∥ → | decisions at the next wrap-up; C and E after A (stock per location) |
+| 3 | P3-C.2 MoMo refunds · P3-D Flutterwave | → | Paystack MoMo-refund confirmation · Flutterwave account |
+| 4 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
+| 5 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
 
 ## Phase 0 progress
 | Epic | Done / total | Done tasks |
@@ -223,6 +229,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-22 | Phase 4 started. P4-A: one location per order by priority (zone / pickup point), two-step transfers. P4-B: count sessions + Manager approval, fixed adjustment reasons, low-stock email digest (`inventory.alerts`) | STATUS (P4-A/B) |
 | 2026-11-22 | P3-B: Hubtel SMS behind a port (no new package), OTP once per phone, risk gates refuse COD (online stays open, no deposit), riders = staff accounts until P5-C | STATUS (P3-B) |
 | 2026-11-21 | P3-C.1: refund lines, amount, shipping; money only. P3-E: block hard / flag soft velocity limits (store settings, Redis, hashed keys); disputes by webhook + manual, open dispute blocks refunds | STATUS (P3-C/E) |
 | 2026-11-21 | Phase 3 started. P3-A: provider secrets in the DB (encrypted, env fallback), Owner-only `payment.settings.manage`, methods switchable per store with a provider per method | STATUS (P3-A) |
