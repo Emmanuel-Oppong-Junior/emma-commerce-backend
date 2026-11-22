@@ -26,6 +26,8 @@ const mockUser: User = {
   mfaSecret: null,
   mfaEnabledAt: null,
   mfaLastUsedStep: null,
+  phoneVerifiedAt: null,
+  phoneVerifiedNumber: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

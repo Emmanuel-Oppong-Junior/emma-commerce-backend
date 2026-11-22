@@ -192,6 +192,38 @@ describe('envValidationSchema', () => {
     );
   });
 
+  describe('Hubtel SMS', () => {
+    const hubtel = {
+      HUBTEL_CLIENT_ID: 'hubtel-client',
+      HUBTEL_CLIENT_SECRET: 'hubtel-unit-client-secret',
+      HUBTEL_SENDER_ID: 'EmmaShop',
+    };
+
+    it('is optional in every environment', () => {
+      expect(validate({ ...productionEnv }).error).toBeUndefined();
+    });
+
+    it('accepts all three variables', () => {
+      expect(validate({ ...productionEnv, ...hubtel }).error).toBeUndefined();
+    });
+
+    it.each(['HUBTEL_CLIENT_ID', 'HUBTEL_CLIENT_SECRET', 'HUBTEL_SENDER_ID'])('refuses a set without %s', (missing) => {
+      const env = { ...baseEnv, NODE_ENV: 'test', ...hubtel, [missing]: undefined };
+      expect(messageOf(env)).toContain('contains [');
+    });
+
+    it('refuses a sender id longer than 11 characters', () => {
+      const env = { ...baseEnv, NODE_ENV: 'test', ...hubtel, HUBTEL_SENDER_ID: 'EmmaCommerceShop' };
+      expect(messageOf(env)).toContain('HUBTEL_SENDER_ID must be 1 to 11 letters');
+    });
+
+    it('refuses a placeholder client secret in production', () => {
+      expect(messageOf({ ...productionEnv, ...hubtel, HUBTEL_CLIENT_SECRET: 'change-me' })).toContain(
+        'HUBTEL_CLIENT_SECRET',
+      );
+    });
+  });
+
   describe('ROLE', () => {
     it('defaults to api', () => {
       expect(validate({ ...baseEnv, NODE_ENV: 'test' }).value.ROLE).toBe('api');

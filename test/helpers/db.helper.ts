@@ -94,6 +94,8 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
     },
   });
   await relaxVelocityLimits(prisma);
+  await relaxCodRiskLimits(prisma);
+  await prisma.codBlacklistEntry.deleteMany();
 
   // Independent reference data
   await prisma.tax.deleteMany();
@@ -114,6 +116,27 @@ export async function clearPaymentLedger(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe(
     'TRUNCATE "DisputeNote", "DisputeEvent", "Dispute", "RefundLine", "Refund", "CashCollection", "PaymentAttempt", "PaymentIntent", "WebhookEvent"',
   );
+}
+
+/**
+ * Puts the cash-on-delivery open-order and order-total caps out of reach: suites place many COD orders from one account.
+ * cod-risk.e2e-spec sets the limits it tests.
+ */
+export async function relaxCodRiskLimits(prisma: PrismaService): Promise<void> {
+  await prisma.store.updateMany({ data: { codMaxOpenOrdersPerPhone: 100, codMaxOrderTotal: 999_999_999 } });
+}
+
+/** Gives the user a verified phone number (P3-B.1), which cash-on-delivery checkouts require. */
+export async function verifyPhoneForCod(
+  prisma: PrismaService,
+  userId = 'seed_user',
+  phone = '+233244000000',
+): Promise<void> {
+  await prisma.user.update({ where: { id: userId }, data: { phoneNumber: phone } });
+  await prisma.user.update({
+    where: { id: userId },
+    data: { phoneVerifiedAt: new Date(), phoneVerifiedNumber: phone },
+  });
 }
 
 /**

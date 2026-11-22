@@ -41,6 +41,8 @@ import { toAddressSnapshot } from '../addresses/address-snapshot';
 import { PaymentSettingsService } from '../payment/settings/payment-settings.service';
 import { VelocityService } from '../fraud/velocity.service';
 import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
+import { CodAvailability, CodRiskService } from '../cod/cod-risk.service';
+import { DeliveryAddressFacts } from '../cod/cod-blacklist';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -72,12 +74,16 @@ export interface CreateOrderParams extends CheckoutParams {
 export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments'> {
   lines: (OrderSnapshotLine & { cartItemId: string; fromPriceList: boolean })[];
   adjustments: (QuoteAdjustment & { allocations: { cartItemId: string; amount: Decimal }[] })[];
+  /** Whether this checkout could be paid on delivery (P3-B), whatever payment method was asked for. */
+  cashOnDelivery: CodAvailability;
 }
 
 interface Fulfilment {
   shippingFee: Prisma.Decimal;
   /** The delivery zone; null for pickup. */
   shippingZoneId: string | null;
+  /** The delivery address the cash-on-delivery blacklist is matched against; null for pickup. */
+  deliveryAddress: DeliveryAddressFacts | null;
   shippingAddressId?: string;
   pickupLocationId?: string;
   shippingAddressSnapshot?: Record<string, unknown>;
@@ -144,15 +150,22 @@ export class OrdersService {
     private readonly taxService: TaxService,
     private readonly paymentSettings: PaymentSettingsService,
     private readonly velocity: VelocityService,
+    private readonly codRisk: CodRiskService,
   ) {}
 
   /**
    * Prices the user's cart for checkout with the given fulfilment and coupon, exactly as createOrder will charge it.
    * Writes nothing. BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer the payment method.
+   * Reports whether the checkout could be paid on delivery (`cashOnDelivery`) without refusing it.
    */
   async checkoutQuote(userId: string, params: CheckoutParams): Promise<CheckoutQuote> {
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
-    const { cart, snapshot } = await this.priceCheckout(userId, params);
+    const { cart, snapshot, fulfilment } = await this.priceCheckout(userId, params);
+    const cashOnDelivery = await this.codRisk.availability(userId, {
+      grandTotal: snapshot.grandTotal,
+      shippingZoneId: fulfilment.shippingZoneId,
+      address: fulfilment.deliveryAddress,
+    });
     const cartItemIds = snapshot.lines.map((line) => cart.items[line.cartLineIndex].id);
     return {
       ...snapshot,
@@ -165,6 +178,7 @@ export class OrdersService {
         ...adjustment,
         allocations: sharesByCartItem(allocations, cartItemIds),
       })),
+      cashOnDelivery,
     };
   }
 
@@ -174,7 +188,8 @@ export class OrdersService {
    * that quote's hash is the `quoteHash` the customer confirmed; otherwise CONFLICT with reason QUOTE_CHANGED and
    * nothing is reserved, charged or recorded. The order stores the quote as its snapshot, so it charges the quote's
    * grand total. DELIVERY needs shippingAddressId (shipping fee by city); PICKUP needs pickupLocationId (no fee). A
-   * payment method the store does not offer is refused first (BAD_REQUEST, reason PAYMENT_METHOD_UNAVAILABLE).
+   * payment method the store does not offer is refused first (BAD_REQUEST, reason PAYMENT_METHOD_UNAVAILABLE). Cash on
+   * delivery also has to pass the risk gates (CodRiskService.assertCodAllowed: PHONE_NOT_VERIFIED, COD_NOT_AVAILABLE).
    */
   async createOrderFromCart(userId: string, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
@@ -183,7 +198,16 @@ export class OrdersService {
     const order = await this.ordersRepository.runTransaction(async (tx) => {
       const checkout = await this.priceCheckout(userId, params, tx);
       if (checkout.snapshot.quoteHash !== params.quoteHash) throw quoteChanged();
-      const placed = await this.placeOrder(tx, userId, checkout, params);
+      const codPhone =
+        params.paymentMethod === PaymentMethod.CASH_ON_DELIVERY
+          ? await this.codRisk.assertCodAllowed(tx, userId, {
+              grandTotal: checkout.snapshot.grandTotal,
+              shippingZoneId: checkout.fulfilment.shippingZoneId,
+              address: checkout.fulfilment.deliveryAddress,
+              contactPhone: params.contactPhone,
+            })
+          : undefined;
+      const placed = await this.placeOrder(tx, userId, checkout, params, codPhone);
       await this.velocity.flagOrder(placed.id, softHits, tx);
       return placed;
     });
@@ -231,6 +255,7 @@ export class OrdersService {
     return {
       shippingFee: zone.fee,
       shippingZoneId: zone.id,
+      deliveryAddress: address,
       shippingAddressId,
       shippingAddressSnapshot: toAddressSnapshot(address),
     };
@@ -242,6 +267,7 @@ export class OrdersService {
     return {
       shippingFee: new Prisma.Decimal(0),
       shippingZoneId: null,
+      deliveryAddress: null,
       pickupLocationId,
       pickupLocationSnapshot: {
         name: location.name,
@@ -654,6 +680,7 @@ export class OrdersService {
     userId: string,
     checkout: PricedCheckout,
     params: CreateOrderParams,
+    codPhone: string | undefined,
   ): Promise<Order & { items: OrderItem[] }> {
     const { fulfilment } = checkout;
     const orderDetails = {
@@ -662,6 +689,7 @@ export class OrdersService {
       paymentMethod: params.paymentMethod ?? PaymentMethod.ONLINE,
       contactEmail: params.contactEmail,
       contactPhone: params.contactPhone,
+      codPhone,
       fulfillmentType: params.fulfillmentType,
       shippingAddressId: fulfilment.shippingAddressId,
       shippingAddressSnapshot: fulfilment.shippingAddressSnapshot,

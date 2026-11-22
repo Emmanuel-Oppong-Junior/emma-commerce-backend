@@ -5,7 +5,7 @@ import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin, signInUser, signUpUser } from '../helpers/auth.helper';
-import { resetDb, seedMinimal, setStock, stockOf } from '../helpers/db.helper';
+import { resetDb, seedMinimal, setStock, stockOf, verifyPhoneForCod } from '../helpers/db.helper';
 import { migrationSql, migrationSqlFrom, ScratchSchema } from '../helpers/migration.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
 
@@ -111,6 +111,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     ({ app, prisma } = await createTestApp((builder) => builder.overrideProvider(PaystackClient).useValue(paystack)));
     await resetDb(prisma);
     await seedMinimal(prisma);
+    await verifyPhoneForCod(prisma);
     await setStock(prisma, 'seed_var2', 100);
     await prisma.pickupLocation.create({
       data: {

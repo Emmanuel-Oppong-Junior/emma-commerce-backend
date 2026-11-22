@@ -119,6 +119,7 @@ export class OrdersRepository {
       paymentMethod?: PaymentMethod;
       contactEmail: string;
       contactPhone: string;
+      codPhone?: string;
     },
   ): Promise<OrderWithItems> {
     const { snapshot } = orderDetails;
@@ -144,6 +145,7 @@ export class OrdersRepository {
         status: OrderStatus.PLACED,
         contactEmail: orderDetails.contactEmail,
         contactPhone: orderDetails.contactPhone,
+        codPhone: orderDetails.codPhone,
         statusEvents: { create: { from: null, to: OrderStatus.PLACED, actorId: userId } },
       },
     });
