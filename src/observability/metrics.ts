@@ -16,6 +16,8 @@ const DURATION_BUCKETS_SECONDS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2
 
 export type WebhookFailureReason = 'invalid_signature' | 'settlement_failed';
 
+export type VelocityCheckStage = 'screen' | 'record';
+
 export interface HttpRequestSample {
   method: string;
   route: string;
@@ -44,6 +46,8 @@ export class AppMetrics {
   private readonly webhookFailures: Counter;
   private readonly reconciliationMismatches: Counter;
   private readonly stockMismatches: Counter;
+  private readonly velocityHits: Counter;
+  private readonly velocityErrors: Counter;
   private readonly operationNames = new Set<string>();
 
   constructor(@Inject(METER) meter: Meter) {
@@ -78,6 +82,13 @@ export class AppMetrics {
     this.stockMismatches = meter.createCounter('stock_reconciliation_mismatches', {
       description:
         'Stock levels the nightly ledger reconciliation found out of line with movements or reservations, by kind',
+    });
+    this.velocityHits = meter.createCounter('velocity_limit_hits', {
+      description:
+        'Velocity rules found above a limit, by rule and level (SOFT flags the order, HARD refuses or flags)',
+    });
+    this.velocityErrors = meter.createCounter('velocity_check_errors', {
+      description: 'Velocity checks skipped (fail-open) or events not counted because Redis failed, by stage',
     });
   }
 
@@ -132,6 +143,15 @@ export class AppMetrics {
     for (const [kind, count] of Object.entries(countsByKind)) {
       if (count > 0) this.stockMismatches.add(count, { kind });
     }
+  }
+
+  /** `rule` and `level` are enum values from code, so the series stay bounded. */
+  recordVelocityLimitHit(rule: string, level: string): void {
+    this.velocityHits.add(1, { rule, level });
+  }
+
+  recordVelocityCheckError(stage: VelocityCheckStage): void {
+    this.velocityErrors.add(1, { stage });
   }
 
   private boundedOperationName(name: string | null | undefined): string {

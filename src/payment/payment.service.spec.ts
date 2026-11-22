@@ -18,6 +18,8 @@ import { PaymentProviderRegistry } from './providers/payment-provider.registry';
 import { paymentSettingsStub, providerRegistryWith } from '../../test/helpers/payment-providers.helper';
 import { OnlinePaymentMethod } from './settings/payment-methods';
 import { PaymentSettingsService } from './settings/payment-settings.service';
+import { VelocityService } from '../fraud/velocity.service';
+import { velocityStub } from '../../test/helpers/velocity.helper';
 
 const mockPaystack = {
   initializeTransaction: jest.fn(),
@@ -53,6 +55,8 @@ const mockStoreService = { getCurrency: jest.fn().mockResolvedValue('GHS') };
 
 const mockPaymentSettings = paymentSettingsStub({ callbackUrl: 'http://callback.test' });
 
+const mockVelocity = velocityStub();
+
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
 describe('PaymentService', () => {
@@ -72,6 +76,7 @@ describe('PaymentService', () => {
         },
         { provide: PaymentSettingsService, useValue: mockPaymentSettings },
         { provide: StoreService, useValue: mockStoreService },
+        { provide: VelocityService, useValue: mockVelocity },
       ],
     }).compile();
 
@@ -272,6 +277,38 @@ describe('PaymentService', () => {
       expect(paymentRepository.markInitializationFailed).toHaveBeenCalledWith('pay1');
       expect(paymentRepository.recordCheckout).not.toHaveBeenCalled();
     });
+
+    describe('velocity checks', () => {
+      const softHit = { rule: 'PAYMENT_ATTEMPTS_PER_IP_1H', level: 'SOFT', count: 21, limit: 20 };
+
+      it('screens the customer and IP, then flags soft hits on the order and counts the new attempt', async () => {
+        mockVelocity.screenOrRefuse.mockResolvedValueOnce([softHit]);
+
+        await service.initiatePayment(userId, createPaymentDto, '::ffff:41.66.1.2');
+
+        const subjects = { CUSTOMER: 'user1', IP: '41.66.1.2' };
+        expect(mockVelocity.screenOrRefuse).toHaveBeenCalledWith('PAYMENT_INITIATION', subjects);
+        expect(mockVelocity.flagOrder).toHaveBeenCalledWith('order1', [softHit]);
+        expect(mockVelocity.record).toHaveBeenCalledWith('PAYMENT_STARTED', subjects);
+      });
+
+      it('opens no attempt when a hard limit refuses it', async () => {
+        mockVelocity.screenOrRefuse.mockRejectedValueOnce(new ForbiddenException('Too many payment attempts'));
+
+        await expect(service.initiatePayment(userId, createPaymentDto)).rejects.toThrow(ForbiddenException);
+        expect(paymentRepository.openAttempt).not.toHaveBeenCalled();
+        expect(mockVelocity.record).not.toHaveBeenCalled();
+      });
+
+      it('does not count a replay of an idempotency key as a new attempt', async () => {
+        openAttemptAgainst(order, { created: false, attempt: payment, authorizationUrl: 'http://paystack.test/auth' });
+
+        await service.initiatePayment(userId, { ...createPaymentDto, idempotencyKey: 'key-1' });
+
+        expect(mockVelocity.record).not.toHaveBeenCalled();
+        expect(mockVelocity.flagOrder).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('verifyPayment', () => {
@@ -310,6 +347,46 @@ describe('PaymentService', () => {
       mockPaymentRepository.findByReference.mockResolvedValue(payment);
       mockPaystack.verifyTransaction.mockResolvedValue(verification);
       mockPaymentRepository.findOrderWithUser.mockResolvedValue({ id: 'order1', user: { email: 'buyer@example.com' } });
+    });
+
+    describe('velocity checks', () => {
+      const failedState = { ...lockedState };
+      const cardHit = { rule: 'FAILED_PAYMENTS_PER_CARD_24H', level: 'HARD', count: 7, limit: 6 };
+
+      it('counts a failure against the customer and the card, then flags the order when they are above a limit', async () => {
+        mockPaystack.verifyTransaction.mockResolvedValue({
+          reference: 'ref1',
+          status: 'failed',
+          authorization: { signature: 'SIG_card', last4: '4081' },
+        });
+        settleAgainst(failedState, { ...payment, status: PaymentStatus.FAILED, order: { userId: 'user1' } });
+        mockVelocity.screen.mockResolvedValueOnce([cardHit]);
+
+        await service.verifyPayment(reference);
+
+        const subjects = { CUSTOMER: 'user1', CARD: 'SIG_card' };
+        expect(mockVelocity.record).toHaveBeenCalledWith('PAYMENT_FAILED', subjects);
+        expect(mockVelocity.screen).toHaveBeenCalledWith('PAYMENT_SETTLEMENT', subjects);
+        expect(mockVelocity.flagOrder).toHaveBeenCalledWith('order1', [cardHit]);
+      });
+
+      it('checks the card of a success without counting a failure', async () => {
+        mockPaystack.verifyTransaction.mockResolvedValue({ ...verification, authorization: { signature: 'SIG_card' } });
+        settleAgainst(lockedState, { ...completed, order: { userId: 'user1' } });
+
+        await service.verifyPayment(reference);
+
+        expect(mockVelocity.record).not.toHaveBeenCalled();
+        expect(mockVelocity.screen).toHaveBeenCalledWith('PAYMENT_SETTLEMENT', { CUSTOMER: 'user1', CARD: 'SIG_card' });
+      });
+
+      it('checks nothing for a mobile money success (no card)', async () => {
+        settleAgainst(lockedState, completed);
+
+        await service.verifyPayment(reference);
+
+        expect(mockVelocity.screen).not.toHaveBeenCalled();
+      });
     });
 
     it('settles a matching success as payment and returns the completed attempt', async () => {

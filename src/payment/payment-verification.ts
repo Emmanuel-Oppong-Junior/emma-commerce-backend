@@ -14,6 +14,8 @@ export interface ProviderVerification {
   status: string;
   amount: number;
   currency: string;
+  /** The card's fingerprint (Paystack: authorization.signature) when a card was charged, for velocity checks only. */
+  cardFingerprint?: string;
 }
 
 /** The locked ledger and order state a verification is decided against. */
@@ -46,7 +48,9 @@ export function isSettled(status: PaymentStatus): boolean {
 /** Rejects a provider response that cannot be trusted to settle the attempt for `reference`. */
 export function parseProviderVerification(
   reference: string,
-  data: { reference?: unknown; status?: unknown; amount?: unknown; currency?: unknown } | undefined,
+  data:
+    | { reference?: unknown; status?: unknown; amount?: unknown; currency?: unknown; authorization?: unknown }
+    | undefined,
 ): ProviderVerification {
   if (data?.reference !== reference) {
     throw new BadGatewayException(
@@ -56,15 +60,22 @@ export function parseProviderVerification(
   if (typeof data.status !== 'string') {
     throw new BadGatewayException(`Payment provider returned no status for reference "${reference}"`);
   }
+  const card = cardFingerprintOf(data.authorization);
   if (data.status !== PROVIDER_SUCCESS) {
-    return { reference, status: data.status, amount: 0, currency: '' };
+    return { reference, status: data.status, amount: 0, currency: '', ...card };
   }
   if (!Number.isSafeInteger(data.amount) || typeof data.currency !== 'string') {
     throw new BadGatewayException(
       `Payment provider returned a success without a valid amount and currency for reference "${reference}"`,
     );
   }
-  return { reference, status: data.status, amount: data.amount as number, currency: data.currency };
+  return { reference, status: data.status, amount: data.amount as number, currency: data.currency, ...card };
+}
+
+function cardFingerprintOf(authorization: unknown): { cardFingerprint?: string } {
+  if (typeof authorization !== 'object' || authorization === null) return {};
+  const { signature } = authorization as { signature?: unknown };
+  return typeof signature === 'string' && signature !== '' ? { cardFingerprint: signature } : {};
 }
 
 /**

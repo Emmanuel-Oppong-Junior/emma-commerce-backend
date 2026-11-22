@@ -1709,6 +1709,8 @@ query {
 
 **Breaking change (P2-A.2):** `CreateOrderInput.quoteHash` is new and **required**: call `checkoutQuote` with the same fulfilment and coupon first and send its `quoteHash`. If anything that determines the charge changed in between (a price, a discount, the coupon's value, a tax rate, the shipping fee, the cart), `createOrder` fails with `CONFLICT` and `extensions.reason: "QUOTE_CHANGED"`: nothing is reserved, charged or recorded; quote again and show the new total.
 
+**Velocity checks (P3-E.1):** too many orders in a short time from the same account, phone number (`contactPhone`) or network (IP address) fail with `FORBIDDEN` and `extensions.reason: "VELOCITY_LIMIT"`; nothing is reserved or recorded. Show the message ("Too many orders in a short time ... Try again later or contact the store"); it names no limit. Below that, an order can be accepted but flagged for staff review (invisible to the customer). See [Velocity checks](#velocity-checks-p3-e1).
+
 **Input: `CreateOrderInput`**
 
 ```typescript
@@ -1966,6 +1968,31 @@ query { availablePaymentMethods { cashOnDelivery online { method provider public
 - `setPaystackConfig(input: { secretKey: String!, publicKey: String, callbackUrl: String })`: replaces the whole Paystack config. `secretKey` must start with `sk_test_` or `sk_live_` (the mode follows it); `publicKey`, if sent, must be a `pk_` key of the same mode (`BAD_REQUEST` otherwise). The secret is stored AES-256-GCM encrypted. From then on these keys open checkouts and check webhook signatures; `PAYSTACK_SECRET_KEY` is no longer used. `callbackUrl` replaces `PAYSTACK_CALLBACK_URL` when set.
 - `removePaystackConfig`: deletes the stored keys, so `PAYSTACK_SECRET_KEY` (if set) applies again. `NOT_FOUND` when none are stored.
 - `updatePaymentMethods(input: { cardPaymentsEnabled, mobileMoneyPaymentsEnabled, cashOnDeliveryEnabled, cardPaymentProvider, mobileMoneyPaymentProvider })`: omitted fields keep their value. A switched-off method is refused at `checkoutQuote`/`createOrder` (order level) and `POST /payment/initialize` (online method), with `BAD_REQUEST` and reason `PAYMENT_METHOD_UNAVAILABLE`. Orders already placed keep their method.
+
+---
+
+#### Velocity checks (P3-E.1)
+
+Counters per **customer account**, **phone number** (the order's `contactPhone`, Ghana numbers in E.164), **IP address** and **card** (Paystack's card fingerprint, known only once a charge is verified) over fixed 1-hour or 24-hour windows. Counters live in Redis under SHA-256 hashed keys; no phone number, IP address or card value is stored or logged. Each rule has two limits, set by the Owner: above the **soft** limit the action goes through and the order gets a **review flag** for staff; above the **hard** limit the action is refused (`FORBIDDEN`, `reason: VELOCITY_LIMIT`). Card rules can only flag (the card is known after the charge), at level `SOFT` or `HARD`. If Redis is down the checks let everything through (logged and counted in `velocity_check_errors_total`).
+
+| `VelocityRule` | Counts | Per | Window | Default soft / hard |
+|---|---|---|---|---|
+| `ORDERS_PER_CUSTOMER_1H` | orders placed | customer | 1 h | 3 / 6 |
+| `ORDERS_PER_CUSTOMER_24H` | orders placed | customer | 24 h | 6 / 15 |
+| `ORDERS_PER_PHONE_24H` | orders placed | phone | 24 h | 6 / 15 |
+| `ORDERS_PER_IP_1H` | orders placed | IP | 1 h | 10 / 30 |
+| `ORDERS_PER_IP_24H` | orders placed | IP | 24 h | 40 / 120 |
+| `PAYMENT_ATTEMPTS_PER_CUSTOMER_1H` | payment attempts started | customer | 1 h | 8 / 20 |
+| `PAYMENT_ATTEMPTS_PER_IP_1H` | payment attempts started | IP | 1 h | 20 / 60 |
+| `FAILED_PAYMENTS_PER_CUSTOMER_24H` | failed payments | customer | 24 h | 4 / 10 (hard: refuses new attempts) |
+| `FAILED_PAYMENTS_PER_CARD_24H` | failed payments | card | 24 h | 3 / 6 (flags only) |
+
+A rule fires when its count in the window, including the order or attempt being made, goes above the limit (soft 3 = the 4th order in the hour is flagged). Windows start at the first counted event.
+
+- `velocityLimits: [VelocityLimit!]!` (Owner: `payment.settings.manage`): every rule with `{ rule, event, subject, windowSeconds, softLimit, hardLimit, isDefault }` (`VelocityEvent`: `ORDER_PLACED | PAYMENT_STARTED | PAYMENT_FAILED`; `VelocitySubject`: `CUSTOMER | PHONE | IP | CARD`; `isDefault` true while the code default applies).
+- `updateVelocityLimits(input: { limits: [{ rule, softLimit, hardLimit }] }): [VelocityLimit!]!` (Owner, recent step-up, audited): whole numbers 1–1,000,000 with `hardLimit >= softLimit` (`BAD_REQUEST` otherwise, nothing saved); rules left out keep their limits.
+- `flaggedOrders(first: Int = 20): [FlaggedOrder!]!` (1-100) (staff: `order.view`): orders with open review flags, newest first: `{ id, orderNumber, userId, status, grandTotal, createdAt, reviewFlags: [OrderReviewFlag] }`; open `viewOrder` for the full order. `OrderReviewFlag`: `{ id, orderId, rule, level: VelocityLevel (SOFT | HARD), count, limit, createdAt, clearedAt, clearedById, clearNote }`. One open flag per order and rule.
+- `clearOrderReviewFlags(input: { orderId, note }): [OrderReviewFlag!]!` (staff: `order.manage`, audited): clears every open flag of the order with the note; `NOT_FOUND` when it has none. A flag does not hold the order: cancel it with `adminCancelOrder` if it is fraud.
 
 ---
 
@@ -3234,6 +3261,7 @@ The amount is always the order total at the first initialization; any other fiel
 - Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `CANCELLED`; it is kept, and if the customer still completes that older checkout the payment is matched.
 - Repeating an `idempotencyKey` for the same order returns the same attempt and the same `authorizationUrl` without opening a new checkout. It returns **409** if that attempt is still being set up (retry shortly) or is no longer `PENDING` (use a new key).
 - If Paystack cannot open the checkout the request fails and the same key may be retried.
+- **Velocity checks (P3-E.1):** too many payment attempts in a short time from the same account or IP address, or too many failed payments on the account, return **403** with `"reason": "VELOCITY_LIMIT"` before any attempt is opened. A repeated `idempotencyKey` is not counted as a new attempt.
 - The checkout is opened with the provider the store configured for the method (Paystack), limited to that channel (`card` or `mobile_money`). Paystack's `callback_url` is the store's configured callback URL, else `PAYSTACK_CALLBACK_URL` (a frontend page; see [Section 8](#8-payment-integration-paystack)).
 
 **Response** (`201`): the payment attempt plus `authorizationUrl`. Decimal amounts are JSON strings here.

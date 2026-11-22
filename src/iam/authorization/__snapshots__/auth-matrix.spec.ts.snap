@@ -18,6 +18,7 @@ Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
 Mutation changeUserPassword              authenticated
 Mutation clearCart                       authenticated
+Mutation clearOrderReviewFlags           permission: order.manage
 Mutation clearWishlist                   authenticated
 Mutation completeMfaSignIn               public
 Mutation confirmMfaEnrollment            authenticated
@@ -116,6 +117,7 @@ Mutation updateTag                       permission: catalog.taxonomy.write
 Mutation updateTax                       permission: tax.manage; step-up
 Mutation updateUser                      permission: user.manage
 Mutation updateVariant                   permission: catalog.product.write; step-up when input.basePrice is set
+Mutation updateVelocityLimits            permission: payment.settings.manage; step-up
 Mutation verifyEmail                     public
 Mutation verifyPayment                   customer only
 Query activePickupLocations              public
@@ -135,6 +137,7 @@ Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
 Query failedJobs                         permission: jobs.manage
+Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only
 Query getShippingFee                     authenticated
 Query getUserPayment                     permission: payment.view
@@ -186,6 +189,7 @@ Query users                              permission: user.view
 Query validateCouponCode                 authenticated
 Query variant                            permission: catalog.product.read
 Query variants                           permission: catalog.product.read
+Query velocityLimits                     permission: payment.settings.manage
 Query viewOrder                          permission: order.view
 Query wishlist                           authenticated
 REST GET /                               authenticated

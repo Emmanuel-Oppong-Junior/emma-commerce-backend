@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseMfaKey, sealSecret } from '../../src/iam/mfa/mfa-crypto';
 import { TEST_TOTP_SEED } from './staff.helper';
+import { ALL_VELOCITY_RULES } from '../../src/fraud/velocity-rules';
 
 const STAFF_ROLES_MIGRATION = join(__dirname, '../../prisma/migrations/20261120100000_staff_roles/migration.sql');
 
@@ -92,6 +93,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
       mobileMoneyPaymentProvider: 'PAYSTACK',
     },
   });
+  await relaxVelocityLimits(prisma);
 
   // Independent reference data
   await prisma.tax.deleteMany();
@@ -112,6 +114,19 @@ export async function clearPaymentLedger(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe(
     'TRUNCATE "Refund", "CashCollection", "PaymentAttempt", "PaymentIntent", "WebhookEvent"',
   );
+}
+
+/**
+ * Puts every velocity limit out of reach. Suites place many orders and payments from one account and one IP within the
+ * hour, and the counters in Redis outlive each file, so the defaults would refuse them; velocity.e2e-spec sets the
+ * limits it tests.
+ */
+export async function relaxVelocityLimits(prisma: PrismaService): Promise<void> {
+  const store = await prisma.store.findFirstOrThrow({ where: { singleton: true }, select: { id: true } });
+  await prisma.velocityLimit.deleteMany();
+  await prisma.velocityLimit.createMany({
+    data: ALL_VELOCITY_RULES.map((rule) => ({ storeId: store.id, rule, softLimit: 1_000_000, hardLimit: 1_000_000 })),
+  });
 }
 
 /** Takes the store's next order number the way OrdersRepository does, for orders inserted directly by a test. */

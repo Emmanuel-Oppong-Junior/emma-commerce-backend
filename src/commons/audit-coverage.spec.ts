@@ -70,6 +70,8 @@ const AUDITED: Record<string, string> = {
   setPaystackConfig: 'payment-settings.service.spec (audited without the secret)',
   removePaystackConfig: 'payment-settings.service.spec',
   updatePaymentMethods: 'payment-settings.service.spec',
+  updateVelocityLimits: 'velocity.service.spec (updateLimits)',
+  clearOrderReviewFlags: 'velocity.service.spec (clears flags with an audit row)',
   assignStaffRole: 'staff.service.spec (audit trail)',
   removeStaffRole: 'staff.service.spec (audit trail)',
   createStaffRole: 'staff.service.spec (audit trail)',

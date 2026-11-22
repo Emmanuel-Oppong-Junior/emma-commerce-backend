@@ -1,6 +1,7 @@
 import { PaymentService } from '../../src/payment/payment.service';
 import { OnlinePaymentMethod } from '../../src/payment/settings/payment-methods';
 import { paymentSettingsStub, providerRegistryWith } from '../helpers/payment-providers.helper';
+import { velocityStub } from '../helpers/velocity.helper';
 
 interface PaystackVerifyData {
   status: string;
@@ -38,6 +39,7 @@ function buildPaymentService(
     providerRegistryWith(paystack),
     { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
     paymentSettingsStub() as never,
+    velocityStub() as never,
   );
   return { service, repository, paystack };
 }

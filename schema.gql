@@ -335,6 +335,14 @@ input CheckoutQuoteInput {
   shippingAddressId: ID
 }
 
+input ClearOrderReviewFlagsInput {
+  """
+  Why the order is fine (or what was done), kept with the flags and in the audit log
+  """
+  note: String!
+  orderId: ID!
+}
+
 input CompleteMfaSignInInput {
   """
   extensions.mfaChallenge from the MFA_REQUIRED signIn error (valid 5 minutes)
@@ -946,6 +954,19 @@ type FailedJob {
   queue: JobQueue!
 }
 
+"""An order with open review flags (viewOrder has the details)"""
+type FlaggedOrder {
+  createdAt: DateTime!
+  grandTotal: Money!
+  id: ID!
+  orderNumber: Int!
+
+  """The open flags, oldest first"""
+  reviewFlags: [OrderReviewFlagEntity!]!
+  status: OrderStatus!
+  userId: ID!
+}
+
 input ForgotPasswordInput {
   email: String!
 }
@@ -1080,6 +1101,11 @@ type Mutation {
   """Clears all items from the user’s cart"""
   clearCart: Cart!
 
+  """
+  Clear an order's open review flags with a note, returning them. NOT_FOUND when it has none. Staff, audited
+  """
+  clearOrderReviewFlags(input: ClearOrderReviewFlagsInput!): [OrderReviewFlagEntity!]!
+
   """Clears the user’s wishlist"""
   clearWishlist: Wishlist!
 
@@ -1107,7 +1133,7 @@ type Mutation {
   createCustomerGroup(input: CreateCustomerGroupInput!): CustomerGroup!
 
   """
-  Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it
+  Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it; FORBIDDEN with reason VELOCITY_LIMIT when too many orders came from the same account, phone number or network in a short time
   """
   createOrder(input: CreateOrderInput!): Order!
 
@@ -1433,6 +1459,11 @@ type Mutation {
   updateVariant(input: UpdateVariantInput!): Variant!
 
   """
+  Set the soft and hard limits of velocity rules (whole numbers >= 1, hard >= soft); rules left out keep theirs. Owner, recent step-up, audited
+  """
+  updateVelocityLimits(input: UpdateVelocityLimitsInput!): [VelocityLimitEntity!]!
+
+  """
   Verify an email address with the token from the verification email. Completes a pending email change (signing the user out everywhere) if one is in progress.
   """
   verifyEmail(input: VerifyEmailInput!): Boolean!
@@ -1635,6 +1666,28 @@ enum OrderPaymentStatus {
   PARTIALLY_REFUNDED
   PENDING
   REFUNDED
+}
+
+"""
+A velocity rule that fired on an order; never shows the phone, IP or card it counted
+"""
+type OrderReviewFlagEntity {
+  clearNote: String
+  clearedAt: DateTime
+
+  """The staff user who cleared the flag"""
+  clearedById: ID
+
+  """The count in the window when the rule fired"""
+  count: Int!
+  createdAt: DateTime!
+  id: ID!
+  level: VelocityLevel!
+
+  """The limit the count went above"""
+  limit: Int!
+  orderId: ID!
+  rule: VelocityRule!
 }
 
 enum OrderStatus {
@@ -2376,6 +2429,14 @@ type Query {
     first: Int! = 20
     queue: JobQueue!
   ): [FailedJob!]!
+
+  """
+  Orders a velocity rule flagged for review that no one has cleared yet, newest first (staff)
+  """
+  flaggedOrders(
+    """1-100, newest orders first"""
+    first: Int! = 20
+  ): [FlaggedOrder!]!
   getMyPayments: [Payment!]!
 
   """Get the shipping fee for a saved address"""
@@ -2579,6 +2640,11 @@ type Query {
   Admin: variants of every product, or of one, archived included, by ID (max 100 per page)
   """
   variants(paginationArgs: PaginationArgs, productId: ID): VariantConnection!
+
+  """
+  Every velocity rule with its window and the soft and hard limits in force (Owner)
+  """
+  velocityLimits: [VelocityLimitEntity!]!
 
   """Retrieves a specific order by ID (admin only)"""
   viewOrder(id: String!): Order!
@@ -3590,6 +3656,11 @@ input UpdateVariantInput {
   widthMm: Int
 }
 
+"""Limits to set; rules left out keep theirs"""
+input UpdateVelocityLimitsInput {
+  limits: [VelocityLimitInput!]!
+}
+
 type User {
   """Saved addresses for this user"""
   addresses: [Address!]
@@ -3838,6 +3909,72 @@ type VariantPriceTier {
 
   """Unit price, tax included, before promotions"""
   unitPrice: Money!
+}
+
+"""What a velocity rule counts"""
+enum VelocityEvent {
+  ORDER_PLACED
+  PAYMENT_FAILED
+  PAYMENT_STARTED
+}
+
+"""
+SOFT lets the action through and flags the order; HARD refuses it (card rules can only flag)
+"""
+enum VelocityLevel {
+  HARD
+  SOFT
+}
+
+"""A velocity rule and the limits in force for it"""
+type VelocityLimitEntity {
+  event: VelocityEvent!
+
+  """
+  Above this count in the window the action is refused (card rules: flagged HARD)
+  """
+  hardLimit: Int!
+
+  """
+  Whether the code default applies (the store has not set its own limits for the rule)
+  """
+  isDefault: Boolean!
+  rule: VelocityRule!
+
+  """Above this count in the window the order is flagged for review"""
+  softLimit: Int!
+  subject: VelocitySubject!
+  windowSeconds: Int!
+}
+
+input VelocityLimitInput {
+  """At least softLimit"""
+  hardLimit: Int!
+  rule: VelocityRule!
+  softLimit: Int!
+}
+
+"""
+A velocity rule: one event counted per subject (customer, phone, IP, card) over a fixed window
+"""
+enum VelocityRule {
+  FAILED_PAYMENTS_PER_CARD_24H
+  FAILED_PAYMENTS_PER_CUSTOMER_24H
+  ORDERS_PER_CUSTOMER_1H
+  ORDERS_PER_CUSTOMER_24H
+  ORDERS_PER_IP_1H
+  ORDERS_PER_IP_24H
+  ORDERS_PER_PHONE_24H
+  PAYMENT_ATTEMPTS_PER_CUSTOMER_1H
+  PAYMENT_ATTEMPTS_PER_IP_1H
+}
+
+"""Who or what a velocity rule counts per"""
+enum VelocitySubject {
+  CARD
+  CUSTOMER
+  IP
+  PHONE
 }
 
 input VerifyEmailInput {

@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, RawBodyRequest, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Ip, Post, RawBodyRequest, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { PaymentService } from './payment.service';
@@ -18,8 +18,12 @@ export class PaymentController {
   @Auth(AuthType.Bearer)
   @Throttle({ payment: { limit: 5, ttl: 60000 } })
   @Post('/initialize')
-  async initializeTransaction(@Body() createPaymentDto: CreatePaymentDto, @ActiveUser('id') userId: string) {
-    return this.paymentService.initiatePayment(userId, createPaymentDto);
+  async initializeTransaction(
+    @Body() createPaymentDto: CreatePaymentDto,
+    @ActiveUser('id') userId: string,
+    @Ip() clientIp: string,
+  ) {
+    return this.paymentService.initiatePayment(userId, createPaymentDto, clientIp);
   }
 
   @Auth(AuthType.None)

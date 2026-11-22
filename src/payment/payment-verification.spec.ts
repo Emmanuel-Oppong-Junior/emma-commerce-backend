@@ -109,6 +109,21 @@ describe('parseProviderVerification', () => {
     ).toEqual({ reference: 'ref1', status: 'success', amount: 100, currency: 'GHS' });
   });
 
+  it("keeps the card's authorization signature (and nothing else of the authorization) for velocity checks", () => {
+    const authorization = { signature: 'SIG_card', last4: '4081', authorization_code: 'AUTH_x' };
+
+    expect(parseProviderVerification('ref1', { reference: 'ref1', status: 'failed', authorization })).toEqual({
+      reference: 'ref1',
+      status: 'failed',
+      amount: 0,
+      currency: '',
+      cardFingerprint: 'SIG_card',
+    });
+    expect(
+      parseProviderVerification('ref1', { reference: 'ref1', status: 'failed', authorization: { signature: '' } }),
+    ).not.toHaveProperty('cardFingerprint');
+  });
+
   it('accepts a non-success status without an amount', () => {
     expect(parseProviderVerification('ref1', { reference: 'ref1', status: 'failed' })).toMatchObject({
       status: 'failed',

@@ -43,6 +43,8 @@ export interface VerifiedTransaction {
   channel?: unknown;
   paid_at?: unknown;
   gateway_response?: unknown;
+  /** Card details; only `signature` is read (velocity checks), nothing of it is stored. */
+  authorization?: unknown;
 }
 
 export interface CreateRefundRequest {
