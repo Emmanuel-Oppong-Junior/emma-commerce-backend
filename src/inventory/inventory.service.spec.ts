@@ -18,6 +18,7 @@ function movement(overrides: Partial<StockMovement> = {}): StockMovement {
     refId: null,
     actorId: 'admin1',
     note: 'Manual restock',
+    lotId: null,
     createdAt: fixedDate,
     ...overrides,
   };
@@ -33,6 +34,7 @@ describe('InventoryService', () => {
     findActiveLocation: jest.Mock;
   };
   let audit: ReturnType<typeof createAuditServiceMock>;
+  let lots: Record<string, jest.Mock>;
   let service: InventoryService;
 
   beforeEach(() => {
@@ -47,7 +49,14 @@ describe('InventoryService', () => {
     };
     audit = createAuditServiceMock();
     const prisma = { $transaction: jest.fn((work: (t: unknown) => unknown) => work(tx)) };
-    service = new InventoryService(ledger as never, repository as never, prisma as never, audit as never);
+    lots = { isTracked: jest.fn().mockResolvedValue(false) };
+    service = new InventoryService(
+      ledger as never,
+      repository as never,
+      prisma as never,
+      audit as never,
+      lots as never,
+    );
   });
 
   describe('restockVariant', () => {
@@ -258,6 +267,97 @@ describe('InventoryService', () => {
 
       expect(audit.log).toHaveBeenCalledTimes(1);
       expect(audit.log).toHaveBeenCalledWith({ action: 'STOCK_ADJUSTMENT', userId: 'admin1', ...expected }, tx);
+    });
+  });
+
+  describe('lot-tracked variants (P4-C.1)', () => {
+    const expiresAt = new Date('2030-01-01T00:00:00.000Z');
+
+    beforeEach(() => {
+      lots.isTracked.mockResolvedValue(true);
+      lots.resolveLot = jest.fn().mockResolvedValue({ id: 'lot1', lotNumber: 'L1' });
+      lots.returnLots = jest.fn().mockResolvedValue([{ lotId: 'lot1', quantity: 2 }]);
+      lots.lotToRemoveFrom = jest.fn().mockResolvedValue({ id: 'lot1', lotNumber: 'L1' });
+      lots.lotOnHandAt = jest.fn().mockResolvedValue(1);
+      Object.assign(ledger, {
+        receiveLots: jest.fn().mockResolvedValue([movement({ lotId: 'lot1', onHandDelta: 2 })]),
+        adjustLots: jest.fn().mockResolvedValue([movement({ reason: 'ADJUSTMENT', lotId: 'lot1', onHandDelta: -1 })]),
+      });
+    });
+
+    it('receives into the lot given, with the expiry required, and audits the lot', async () => {
+      await service.restockVariant({ variantId: 'var1', quantity: 2, lot: { lotNumber: 'L1', expiresAt } }, 'admin1');
+
+      expect(lots.resolveLot).toHaveBeenCalledWith(tx, 'var1', { lotNumber: 'L1', expiresAt }, expect.any(Date), true);
+      expect((ledger as Record<string, jest.Mock>).receiveLots).toHaveBeenCalledWith(
+        tx,
+        'var1',
+        2,
+        'RECEIPT',
+        { actorId: 'admin1', note: 'Manual restock' },
+        undefined,
+        [{ lotId: 'lot1', quantity: 2 }],
+      );
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          details: expect.objectContaining({ lots: [{ lotId: 'lot1', onHandDelta: 2, stockMovementId: 'mv1' }] }),
+        }),
+        tx,
+      );
+    });
+
+    it('refuses a receipt without a lot', async () => {
+      await expect(service.restockVariant({ variantId: 'var1', quantity: 2 }, 'admin1')).rejects.toThrow(
+        new BadRequestException('Variant "var1" tracks lots: give the lot number and expiry of the units received'),
+      );
+      expect(ledger.receive).not.toHaveBeenCalled();
+    });
+
+    it('restocks a return into the lots the order drew from by default', async () => {
+      repository.findReturnRequestLocation.mockResolvedValue({ orderId: 'order1', stockLocationId: 'branch' });
+
+      await service.restockVariant({ variantId: 'var1', quantity: 2, returnRequestId: 'rr1' }, 'admin1');
+
+      expect(lots.returnLots).toHaveBeenCalledWith(tx, 'order1', 'var1', 2, expect.any(Date));
+      expect((ledger as Record<string, jest.Mock>).receiveLots).toHaveBeenCalledWith(
+        tx,
+        'var1',
+        2,
+        'RETURN_RESTOCK',
+        expect.objectContaining({ refType: 'ReturnRequest', refId: 'rr1' }),
+        'branch',
+        [{ lotId: 'lot1', quantity: 2 }],
+      );
+    });
+
+    it('refuses to remove more of a named lot than the location holds', async () => {
+      await expect(
+        service.adjustVariantStock(
+          { variantId: 'var1', delta: -2, reason: 'DAMAGED', lot: { lotNumber: 'L1' } },
+          'admin1',
+        ),
+      ).rejects.toThrow(new BadRequestException('Cannot remove 2 units of lot "L1": only 1 at this location'));
+    });
+
+    it('removes first expiry first when no lot is named', async () => {
+      await service.adjustVariantStock({ variantId: 'var1', delta: -1, reason: 'LOST' }, 'admin1');
+
+      expect((ledger as Record<string, jest.Mock>).adjustLots).toHaveBeenCalledWith(
+        tx,
+        'var1',
+        'store_main',
+        -1,
+        { actorId: 'admin1', adjustmentReason: 'LOST', note: undefined },
+        undefined,
+      );
+    });
+
+    it('refuses a lot on an untracked variant', async () => {
+      lots.isTracked.mockResolvedValue(false);
+
+      await expect(
+        service.restockVariant({ variantId: 'var1', quantity: 1, lot: { lotNumber: 'L1', expiresAt } }, 'admin1'),
+      ).rejects.toThrow(new BadRequestException('Variant "var1" does not track lots; leave the lot out'));
     });
   });
 });

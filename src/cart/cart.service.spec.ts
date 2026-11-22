@@ -39,6 +39,7 @@ describe('CartService', () => {
     sku: 'TSHIRT-M',
     price: new Prisma.Decimal('19.99'),
     stockLevels: [{ onHand: 100, reserved: 0, locationId: 'loc_main' }],
+    lots: [],
     isActive: true,
     product: mockProduct,
   };

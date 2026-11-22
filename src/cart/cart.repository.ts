@@ -5,12 +5,23 @@ import { StockCounts } from '../inventory/stock';
 import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
 
 type CartWithItems = Cart & { items: CartItem[] };
-export type VariantForSale = Variant & { product: Product; stockLevels: (StockCounts & { locationId: string })[] };
+export type VariantForSale = Variant & {
+  product: Product;
+  stockLevels: (StockCounts & { locationId: string })[];
+  lots: { expiresAt: Date; stock: { locationId: string; onHand: number }[] }[];
+};
 
-/** What checking a variant for sale reads: the variant, its product and its stock at each location serving customers. */
+/**
+ * What checking a variant for sale reads: the variant, its product, its stock at each location serving customers and
+ * its lots holding units (whose expired ones are not sellable, see sellableLevels).
+ */
 export const FOR_SALE = {
   product: true,
   stockLevels: { where: { location: SERVING_LOCATION }, select: { onHand: true, reserved: true, locationId: true } },
+  lots: {
+    where: { stock: { some: { onHand: { gt: 0 } } } },
+    select: { expiresAt: true, stock: { where: { onHand: { gt: 0 } }, select: { locationId: true, onHand: true } } },
+  },
 } satisfies Prisma.VariantInclude;
 
 @Injectable()

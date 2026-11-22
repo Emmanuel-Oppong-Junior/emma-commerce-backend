@@ -150,6 +150,7 @@ const mockVariant = {
   price: new Decimal('19.99'),
   basePrice: null,
   stockLevels: [{ onHand: 100, reserved: 0, locationId: 'loc_main' }],
+  lots: [],
   isActive: true,
   product: mockProduct,
 };

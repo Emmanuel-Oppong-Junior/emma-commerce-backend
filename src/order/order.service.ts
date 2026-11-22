@@ -44,6 +44,7 @@ import { VelocityService } from '../fraud/velocity.service';
 import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
 import { CodAvailability, CodRiskService } from '../cod/cod-risk.service';
 import { DeliveryAddressFacts } from '../cod/cod-blacklist';
+import { sellableLevels } from '../inventory/lots/lots';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -682,7 +683,11 @@ export class OrdersService {
         `"${variant.product.name}" is priced in ${variant.product.currency ?? 'no currency'}; only ${currency} products can be checked out`,
       );
     }
-    const available = sellableQuantity(variant.stockLevels.filter((level) => locationIds.includes(level.locationId)));
+    const available = sellableQuantity(
+      sellableLevels(variant.stockLevels, variant.lots, new Date()).filter((level) =>
+        locationIds.includes(level.locationId),
+      ),
+    );
     if (available < item.quantity) {
       throw new BadRequestException(
         `Insufficient stock for "${variant.product.name}" (${variant.sku}): ${available} available, ${item.quantity} requested`,
@@ -693,8 +698,9 @@ export class OrdersService {
 
   /** Every line passed on its own; the whole order must also come from one location (see placeOrder). */
   private assertOneLocationFills(cartItems: CartItem[], variants: VariantForSale[], locationIds: string[]): void {
+    const now = new Date();
     const levels = variants.flatMap((variant) =>
-      variant.stockLevels.map((level) => ({ ...level, variantId: variant.id })),
+      sellableLevels(variant.stockLevels, variant.lots, now).map((level) => ({ ...level, variantId: variant.id })),
     );
     if (!chooseFulfilmentLocation(locationIds, cartItems, levels)) throw notAllAtOneLocation();
   }

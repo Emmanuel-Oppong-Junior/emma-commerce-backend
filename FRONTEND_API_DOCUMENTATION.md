@@ -2354,6 +2354,8 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   actorId?: string;            // Staff member or customer who caused it
   adjustmentReason?: StockAdjustmentReason; // ADJUSTMENT only (P4-B.1): DAMAGED, LOST, FOUND, EXPIRED, CORRECTION, STOCK_TAKE, OTHER
   note?: string;               // The note given by staff, or e.g. "Order cancelled"
+  lotId?: string;              // P4-C.1: the lot moved (lot-tracked variants; one movement per lot), null otherwise
+  lot?: Lot;                   // P4-C.1: that lot (its `stock` is empty here)
   createdAt: DateTime;
 }
 ```
@@ -2393,10 +2395,13 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   reason?: string;          // Max 500 chars. Default "Manual restock" ("Returned goods restocked" with returnRequestId).
   returnRequestId?: string; // The return request the goods came back under; recorded as RETURN_RESTOCK referencing it.
   locationId?: string;      // P4-A.1. Where the stock is received (default: the return's order location, else the default location).
+  lot?: LotInput;           // P4-C.1. Lot-tracked variants only: see "Lots and expiry" below.
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Return request "<id>" not found`, `Stock location "<id>" not found`).
+For a lot-tracked variant (P4-C.1) a receipt needs `lot` with `lotNumber` and `expiresAt` (in the future); an existing lot number adds to that lot (its `expiresAt` must match). A return restock may name an existing, unexpired lot; without one the units go back into the lots the order's sales drew from (earliest expiry first). When the units spread over several lots, the first movement is returned (all of them are in `stockMovements`).
+
+**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Return request "<id>" not found`, `Stock location "<id>" not found`); `BAD_REQUEST` (P4-C.1: `Variant "<id>" tracks lots: give the lot number and expiry of the units received`, `Lot "<n>" needs its expiry date (expiresAt)`, `Lot "<n>" expires at <date>, not <date>`, `Lot "<n>" expired at <date>; expired goods cannot be received`, `Variant "<id>" has no lot "<n>"`, `... name the lot the returned units belong to`, `Variant "<id>" does not track lots; leave the lot out`).
 
 ---
 
@@ -2415,8 +2420,11 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   delta: number;                   // Required. Non-zero integer; negative removes stock.
   reason: StockAdjustmentReason;   // Required. See below.
   note?: string;                   // Max 500 chars. Required (not blank) when reason is OTHER. Stored as the movement's note.
+  lot?: LotInput;                  // P4-C.1. Lot-tracked variants: required when adding (existing lot, or a new one with expiresAt); optional when removing.
 }
 ```
+
+For a lot-tracked variant (P4-C.1), a removal without `lot` is drawn first expiry first out (unexpired lots, then expired ones), one movement per lot (the first is returned; the audit entry lists every lot). Errors: `BAD_REQUEST` `Variant "<id>" tracks lots: name the lot the units are added to`, `Cannot remove N units of lot "<n>": only M at this location`, `Variant "<id>" has no lot "<n>"`.
 
 **`StockAdjustmentReason`**: `DAMAGED`, `LOST`, `EXPIRED` (remove stock only: `delta` < 0), `FOUND` (adds stock only: `delta` > 0), `CORRECTION`, `OTHER` (either way; `OTHER` needs a `note`), `STOCK_TAKE` (set only by an approved stock-take, see [Stock-takes](#stock-takes); refused here).
 
@@ -2576,6 +2584,47 @@ StockTakeLine {
 - `stockTake(id)` → `StockTake!` (`inventory.view`).
 - `stockTakeLines(stockTakeId, counted?: Boolean, first = 50 (1-200), after?)` → `StockTakeLinePage!`, in SKU order (`inventory.view`; `counted: false` lists what is left to count).
 - `stockTakeVarianceReport(id)` → `StockTakeVarianceReport! { stockTake, lines, totals }` (`inventory.stocktake.approve`): each counted line with `expectedAtOpen`, `changeSinceOpen` (how the expected quantity moved before the count), `expectedQuantity`, `countedQuantity`, `variance`, `unitPrice` and `varianceValue` (`Money`, at the variant's **current price**; cost is not tracked yet; null without a price); `totals`: `lineCount`, `countedCount`, `uncountedCount`, `linesWithVariance`, `shortageUnits`, `surplusUnits`, `netVarianceUnits`, `shortageValue`, `surplusValue`, `netVarianceValue`.
+
+#### Lots and expiry (P4-C.1)
+
+Opt-in per product with `Product.trackLots` (default `false`; set on `createProduct` / `updateProduct`, permission `product.manage`). An untracked product behaves exactly as before: no lots, `lotId` null.
+
+- **Lots.** A `Lot` belongs to one variant: `lotNumber` (unique per variant), `expiresAt`, optional `manufacturedAt`. Its units are held per location; for a tracked variant the lots at a location always add up to that location's on-hand stock. Every on-hand change of a tracked variant records its lot (`StockMovement.lotId`), one movement per lot touched.
+- **Receiving** (`restockVariant` with `lot`, `adjustVariantStock` adding with `lot`): lot number plus expiry, in the future. `createProduct` / `createVariant` refuse opening stock (`quantity` > 0) for a tracked product (`BAD_REQUEST`): receive it with `restockVariant`.
+- **First expiry, first out.** Units leaving a location are drawn from the unexpired lots with the earliest expiry (ties: the oldest lot): sales (online payment captured, cash-on-delivery dispatch), transfer dispatch, removals without a lot and stock-take shortages. Reservations stay per variant and location; lots are drawn when the sale is consumed. A paid order cancelled before dispatch puts its units back into the lots it drew from.
+- **Expired lots are not sold.** From `expiresAt` on, a lot's units are left out of `Variant.available`, `Product.totalStock`/`inStock`, the cart and checkout checks and placement (`createOrder` refuses them like any missing stock). An hourly job writes them off: one `ADJUSTMENT` with `adjustmentReason: EXPIRED`, `refType: "Lot"`, `refId`: the lot id, per lot. Units held for open orders are not written off: the reservation is kept and, if no unexpired units are left when the sale is consumed, the expired lot supplies it (a warning is logged with ids). The `products(inStock: true)` filter alone still counts expired units until the job has run (at most an hour).
+- **Transfers** ship unexpired lots only (`dispatchStockTransfer` refuses with `only N available at the source` otherwise, also keeping what the source's reservations need) and the same lots arrive at the destination; a shortfall falls on the lots that expire last.
+- **Stock-takes** count per variant: a shortage is drawn first expiry first, a surplus goes into the variant's latest-expiring lot; a tracked variant that never had a lot refuses the approval with `CONFLICT` + `reason: STOCK_TAKE_NO_LOT`.
+- **Switching tracking** (`updateProduct` with `trackLots`) is allowed only while the product holds no stock: nothing on hand, in transit or sold awaiting dispatch (`BAD_REQUEST` naming the counts). To start tracking a stocked product, adjust its stock out (`CORRECTION`) and receive it again with lot numbers.
+
+```typescript
+LotInput {
+  lotNumber: string;       // Required, max 100 characters
+  expiresAt?: DateTime;    // Required on a receipt and to create a lot; must match an existing lot
+  manufacturedAt?: DateTime; // Not in the future, before expiresAt
+}
+Lot {
+  id: string; variantId: string; lotNumber: string;
+  expiresAt: DateTime; manufacturedAt?: DateTime; createdAt: DateTime;
+  expired: boolean;
+  onHand: number;                                   // over every location
+  stock: { locationId: string; locationName: string; onHand: number }[]; // locations holding some
+}
+ExpiringStockLine {
+  lotId: string; lotNumber: string; expiresAt: DateTime; manufacturedAt?: DateTime;
+  expired: boolean;                // expired, not yet written off
+  variantId: string; sku: string; productId: string; productName: string;
+  locations: { locationId: string; locationName: string; onHand: number }[]; // by location name
+  onHand: number;
+  unitPrice?: Money;               // the variant's current selling price
+  value?: Money;                   // onHand x unitPrice (cost value arrives with purchasing)
+}
+```
+
+- `expiringStock(withinDays: Int = 30 (1-365), locationId?: ID, categoryId?: ID)` → `[ExpiringStockLine!]!` (`inventory.view`): lots with units on hand expiring within the window (expired ones included), soonest first. `BAD_USER_INPUT` outside 1-365.
+- `variantLots(variantId: ID!)` → `[Lot!]!` (`inventory.view`): every lot of the variant, soonest expiry first.
+
+API changes (P4-C.1, additive): `LotInput`, `Lot`, `LotLocationStock`, `ExpiringStockLine`, `RestockVariantInput.lot`, `AdjustVariantStockInput.lot`, `StockMovement.lotId` / `lot`, queries `expiringStock` and `variantLots`. `Product.trackLots` existed and is now enforced.
 
 ---
 
@@ -3383,7 +3432,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
-| `inventory.view` | `stockMovements`, `stockLocations`, `stockLocation`, `stockTransfers`, `stockTransfer`, `stockInTransit`, `stockTakes`, `stockTake`, `stockTakeLines` (without expected quantities); the `Variant.onHand`, `Variant.reserved` and `Variant.stockLevels` fields; `ShippingZone.fulfilmentLocations`, `PickupLocation.fulfilmentLocations` |
+| `inventory.view` | `stockMovements`, `stockLocations`, `stockLocation`, `stockTransfers`, `stockTransfer`, `stockInTransit`, `stockTakes`, `stockTake`, `stockTakeLines` (without expected quantities), `expiringStock`, `variantLots`; the `Variant.onHand`, `Variant.reserved` and `Variant.stockLevels` fields; `ShippingZone.fulfilmentLocations`, `PickupLocation.fulfilmentLocations` |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock`, `openStockTake`, `recordStockTakeCounts`, `submitStockTake` |
 | `inventory.alerts` | No operation: holders receive the low-stock digest email (P4-B.2; held by Owner, Manager and Inventory clerk) |
 | `inventory.location.manage` | `createStockLocation`, `updateStockLocation`, `deleteStockLocation`, `setShippingZoneFulfilmentLocations`, `setPickupLocationFulfilmentLocations` (P4-A.1; held by Owner and Manager) |
@@ -3586,7 +3635,7 @@ Two **system types** exist and are read-only: **General** (`id: "product_type_ge
 - **Rules for a type that products use** (so stored values stay valid): new attributes must be optional; an attribute can be relabelled, reordered, made (un)filterable, made optional and given extra allowed values; making it required, changing its unit, narrowing its allowed values and removing it are refused with `CONFLICT`. System types refuse every change.
 - **Possible Errors**: `CONFLICT`, `NOT_FOUND`, `BAD_USER_INPUT`, `FORBIDDEN`.
 
-**Capability fields on Product** (typed, for rules later phases enforce; today they are stored and returned only): `requiresPrescription` (pharmacy checkout gate), `isPerishable` and `shelfLifeDays` (expiry tracking with the inventory ledger), `trackLots` and `trackSerials` (lot and serial tracking), `fulfilmentKind` (`PHYSICAL` | `DIGITAL` | `SERVICE`, for delivery rules) and `unitOfMeasure` (`EACH` | `KG` | `G` | `L` | `ML` | `M`, for weighable goods). `createProduct` / `updateProduct` accept them (all optional; defaults `false`, `PHYSICAL`, `EACH`; `shelfLifeDays` 1-3650). Physical sizes live on the variant: `weightGrams`, `lengthMm`, `widthMm`, `heightMm`.
+**Capability fields on Product** (typed, for rules later phases enforce; today they are stored and returned only): `requiresPrescription` (pharmacy checkout gate), `isPerishable` and `shelfLifeDays` (expiry tracking with the inventory ledger), `trackLots` (enforced since P4-C.1: lots with expiry, see [Lots and expiry](#lots-and-expiry-p4-c1)) and `trackSerials` (serial tracking), `fulfilmentKind` (`PHYSICAL` | `DIGITAL` | `SERVICE`, for delivery rules) and `unitOfMeasure` (`EACH` | `KG` | `G` | `L` | `ML` | `M`, for weighable goods). `createProduct` / `updateProduct` accept them (all optional; defaults `false`, `PHYSICAL`, `EACH`; `shelfLifeDays` 1-3650). Physical sizes live on the variant: `weightGrams`, `lengthMm`, `widthMm`, `heightMm`.
 
 ---
 
@@ -4159,7 +4208,8 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
 
 ### Other stock changes
 
-- `restockVariant`: a delivery (`RECEIPT`), or returned goods with `returnRequestId` (`RETURN_RESTOCK`). A new variant's opening stock (from `createProduct` or `createVariant`) is a `RECEIPT` ("Initial stock").
+- `restockVariant`: a delivery (`RECEIPT`), or returned goods with `returnRequestId` (`RETURN_RESTOCK`). A new variant's opening stock (from `createProduct` or `createVariant`) is a `RECEIPT` ("Initial stock"). Lot-tracked products (P4-C.1) receive into a lot with its expiry and have no opening stock.
+- Expired lots (P4-C.1) are not sellable and are written off hourly (`ADJUSTMENT`, `EXPIRED`); see [Lots and expiry](#lots-and-expiry-p4-c1).
 - `adjustVariantStock`: `ADJUSTMENT` by a signed delta, never below the reserved units.
 - Not on `approveReturn`, `processRefund` or `deleteOrder`: returned goods are restocked with `restockVariant`.
 

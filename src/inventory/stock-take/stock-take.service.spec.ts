@@ -32,6 +32,7 @@ describe('StockTakeService', () => {
   let ledgerRepository: Record<string, jest.Mock>;
   let ledger: { adjustAt: jest.Mock; availableAt: jest.Mock };
   let audit: ReturnType<typeof createAuditServiceMock>;
+  let lots: Record<string, jest.Mock>;
   let service: StockTakeService;
 
   beforeEach(() => {
@@ -62,6 +63,7 @@ describe('StockTakeService', () => {
       availableAt: jest.fn(),
     };
     audit = createAuditServiceMock();
+    lots = { isTracked: jest.fn().mockResolvedValue(false), surplusLot: jest.fn() };
     const prisma = { $transaction: jest.fn((work: (t: unknown) => unknown) => work(tx)) };
     service = new StockTakeService(
       repository as never,
@@ -69,6 +71,7 @@ describe('StockTakeService', () => {
       ledger as never,
       prisma as never,
       audit as never,
+      lots as never,
     );
   });
 

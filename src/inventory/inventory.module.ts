@@ -21,6 +21,9 @@ import { LowStockAlertsRepository } from './low-stock/low-stock-alerts.repositor
 import { LowStockAlertsService } from './low-stock/low-stock-alerts.service';
 import { StockTakeService } from './stock-take/stock-take.service';
 import { StockTakeLineCountLoader, StockTakeResolver } from './stock-take/stock-take.resolver';
+import { LotStockRepository } from './lots/lot-stock.repository';
+import { LotsService } from './lots/lots.service';
+import { LotLoader, LotsResolver, StockMovementLotResolver } from './lots/lots.resolver';
 
 @Module({
   imports: [CommonsModule, OutboxModule],
@@ -46,6 +49,11 @@ import { StockTakeLineCountLoader, StockTakeResolver } from './stock-take/stock-
     StockTakeLineCountLoader,
     LowStockAlertsRepository,
     LowStockAlertsService,
+    LotStockRepository,
+    LotsService,
+    LotsResolver,
+    LotLoader,
+    StockMovementLotResolver,
   ],
   exports: [
     InventoryService,
@@ -54,6 +62,7 @@ import { StockTakeLineCountLoader, StockTakeResolver } from './stock-take/stock-
     StockLocationsService,
     StockLocationsRepository,
     LowStockAlertsService,
+    LotsService,
   ],
 })
 export class InventoryModule {}

@@ -16,6 +16,7 @@ import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helpe
 import { Decimal } from '@prisma/client/runtime/client';
 import { ProductTypesRepository } from '../product-types/product-types.repository';
 import { VariantService } from '../variant/variant.service';
+import { LotsService } from '../inventory/lots/lots.service';
 
 const AVAILABLE_STOCK = { stockLevels: { some: { onHand: { gt: 'reserved' } } } };
 const mockProductsRepository = {
@@ -47,6 +48,7 @@ const preparedDefault = [{ data: { optionsKey: '' }, quantity: 100 }];
 const mockVariantService = { prepare: jest.fn(), insertPrepared: jest.fn() };
 
 describe('ProductsService', () => {
+  const mockLotsService = { assertTrackingChange: jest.fn() };
   let service: ProductsService;
   let productsRepository: jest.Mocked<ProductsRepository>;
 
@@ -59,6 +61,7 @@ describe('ProductsService', () => {
         { provide: AuditService, useValue: mockAuditService },
         { provide: ProductTypesRepository, useValue: mockProductTypesRepository },
         { provide: VariantService, useValue: mockVariantService },
+        { provide: LotsService, useValue: mockLotsService },
       ],
     }).compile();
 
@@ -434,6 +437,26 @@ describe('ProductsService', () => {
       expect(repriceVariants()).not.toHaveBeenCalled();
       expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
       expect(result).toEqual(updatedProduct);
+    });
+
+    it('checks the lot-tracking switch in the update transaction, only when it changes (P4-C.1)', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', isTaxable: false, trackLots: false });
+      mockLotsService.assertTrackingChange.mockClear();
+
+      await service.update('prod1', { trackLots: false }, 'admin1');
+      expect(mockLotsService.assertTrackingChange).not.toHaveBeenCalled();
+
+      await service.update('prod1', { trackLots: true }, 'admin1');
+      expect(mockLotsService.assertTrackingChange).toHaveBeenCalledWith(AUDIT_TX, 'prod1', true);
+    });
+
+    it('writes nothing when the lot-tracking switch is refused', async () => {
+      mockProductsRepository.findById.mockResolvedValue({ id: 'prod1', isTaxable: false, trackLots: true });
+      mockProductsRepository.update.mockClear();
+      mockLotsService.assertTrackingChange.mockRejectedValueOnce(new BadRequestException('holds stock'));
+
+      await expect(service.update('prod1', { trackLots: false }, 'admin1')).rejects.toThrow('holds stock');
+      expect(productsRepository.update).not.toHaveBeenCalled();
     });
 
     it('reprices every variant with the total active tax rate when tax is turned on, in the same transaction', async () => {

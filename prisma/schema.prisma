@@ -225,6 +225,7 @@ model Variant {
   transferLines     StockTransferLine[]
   stockTakeLines    StockTakeLine[]
   lowStockAlerts    LowStockAlert[]
+  lots              Lot[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1228,6 +1229,7 @@ model StockLocation {
   orders          Order[]
   transfersOut    StockTransfer[]               @relation("StockTransferFrom")
   transfersIn     StockTransfer[]               @relation("StockTransferTo")
+  lotStocks       LotStock[]
 
   @@unique([storeId], map: "StockLocation_one_default_per_store", where: raw("\"isDefault\""))
 }
@@ -1399,11 +1401,50 @@ model StockMovement {
   location         StockLocation          @relation(fields: [locationId], references: [id], onDelete: Restrict)
   /// Why staff adjusted (P4-B.1): set on ADJUSTMENT movements only (a CHECK refuses it elsewhere); null before P4-B.1
   adjustmentReason StockAdjustmentReason?
+  /// The lot the units came from or went to (P4-C.1): set on every on-hand change of a lot-tracked variant, one
+  /// movement per lot; null for untracked variants and for RESERVE/RELEASE (a CHECK refuses it there)
+  lotId            String?
+  lot              Lot?                   @relation(fields: [lotId], references: [id], onDelete: Cascade)
 
   @@index([variantId, createdAt])
+  @@index([lotId])
   @@index([locationId])
   @@index([refType, refId])
   @@index([createdAt])
+}
+
+/// A batch of one variant with its expiry (P4-C.1), for products with trackLots; the lot number is unique per variant.
+/// Units of a lot past expiresAt are not sold; the hourly lot-expiry job writes them off (ADJUSTMENT, EXPIRED).
+model Lot {
+  id             String          @id @default(cuid())
+  variantId      String
+  lotNumber      String          @db.VarChar(100)
+  expiresAt      DateTime
+  manufacturedAt DateTime?
+  createdAt      DateTime        @default(now())
+  variant        Variant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  stock          LotStock[]
+  movements      StockMovement[]
+
+  @@unique([variantId, lotNumber])
+  @@index([expiresAt])
+}
+
+/// Units of a lot at one location (P4-C.1). For a lot-tracked variant the lots at a location add up to that
+/// StockLevel's onHand (checked by the stock reconciliation job). Changed only by StockLedgerService, with the lot's
+/// StockMovement in the same transaction; the database rejects a negative onHand.
+model LotStock {
+  id         String        @id @default(cuid())
+  lotId      String
+  locationId String
+  onHand     Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  lot        Lot           @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  location   StockLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@unique([lotId, locationId])
+  @@index([locationId])
 }
 
 /// OPEN (counting) -> SUBMITTED (counts closed) -> APPROVED (variances posted), or CANCELLED before approval (P4-B.1).

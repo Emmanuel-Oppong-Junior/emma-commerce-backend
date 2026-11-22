@@ -9,7 +9,8 @@ import {
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StockCounts, StockEffect } from './stock';
-import { LedgerTotals } from './stock-reconciliation';
+import { LedgerTotals, LotTotals } from './stock-reconciliation';
+import { expiredLotUnitsSql } from './lots/lot-stock.repository';
 
 type Db = Prisma.TransactionClient;
 
@@ -24,6 +25,7 @@ export interface NewMovement {
   actorId?: string;
   note?: string;
   adjustmentReason?: StockAdjustmentReason;
+  lotId?: string;
 }
 
 export interface NewReservation {
@@ -73,9 +75,14 @@ export class StockLedgerRepository {
 
   /**
    * Applies `effect` only if the level stays valid (0 <= reserved <= onHand), in one conditional statement, so
-   * concurrent changes can never oversell. Returns the counts after the change, or null if refused or missing.
+   * concurrent changes can never oversell. A reservation also leaves the units of expired lots alone (P4-C.1).
+   * Returns the counts after the change, or null if refused or missing.
    */
   async applyEffect(db: Db, variantId: string, locationId: string, effect: StockEffect): Promise<StockCounts | null> {
+    const expiredGuard =
+      effect.reason === StockMovementReason.RESERVE
+        ? Prisma.sql`AND "onHand" - ("reserved" + ${effect.reservedDelta}::int) >= ${expiredLotUnitsSql('StockLevel', new Date())}`
+        : Prisma.empty;
     const [after] = await db.$queryRaw<StockCounts[]>`
       UPDATE "StockLevel"
       SET "onHand" = "onHand" + ${effect.onHandDelta}::int, "reserved" = "reserved" + ${effect.reservedDelta}::int,
@@ -83,6 +90,7 @@ export class StockLedgerRepository {
       WHERE "variantId" = ${variantId} AND "locationId" = ${locationId}
         AND "onHand" + ${effect.onHandDelta}::int >= "reserved" + ${effect.reservedDelta}::int
         AND "reserved" + ${effect.reservedDelta}::int >= 0
+        ${expiredGuard}
       RETURNING "onHand", "reserved"`;
     return after ?? null;
   }
@@ -136,13 +144,16 @@ export class StockLedgerRepository {
     return db.variant.findUnique({ where: { id: variantId }, select: { lowStockThreshold: true } });
   }
 
-  /** The location the return request's order was fulfilled from; null when the request does not exist. */
-  async findReturnRequestLocation(db: Db, id: string): Promise<{ stockLocationId: string | null } | null> {
+  /** The return request's order and the location it was fulfilled from; null when the request does not exist. */
+  async findReturnRequestLocation(
+    db: Db,
+    id: string,
+  ): Promise<{ orderId: string; stockLocationId: string | null } | null> {
     const request = await db.returnRequest.findUnique({
       where: { id },
-      select: { order: { select: { stockLocationId: true } } },
+      select: { order: { select: { id: true, stockLocationId: true } } },
     });
-    return request && { stockLocationId: request.order.stockLocationId };
+    return request && { orderId: request.order.id, stockLocationId: request.order.stockLocationId };
   }
 
   /** Movements newest first, a page of `take` after the `after` cursor (a movement id). */
@@ -195,6 +206,41 @@ export class StockLedgerRepository {
       SELECT * FROM totals
       WHERE "onHand" <> "movedOnHand" OR "reserved" <> "movedReserved" OR "reserved" <> "activeReserved"
       ORDER BY "variantId", "locationId"`;
+  }
+
+  /**
+   * Lots and levels that disagree with the ledger: a lot's units at a location against the sum of its movements
+   * there (LOT_MOVEMENTS), and, for a lot-tracked variant, a level's onHand against the sum of its lots
+   * (LOT_TOTAL, lotId null).
+   */
+  async findLotDisagreements(): Promise<LotTotals[]> {
+    return this.prisma.$queryRaw<LotTotals[]>`
+      WITH lot_keys AS (
+        SELECT "lotId", "locationId" FROM "LotStock"
+        UNION SELECT "lotId", "locationId" FROM "StockMovement" WHERE "lotId" IS NOT NULL
+      ), lot_moved AS (
+        SELECT "lotId", "locationId", sum("onHandDelta")::int AS "onHand"
+        FROM "StockMovement" WHERE "lotId" IS NOT NULL GROUP BY "lotId", "locationId"
+      ), lot_totals AS (
+        SELECT lt."variantId", ls."locationId", sum(ls."onHand")::int AS "onHand"
+        FROM "LotStock" ls JOIN "Lot" lt ON lt."id" = ls."lotId" GROUP BY lt."variantId", ls."locationId"
+      )
+      SELECT 'LOT_MOVEMENTS' AS "kind", lt."variantId", k."locationId", k."lotId",
+             COALESCE(m."onHand", 0) AS "expected", COALESCE(ls."onHand", 0) AS "actual"
+      FROM lot_keys k
+      JOIN "Lot" lt ON lt."id" = k."lotId"
+      LEFT JOIN "LotStock" ls ON ls."lotId" = k."lotId" AND ls."locationId" = k."locationId"
+      LEFT JOIN lot_moved m ON m."lotId" = k."lotId" AND m."locationId" = k."locationId"
+      WHERE COALESCE(m."onHand", 0) <> COALESCE(ls."onHand", 0)
+      UNION ALL
+      SELECT 'LOT_TOTAL', sl."variantId", sl."locationId", NULL,
+             sl."onHand", COALESCE(t."onHand", 0)
+      FROM "StockLevel" sl
+      JOIN "Variant" v ON v."id" = sl."variantId"
+      JOIN "Product" p ON p."id" = v."productId"
+      LEFT JOIN lot_totals t ON t."variantId" = sl."variantId" AND t."locationId" = sl."locationId"
+      WHERE p."trackLots" AND sl."onHand" <> COALESCE(t."onHand", 0)
+      ORDER BY 2, 3, 4`;
   }
 
   async countLevels(): Promise<number> {

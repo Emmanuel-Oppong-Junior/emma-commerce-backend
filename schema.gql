@@ -75,6 +75,11 @@ input AdjustVariantStockInput {
   """Stock location; defaults to the store’s default location"""
   locationId: ID
 
+  """
+  Lot-tracked variants only (P4-C.1): required when adding (an existing lot, or a new one with its expiry); optional when removing (default: first expiry first out)
+  """
+  lot: LotInput
+
   """Free text; required when the reason is OTHER"""
   note: String
 
@@ -1285,6 +1290,38 @@ enum DisputeStatus {
 }
 
 """
+A lot with stock expiring soon (or already expired), for the expiring-stock report
+"""
+type ExpiringStockLine {
+  """
+  Expired and not yet written off (units held for orders, or before the next expiry run)
+  """
+  expired: Boolean!
+  expiresAt: DateTime!
+
+  """Units per location, by location name"""
+  locations: [LotLocationStock!]!
+  lotId: ID!
+  lotNumber: String!
+  manufacturedAt: DateTime
+
+  """Units on hand over the locations listed"""
+  onHand: Int!
+  productId: ID!
+  productName: String!
+  sku: String!
+
+  """The variant’s current selling price"""
+  unitPrice: Money
+
+  """
+  onHand at the current selling price (cost value comes with purchasing); null when unpriced
+  """
+  value: Money
+  variantId: ID!
+}
+
+"""
 A background job that failed its last attempt. Job data is never exposed.
 """
 type FailedJob {
@@ -1377,6 +1414,53 @@ enum JobQueue {
   MAINTENANCE
   NOTIFICATIONS
   WEBHOOKS
+}
+
+"""A batch of a lot-tracked variant with its expiry (P4-C.1)"""
+type Lot {
+  """When the lot was first received"""
+  createdAt: DateTime!
+
+  """Whether the lot has expired"""
+  expired: Boolean!
+
+  """
+  From this instant the units are not sold; the hourly expiry job writes them off
+  """
+  expiresAt: DateTime!
+  id: ID!
+
+  """Unique per variant"""
+  lotNumber: String!
+  manufacturedAt: DateTime
+
+  """Units on hand over every location"""
+  onHand: Int!
+
+  """Locations holding units of the lot"""
+  stock: [LotLocationStock!]!
+  variantId: ID!
+}
+
+"""A lot of a lot-tracked variant (P4-C.1), by its number"""
+input LotInput {
+  """
+  When the lot expires; required on a receipt (in the future) and to create a lot, and must match an existing lot
+  """
+  expiresAt: DateTime
+
+  """Unique per variant; receiving into an existing lot number adds to it"""
+  lotNumber: String!
+
+  """Optional; before the expiry and not in the future"""
+  manufacturedAt: DateTime
+}
+
+"""Units of a lot at one stock location"""
+type LotLocationStock {
+  locationId: ID!
+  locationName: String!
+  onHand: Int!
 }
 
 """
@@ -3024,6 +3108,20 @@ type Query {
   ): [DisputeEntity!]!
 
   """
+  Lots with stock expiring within withinDays (default 30, expired ones included), soonest first, with units per location and their value at the current price (staff)
+  """
+  expiringStock(
+    """Only products of this category"""
+    categoryId: ID
+
+    """Only units at this location"""
+    locationId: ID
+
+    """Lots expiring within this many days, expired ones included (1-365)"""
+    withinDays: Int! = 30
+  ): [ExpiringStockLine!]!
+
+  """
   Background jobs of one queue that failed their last attempt, newest first (super admin only; audited)
   """
   failedJobs(
@@ -3311,6 +3409,9 @@ type Query {
 
   """Admin: a variant by ID, archived or not"""
   variant(variantId: String!): Variant!
+
+  """The lots of a lot-tracked variant, soonest expiry first (staff)"""
+  variantLots(variantId: ID!): [Lot!]!
 
   """
   Admin: variants of every product, or of one, archived included, by ID (max 100 per page)
@@ -3686,6 +3787,11 @@ input RestockVariantInput {
   Where the stock is received; defaults to the location of the return's order, else the default location
   """
   locationId: ID
+
+  """
+  Lot-tracked variants only (P4-C.1). A receipt needs the lot number and expiry (in the future); a return restock may name an existing lot, else the units go back into the lots the order's sale drew from
+  """
+  lot: LotInput
   quantity: Int!
 
   """
@@ -4015,6 +4121,14 @@ type StockMovement {
   createdAt: DateTime!
   id: ID!
   locationId: ID!
+
+  """
+  The lot the units came from or went to (lot-tracked variants); its stock is not listed here
+  """
+  lot: Lot
+
+  """The lot moved (lot-tracked variants, P4-C.1): one movement per lot"""
+  lotId: ID
   note: String
 
   """Signed change to on-hand stock"""

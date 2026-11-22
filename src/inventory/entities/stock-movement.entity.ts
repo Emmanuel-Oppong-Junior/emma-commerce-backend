@@ -73,6 +73,12 @@ export class StockMovement {
   @Field(() => String, { nullable: true })
   note: string | null;
 
+  @Field(() => ID, {
+    nullable: true,
+    description: 'The lot moved (lot-tracked variants, P4-C.1): one movement per lot',
+  })
+  lotId: string | null;
+
   @Field()
   createdAt: Date;
 }

@@ -5,6 +5,7 @@ import { UpdateCartItemInput } from './dto/update-cart.input';
 import { CartRepository, VariantForSale } from './cart.repository';
 import { notSellableReason } from '../variant/sellable';
 import { sellableQuantity } from '../inventory/fulfilment-location';
+import { sellableLevels } from '../inventory/lots/lots';
 
 /**
  * Service for managing user carts. A cart line is one variant (SKU) and is priced and stocked from it.
@@ -82,7 +83,7 @@ export class CartService {
 
   private ensureInStock(variant: VariantForSale, quantity: number): void {
     // One order takes a variant from one location, so the cart allows what the best serving location holds.
-    const available = sellableQuantity(variant.stockLevels);
+    const available = sellableQuantity(sellableLevels(variant.stockLevels, variant.lots, new Date()));
     if (quantity > available) {
       throw new BadRequestException(
         `Cannot add ${quantity} of "${variant.product.name}" (${variant.sku}) to cart; only ${available} in stock`,
