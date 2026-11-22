@@ -21,6 +21,7 @@ import { StoreService } from '../store/store.service';
 import { VelocityService } from '../fraud/velocity.service';
 import { codRiskStub, velocityStub } from '../../test/helpers/velocity.helper';
 import { CodRiskService } from '../cod/cod-risk.service';
+import { StockLocationsService } from '../inventory/locations/stock-locations.service';
 
 const mockAuditService = { log: jest.fn() };
 const mockTaxService = { findActive: jest.fn() };
@@ -148,7 +149,7 @@ const mockVariant = {
   optionValues: { size: 'M' },
   price: new Decimal('19.99'),
   basePrice: null,
-  stockLevels: [{ onHand: 100, reserved: 0 }],
+  stockLevels: [{ onHand: 100, reserved: 0, locationId: 'loc_main' }],
   isActive: true,
   product: mockProduct,
 };
@@ -237,6 +238,7 @@ const mockUser = {
 };
 
 const mockPaymentSettings = { assertOrderPaymentMethod: jest.fn() };
+const mockStockLocations = { candidatesFor: jest.fn(), lockFulfilmentLocation: jest.fn() };
 const mockVelocity = velocityStub();
 const mockCodRisk = codRiskStub();
 
@@ -265,6 +267,7 @@ describe('OrdersService', () => {
         { provide: PaymentSettingsService, useValue: mockPaymentSettings },
         { provide: VelocityService, useValue: mockVelocity },
         { provide: CodRiskService, useValue: mockCodRisk },
+        { provide: StockLocationsService, useValue: mockStockLocations },
       ],
     }).compile();
 
@@ -280,6 +283,8 @@ describe('OrdersService', () => {
     Object.assign(mockCodRisk, codRiskStub());
     mockStoreService.getCurrency.mockResolvedValue('GHS');
     mockTaxService.findActive.mockResolvedValue([]);
+    mockStockLocations.candidatesFor.mockResolvedValue(['loc_main']);
+    mockStockLocations.lockFulfilmentLocation.mockResolvedValue({ locationId: 'loc_main' });
 
     // Default transaction mock: executes the callback with a stub tx
     mockOrdersRepository.runTransaction.mockImplementation(async (callback) => {
@@ -655,7 +660,7 @@ describe('OrdersService', () => {
         sku: 'TSHIRT-L',
         optionValues: { size: 'L' },
         price: new Decimal('120'),
-        stockLevels: [{ onHand: 10, reserved: 0 }],
+        stockLevels: [{ onHand: 10, reserved: 0, locationId: 'loc_main' }],
       };
       const productTenPercent = candidate('product10', 'PERCENT', 10, { targetIds: ['prod1'] });
       const largeTwentyOff = candidate('large20', 'AMOUNT_OFF', 20, { scope: 'SKU', targetIds: ['var2'] });
@@ -752,24 +757,94 @@ describe('OrdersService', () => {
         const expiresAt = expect.any(Date);
         expect(mockStockLedger.reserve).toHaveBeenCalledWith(
           {},
-          { variantId: 'var1', quantity: 2, orderId: 'order1', orderItemId: 'orderItem1', expiresAt },
+          {
+            variantId: 'var1',
+            quantity: 2,
+            orderId: 'order1',
+            orderItemId: 'orderItem1',
+            expiresAt,
+            locationId: 'loc_main',
+          },
           mockUserId,
         );
         expect(mockStockLedger.reserve).toHaveBeenCalledWith(
           {},
-          { variantId: 'var2', quantity: 1, orderId: 'order1', orderItemId: 'orderItem2', expiresAt },
+          {
+            variantId: 'var2',
+            quantity: 1,
+            orderId: 'order1',
+            orderItemId: 'orderItem2',
+            expiresAt,
+            locationId: 'loc_main',
+          },
           mockUserId,
         );
       });
 
       it('checks stock per variant, so one short variant fails the order before any stock is taken', async () => {
         mockOrdersRepository.findVariant.mockImplementation(async (id: string) =>
-          id === 'var1' ? mockVariant : { ...large, stockLevels: [{ onHand: 3, reserved: 3 }] },
+          id === 'var1' ? mockVariant : { ...large, stockLevels: [{ onHand: 3, reserved: 3, locationId: 'loc_main' }] },
         );
 
         await expect(placeOrder(deliveryParams)).rejects.toThrow(
           new BadRequestException('Insufficient stock for "T-Shirt" (TSHIRT-L): 0 available, 1 requested'),
         );
+        expect(mockStockLedger.reserve).not.toHaveBeenCalled();
+      });
+
+      it('reserves every line at the location chosen for the delivery zone and stores it on the order', async () => {
+        mockStockLocations.candidatesFor.mockResolvedValue(['loc_branch', 'loc_main']);
+        mockStockLocations.lockFulfilmentLocation.mockResolvedValue({ locationId: 'loc_branch' });
+        mockOrdersRepository.findVariant.mockImplementation(async (id: string) => ({
+          ...(id === 'var1' ? mockVariant : large),
+          stockLevels: [{ onHand: 10, reserved: 0, locationId: 'loc_branch' }],
+        }));
+
+        await placeOrder(deliveryParams);
+
+        expect(mockStockLocations.candidatesFor).toHaveBeenCalledWith({ shippingZoneId: 'zone1' }, undefined);
+        expect(mockStockLocations.lockFulfilmentLocation).toHaveBeenCalledWith(
+          {},
+          ['loc_branch', 'loc_main'],
+          expect.arrayContaining([expect.objectContaining({ variantId: 'var1' })]),
+        );
+        expect(mockOrdersRepository.create).toHaveBeenCalledWith(
+          {},
+          mockUserId,
+          expect.objectContaining({ stockLocationId: 'loc_branch' }),
+        );
+        for (const [, line] of mockStockLedger.reserve.mock.calls) {
+          expect(line).toEqual(expect.objectContaining({ locationId: 'loc_branch' }));
+        }
+      });
+
+      it('ignores stock at locations that do not fulfil the delivery when checking a line', async () => {
+        mockStockLocations.candidatesFor.mockResolvedValue(['loc_branch']);
+
+        await expect(ordersService.checkoutQuote(mockUserId, deliveryParams)).rejects.toThrow(
+          new BadRequestException('Insufficient stock for "T-Shirt" (TSHIRT-M): 0 available, 2 requested'),
+        );
+      });
+
+      it('refuses a cart whose lines are each in stock somewhere but not all at one location', async () => {
+        mockStockLocations.candidatesFor.mockResolvedValue(['loc_a', 'loc_b']);
+        mockOrdersRepository.findVariant.mockImplementation(async (id: string) => ({
+          ...(id === 'var1' ? mockVariant : large),
+          stockLevels: [{ onHand: 10, reserved: 0, locationId: id === 'var1' ? 'loc_a' : 'loc_b' }],
+        }));
+
+        await expect(ordersService.checkoutQuote(mockUserId, deliveryParams)).rejects.toThrow(
+          'not all in stock at one location',
+        );
+      });
+
+      it('refuses with the SKU named when no location can fill a line once the stock is locked', async () => {
+        mockStockLocations.lockFulfilmentLocation.mockResolvedValue({ locationId: null, shortVariantId: 'var2' });
+
+        await expect(placeOrder(deliveryParams)).rejects.toThrow(
+          new BadRequestException('Variant "TSHIRT-L" is out of stock or no longer on sale — please review your cart'),
+        );
+        expect(mockOrdersRepository.create).not.toHaveBeenCalled();
         expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       });
 

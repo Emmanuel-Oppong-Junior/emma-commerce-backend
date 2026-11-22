@@ -30,6 +30,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     { assertOrderPaymentMethod: jest.fn() } as never,
     velocityStub() as never,
     codRiskStub() as never,
+    {} as never,
   );
   return { service, repository };
 }

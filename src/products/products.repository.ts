@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Category, Prisma, Product, SubCategory, Tag } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
 import { PriceChangeOrigin } from '../price-history/price-change';
 import { insertRepricedChanges } from '../price-history/price-history.repository';
 
@@ -14,9 +15,11 @@ export interface VariantOptions {
 export class ProductsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Variant filter: some location has stock that is not reserved (onHand > reserved), compared in SQL. */
+  /** Variant filter: some location serving customers has stock that is not reserved (onHand > reserved), in SQL. */
   hasAvailableStock(): Prisma.VariantWhereInput {
-    return { stockLevels: { some: { onHand: { gt: this.prisma.stockLevel.fields.reserved } } } };
+    return {
+      stockLevels: { some: { onHand: { gt: this.prisma.stockLevel.fields.reserved }, location: SERVING_LOCATION } },
+    };
   }
 
   async create(

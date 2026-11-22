@@ -30,6 +30,16 @@ export function consumeEffect(quantity: number): StockEffect {
   return { onHandDelta: -quantity, reservedDelta: -quantity, reason: StockMovementReason.SALE };
 }
 
+/** Units leaving a location on a transfer: only available ones, so stock reserved for orders stays. */
+export function transferOutEffect(quantity: number): StockEffect {
+  return { onHandDelta: -quantity, reservedDelta: 0, reason: StockMovementReason.TRANSFER };
+}
+
+/** Units arriving at a location on a transfer. */
+export function transferInEffect(quantity: number): StockEffect {
+  return { onHandDelta: quantity, reservedDelta: 0, reason: StockMovementReason.TRANSFER };
+}
+
 /**
  * Giving back a reservation's units on cancel or expiry. An ACTIVE hold just ends. A CONSUMED one has already left
  * on-hand stock (paid online, or an order placed before the ledger) but the order is cancelled before dispatch, so

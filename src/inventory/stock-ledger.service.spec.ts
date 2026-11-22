@@ -24,6 +24,12 @@ describe('StockLedgerService', () => {
       findReservations: jest.fn().mockResolvedValue([]),
       claimReservation: jest.fn().mockResolvedValue(true),
       findVariantForAlert: jest.fn().mockResolvedValue({ lowStockThreshold: 5 }),
+      // One active location: the variant's total available is what the level just changed to.
+      activeAvailable: jest.fn(async () => {
+        const { results } = repository.applyEffect.mock;
+        const after = (await results[results.length - 1].value) as { onHand: number; reserved: number };
+        return { available: after.onHand - after.reserved, locationActive: true };
+      }),
     };
     outbox = { record: jest.fn() };
     service = new StockLedgerService(repository as never, outbox as never);
@@ -156,6 +162,40 @@ describe('StockLedgerService', () => {
     });
   });
 
+  describe('transfers', () => {
+    it('takes transferred units off available stock at the source as a negative TRANSFER', async () => {
+      await service.transferOut(tx, 'var1', 'loc_a', 3, { refType: 'StockTransfer', refId: 't1' });
+
+      expect(repository.ensureLevel).toHaveBeenCalledWith(tx, 'var1', 'loc_a');
+      expect(repository.applyEffect).toHaveBeenCalledWith(tx, 'var1', 'loc_a', {
+        onHandDelta: -3,
+        reservedDelta: 0,
+        reason: 'TRANSFER',
+      });
+    });
+
+    it('writes nothing when the source has too few units available', async () => {
+      repository.applyEffect.mockResolvedValue(null);
+
+      await expect(service.transferOut(tx, 'var1', 'loc_a', 3, {})).resolves.toBeNull();
+      expect(repository.insertMovement).not.toHaveBeenCalled();
+    });
+
+    it('adds received units at the destination as a positive TRANSFER', async () => {
+      await service.transferIn(tx, 'var1', 'loc_b', 3, { refType: 'StockTransfer', refId: 't1' });
+
+      expect(repository.insertMovement).toHaveBeenCalledWith(tx, {
+        variantId: 'var1',
+        locationId: 'loc_b',
+        onHandDelta: 3,
+        reservedDelta: 0,
+        reason: 'TRANSFER',
+        refType: 'StockTransfer',
+        refId: 't1',
+      });
+    });
+  });
+
   describe('low-stock event', () => {
     it('records inventory.low_stock.v1 once when available stock falls to the threshold', async () => {
       repository.applyEffect.mockResolvedValue({ onHand: 10, reserved: 5 });
@@ -178,6 +218,37 @@ describe('StockLedgerService', () => {
 
       expect(outbox.record).not.toHaveBeenCalled();
       expect(repository.findVariantForAlert).toHaveBeenCalledTimes(1);
+    });
+
+    it('measures the threshold on the total available across active locations', async () => {
+      repository.applyEffect.mockResolvedValue({ onHand: 10, reserved: 5 });
+      repository.activeAvailable.mockResolvedValue({ available: 25, locationActive: true });
+
+      await service.reserve(tx, { variantId: 'var1', quantity: 2, orderId: 'o', orderItemId: 'oi', expiresAt: null });
+
+      expect(repository.activeAvailable).toHaveBeenCalledWith(tx, 'var1', LOCATION);
+      expect(outbox.record).not.toHaveBeenCalled();
+    });
+
+    it('records the event with the summed total when it crosses the threshold', async () => {
+      repository.activeAvailable.mockResolvedValue({ available: 4, locationActive: true });
+
+      await service.adjust(tx, 'var1', -3, {});
+
+      expect(outbox.record).toHaveBeenCalledWith(tx, {
+        type: 'inventory.low_stock.v1',
+        aggregateId: 'var1',
+        payload: { variantId: 'var1', locationId: LOCATION, available: 4, movementId: 'mv1' },
+      });
+    });
+
+    it('ignores a change at an inactive location, whose stock is not in the total', async () => {
+      repository.activeAvailable.mockResolvedValue({ available: 4, locationActive: false });
+
+      await service.adjust(tx, 'var1', -3, {}, 'loc_closed');
+
+      expect(repository.applyEffect).toHaveBeenCalledWith(tx, 'var1', 'loc_closed', expect.anything());
+      expect(outbox.record).not.toHaveBeenCalled();
     });
 
     it('does not look for a threshold when a sale leaves available stock unchanged', async () => {

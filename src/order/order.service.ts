@@ -26,7 +26,8 @@ import { abandonedOrderWhere, OrderSnapshot, OrderSnapshotLine, OrdersRepository
 import { VariantForSale } from '../cart/cart.repository';
 import { notSellableReason } from '../variant/sellable';
 import { StockLedgerService } from '../inventory/stock-ledger.service';
-import { availableOf } from '../inventory/stock';
+import { chooseFulfilmentLocation, sellableQuantity } from '../inventory/fulfilment-location';
+import { StockLocationsService } from '../inventory/locations/stock-locations.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
@@ -88,6 +89,8 @@ interface Fulfilment {
   pickupLocationId?: string;
   shippingAddressSnapshot?: Record<string, unknown>;
   pickupLocationSnapshot?: Record<string, unknown>;
+  /** The stock locations that may fulfil the order, in the order they are tried. */
+  fulfilmentLocationIds: string[];
 }
 
 interface PricedCheckout {
@@ -133,6 +136,16 @@ function discountedUnits(quote: Pick<Quote, 'lines'>): Record<string, number> {
   return units;
 }
 
+function outOfStock(sku: string | null): BadRequestException {
+  return new BadRequestException(`Variant "${sku}" is out of stock or no longer on sale — please review your cart`);
+}
+
+function notAllAtOneLocation(): BadRequestException {
+  return new BadRequestException(
+    'The items in your cart are not all in stock at one location that serves this delivery — please review your cart',
+  );
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -151,6 +164,7 @@ export class OrdersService {
     private readonly paymentSettings: PaymentSettingsService,
     private readonly velocity: VelocityService,
     private readonly codRisk: CodRiskService,
+    private readonly stockLocations: StockLocationsService,
   ) {}
 
   /**
@@ -255,6 +269,7 @@ export class OrdersService {
     return {
       shippingFee: zone.fee,
       shippingZoneId: zone.id,
+      fulfilmentLocationIds: await this.stockLocations.candidatesFor({ shippingZoneId: zone.id }, tx),
       deliveryAddress: address,
       shippingAddressId,
       shippingAddressSnapshot: toAddressSnapshot(address),
@@ -268,6 +283,7 @@ export class OrdersService {
       shippingFee: new Prisma.Decimal(0),
       shippingZoneId: null,
       deliveryAddress: null,
+      fulfilmentLocationIds: await this.stockLocations.candidatesFor({ pickupLocationId }, tx),
       pickupLocationId,
       pickupLocationSnapshot: {
         name: location.name,
@@ -569,14 +585,17 @@ export class OrdersService {
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
-    shipping: Pick<Fulfilment, 'shippingFee' | 'shippingZoneId'>,
+    shipping: Pick<Fulfilment, 'shippingFee' | 'shippingZoneId' | 'fulfilmentLocationIds'>,
     couponCode: string | undefined,
     tx: Prisma.TransactionClient | undefined,
   ): Promise<{ snapshot: OrderSnapshot; couponCode?: { id: string; promotionId: string } }> {
     const now = new Date();
     const currency = await this.storeService.getCurrency(tx);
     const variants: VariantForSale[] = [];
-    for (const item of cartItems) variants.push(await this.checkVariantAvailability(item, currency, tx));
+    for (const item of cartItems) {
+      variants.push(await this.checkVariantAvailability(item, currency, shipping.fulfilmentLocationIds, tx));
+    }
+    this.assertOneLocationFills(cartItems, variants, shipping.fulfilmentLocationIds);
     const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => id !== null))];
     const promotions = await this.promotionsService.findForPricing(
       {
@@ -650,6 +669,7 @@ export class OrdersService {
   private async checkVariantAvailability(
     item: CartItem,
     currency: Currency,
+    locationIds: string[],
     tx: Prisma.TransactionClient | undefined,
   ): Promise<VariantForSale> {
     const variant = await this.ordersRepository.findVariant(item.variantId, tx);
@@ -662,7 +682,7 @@ export class OrdersService {
         `"${variant.product.name}" is priced in ${variant.product.currency ?? 'no currency'}; only ${currency} products can be checked out`,
       );
     }
-    const available = availableOf(variant.stockLevels);
+    const available = sellableQuantity(variant.stockLevels.filter((level) => locationIds.includes(level.locationId)));
     if (available < item.quantity) {
       throw new BadRequestException(
         `Insufficient stock for "${variant.product.name}" (${variant.sku}): ${available} available, ${item.quantity} requested`,
@@ -671,9 +691,18 @@ export class OrdersService {
     return variant;
   }
 
+  /** Every line passed on its own; the whole order must also come from one location (see placeOrder). */
+  private assertOneLocationFills(cartItems: CartItem[], variants: VariantForSale[], locationIds: string[]): void {
+    const levels = variants.flatMap((variant) =>
+      variant.stockLevels.map((level) => ({ ...level, variantId: variant.id })),
+    );
+    if (!chooseFulfilmentLocation(locationIds, cartItems, levels)) throw notAllAtOneLocation();
+  }
+
   /**
-   * Writes the order from the priced checkout, reserves its stock and the uses of the promotions it applies (see
-   * PromotionsService.reserveRedemptions), on the caller's tx.
+   * Writes the order from the priced checkout, reserves its stock at one location and the uses of the promotions it
+   * applies (see PromotionsService.reserveRedemptions), on the caller's tx. The location is the first of the
+   * fulfilment list that can fill every line, chosen with the stock levels locked (StockLocationsService).
    */
   private async placeOrder(
     tx: Prisma.TransactionClient,
@@ -698,7 +727,18 @@ export class OrdersService {
     };
     const cartId = checkout.cart.id;
     const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
-    const newOrder = await this.ordersRepository.create(tx, userId, orderDetails);
+    const chosen = await this.stockLocations.lockFulfilmentLocation(
+      tx,
+      fulfilment.fulfilmentLocationIds,
+      checkout.cart.items,
+    );
+    if (chosen.locationId === null) {
+      const { shortVariantId } = chosen;
+      const short = checkout.snapshot.lines.find((line) => line.variantId === shortVariantId);
+      throw short ? outOfStock(short.sku) : notAllAtOneLocation();
+    }
+    const stockLocationId: string = chosen.locationId;
+    const newOrder = await this.ordersRepository.create(tx, userId, { ...orderDetails, stockLocationId });
 
     // Cash on delivery holds its stock until dispatch; an online order's hold expires with the unpaid order.
     const expiresAt = isCod ? null : new Date(Date.now() + UNPAID_ORDER_EXPIRY_HOURS * 60 * 60 * 1000);
@@ -713,14 +753,11 @@ export class OrdersService {
             orderId: newOrder.id,
             orderItemId: item.id,
             expiresAt,
+            locationId: stockLocationId,
           },
           userId,
         ));
-      if (!reserved) {
-        throw new BadRequestException(
-          `Variant "${item.sku}" is out of stock or no longer on sale — please review your cart`,
-        );
-      }
+      if (!reserved) throw outOfStock(item.sku);
     }
 
     await this.promotionsService.reserveRedemptions(

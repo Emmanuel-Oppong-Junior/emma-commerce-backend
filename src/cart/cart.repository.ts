@@ -2,14 +2,15 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Cart, CartItem, Prisma, Product, Variant } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StockCounts } from '../inventory/stock';
+import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
 
 type CartWithItems = Cart & { items: CartItem[] };
-export type VariantForSale = Variant & { product: Product; stockLevels: StockCounts[] };
+export type VariantForSale = Variant & { product: Product; stockLevels: (StockCounts & { locationId: string })[] };
 
-/** What checking a variant for sale reads: the variant, its product and its stock at every location. */
+/** What checking a variant for sale reads: the variant, its product and its stock at each location serving customers. */
 export const FOR_SALE = {
   product: true,
-  stockLevels: { select: { onHand: true, reserved: true } },
+  stockLevels: { where: { location: SERVING_LOCATION }, select: { onHand: true, reserved: true, locationId: true } },
 } satisfies Prisma.VariantInclude;
 
 @Injectable()

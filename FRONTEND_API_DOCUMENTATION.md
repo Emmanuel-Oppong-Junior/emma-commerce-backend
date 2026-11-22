@@ -1498,6 +1498,7 @@ All order operations require `Bearer` JWT.
   shippingAddressSnapshot?: JSON;              // DELIVERY: { recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country } at order time; orders placed before Ghana addresses (P1-G) hold { street, city, state, zipCode, country } instead
   pickupLocationId?: string;                   // Set for PICKUP orders
   pickupLocationSnapshot?: JSON;               // PICKUP: { name, address, city, state, country } at order time
+  stockLocationId?: string;                    // P4-A.1, staff with order.view (FORBIDDEN otherwise): where the order is reserved and fulfilled from
   createdAt: DateTime;
   updatedAt: DateTime;
   items: OrderItem[];
@@ -1770,7 +1771,7 @@ No tax is added at checkout; tax is already inside each variant's `price`, and t
 - `CONFLICT` with `extensions.reason: "PROMOTION_LIMIT_REACHED"` (a promotion or the coupon code has no use left) or `"PROMOTION_CUSTOMER_LIMIT_REACHED"` (the caller used up their uses) — another order took the last use meanwhile; nothing was recorded. Call `checkoutQuote` again.
 - `CONFLICT` with `extensions.reason: "PROMOTION_UNITS_SOLD_OUT"` (P2-B.4) — a flash sale has fewer units left at its price than the quote reduced (another order took them meanwhile); nothing was recorded. Call `checkoutQuote` again: it shows the units still left at the promotional price.
 - `NOT_FOUND` — No cart, empty cart (also the second of two simultaneous submits), shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
-- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon code inactive, not started, expired, at its usage limit, already used by the caller, below its minimums, or for items not in the cart.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); every line is in stock but not all at one location serving the delivery or pickup point (`The items in your cart are not all in stock at one location that serves this delivery — please review your cart`, P4-A.1: the customer can split the order); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon code inactive, not started, expired, at its usage limit, already used by the caller, below its minimums, or for items not in the cart.
 - `BAD_USER_INPUT` — Missing or malformed `quoteHash`; invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:
@@ -2328,7 +2329,13 @@ RemovePriceListEntriesInput { priceListId: ID; variantIds: ID[] /* 1-200 */ }
 
 ### 2.15 Inventory
 
-Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; see [2.24](#224-staff-roles-and-permissions). **Stock is held per variant (the SKU) and location** (ADR-0008): each store has one default location, where all stock lives for now. A variant shows `available` (on hand minus reserved for open orders; public), `onHand` and `reserved` (staff with `inventory.view`, through the admin `variant` / `variants` queries; `FORBIDDEN` otherwise). `Product.totalStock` and `Product.inStock` summarise the **available** stock of its active variants. Every stock change writes one entry to the append-only stock ledger (`StockMovement`); manual changes also write an audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`). On-hand stock can never go below zero, and reserved stock never above on-hand stock.
+Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; see [2.24](#224-staff-roles-and-permissions). **Stock is held per variant (the SKU) and location** (ADR-0008). A variant shows `available` (public), `onHand` and `reserved` (summed over every location) and `stockLevels` (per location) to staff with `inventory.view` (`FORBIDDEN` otherwise). `Product.totalStock` and `Product.inStock` summarise the **available** stock of its active variants.
+
+**Locations and fulfilment (P4-A.1).** Each store has stock locations (`WAREHOUSE`, `BRANCH`, `PICKUP_POINT`); exactly one is the **default**, which is always active. Each shipping zone and each pickup point has an ordered list of fulfilling locations (`setShippingZoneFulfilmentLocations`, `setPickupLocationFulfilmentLocations`); an empty list (the state after migration) means the default location. When an order is placed, **all of its lines are reserved at one location**: the first active location of the zone's or pickup point's list that has every line available (on hand minus reserved); when every listed location is inactive, the default. That location is stored on the order (`Order.stockLocationId`, staff with `order.view`) and on its reservations; payment, cash-on-delivery dispatch, cancellation, expiry and returned-goods restock all act on it. If no single location can fill the whole order, checkout fails with `BAD_REQUEST` (see the createOrder errors in [2.11](#211-orders)). An inactive location is never chosen for new orders and its stock is not shown to customers; orders already reserved there carry on as usual.
+
+**What customers see.** `Variant.available` is what **one order can take**: on hand minus reserved at the best single location that serves customers, never the sum over locations (an order comes from one location). Without a delivery target (product pages, cart) the serving locations are the active ones that appear in any shipping zone's or pickup point's list, plus the default. `addToCart`/`updateCartItem` allow up to that quantity; `checkoutQuote` and `createOrder` check each line against the locations of the chosen zone or pickup point only. `Product.totalStock` adds each active variant's `available`; `products(inStock: true)` keeps products with an active variant in stock at a serving location.
+
+**Behaviour change (P4-A.1, not a schema break):** `Variant.available` was the sum over locations and is now the best single serving location (identical while all stock is at the default location). The `inventory.low_stock.v1` event is now measured on the variant's available stock summed over active locations (`available` in the payload is that total; `locationId` is where the movement happened). Every stock change writes one entry to the append-only stock ledger (`StockMovement`); manual changes also write an audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`). On-hand stock can never go below zero, and reserved stock never above on-hand stock.
 
 **Breaking changes (P1-N.2):** `InventoryLogEntity` and `InventoryActionEnum` → removed, replaced by `StockMovement` and `StockMovementReason`. `restockVariant` and `adjustVariantStock` return `StockMovement!` (was `InventoryLogEntity!`). `inventoryLogs`, `productInventoryLogs` and `variantInventoryLogs` → removed; use the paginated `stockMovements` query (optionally by `variantId` or `productId`). `Variant.quantity` → removed; read `available` (and, as staff, `onHand` / `reserved`). Existing inventory log rows were copied into the ledger by migration.
 
@@ -2350,7 +2357,23 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 }
 ```
 
-**`StockMovementReason`**: `RECEIPT` (delivery or opening stock of a new variant), `RESERVE` (held for an order line), `SALE` (a hold consumed: online payment captured or cash-on-delivery order dispatched), `RELEASE` (hold given back on cancel or expiry), `RETURN_RESTOCK` (returned goods, or a paid order cancelled before dispatch), `ADJUSTMENT`, `OPENING_BALANCE` (stock the old inventory log did not explain, migration only), `TRANSFER` (not used yet).
+**`StockLocation`** (staff)
+
+```typescript
+{
+  id: string;
+  name: string;
+  type: StockLocationType;  // WAREHOUSE | BRANCH | PICKUP_POINT
+  isActive: boolean;        // inactive: never chosen for new orders, stock hidden from customers
+  isDefault: boolean;       // serves every empty fulfilment list; always active
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+```
+
+**`VariantStockLevel`** (the `Variant.stockLevels` field, `inventory.view`, the default location first): `{ locationId: ID!, locationName: String!, onHand: Int!, reserved: Int!, available: Int! }`.
+
+**`StockMovementReason`**: `RECEIPT` (delivery or opening stock of a new variant), `RESERVE` (held for an order line), `SALE` (a hold consumed: online payment captured or cash-on-delivery order dispatched), `RELEASE` (hold given back on cancel or expiry), `RETURN_RESTOCK` (returned goods, or a paid order cancelled before dispatch), `ADJUSTMENT`, `OPENING_BALANCE` (stock the old inventory log did not explain, migration only), `TRANSFER` (P4-A.2: negative at the source when a transfer is dispatched, positive at the destination when it is received; `refType` `StockTransfer`).
 
 ---
 
@@ -2358,7 +2381,7 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 - **Type**: Mutation
 - **Args**: `input: RestockVariantInput!`
 - **Response**: `StockMovement!` (reason `RECEIPT`, or `RETURN_RESTOCK` with `returnRequestId`)
-- **Description**: Add stock to a variant at the default location: a delivery, or goods returned by a customer once received and inspected.
+- **Description**: Add stock to a variant at a location: a delivery, or goods returned by a customer once received and inspected. Returned goods (`returnRequestId`) go back to the location their order was fulfilled from unless `locationId` says otherwise; anything else goes to the default location unless `locationId` is given.
 
 **Input: `RestockVariantInput`**
 
@@ -2368,10 +2391,11 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   quantity: number;         // Required. Integer >= 1.
   reason?: string;          // Max 500 chars. Default "Manual restock" ("Returned goods restocked" with returnRequestId).
   returnRequestId?: string; // The return request the goods came back under; recorded as RETURN_RESTOCK referencing it.
+  locationId?: string;      // P4-A.1. Where the stock is received (default: the return's order location, else the default location).
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Return request "<id>" not found`).
+**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Return request "<id>" not found`, `Stock location "<id>" not found`).
 
 ---
 
@@ -2388,10 +2412,11 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   variantId: string;  // Required.
   delta: number;      // Required. Non-zero integer; negative removes stock.
   reason: string;     // Required. 1–500 chars. Stored as the movement's note.
+  locationId?: string; // P4-A.1. Where the stock changes (default: the default location); "available" in the error is at that location.
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (variant); `BAD_REQUEST` (`Cannot remove N units from variant "<id>": only M available`).
+**Possible Errors**: `NOT_FOUND` (variant, stock location); `BAD_REQUEST` (`Cannot remove N units from variant "<id>": only M available`).
 
 ---
 
@@ -2399,6 +2424,101 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 - **Type**: Query (`inventory.view`)
 - **Args**: `variantId?: ID`, `productId?: ID` (every variant of the product), `reason?: StockMovementReason`, `first: Int = 50` (1–100), `after?: ID` (the id of the last movement of the previous page)
 - **Response**: `StockMovementPage! { nodes: [StockMovement!]!, totalCount: Int!, hasNextPage: Boolean! }`, newest first
+
+---
+
+#### `stockLocations` / `stockLocation` (P4-A.1)
+- **Type**: Query (`inventory.view`)
+- **Args**: none / `id: ID!`
+- **Response**: `[StockLocation!]!` (the default first, then by name) / `StockLocation!` (`NOT_FOUND` when unknown)
+
+#### `createStockLocation` (P4-A.1)
+- **Type**: Mutation (`inventory.location.manage`)
+- **Args**: `input: CreateStockLocationInput! { name: String! (1–120), type?: StockLocationType (default WAREHOUSE), isActive?: Boolean (default true) }`
+- **Response**: `StockLocation!`. Audited (entity `StockLocation`, action `CREATE`). A new location holds no stock and fulfils nothing until it is restocked (`restockVariant` with `locationId`) and added to a fulfilment list.
+
+#### `updateStockLocation` (P4-A.1)
+- **Type**: Mutation (`inventory.location.manage`)
+- **Args**: `id: ID!`, `input: UpdateStockLocationInput! { name?, type?, isActive?, isDefault? }`
+- **Response**: `StockLocation!`. Audited with the changed fields. `isDefault: true` makes the (active) location the default and takes the flag off the old one.
+- **Possible Errors**: `NOT_FOUND`; `BAD_REQUEST` when deactivating the default, sending `isDefault: false` for the default ("Make another location the default instead"), or making an inactive location the default.
+
+#### `deleteStockLocation` (P4-A.1)
+- **Type**: Mutation (`inventory.location.manage`)
+- **Args**: `id: ID!`
+- **Response**: `StockLocation!` (the deleted location). Audited. It leaves every fulfilment list it was on.
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` for the default location, and for a location with stock history (any movement, reservation, order or transfer): deactivate it instead (`updateStockLocation` with `isActive: false`).
+
+#### `setShippingZoneFulfilmentLocations` / `setPickupLocationFulfilmentLocations` (P4-A.1)
+- **Type**: Mutation (`inventory.location.manage`)
+- **Args**: `shippingZoneId: ID!` / `pickupLocationId: ID!`, `input: FulfilmentLocationsInput! { locationIds: [ID!]! }` (at most 20, no repeats; the first is tried first; `[]` = the default location). A pickup point may list its own `PICKUP_POINT` location.
+- **Response**: `[StockLocation!]!`, the new list in order. Audited on the zone or pickup point (`UPDATE`, `fulfilmentLocations` from/to). Read a list back on `ShippingZone.fulfilmentLocations` / `PickupLocation.fulfilmentLocations` (`inventory.view`; inactive entries included, they are skipped when placing).
+- **Possible Errors**: `NOT_FOUND` (zone, pickup point or a location); `BAD_USER_INPUT` (repeats, more than 20).
+
+---
+
+#### Stock transfers (P4-A.2)
+
+Stock moves between two locations in **two steps**. `createStockTransfer` makes a `DRAFT` (nothing moves). `dispatchStockTransfer` takes every line off the source's **available** stock (on hand minus reserved, so stock held for orders never leaves) with a `TRANSFER` movement per line; from then on the units are **in transit**: counted on the transfer, at neither location (`stockInTransit`). `receiveStockTransfer` adds what arrived to the destination (`TRANSFER` movements) and ends the transfer: `RECEIVED` when every unit arrived, `PARTIALLY_RECEIVED` when a line came up short. A shortfall is recorded on the line as its `variance` with a required note; no stock is created for the missing units (they left the source at dispatch). A transfer is received once; there is no second delivery. `cancelStockTransfer` works only on a `DRAFT`; goods already dispatched are received (short if need be) and sent back on a new transfer. Each step is a conditional status change: of two concurrent dispatches, receipts or cancels one wins and the other gets `CONFLICT`. Every step is audited (entity `StockTransfer`: `CREATE`, then `STATUS_CHANGE` with from/to, the variances or the cancel reason). Writes need `inventory.transfer` (Owner, Manager, Inventory clerk); reads need `inventory.view`.
+
+**`StockTransferStatus`**: `DRAFT` → `DISPATCHED` | `CANCELLED`; `DISPATCHED` → `RECEIVED` | `PARTIALLY_RECEIVED`. `RECEIVED`, `PARTIALLY_RECEIVED` and `CANCELLED` are final.
+
+**`StockTransfer`**
+
+```typescript
+{
+  id: string;
+  fromLocationId: string;
+  toLocationId: string;
+  status: StockTransferStatus;
+  note?: string;
+  lines: StockTransferLine[];
+  createdById: string;
+  dispatchedById?: string;  dispatchedAt?: DateTime;
+  receivedById?: string;    receivedAt?: DateTime;
+  cancelledById?: string;   cancelledAt?: DateTime;
+  createdAt: DateTime;
+  updatedAt: DateTime;
+}
+// StockTransferLine
+{
+  id: string;
+  variantId: string;
+  quantity: number;            // units dispatched (or to dispatch)
+  receivedQuantity?: number;   // null until received
+  variance?: number;           // quantity - receivedQuantity once received
+  varianceNote?: string;       // why units are missing
+}
+```
+
+#### `createStockTransfer`
+- **Type**: Mutation (`inventory.transfer`)
+- **Args**: `input: CreateStockTransferInput! { fromLocationId: ID!, toLocationId: ID!, lines: [{ variantId: ID!, quantity: Int! (>= 1) }] (1–100, one per variant), note?: String (max 500) }`
+- **Response**: `StockTransfer!` (`DRAFT`)
+- **Possible Errors**: `BAD_REQUEST` (same location twice, repeated variant, an inactive location); `BAD_USER_INPUT` (quantity below 1, no lines); `NOT_FOUND` (location or variant).
+
+#### `dispatchStockTransfer`
+- **Type**: Mutation (`inventory.transfer`)
+- **Args**: `id: ID!`
+- **Response**: `StockTransfer!` (`DISPATCHED`)
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` (not a draft: already dispatched, received or cancelled); `BAD_REQUEST` (`Cannot dispatch N of variant "<id>": only M available at the source`; nothing is dispatched).
+
+#### `receiveStockTransfer`
+- **Type**: Mutation (`inventory.transfer`)
+- **Args**: `id: ID!`, `input?: ReceiveStockTransferInput { lines?: [{ variantId: ID!, receivedQuantity: Int! (0..quantity), note?: String }] }`. List only the lines that arrived short; every other line is received in full. A short line needs a `note`.
+- **Response**: `StockTransfer!` (`RECEIVED` or `PARTIALLY_RECEIVED`)
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` (not in transit: still a draft, already received or cancelled); `BAD_REQUEST` (more received than dispatched, a variant not on the transfer, a shortfall without a note).
+
+#### `cancelStockTransfer`
+- **Type**: Mutation (`inventory.transfer`)
+- **Args**: `id: ID!`, `input?: { reason?: String (max 500) }`
+- **Response**: `StockTransfer!` (`CANCELLED`)
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` (already dispatched, received or cancelled).
+
+#### `stockTransfers` / `stockTransfer` / `stockInTransit`
+- **Type**: Query (`inventory.view`)
+- **Args**: `stockTransfers(status?: StockTransferStatus, locationId?: ID (leaving or arriving there), variantId?: ID, first: Int = 50 (1–100), after?: ID)`; `stockTransfer(id: ID!)`; `stockInTransit(variantIds?: [ID!])`
+- **Response**: `StockTransferPage! { nodes, totalCount, hasNextPage }` newest first; `StockTransfer!` (`NOT_FOUND` when unknown); `[VariantInTransit!]! { variantId, quantity }`, the units on dispatched transfers per variant (variants with none in transit are left out).
 
 ---
 
@@ -3206,8 +3326,10 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
-| `inventory.view` | `stockMovements`; the `Variant.onHand` and `Variant.reserved` fields |
+| `inventory.view` | `stockMovements`, `stockLocations`, `stockLocation`, `stockTransfers`, `stockTransfer`, `stockInTransit`; the `Variant.onHand`, `Variant.reserved` and `Variant.stockLevels` fields; `ShippingZone.fulfilmentLocations`, `PickupLocation.fulfilmentLocations` |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
+| `inventory.location.manage` | `createStockLocation`, `updateStockLocation`, `deleteStockLocation`, `setShippingZoneFulfilmentLocations`, `setPickupLocationFulfilmentLocations` (P4-A.1; held by Owner and Manager) |
+| `inventory.transfer` | `createStockTransfer`, `dispatchStockTransfer`, `receiveStockTransfer`, `cancelStockTransfer` (P4-A.2; held by Owner, Manager and Inventory clerk) |
 | `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
 | `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |
 | `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |

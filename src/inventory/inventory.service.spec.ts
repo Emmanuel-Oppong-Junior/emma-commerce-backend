@@ -23,16 +23,20 @@ function movement(overrides: Partial<StockMovement> = {}): StockMovement {
 }
 
 describe('InventoryService', () => {
-  const tx = { variant: { count: jest.fn() } };
+  const tx = { variant: { count: jest.fn() }, stockLocation: { count: jest.fn() } };
   let ledger: { receive: jest.Mock; adjust: jest.Mock; available: jest.Mock };
-  let repository: { returnRequestExists: jest.Mock; findMovements: jest.Mock };
+  let repository: { findReturnRequestLocation: jest.Mock; findMovements: jest.Mock };
   let audit: ReturnType<typeof createAuditServiceMock>;
   let service: InventoryService;
 
   beforeEach(() => {
     tx.variant.count.mockReset().mockResolvedValue(1);
+    tx.stockLocation.count.mockReset().mockResolvedValue(1);
     ledger = { receive: jest.fn().mockResolvedValue(movement()), adjust: jest.fn(), available: jest.fn() };
-    repository = { returnRequestExists: jest.fn().mockResolvedValue(true), findMovements: jest.fn() };
+    repository = {
+      findReturnRequestLocation: jest.fn().mockResolvedValue({ stockLocationId: null }),
+      findMovements: jest.fn(),
+    };
     audit = createAuditServiceMock();
     const prisma = { $transaction: jest.fn((work: (t: unknown) => unknown) => work(tx)) };
     service = new InventoryService(ledger as never, repository as never, prisma as never, audit as never);
@@ -42,31 +46,69 @@ describe('InventoryService', () => {
     it('receives the units as a RECEIPT on the default note', async () => {
       await service.restockVariant({ variantId: 'var1', quantity: 50 }, 'admin1');
 
-      expect(ledger.receive).toHaveBeenCalledWith(tx, 'var1', 50, 'RECEIPT', {
-        actorId: 'admin1',
-        note: 'Manual restock',
-      });
+      expect(ledger.receive).toHaveBeenCalledWith(
+        tx,
+        'var1',
+        50,
+        'RECEIPT',
+        { actorId: 'admin1', note: 'Manual restock' },
+        undefined,
+      );
     });
 
     it('keeps the reason given', async () => {
       await service.restockVariant({ variantId: 'var1', quantity: 20, reason: 'Received shipment' }, 'admin1');
 
-      expect(ledger.receive).toHaveBeenCalledWith(tx, 'var1', 20, 'RECEIPT', {
-        actorId: 'admin1',
-        note: 'Received shipment',
-      });
+      expect(ledger.receive).toHaveBeenCalledWith(
+        tx,
+        'var1',
+        20,
+        'RECEIPT',
+        { actorId: 'admin1', note: 'Received shipment' },
+        undefined,
+      );
     });
 
     it('records goods of a return request as RETURN_RESTOCK referencing the request', async () => {
       await service.restockVariant({ variantId: 'var1', quantity: 1, returnRequestId: 'rr1' }, 'admin1');
 
-      expect(repository.returnRequestExists).toHaveBeenCalledWith(tx, 'rr1');
-      expect(ledger.receive).toHaveBeenCalledWith(tx, 'var1', 1, 'RETURN_RESTOCK', {
-        actorId: 'admin1',
-        note: 'Returned goods restocked',
-        refType: 'ReturnRequest',
-        refId: 'rr1',
-      });
+      expect(repository.findReturnRequestLocation).toHaveBeenCalledWith(tx, 'rr1');
+      expect(ledger.receive).toHaveBeenCalledWith(
+        tx,
+        'var1',
+        1,
+        'RETURN_RESTOCK',
+        { actorId: 'admin1', note: 'Returned goods restocked', refType: 'ReturnRequest', refId: 'rr1' },
+        undefined,
+      );
+    });
+
+    it('restocks returned goods at the location their order was fulfilled from', async () => {
+      repository.findReturnRequestLocation.mockResolvedValue({ stockLocationId: 'loc_branch' });
+
+      await service.restockVariant({ variantId: 'var1', quantity: 1, returnRequestId: 'rr1' }, 'admin1');
+
+      expect(ledger.receive).toHaveBeenCalledWith(tx, 'var1', 1, 'RETURN_RESTOCK', expect.anything(), 'loc_branch');
+    });
+
+    it('receives at the location given, over the order location', async () => {
+      repository.findReturnRequestLocation.mockResolvedValue({ stockLocationId: 'loc_branch' });
+
+      await service.restockVariant(
+        { variantId: 'var1', quantity: 1, returnRequestId: 'rr1', locationId: 'loc_other' },
+        'admin1',
+      );
+
+      expect(ledger.receive).toHaveBeenCalledWith(tx, 'var1', 1, 'RETURN_RESTOCK', expect.anything(), 'loc_other');
+    });
+
+    it('rejects an unknown location without moving stock', async () => {
+      tx.stockLocation.count.mockResolvedValue(0);
+
+      await expect(
+        service.restockVariant({ variantId: 'var1', quantity: 1, locationId: 'nope' }, 'admin1'),
+      ).rejects.toThrow(new NotFoundException('Stock location "nope" not found'));
+      expect(ledger.receive).not.toHaveBeenCalled();
     });
 
     it('rejects an unknown variant or return request without moving stock', async () => {
@@ -75,7 +117,7 @@ describe('InventoryService', () => {
         new NotFoundException('Variant "nope" not found'),
       );
       tx.variant.count.mockResolvedValue(1);
-      repository.returnRequestExists.mockResolvedValue(false);
+      repository.findReturnRequestLocation.mockResolvedValue(null);
       await expect(
         service.restockVariant({ variantId: 'var1', quantity: 1, returnRequestId: 'rr-x' }, 'admin1'),
       ).rejects.toThrow(new NotFoundException('Return request "rr-x" not found'));
@@ -89,7 +131,13 @@ describe('InventoryService', () => {
 
       await service.adjustVariantStock({ variantId: 'var1', delta: -3, reason: 'Damaged in storage' }, 'admin1');
 
-      expect(ledger.adjust).toHaveBeenCalledWith(tx, 'var1', -3, { actorId: 'admin1', note: 'Damaged in storage' });
+      expect(ledger.adjust).toHaveBeenCalledWith(
+        tx,
+        'var1',
+        -3,
+        { actorId: 'admin1', note: 'Damaged in storage' },
+        undefined,
+      );
     });
 
     it('refuses to remove units that are not available, and audits nothing', async () => {

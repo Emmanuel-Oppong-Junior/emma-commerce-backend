@@ -2,7 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, StockMovement, StockMovementReason, StockReservationStatus } from '../generated/prisma/client';
 import { OutboxService } from '../outbox/outbox.service';
 import { StockLedgerRepository } from './stock-ledger.repository';
-import { consumeEffect, crossesLowStock, releaseEffect, reserveEffect, StockEffect } from './stock';
+import {
+  consumeEffect,
+  crossesLowStock,
+  releaseEffect,
+  reserveEffect,
+  StockEffect,
+  transferInEffect,
+  transferOutEffect,
+} from './stock';
 
 type Tx = Prisma.TransactionClient;
 
@@ -14,9 +22,9 @@ export interface MovementSource {
 }
 
 /**
- * Every stock change (ADR-0008): a conditional update of the StockLevel at the default location, one StockMovement
- * row and, when available stock falls to the variant's low-stock threshold, an `inventory.low_stock.v1` event, all on
- * the caller's transaction. Reservation transitions are conditional on the reservation's status, so repeating a
+ * Every stock change (ADR-0008): a conditional update of one StockLevel (the default location unless a location is
+ * given), one StockMovement row and, when the variant's available stock summed over active locations falls to its
+ * low-stock threshold, an `inventory.low_stock.v1` event, all on the caller's transaction. Reservation transitions are conditional on the reservation's status, so repeating a
  * consume or release changes nothing.
  */
 @Injectable()
@@ -26,15 +34,16 @@ export class StockLedgerService {
     private readonly outbox: OutboxService,
   ) {}
 
-  /** Adds stock (a delivery, opening stock, or returned goods with RETURN_RESTOCK). */
+  /** Adds stock (a delivery, opening stock, or returned goods with RETURN_RESTOCK) at the location (default). */
   async receive(
     tx: Tx,
     variantId: string,
     quantity: number,
     reason: StockMovementReason,
     source: MovementSource,
+    locationId?: string,
   ): Promise<StockMovement> {
-    const locationId = await this.repository.defaultLocationId(tx);
+    locationId ??= await this.repository.defaultLocationId(tx);
     await this.repository.ensureLevel(tx, variantId, locationId);
     const movement = await this.move(
       tx,
@@ -48,8 +57,14 @@ export class StockLedgerService {
   }
 
   /** Changes on-hand stock by a signed delta; null when that would take it below the units reserved for orders. */
-  async adjust(tx: Tx, variantId: string, delta: number, source: MovementSource): Promise<StockMovement | null> {
-    const locationId = await this.repository.defaultLocationId(tx);
+  async adjust(
+    tx: Tx,
+    variantId: string,
+    delta: number,
+    source: MovementSource,
+    locationId?: string,
+  ): Promise<StockMovement | null> {
+    locationId ??= await this.repository.defaultLocationId(tx);
     await this.repository.ensureLevel(tx, variantId, locationId);
     return this.move(
       tx,
@@ -60,26 +75,73 @@ export class StockLedgerService {
     );
   }
 
-  /** Units of the variant that can still be sold or adjusted away at the default location. */
-  async available(tx: Tx, variantId: string): Promise<number> {
-    const level = await this.repository.findLevel(tx, variantId, await this.repository.defaultLocationId(tx));
+  /**
+   * Takes `quantity` units off the location's available stock for a transfer (TRANSFER, negative); null (nothing
+   * written) when fewer are available, so units reserved for orders never leave.
+   */
+  async transferOut(
+    tx: Tx,
+    variantId: string,
+    locationId: string,
+    quantity: number,
+    source: MovementSource,
+  ): Promise<StockMovement | null> {
+    await this.repository.ensureLevel(tx, variantId, locationId);
+    return this.move(tx, variantId, locationId, transferOutEffect(quantity), source);
+  }
+
+  /** Adds `quantity` units that arrived at the location on a transfer (TRANSFER, positive). */
+  async transferIn(
+    tx: Tx,
+    variantId: string,
+    locationId: string,
+    quantity: number,
+    source: MovementSource,
+  ): Promise<StockMovement> {
+    await this.repository.ensureLevel(tx, variantId, locationId);
+    const movement = await this.move(tx, variantId, locationId, transferInEffect(quantity), source);
+    if (!movement) throw new Error(`Stock level of variant "${variantId}" refused a transfer receipt of ${quantity}`);
+    return movement;
+  }
+
+  /** Units of the variant that can still be sold or adjusted away at the location (default). */
+  async available(tx: Tx, variantId: string, locationId?: string): Promise<number> {
+    locationId ??= await this.repository.defaultLocationId(tx);
+    const level = await this.repository.findLevel(tx, variantId, locationId);
     return level ? level.onHand - level.reserved : 0;
   }
 
-  /** Holds `quantity` units for an order line if that many are available; false (nothing written) otherwise. */
+  /**
+   * Holds `quantity` units for an order line at the line's location (default) if that many are available there;
+   * false (nothing written) otherwise.
+   */
   async reserve(
     tx: Tx,
-    line: { variantId: string; quantity: number; orderId: string; orderItemId: string; expiresAt: Date | null },
+    line: {
+      variantId: string;
+      quantity: number;
+      orderId: string;
+      orderItemId: string;
+      expiresAt: Date | null;
+      locationId?: string;
+    },
     actorId?: string,
   ): Promise<boolean> {
-    const locationId = await this.repository.defaultLocationId(tx);
+    const locationId = line.locationId ?? (await this.repository.defaultLocationId(tx));
     const movement = await this.move(tx, line.variantId, locationId, reserveEffect(line.quantity), {
       refType: 'Order',
       refId: line.orderId,
       actorId,
     });
     if (!movement) return false;
-    await this.repository.createReservation(tx, { ...line, locationId });
+    await this.repository.createReservation(tx, {
+      variantId: line.variantId,
+      quantity: line.quantity,
+      orderId: line.orderId,
+      orderItemId: line.orderItemId,
+      expiresAt: line.expiresAt,
+      locationId,
+    });
     return true;
   }
 
@@ -150,16 +212,18 @@ export class StockLedgerService {
     const after = await this.repository.applyEffect(tx, variantId, locationId, effect);
     if (!after) return null;
     const movement = await this.repository.insertMovement(tx, { variantId, locationId, ...effect, ...source });
-    const availableAfter = after.onHand - after.reserved;
-    const availableBefore = availableAfter - effect.onHandDelta + effect.reservedDelta;
-    if (availableAfter < availableBefore) {
+    const change = effect.onHandDelta - effect.reservedDelta;
+    if (change < 0) {
+      // The threshold is per variant, so it is checked against what is available across the active locations.
+      const total = await this.repository.activeAvailable(tx, variantId, locationId);
+      const availableBefore = total.available - (total.locationActive ? change : 0);
       const variant = await this.repository.findVariantForAlert(tx, variantId);
       const threshold = variant?.lowStockThreshold ?? null;
-      if (crossesLowStock(availableBefore, availableAfter, threshold)) {
+      if (crossesLowStock(availableBefore, total.available, threshold)) {
         await this.outbox.record(tx, {
           type: 'inventory.low_stock.v1',
           aggregateId: variantId,
-          payload: { variantId, locationId, available: availableAfter, movementId: movement.id },
+          payload: { variantId, locationId, available: total.available, movementId: movement.id },
         });
       }
     }

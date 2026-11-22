@@ -15,6 +15,7 @@ import { Decimal } from '@prisma/client/runtime/client';
 import GraphQLJSON from 'graphql-type-json';
 import { User } from '../../users/entities/user.entity';
 import { MoneyObject } from '../../commons/money/money.object';
+import { staffWith } from '../../iam/authorization/staff-permission.field-middleware';
 
 @ObjectType()
 export class Order {
@@ -86,6 +87,13 @@ export class Order {
 
   @Field(() => ID, { nullable: true, description: 'Set when fulfillmentType is PICKUP' })
   pickupLocationId?: string;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'The stock location the order is reserved at and fulfilled from (staff with order.view)',
+    middleware: [staffWith('order.view')],
+  })
+  stockLocationId?: string | null;
 
   @Field(() => GraphQLJSON, {
     nullable: true,
