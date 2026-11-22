@@ -7,9 +7,10 @@ import { RefundsService } from './refunds.service';
 import { RefundsResolver } from './refunds.resolver';
 import { RefundRepository } from './refund.repository';
 import { PaymentProvidersModule } from '../payment/providers/payment-providers.module';
+import { DisputesModule } from '../payment/disputes/disputes.module';
 
 @Module({
-  imports: [CommonsModule, PaymentProvidersModule],
+  imports: [CommonsModule, PaymentProvidersModule, DisputesModule],
   providers: [ReturnsService, ReturnsResolver, ReturnsRepository, RefundsService, RefundsResolver, RefundRepository],
   exports: [ReturnsService],
 })

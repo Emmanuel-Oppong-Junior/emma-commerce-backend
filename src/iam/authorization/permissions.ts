@@ -13,6 +13,7 @@ export const PERMISSION_CATALOGUE = {
   'payment.view': 'Read payments and refunds of every customer',
   'payment.record': 'Record cash collected for cash-on-delivery orders',
   'payment.manage': 'Soft-delete and restore payment records',
+  'payment.dispute.manage': 'Record chargebacks and disputes, add evidence notes and change their status',
   'payment.settings.manage': 'Set the payment provider keys and switch payment methods on or off (Owner only)',
   'promotion.manage': 'Manage promotions, coupon codes and their redemptions',
   'customer.group.manage': 'Manage customer groups and their members',

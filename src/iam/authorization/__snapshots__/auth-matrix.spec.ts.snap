@@ -4,6 +4,7 @@ exports[`Authorization matrix matches the reviewed matrix 1`] = `
 "
 Mutation addAttributeDefinition          permission: catalog.taxonomy.write
 Mutation addCustomerGroupMembers         permission: customer.group.manage
+Mutation addDisputeNote                  permission: payment.dispute.manage
 Mutation addProductsToTag                permission: catalog.taxonomy.write
 Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
@@ -62,6 +63,7 @@ Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
 Mutation processRefund                   permission: order.refund; step-up
 Mutation recordCodPayment                permission: payment.record
+Mutation recordDispute                   permission: payment.dispute.manage
 Mutation refreshToken                    public
 Mutation rejectReturn                    permission: return.manage
 Mutation removeAttributeDefinition       permission: catalog.taxonomy.write
@@ -99,6 +101,7 @@ Mutation updateCartItem                  authenticated
 Mutation updateCategory                  permission: catalog.taxonomy.write
 Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
+Mutation updateDisputeStatus             permission: payment.dispute.manage
 Mutation updateMyProfile                 authenticated
 Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
 Mutation updatePickupLocation            permission: shipping.manage
@@ -136,6 +139,8 @@ Query checkoutQuote                      authenticated
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
+Query dispute                            permission: payment.view
+Query disputes                           permission: payment.view
 Query failedJobs                         permission: jobs.manage
 Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only

@@ -1,4 +1,4 @@
-import { OrderStatus, ShipmentStatus } from '../generated/prisma/client';
+import { DisputeSource, OrderStatus, ShipmentStatus } from '../generated/prisma/client';
 import { JobQueue } from '../jobs/job-queues';
 import { JobMeta } from '../jobs/job-context';
 
@@ -23,6 +23,8 @@ export interface DomainEventPayloads {
   };
   'shipment.tracking_updated.v1': { orderId: string; shipmentId: string; trackingNumber: string };
   'payment.succeeded.v1': { orderId: string; paymentId: string; amount: string };
+  /** A chargeback or dispute was opened on a payment (from the provider webhook or by staff). */
+  'payment.dispute_opened.v1': { disputeId: string; paymentId: string; orderId: string; source: DisputeSource };
   /** Available stock of a variant at a location fell to its low-stock threshold (raised once per crossing). */
   'inventory.low_stock.v1': { variantId: string; locationId: string; available: number; movementId: string };
 }
@@ -44,6 +46,7 @@ export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
   'shipment.status_changed.v1': JobQueue.NOTIFICATIONS,
   'shipment.tracking_updated.v1': JobQueue.NOTIFICATIONS,
   'payment.succeeded.v1': JobQueue.NOTIFICATIONS,
+  'payment.dispute_opened.v1': JobQueue.NOTIFICATIONS,
   'inventory.low_stock.v1': JobQueue.NOTIFICATIONS,
 };
 

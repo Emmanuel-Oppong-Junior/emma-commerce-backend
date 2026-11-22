@@ -1996,6 +1996,35 @@ A rule fires when its count in the window, including the order or attempt being 
 
 ---
 
+#### Disputes and chargebacks (P3-E.2)
+
+A `Dispute` is a chargeback or dispute on a captured online payment (attempt). Paystack's dispute webhooks create and move it (source `PROVIDER`); staff can also record one by hand (source `STAFF`, e.g. a chargeback notice that arrived by email). An unresolved dispute blocks refunds on its payment (see `processPendingRefund`).
+
+`DisputeStatus`: `OPEN` → `AWAITING_EVIDENCE` (answer by `evidenceDueAt`) ⇄ `UNDER_REVIEW` (with the bank) → `WON` | `LOST` | `ACCEPTED` (the merchant accepted the claim). `OPEN` may also go straight to any later status; resolved statuses are final. Paystack mapping: `pending` → `OPEN`, `awaiting-merchant-feedback` → `AWAITING_EVIDENCE`, `awaiting-bank-feedback` → `UNDER_REVIEW`, `resolved` with resolution `declined` → `WON`, `merchant-accepted` → `ACCEPTED`; any other value leaves the status unchanged (logged; staff set it by hand). A late webhook the table does not allow (a reminder after the resolution) changes nothing.
+
+```typescript
+Dispute {
+  id: string; attemptId: string; orderId: string;
+  provider: PaymentProvider;           // PAYSTACK | CASH_ON_DELIVERY
+  providerDisputeId: string | null;    // unique per provider
+  amount: Money; currency: string;
+  category: string | null; reason: string | null;
+  status: DisputeStatus; source: DisputeSource;  // PROVIDER | STAFF
+  evidenceDueAt: DateTime | null; openedAt: DateTime; resolvedAt: DateTime | null;
+  createdById: string | null;          // staff who recorded it
+  notes: { id; authorId; body; createdAt }[];                                          // append-only, oldest first
+  history: { id; fromStatus: DisputeStatus | null; toStatus; source; actorId; providerStatus; note; createdAt }[];
+  createdAt: DateTime; updatedAt: DateTime;
+}
+```
+
+- `disputes(status: DisputeStatus, paymentId: ID, first: Int = 20): [Dispute!]!` and `dispute(id: ID!): Dispute!` (staff: `payment.view`; `NOT_FOUND` for an unknown id).
+- `recordDispute(input: { paymentId, amount: Decimal, category, reason, providerDisputeId, evidenceDueAt, status }): Dispute!` (`payment.dispute.manage`: Owner, Manager; audited): the payment must be a `CAPTURED` online payment (`CONFLICT` otherwise; cash on delivery `BAD_REQUEST`), the amount more than 0 and at most the payment amount (`BAD_REQUEST`), `status` `OPEN` (default), `AWAITING_EVIDENCE` or `UNDER_REVIEW`. A `providerDisputeId` already recorded → `CONFLICT`.
+- `updateDisputeStatus(input: { disputeId, status, note }): Dispute!` (`payment.dispute.manage`, audited): `CONFLICT` for a move the table does not allow.
+- `addDisputeNote(input: { disputeId, body }): Dispute!` (`payment.dispute.manage`, audited): appends an evidence note (max 5000 characters); notes cannot be edited or deleted.
+
+---
+
 #### `softDeletePayment` / `restorePayment` (ADMIN only)
 - **Type**: Mutation
 - **Roles**: `ADMIN` only (a `SUPER_ADMIN` gets `FORBIDDEN`)
@@ -2368,6 +2397,7 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 - **Args**: `refundId: ID!`
 - **Response**: `RefundEntity`
 - **Description**: Sends a `PENDING` refund through Paystack, or resends a `FAILED` one. Used for auto-refunds that payment verification queues when money arrives for a cancelled, already-paid or wrong-amount payment (these are never sent automatically). A refund linked to a return request also completes that request. Same cap, claim and error rules as `processRefund`: a second call gets `CONFLICT`.
+- **Disputes (P3-E.2):** every refund send (`processRefund`, `processPendingRefund`) is refused with `CONFLICT` and `extensions.reason: "PAYMENT_DISPUTED"` while the payment has an unresolved dispute (`OPEN`, `AWAITING_EVIDENCE`, `UNDER_REVIEW`): the bank may still return the money. A dispute resolved `LOST` or `ACCEPTED` counts as money already returned, so only what is left after it (and earlier refunds) can be refunded, else the same `CONFLICT`. Nothing is sent.
 
 ---
 
@@ -3031,14 +3061,15 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
 | `inventory.view` | `stockMovements`; the `Variant.onHand` and `Variant.reserved` fields |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
-| `order.view` | `getOrders`, `viewOrder` |
-| `order.manage` | `adminCancelOrder`, `deleteOrder` |
+| `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
+| `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |
 | `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |
 | `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund` |
 | `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
-| `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment` |
+| `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment`, `disputes`, `dispute` (P3-E.2) |
 | `payment.record` | `recordCodPayment` |
 | `payment.manage` | `softDeletePayment`, `restorePayment` |
+| `payment.dispute.manage` | `recordDispute`, `updateDisputeStatus`, `addDisputeNote` (P3-E.2; held by Owner and Manager) |
 | `promotion.manage` | `promotions`, `promotion`, `createPromotion`, `updatePromotion`, `deletePromotion`, `createCouponCode`, `updateCouponCode`, `deleteCouponCode`, `redemptions` (P2-B.1) |
 | `customer.group.manage` | `customerGroups`, `customerGroup` (with `members`), `createCustomerGroup`, `updateCustomerGroup`, `deleteCustomerGroup`, `addCustomerGroupMembers`, `removeCustomerGroupMembers` (P2-B.3; held by Owner and Manager) |
 | `pricelist.manage` | `priceLists`, `priceList` (with `entries`), and with step-up `createPriceList`, `updatePriceList`, `deletePriceList`, `setPriceListEntries`, `removePriceListEntries` (P2-W.1; held by Owner and Manager) |
@@ -3310,6 +3341,7 @@ The endpoint no longer answers `503` when processing fails: the stored event is 
 **Handled Events** (each delivery is stored once per event type and Paystack `data.id`, or `data.reference` when there is no id; repeats are no-ops):
 - `charge.success` → re-verifies the reference with Paystack; marks payment `CAPTURED`, order status → `CONFIRMED` (same rule as `verifyPayment`).
 - `charge.failed` → re-verifies; marks payment `FAILED`.
+- `charge.dispute.create` / `charge.dispute.remind` / `charge.dispute.resolve` (P3-E.2) → creates or updates the [dispute](#disputes-and-chargebacks-p3-e2) of the transaction (`data.transaction.reference`). Keyed per dispute id and `data.updatedAt`, so each reminder is processed once and a redelivery is a no-op. Only the validated dispute fields are stored (no customer or card data). A signed dispute body without a valid dispute id, transaction reference, amount (`refund_amount`, subunits) or currency gets `400` and nothing is stored.
 - All other events: stored and acknowledged (`200 OK`) but not processed.
 
 ---

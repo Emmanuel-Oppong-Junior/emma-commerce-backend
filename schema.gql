@@ -2,6 +2,12 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+input AddDisputeNoteInput {
+  """Evidence or a step taken; notes cannot be edited or deleted"""
+  body: String!
+  disputeId: ID!
+}
+
 input AddProductsToTagDto {
   """List of product IDs to be added to tag"""
   productIds: [ID!] = []
@@ -934,6 +940,88 @@ enum DeliveryOptions {
   SELECTED_REGIONS
 }
 
+"""A chargeback or dispute on a captured payment"""
+type DisputeEntity {
+  amount: Money!
+
+  """The disputed payment (attempt)"""
+  attemptId: ID!
+
+  """e.g. chargeback, fraud"""
+  category: String
+  createdAt: DateTime!
+
+  """The staff user who recorded it by hand"""
+  createdById: ID
+  currency: String!
+  evidenceDueAt: DateTime
+
+  """Status changes, oldest first"""
+  history: [DisputeHistoryEntry!]!
+  id: ID!
+
+  """Oldest first"""
+  notes: [DisputeNoteEntity!]!
+  openedAt: DateTime!
+  orderId: ID!
+  provider: PaymentProvider!
+
+  """The provider's dispute id (unique per provider)"""
+  providerDisputeId: String
+  reason: String
+  resolvedAt: DateTime
+
+  """Who opened it"""
+  source: DisputeSource!
+  status: DisputeStatus!
+  updatedAt: DateTime!
+}
+
+"""One status change of a dispute"""
+type DisputeHistoryEntry {
+  """The staff user, for STAFF changes"""
+  actorId: ID
+  createdAt: DateTime!
+
+  """Null for the entry that opened the dispute"""
+  fromStatus: DisputeStatus
+  id: ID!
+  note: String
+
+  """The provider's own status, for PROVIDER changes"""
+  providerStatus: String
+  source: DisputeSource!
+  toStatus: DisputeStatus!
+}
+
+"""A staff evidence note; notes are append-only"""
+type DisputeNoteEntity {
+  authorId: ID!
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+}
+
+"""
+PROVIDER: from the payment provider webhook; STAFF: recorded or changed by staff
+"""
+enum DisputeSource {
+  PROVIDER
+  STAFF
+}
+
+"""
+OPEN, AWAITING_EVIDENCE (answer by evidenceDueAt), UNDER_REVIEW (with the bank); resolved: WON, LOST, ACCEPTED (the merchant accepted the claim)
+"""
+enum DisputeStatus {
+  ACCEPTED
+  AWAITING_EVIDENCE
+  LOST
+  OPEN
+  UNDER_REVIEW
+  WON
+}
+
 """
 A background job that failed its last attempt. Job data is never exposed.
 """
@@ -1058,6 +1146,9 @@ type Mutation {
 
   """Admin: add customers to a group (members already in it are kept)"""
   addCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
+
+  """Append an evidence note to a dispute. Owner, Manager, audited"""
+  addDisputeNote(input: AddDisputeNoteInput!): DisputeEntity!
 
   """Add products to a tag"""
   addProductsToTag(tagId: String!, updateDiscountInput: AddProductsToTagDto!): Tag!
@@ -1253,6 +1344,11 @@ type Mutation {
   """
   recordCodPayment(orderId: String!): Payment!
 
+  """
+  Record a dispute against a captured online payment by hand (e.g. a chargeback notice by email). Owner, Manager, audited
+  """
+  recordDispute(input: RecordDisputeInput!): DisputeEntity!
+
   """Refresh access and refresh tokens using a valid refresh token"""
   refreshToken(input: RefreshTokenInput!): AuthEntity!
 
@@ -1383,6 +1479,11 @@ type Mutation {
 
   """Admin: rename or describe a customer group"""
   updateCustomerGroup(id: ID!, input: UpdateCustomerGroupInput!): CustomerGroup!
+
+  """
+  Move a dispute to another status (OPEN -> AWAITING_EVIDENCE/UNDER_REVIEW -> WON/LOST/ACCEPTED); CONFLICT for a move the table does not allow. Owner, Manager, audited
+  """
+  updateDisputeStatus(input: UpdateDisputeStatusInput!): DisputeEntity!
 
   """
   Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.
@@ -1768,6 +1869,11 @@ type PaymentMethodSettings {
   cashOnDeliveryEnabled: Boolean!
   mobileMoneyPaymentProvider: OnlinePaymentProvider!
   mobileMoneyPaymentsEnabled: Boolean!
+}
+
+enum PaymentProvider {
+  CASH_ON_DELIVERY
+  PAYSTACK
 }
 
 """Test or live keys, from the secret key prefix"""
@@ -2421,6 +2527,21 @@ type Query {
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
 
+  """One dispute with its notes and history (staff)"""
+  dispute(id: ID!): DisputeEntity!
+
+  """
+  Disputes and chargebacks, newest first, optionally by status or payment (staff)
+  """
+  disputes(
+    """1-50, newest first"""
+    first: Int! = 20
+
+    """Only the disputes of this payment (attempt)"""
+    paymentId: ID
+    status: DisputeStatus
+  ): [DisputeEntity!]!
+
   """
   Background jobs of one queue that failed their last attempt, newest first (super admin only; audited)
   """
@@ -2745,6 +2866,23 @@ type QuoteTaxLine {
 
   """The tax rate it comes from"""
   taxId: ID!
+}
+
+input RecordDisputeInput {
+  """More than 0, at most the payment amount"""
+  amount: Decimal!
+  category: String
+  evidenceDueAt: DateTime
+
+  """The captured online payment (attempt) disputed"""
+  paymentId: ID!
+
+  """The provider's dispute id, when it has one"""
+  providerDisputeId: String
+  reason: String
+
+  """OPEN (default), AWAITING_EVIDENCE or UNDER_REVIEW"""
+  status: DisputeStatus
 }
 
 """One promotion used by one order (staff view)"""
@@ -3359,6 +3497,14 @@ input UpdateCouponCodeInput {
 input UpdateCustomerGroupInput {
   description: String
   name: String
+}
+
+input UpdateDisputeStatusInput {
+  disputeId: ID!
+
+  """Kept in the dispute history"""
+  note: String
+  status: DisputeStatus!
 }
 
 """Payment-method switches to change; omitted fields keep their value"""

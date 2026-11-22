@@ -3,6 +3,7 @@ import { Prisma } from '../generated/prisma/client';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { PAYSTACK_WEBHOOK_CRYPTO_ALGO } from './constant';
 import { PaystackEvent } from './enums/paystack-event.enum';
+import { isPaystackDisputeEvent, parsePaystackDispute } from './paystack-dispute';
 
 /** A webhook whose signature checked out, reduced to what the inbox stores and the processor needs. */
 export interface PaystackWebhookEvent {
@@ -41,6 +42,16 @@ export function parsePaystackWebhook(rawBody: Buffer): PaystackWebhookEvent {
   }
 
   const { event, data } = body;
+  if (isPaystackDisputeEvent(event)) {
+    // Only the validated, provider-neutral notice is stored: the raw dispute carries the customer and card details.
+    const dispute = parsePaystackDispute(event, data);
+    return {
+      event,
+      eventKey: disputeEventKey(event, dispute.providerDisputeId, data.updatedAt, rawBody),
+      reference: dispute.reference,
+      payload: { event, dispute } as unknown as Prisma.InputJsonValue,
+    };
+  }
   const reference = typeof data.reference === 'string' && data.reference !== '' ? data.reference : null;
   const storedData = Object.fromEntries(Object.entries(data).filter(([key]) => !UNSTORED_DATA_FIELDS.includes(key)));
   return {
@@ -61,6 +72,18 @@ export function webhookEventKey(event: string, data: Record<string, unknown>, ra
   if (typeof data.id === 'number' || (typeof data.id === 'string' && data.id !== '')) return `${event}:id:${data.id}`;
   if (typeof data.reference === 'string' && data.reference !== '') return `${event}:ref:${data.reference}`;
   return `${event}:sha256:${createHash('sha256').update(rawBody).digest('hex')}`;
+}
+
+/**
+ * One dispute gets several reminders, so its events are keyed by the dispute and its `updatedAt`, which changes with
+ * every occurrence while a redelivery repeats it. Without `updatedAt` the body digest still collapses redeliveries.
+ */
+function disputeEventKey(event: string, disputeId: string, updatedAt: unknown, rawBody: Buffer): string {
+  const version =
+    typeof updatedAt === 'string' && updatedAt !== ''
+      ? updatedAt
+      : `sha256:${createHash('sha256').update(rawBody).digest('hex')}`;
+  return `${event}:dispute:${disputeId}:${version}`;
 }
 
 /** Events that settle a payment attempt by re-verifying its reference with Paystack. */

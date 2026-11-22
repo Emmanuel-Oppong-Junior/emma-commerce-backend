@@ -14,7 +14,7 @@ const OPERATION_NAME_PATTERN = /^[_A-Za-z][_0-9A-Za-z]{0,63}$/;
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']);
 const DURATION_BUCKETS_SECONDS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
 
-export type WebhookFailureReason = 'invalid_signature' | 'settlement_failed';
+export type WebhookFailureReason = 'invalid_signature' | 'settlement_failed' | 'dispute_failed';
 
 export type VelocityCheckStage = 'screen' | 'record';
 

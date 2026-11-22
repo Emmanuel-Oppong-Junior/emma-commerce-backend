@@ -13,6 +13,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentProvidersModule } from './providers/payment-providers.module';
 import { FraudModule } from '../fraud/fraud.module';
+import { DisputesModule } from './disputes/disputes.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { FraudModule } from '../fraud/fraud.module';
     InventoryModule,
     PaymentProvidersModule,
     FraudModule,
+    DisputesModule,
   ],
   providers: [
     PaymentResolver,

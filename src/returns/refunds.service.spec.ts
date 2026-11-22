@@ -44,6 +44,7 @@ describe('RefundsService', () => {
   };
   const paystack = { createRefund: jest.fn() };
   const logger = { log: jest.fn(), error: jest.fn(), warn: jest.fn() };
+  const disputes = { assertRefundAllowed: jest.fn() };
   let auditService: ReturnType<typeof createAuditServiceMock>;
   let service: RefundsService;
 
@@ -55,6 +56,7 @@ describe('RefundsService', () => {
       providerRegistryWith(paystack),
       auditService as unknown as AuditService,
       logger as unknown as LoggerService,
+      disputes as never,
     );
     repository.claimForSending.mockImplementation(async (_id, check, onClaimed) => {
       check(ledger, refund);
@@ -144,6 +146,20 @@ describe('RefundsService', () => {
     repository.claimForSending.mockRejectedValue(new ConflictException('Refund "refund1" is SENDING'));
 
     await expect(service.send('refund1', 'admin1')).rejects.toThrow(ConflictException);
+    expect(paystack.createRefund).not.toHaveBeenCalled();
+  });
+
+  it('neither claims nor calls Paystack when the payment is disputed', async () => {
+    disputes.assertRefundAllowed.mockRejectedValueOnce(
+      new ConflictException({
+        message: 'Payment "pay1" has an unresolved dispute',
+        extensions: { reason: 'PAYMENT_DISPUTED' },
+      }),
+    );
+
+    await expect(service.send('refund1', 'admin1')).rejects.toThrow(ConflictException);
+    expect(disputes.assertRefundAllowed).toHaveBeenCalledWith('refund1');
+    expect(repository.claimForSending).not.toHaveBeenCalled();
     expect(paystack.createRefund).not.toHaveBeenCalled();
   });
 

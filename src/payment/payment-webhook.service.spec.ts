@@ -29,6 +29,7 @@ describe('PaymentWebhookService', () => {
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const queue = { add: jest.fn() };
   const metrics = { recordWebhookFailure: jest.fn() };
+  const disputes = { applyProviderNotice: jest.fn() };
   const service = new PaymentWebhookService(
     webhookEvents as never,
     paymentService as never,
@@ -36,6 +37,7 @@ describe('PaymentWebhookService', () => {
     logger as never,
     queue as never,
     metrics as never,
+    disputes as never,
   );
 
   beforeEach(() => {
@@ -166,6 +168,78 @@ describe('PaymentWebhookService', () => {
       expect(webhookEvents.recordFailure).toHaveBeenCalledWith('evt1', 1, 'Payment with reference "ref1" not found');
       expect(webhookEvents.markProcessed).not.toHaveBeenCalled();
       expect(metrics.recordWebhookFailure).toHaveBeenCalledWith('settlement_failed');
+    });
+
+    describe('dispute events', () => {
+      const notice = {
+        stage: 'OPENED',
+        providerDisputeId: '9001',
+        reference: 'ref1',
+        amount: '100.00',
+        currency: 'GHS',
+        category: 'chargeback',
+        status: 'AWAITING_EVIDENCE',
+        providerStatus: 'awaiting-merchant-feedback',
+        evidenceDueAt: null,
+        resolvedAt: null,
+      };
+      const disputeEvent = () => ({
+        ...storedEvent({
+          event: 'charge.dispute.create',
+          payload: { event: 'charge.dispute.create', dispute: notice },
+        }),
+        attempts: 0,
+      });
+
+      it('applies the stored dispute notice instead of verifying a payment', async () => {
+        webhookEvents.findById.mockResolvedValue(disputeEvent());
+
+        await service.processStoredEvent('evt1');
+
+        expect(disputes.applyProviderNotice).toHaveBeenCalledWith('PAYSTACK', notice, 'evt1');
+        expect(paymentService.verifyPayment).not.toHaveBeenCalled();
+        expect(webhookEvents.markProcessed).toHaveBeenCalledWith('evt1', 1);
+      });
+
+      it('records a failed dispute update and throws so the queue retries', async () => {
+        webhookEvents.findById.mockResolvedValue(disputeEvent());
+        disputes.applyProviderNotice.mockRejectedValueOnce(new NotFoundException('matches no PAYSTACK payment'));
+
+        await expect(service.processStoredEvent('evt1')).rejects.toThrow('matches no PAYSTACK payment');
+        expect(metrics.recordWebhookFailure).toHaveBeenCalledWith('dispute_failed');
+      });
+
+      it('stores a signed dispute webhook as the neutral notice, without customer data, and queues it', async () => {
+        const raw = body('charge.dispute.create', {
+          id: 9001,
+          refund_amount: 10000,
+          currency: 'GHS',
+          status: 'awaiting-merchant-feedback',
+          transaction: { reference: 'ref1', amount: 10000 },
+          customer: { email: 'buyer@example.com' },
+          updatedAt: '2026-11-21T09:00:00.000Z',
+        });
+        webhookEvents.record.mockResolvedValue({ created: true, event: disputeEvent() });
+
+        await service.handlePaystackWebhook(raw, signed(raw));
+
+        const recorded = webhookEvents.record.mock.calls[0][0];
+        expect(recorded).toMatchObject({
+          event: 'charge.dispute.create',
+          eventKey: 'charge.dispute.create:dispute:9001:2026-11-21T09:00:00.000Z',
+          reference: 'ref1',
+          payload: { event: 'charge.dispute.create', dispute: { providerDisputeId: '9001', amount: '100.00' } },
+        });
+        expect(JSON.stringify(recorded.payload)).not.toContain('buyer@example.com');
+        expect(queue.add).toHaveBeenCalled();
+      });
+
+      it('refuses a signed dispute webhook with an invalid payload (BAD_REQUEST), storing nothing', async () => {
+        const raw = body('charge.dispute.create', { id: 9001, currency: 'GHS' });
+
+        await expect(service.handlePaystackWebhook(raw, signed(raw))).rejects.toThrow(BadRequestException);
+        expect(webhookEvents.record).not.toHaveBeenCalled();
+      });
     });
 
     it('does nothing for an event already processed (by the sweep or a redelivery)', async () => {
