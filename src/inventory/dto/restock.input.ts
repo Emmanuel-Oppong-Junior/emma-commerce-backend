@@ -25,4 +25,13 @@ export class RestockVariantInput {
   @IsOptional()
   @IsString()
   returnRequestId?: string;
+
+  @Field(() => ID, {
+    nullable: true,
+    description:
+      "Where the stock is received; defaults to the location of the return's order, else the default location",
+  })
+  @IsOptional()
+  @IsString()
+  locationId?: string;
 }

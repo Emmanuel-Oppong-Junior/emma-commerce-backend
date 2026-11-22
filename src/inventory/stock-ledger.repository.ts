@@ -107,12 +107,32 @@ export class StockLedgerRepository {
     return count === 1;
   }
 
+  /** The variant's available stock summed over active locations, and whether `locationId` is one of them. */
+  async activeAvailable(
+    db: Db,
+    variantId: string,
+    locationId: string,
+  ): Promise<{ available: number; locationActive: boolean }> {
+    const [row] = await db.$queryRaw<{ available: number; locationActive: boolean }[]>`
+      SELECT
+        (SELECT COALESCE(sum(sl."onHand" - sl."reserved"), 0)::int
+         FROM "StockLevel" sl JOIN "StockLocation" l ON l."id" = sl."locationId"
+         WHERE sl."variantId" = ${variantId} AND l."isActive") AS available,
+        (SELECT COALESCE(bool_or(l."isActive"), false) FROM "StockLocation" l WHERE l."id" = ${locationId}) AS "locationActive"`;
+    return row;
+  }
+
   async findVariantForAlert(db: Db, variantId: string): Promise<{ lowStockThreshold: number | null } | null> {
     return db.variant.findUnique({ where: { id: variantId }, select: { lowStockThreshold: true } });
   }
 
-  async returnRequestExists(db: Db, id: string): Promise<boolean> {
-    return (await db.returnRequest.count({ where: { id } })) > 0;
+  /** The location the return request's order was fulfilled from; null when the request does not exist. */
+  async findReturnRequestLocation(db: Db, id: string): Promise<{ stockLocationId: string | null } | null> {
+    const request = await db.returnRequest.findUnique({
+      where: { id },
+      select: { order: { select: { stockLocationId: true } } },
+    });
+    return request && { stockLocationId: request.order.stockLocationId };
   }
 
   /** Movements newest first, a page of `take` after the `after` cursor (a movement id). */

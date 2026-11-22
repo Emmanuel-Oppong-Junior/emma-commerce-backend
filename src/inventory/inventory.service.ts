@@ -27,14 +27,18 @@ export class InventoryService {
 
   /**
    * Adds stock to a variant as a RECEIPT, or as a RETURN_RESTOCK when it is goods from a return request, with an
-   * audit entry in the same transaction.
-   * @throws NotFoundException if the variant or the return request does not exist.
+   * audit entry in the same transaction. Returned goods go back to the location their order was fulfilled from unless
+   * a location is given.
+   * @throws NotFoundException if the variant, the return request or the location does not exist.
    */
   async restockVariant(input: RestockVariantInput, actorId: string): Promise<StockMovement> {
     return this.prisma.$transaction(async (tx) => {
       await this.ensureVariant(tx, input.variantId);
-      if (input.returnRequestId && !(await this.repository.returnRequestExists(tx, input.returnRequestId))) {
-        throw new NotFoundException(`Return request "${input.returnRequestId}" not found`);
+      let locationId = input.locationId && (await this.ensureLocation(tx, input.locationId));
+      if (input.returnRequestId) {
+        const returned = await this.repository.findReturnRequestLocation(tx, input.returnRequestId);
+        if (!returned) throw new NotFoundException(`Return request "${input.returnRequestId}" not found`);
+        locationId ||= returned.stockLocationId ?? undefined;
       }
       const movement = await this.ledger.receive(
         tx,
@@ -46,6 +50,7 @@ export class InventoryService {
           note: input.reason ?? (input.returnRequestId ? 'Returned goods restocked' : 'Manual restock'),
           ...(input.returnRequestId && { refType: 'ReturnRequest', refId: input.returnRequestId }),
         },
+        locationId || undefined,
       );
       await this.auditStockChange(tx, movement);
       return movement;
@@ -60,9 +65,16 @@ export class InventoryService {
   async adjustVariantStock(input: AdjustVariantStockInput, actorId: string): Promise<StockMovement> {
     return this.prisma.$transaction(async (tx) => {
       await this.ensureVariant(tx, input.variantId);
-      const movement = await this.ledger.adjust(tx, input.variantId, input.delta, { actorId, note: input.reason });
+      const locationId = input.locationId && (await this.ensureLocation(tx, input.locationId));
+      const movement = await this.ledger.adjust(
+        tx,
+        input.variantId,
+        input.delta,
+        { actorId, note: input.reason },
+        locationId || undefined,
+      );
       if (!movement) {
-        const available = await this.ledger.available(tx, input.variantId);
+        const available = await this.ledger.available(tx, input.variantId, locationId || undefined);
         throw new BadRequestException(
           `Cannot remove ${-input.delta} units from variant "${input.variantId}": only ${available} available`,
         );
@@ -82,6 +94,12 @@ export class InventoryService {
   private async ensureVariant(tx: Prisma.TransactionClient, variantId: string): Promise<void> {
     const exists = await tx.variant.count({ where: { id: variantId } });
     if (!exists) throw new NotFoundException(`Variant "${variantId}" not found`);
+  }
+
+  private async ensureLocation(tx: Prisma.TransactionClient, locationId: string): Promise<string> {
+    const exists = await tx.stockLocation.count({ where: { id: locationId } });
+    if (!exists) throw new NotFoundException(`Stock location "${locationId}" not found`);
+    return locationId;
   }
 
   private async auditStockChange(tx: Prisma.TransactionClient, movement: StockMovement): Promise<void> {

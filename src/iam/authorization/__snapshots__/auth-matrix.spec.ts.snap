@@ -39,6 +39,7 @@ Mutation createReturnRequest             authenticated
 Mutation createReview                    customer only
 Mutation createShippingZone              permission: shipping.manage
 Mutation createStaffRole                 permission: staff.manage; step-up
+Mutation createStockLocation             permission: inventory.location.manage
 Mutation createSubCategory               permission: catalog.taxonomy.write
 Mutation createTag                       permission: catalog.taxonomy.write
 Mutation createTax                       permission: tax.manage; step-up
@@ -56,6 +57,7 @@ Mutation deleteProductType               permission: catalog.taxonomy.write
 Mutation deletePromotion                 permission: promotion.manage; step-up
 Mutation deleteReview                    customer only
 Mutation deleteShippingZone              permission: shipping.manage
+Mutation deleteStockLocation             permission: inventory.location.manage
 Mutation deleteTag                       permission: catalog.taxonomy.write
 Mutation deleteTax                       permission: tax.manage; step-up
 Mutation deleteVariant                   permission: catalog.product.write
@@ -90,8 +92,10 @@ Mutation restorePayment                  permission: payment.manage
 Mutation restoreProduct                  permission: catalog.product.write
 Mutation retryFailedJob                  permission: jobs.manage
 Mutation setPaystackConfig               permission: payment.settings.manage; step-up
+Mutation setPickupLocationFulfilmentLocations permission: inventory.location.manage
 Mutation setPriceListEntries             permission: pricelist.manage; step-up
 Mutation setShippingZoneCashOnDelivery   permission: payment.settings.manage; step-up
+Mutation setShippingZoneFulfilmentLocations permission: inventory.location.manage
 Mutation signIn                          public
 Mutation signInWithFacebook              public
 Mutation signInWithGoogle                public
@@ -121,6 +125,7 @@ Mutation updateShipmentStatus            permission: order.fulfil
 Mutation updateShipping                  permission: order.fulfil
 Mutation updateShippingZone              permission: shipping.manage
 Mutation updateStaffRole                 permission: staff.manage; step-up
+Mutation updateStockLocation             permission: inventory.location.manage
 Mutation updateStoreSettings             permission: store.settings.manage
 Mutation updateSubCategory               permission: catalog.taxonomy.write
 Mutation updateTag                       permission: catalog.taxonomy.write
@@ -187,6 +192,8 @@ Query shippingZones                      permission: shipping.manage
 Query staffMembers                       permission: staff.view
 Query staffPermissions                   permission: staff.view
 Query staffRoles                         permission: staff.view
+Query stockLocation                      permission: inventory.view
+Query stockLocations                     permission: inventory.view
 Query stockMovements                     permission: inventory.view
 Query storeSettings                      public
 Query subCategories                      authenticated

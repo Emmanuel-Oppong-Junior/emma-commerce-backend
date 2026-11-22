@@ -5,6 +5,7 @@ export const PERMISSION_CATALOGUE = {
   'catalog.media.upload': 'Upload catalogue images',
   'inventory.view': 'Read stock levels and the stock ledger',
   'inventory.adjust': 'Restock and adjust product and variant stock',
+  'inventory.location.manage': 'Manage stock locations and which of them fulfil each shipping zone and pickup point',
   'order.view': 'Read every order',
   'order.manage': 'Cancel and delete orders',
   'order.fulfil': 'Move shipments through picking, packing, dispatch and delivery, and set carrier and tracking',

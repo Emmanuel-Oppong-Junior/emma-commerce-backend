@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ORDER_INCLUDE, OrderSnapshot, OrdersRepository } from './order.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { Address, FulfillmentType, Order, OrderItem, Prisma, User } from '../generated/prisma/client';
+import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
 
 const fixedDate = new Date('2025-01-01T00:00:00.000Z');
 
@@ -402,7 +403,13 @@ describe('OrdersRepository', () => {
       expect(result).toEqual(mockVariant);
       expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({
         where: { id: 'var1' },
-        include: { product: true, stockLevels: { select: { onHand: true, reserved: true } } },
+        include: {
+          product: true,
+          stockLevels: {
+            where: { location: SERVING_LOCATION },
+            select: { onHand: true, reserved: true, locationId: true },
+          },
+        },
       });
     });
   });

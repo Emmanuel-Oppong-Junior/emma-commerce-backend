@@ -127,7 +127,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       sku: 'KETTLE',
       optionValues: {},
       price: new Prisma.Decimal(500),
-      stockLevels: [{ onHand: 5, reserved: 0 }],
+      stockLevels: [{ onHand: 5, reserved: 0, locationId: 'loc_main' }],
       isActive: true,
       product: {
         id: 'product-1',
@@ -174,6 +174,10 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       { assertOrderPaymentMethod: jest.fn() } as never,
       velocityStub() as never,
       codRiskStub() as never,
+      {
+        candidatesFor: jest.fn().mockResolvedValue(['loc_main']),
+        lockFulfilmentLocation: jest.fn().mockResolvedValue({ locationId: 'loc_main' }),
+      } as never,
     );
 
     const params = {

@@ -120,6 +120,7 @@ export class OrdersRepository {
       contactEmail: string;
       contactPhone: string;
       codPhone?: string;
+      stockLocationId?: string;
     },
   ): Promise<OrderWithItems> {
     const { snapshot } = orderDetails;
@@ -146,6 +147,7 @@ export class OrdersRepository {
         contactEmail: orderDetails.contactEmail,
         contactPhone: orderDetails.contactPhone,
         codPhone: orderDetails.codPhone,
+        stockLocationId: orderDetails.stockLocationId,
         statusEvents: { create: { from: null, to: OrderStatus.PLACED, actorId: userId } },
       },
     });

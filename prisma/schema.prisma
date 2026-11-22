@@ -464,6 +464,10 @@ model Order {
   disputes                Dispute[]
   /// Cash on delivery only: the account's verified phone (E.164) the order was placed under (P3-B.2 open-order cap)
   codPhone                String?
+  /// Where the order's stock is reserved and fulfilled from, chosen at placement (P4-A.1); null for orders without
+  /// reservations
+  stockLocationId         String?
+  stockLocation           StockLocation?     @relation(fields: [stockLocationId], references: [id], onDelete: Restrict)
 
   @@index([userId, status])
   @@index([codPhone])
@@ -923,32 +927,36 @@ model ReturnRequest {
 }
 
 model PickupLocation {
-  id        String   @id @default(cuid())
-  name      String
-  address   String
-  city      String
-  state     String
-  country   String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  orders    Order[]
+  id                  String                        @id @default(cuid())
+  name                String
+  address             String
+  city                String
+  state               String
+  country             String
+  isActive            Boolean                       @default(true)
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
+  orders              Order[]
+  /// Stock locations that fulfil orders collected here, by priority; none = the default location
+  fulfilmentLocations PickupLocationStockLocation[]
 
   @@index([isActive])
 }
 
 model ShippingZone {
-  id         String      @id @default(cuid())
-  name       String      @unique
-  cities     String[]
-  fee        Decimal     @db.Decimal(14, 2)
-  isActive   Boolean     @default(true)
+  id                  String                      @id @default(cuid())
+  name                String                      @unique
+  cities              String[]
+  fee                 Decimal                     @db.Decimal(14, 2)
+  isActive            Boolean                     @default(true)
   /// Cash on delivery may be chosen for deliveries to this zone (P3-B.2)
-  codEnabled Boolean     @default(true)
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  codEnabled          Boolean                     @default(true)
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
   /// Free-shipping promotions limited to this zone
-  promotions Promotion[]
+  promotions          Promotion[]
+  /// Stock locations that fulfil deliveries here, by priority; none = the default location
+  fulfilmentLocations ShippingZoneStockLocation[]
 
   @@index([isActive])
 }
@@ -1194,21 +1202,25 @@ enum StockLocationType {
   PICKUP_POINT
 }
 
-/// Where stock is held (ADR-0008). Each store has exactly one default location, created by migration; all stock lives
-/// there until fulfilment picks locations by rule.
+/// Where stock is held (ADR-0008). Each store has exactly one default location (created by migration, always active);
+/// an order is fulfilled from the first location of its shipping zone's or pickup point's list that can fill every
+/// line, or from the default when that list is empty (P4-A.1). An inactive location is never chosen.
 model StockLocation {
-  id           String             @id @default(cuid())
-  storeId      String
-  name         String
-  type         StockLocationType  @default(WAREHOUSE)
-  isActive     Boolean            @default(true)
-  isDefault    Boolean            @default(false)
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  store        Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
-  levels       StockLevel[]
-  reservations StockReservation[]
-  movements    StockMovement[]
+  id              String                        @id @default(cuid())
+  storeId         String
+  name            String
+  type            StockLocationType             @default(WAREHOUSE)
+  isActive        Boolean                       @default(true)
+  isDefault       Boolean                       @default(false)
+  createdAt       DateTime                      @default(now())
+  updatedAt       DateTime                      @updatedAt
+  store           Store                         @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  levels          StockLevel[]
+  reservations    StockReservation[]
+  movements       StockMovement[]
+  shippingZones   ShippingZoneStockLocation[]
+  pickupLocations PickupLocationStockLocation[]
+  orders          Order[]
 
   @@unique([storeId], map: "StockLocation_one_default_per_store", where: raw("\"isDefault\""))
 }
@@ -1259,6 +1271,32 @@ model StockReservation {
   @@unique([orderItemId, locationId])
   @@index([orderId])
   @@index([variantId, locationId, status])
+}
+
+/// A stock location that fulfils deliveries to a shipping zone, tried in ascending priority (P4-A.1).
+model ShippingZoneStockLocation {
+  shippingZoneId String
+  locationId     String
+  priority       Int
+  shippingZone   ShippingZone  @relation(fields: [shippingZoneId], references: [id], onDelete: Cascade)
+  location       StockLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([shippingZoneId, locationId])
+  @@unique([shippingZoneId, priority])
+  @@index([locationId])
+}
+
+/// A stock location that fulfils orders collected at a pickup point, tried in ascending priority (P4-A.1).
+model PickupLocationStockLocation {
+  pickupLocationId String
+  locationId       String
+  priority         Int
+  pickupLocation   PickupLocation @relation(fields: [pickupLocationId], references: [id], onDelete: Cascade)
+  location         StockLocation  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@id([pickupLocationId, locationId])
+  @@unique([pickupLocationId, priority])
+  @@index([locationId])
 }
 
 enum StockMovementReason {

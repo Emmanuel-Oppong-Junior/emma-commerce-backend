@@ -1,5 +1,5 @@
 import { Field, ID, InputType, Int } from '@nestjs/graphql';
-import { IsInt, IsNotEmpty, IsString, MaxLength, NotEquals } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, NotEquals } from 'class-validator';
 
 @InputType()
 export class AdjustVariantStockInput {
@@ -17,4 +17,12 @@ export class AdjustVariantStockInput {
   @IsNotEmpty()
   @MaxLength(500)
   reason: string;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'Where the stock changes; defaults to the default location',
+  })
+  @IsOptional()
+  @IsString()
+  locationId?: string;
 }

@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { CartRepository } from './cart.repository';
 import { PrismaService } from '../prisma/prisma.service';
 import { Cart, CartItem, Prisma, Product, Variant } from '../generated/prisma/client';
+import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
 
 const mockCart = {
   id: 'cart1',
@@ -110,7 +111,13 @@ describe('CartRepository', () => {
       expect(result).toEqual(mockVariant);
       expect(mockPrismaVariant.findUnique).toHaveBeenCalledWith({
         where: { id: 'var1' },
-        include: { product: true, stockLevels: { select: { onHand: true, reserved: true } } },
+        include: {
+          product: true,
+          stockLevels: {
+            where: { location: SERVING_LOCATION },
+            select: { onHand: true, reserved: true, locationId: true },
+          },
+        },
       });
     });
 

@@ -38,7 +38,7 @@ describe('CartService', () => {
     productId: 'prod1',
     sku: 'TSHIRT-M',
     price: new Prisma.Decimal('19.99'),
-    stockLevels: [{ onHand: 100, reserved: 0 }],
+    stockLevels: [{ onHand: 100, reserved: 0, locationId: 'loc_main' }],
     isActive: true,
     product: mockProduct,
   };
@@ -129,7 +129,10 @@ describe('CartService', () => {
     });
 
     it("checks stock against the variant's available stock", async () => {
-      mockCartRepository.findVariant.mockResolvedValue({ ...mockVariant, stockLevels: [{ onHand: 4, reserved: 3 }] });
+      mockCartRepository.findVariant.mockResolvedValue({
+        ...mockVariant,
+        stockLevels: [{ onHand: 4, reserved: 3, locationId: 'loc_main' }],
+      });
       mockCartRepository.findOrCreate.mockResolvedValue({ id: 'cart1', userId: mockUserId });
       mockCartRepository.findCartItem.mockResolvedValue(null);
 
@@ -140,7 +143,10 @@ describe('CartService', () => {
     });
 
     it('counts the quantity already in the cart against the variant stock', async () => {
-      mockCartRepository.findVariant.mockResolvedValue({ ...mockVariant, stockLevels: [{ onHand: 3, reserved: 0 }] });
+      mockCartRepository.findVariant.mockResolvedValue({
+        ...mockVariant,
+        stockLevels: [{ onHand: 3, reserved: 0, locationId: 'loc_main' }],
+      });
       mockCartRepository.findOrCreate.mockResolvedValue({ id: 'cart1', userId: mockUserId });
       mockCartRepository.findCartItem.mockResolvedValue({ id: 'item1', quantity: 2 });
 
@@ -230,7 +236,10 @@ describe('CartService', () => {
 
     it('should throw BadRequestException if quantity exceeds stock', async () => {
       mockCartRepository.findByUser.mockResolvedValue(mockCart);
-      mockCartRepository.findVariant.mockResolvedValue({ ...mockVariant, stockLevels: [{ onHand: 1, reserved: 0 }] });
+      mockCartRepository.findVariant.mockResolvedValue({
+        ...mockVariant,
+        stockLevels: [{ onHand: 1, reserved: 0, locationId: 'loc_main' }],
+      });
 
       await expect(service.updateCartItem(mockUserId, { cartItemId: 'item1', quantity: 5 })).rejects.toThrow(
         BadRequestException,

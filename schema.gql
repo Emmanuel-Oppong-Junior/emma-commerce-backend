@@ -72,6 +72,9 @@ input AdjustVariantStockInput {
   """
   delta: Int!
 
+  """Where the stock changes; defaults to the default location"""
+  locationId: ID
+
   """Why the stock changed"""
   reason: String!
   variantId: ID!
@@ -994,6 +997,15 @@ input CreateStaffRoleInput {
   permissions: [String!]!
 }
 
+input CreateStockLocationInput {
+  """Defaults to true"""
+  isActive: Boolean
+  name: String!
+
+  """Defaults to WAREHOUSE"""
+  type: StockLocationType
+}
+
 input CreateSubCategoryInput {
   """The ID of the parent category"""
   categoryId: String!
@@ -1305,6 +1317,13 @@ enum FulfilmentKind {
   SERVICE
 }
 
+input FulfilmentLocationsInput {
+  """
+  Locations in the order they are tried (at most 20); empty = the default location
+  """
+  locationIds: [ID!]!
+}
+
 """One of Ghana's 16 administrative regions"""
 enum GhanaRegion {
   AHAFO
@@ -1492,6 +1511,9 @@ type Mutation {
   """
   createStaffRole(input: CreateStaffRoleInput!): StaffRole!
 
+  """Create a stock location (staff)"""
+  createStockLocation(input: CreateStockLocationInput!): StockLocation!
+
   """Creates a new subcategory (admin only)"""
   createSubCategory(
     """Input data for the new subcategory"""
@@ -1547,6 +1569,11 @@ type Mutation {
 
   """Delete a shipping zone (admin only)"""
   deleteShippingZone(id: ID!): ShippingZoneEntity!
+
+  """
+  Delete a stock location that never held stock; deactivate one with history instead (staff)
+  """
+  deleteStockLocation(id: ID!): StockLocation!
 
   """Deletes a tag"""
   deleteTag(tagId: String!): Tag!
@@ -1682,6 +1709,11 @@ type Mutation {
   setPaystackConfig(input: SetPaystackConfigInput!): PaymentSettings!
 
   """
+  Set the locations that fulfil orders collected at a pickup point, first tried first (staff)
+  """
+  setPickupLocationFulfilmentLocations(input: FulfilmentLocationsInput!, pickupLocationId: ID!): [StockLocation!]!
+
+  """
   Admin: set variants' prices in a price list; each entry replaces the variant's entry and tiers
   """
   setPriceListEntries(input: SetPriceListEntriesInput!): PriceList!
@@ -1690,6 +1722,11 @@ type Mutation {
   Allow or refuse cash on delivery for deliveries to a shipping zone (pickup is not affected). Owner, recent step-up, audited
   """
   setShippingZoneCashOnDelivery(enabled: Boolean!, id: ID!): ShippingZoneEntity!
+
+  """
+  Set the locations that fulfil deliveries to a shipping zone, first tried first (staff)
+  """
+  setShippingZoneFulfilmentLocations(input: FulfilmentLocationsInput!, shippingZoneId: ID!): [StockLocation!]!
 
   """Sign in an existing user with email and password"""
   signIn(input: SignInInput!): AuthEntity!
@@ -1799,6 +1836,11 @@ type Mutation {
   Change a custom staff role (staff.manage); system roles are immutable. Applies to its holders on their next request. Audited.
   """
   updateStaffRole(input: UpdateStaffRoleInput!, key: String!): StaffRole!
+
+  """
+  Rename, retype, (de)activate a stock location or make it the default (staff)
+  """
+  updateStockLocation(id: ID!, input: UpdateStockLocationInput!): StockLocation!
 
   """Change the store settings (super admin only)"""
   updateStoreSettings(input: UpdateStoreSettingsInput!): StoreSettings!
@@ -1911,6 +1953,11 @@ type Order {
   """Shipping charged (0 for pickup); null on some older orders"""
   shippingTotal: Money
   status: OrderStatus!
+
+  """
+  The stock location the order is reserved at and fulfilled from (staff with order.view)
+  """
+  stockLocationId: ID
 
   """
   Sum of unit list price x quantity, before any discount, tax included; null on some older orders
@@ -2259,6 +2306,11 @@ type PickupLocationEntity {
   city: String!
   country: String!
   createdAt: DateTime!
+
+  """
+  Locations that fulfil orders collected here, first tried first; empty = the default (inventory.view)
+  """
+  fulfilmentLocations: [StockLocation!]!
   id: ID!
 
   """Whether this pickup location accepts orders"""
@@ -3045,6 +3097,12 @@ type Query {
   """System and custom staff roles with their permissions (staff.view)"""
   staffRoles: [StaffRole!]!
 
+  """A stock location (staff)"""
+  stockLocation(id: ID!): StockLocation!
+
+  """Every stock location, the default first (staff)"""
+  stockLocations: [StockLocation!]!
+
   """
   Stock ledger entries, newest first, optionally of one variant or product (admin only)
   """
@@ -3479,6 +3537,10 @@ input ResetPasswordInput {
 }
 
 input RestockVariantInput {
+  """
+  Where the stock is received; defaults to the location of the return's order, else the default location
+  """
+  locationId: ID
   quantity: Int!
 
   """
@@ -3649,6 +3711,11 @@ type ShippingZoneEntity {
 
   """Shipping fee applied for orders delivered to cities in this zone"""
   fee: Money!
+
+  """
+  Locations that fulfil deliveries here, first tried first; empty = the default (inventory.view)
+  """
+  fulfilmentLocations: [StockLocation!]!
   id: ID!
 
   """Whether this zone is currently active"""
@@ -3739,6 +3806,32 @@ type StaffRole {
 type StepUpResult {
   """Sensitive actions are allowed in this session until then"""
   validUntil: DateTime!
+}
+
+"""A place that holds stock: warehouse, branch or pickup point (staff)"""
+type StockLocation {
+  createdAt: DateTime!
+  id: ID!
+
+  """
+  Inactive: never chosen to fulfil new orders, and its stock is not shown to customers
+  """
+  isActive: Boolean!
+
+  """
+  Fulfils shipping zones and pickup points with no list of their own; always active
+  """
+  isDefault: Boolean!
+  name: String!
+  type: StockLocationType!
+  updatedAt: DateTime!
+}
+
+"""What kind of place holds the stock"""
+enum StockLocationType {
+  BRANCH
+  PICKUP_POINT
+  WAREHOUSE
 }
 
 """One entry of the append-only stock ledger"""
@@ -4209,6 +4302,18 @@ input UpdateStaffRoleInput {
   permissions: [String!]
 }
 
+input UpdateStockLocationInput {
+  """The default location cannot be deactivated"""
+  isActive: Boolean
+
+  """
+  true makes this (active) location the default instead of the current one
+  """
+  isDefault: Boolean
+  name: String
+  type: StockLocationType
+}
+
 """
 Store settings to change; omitted fields keep their value, null clears an optional one
 """
@@ -4426,7 +4531,9 @@ type Variant {
   """The promotion behind discountedPrice"""
   appliedPromotion: PublicPromotion
 
-  """Units that can be bought now: on hand minus reserved for open orders"""
+  """
+  Units that can be bought now in one order: on hand minus reserved, at the best single location that serves customers (an order is fulfilled from one location)
+  """
   available: Int!
 
   """Barcode (EAN, UPC, GTIN, ...)"""
@@ -4460,7 +4567,7 @@ type Variant {
   lowStockThreshold: Int
 
   """
-  Units physically in stock, including reserved ones (staff with inventory.view)
+  Units physically in stock at every location, including reserved ones (staff with inventory.view)
   """
   onHand: Int!
 
@@ -4497,6 +4604,9 @@ type Variant {
 
   """Stock keeping unit code"""
   sku: String
+
+  """Stock at each location, the default first (staff with inventory.view)"""
+  stockLevels: [VariantStockLevel!]!
   weightGrams: Int
   widthMm: Int
 }
@@ -4556,6 +4666,16 @@ type VariantPriceTier {
 
   """Unit price, tax included, before promotions"""
   unitPrice: Money!
+}
+
+"""Stock of a variant at one location (staff)"""
+type VariantStockLevel {
+  """onHand - reserved"""
+  available: Int!
+  locationId: ID!
+  locationName: String!
+  onHand: Int!
+  reserved: Int!
 }
 
 """What a velocity rule counts"""

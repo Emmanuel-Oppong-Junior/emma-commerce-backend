@@ -101,6 +101,8 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.tax.deleteMany();
   await prisma.shippingZone.deleteMany();
   await prisma.pickupLocation.deleteMany();
+  // Stock locations a test added (their levels, movements and reservations went with the variants and orders above)
+  await prisma.stockLocation.deleteMany({ where: { isDefault: false } });
 
   // Users last (referenced by many tables above); their staff memberships cascade
   await prisma.user.deleteMany();
