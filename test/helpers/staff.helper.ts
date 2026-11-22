@@ -10,6 +10,7 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'inventory.view',
   'inventory.adjust',
   'inventory.stocktake.approve',
+  'inventory.alerts',
   'order.view',
   'order.manage',
   'order.fulfil',

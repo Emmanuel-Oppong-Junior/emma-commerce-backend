@@ -9,6 +9,7 @@ import { OutboxRelay } from '../outbox/outbox.relay';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
 import { StockReconciliationTask } from '../inventory/tasks/stock-reconciliation.task';
+import { LowStockDigestTask } from '../inventory/tasks/low-stock-digest.task';
 import { WorkerHealthServer } from './worker-health.server';
 import { MaintenanceScheduler } from './maintenance.scheduler';
 import { MaintenanceProcessor } from './maintenance.processor';
@@ -29,6 +30,7 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
     ExpiredOrdersTask,
     PaymentReconciliationTask,
     StockReconciliationTask,
+    LowStockDigestTask,
     MaintenanceScheduler,
     MaintenanceProcessor,
     NotificationsProcessor,

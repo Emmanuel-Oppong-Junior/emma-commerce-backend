@@ -38,6 +38,7 @@ describe('MaintenanceScheduler', () => {
       [MaintenanceJob.SweepPayments]: { pattern: '*/5 * * * *', tz: 'UTC' },
       [MaintenanceJob.DiffPreviousDayPayments]: { pattern: '30 1 * * *', tz: 'UTC' },
       [MaintenanceJob.ReconcileStock]: { pattern: '30 2 * * *', tz: 'UTC' },
+      [MaintenanceJob.SendLowStockDigest]: { pattern: '0 6-21/3 * * *', tz: 'UTC' },
     });
   });
 

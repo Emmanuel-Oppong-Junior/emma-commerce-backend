@@ -223,6 +223,7 @@ model Variant {
   priceChanges      PriceChange[]
   priceListEntries  PriceListEntry[]
   stockTakeLines    StockTakeLine[]
+  lowStockAlerts    LowStockAlert[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1209,6 +1210,7 @@ model StockLocation {
   store        Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
   levels       StockLevel[]
   stockTakes   StockTake[]
+  lowStockAlerts LowStockAlert[]
   reservations StockReservation[]
   movements    StockMovement[]
 
@@ -1368,6 +1370,37 @@ model StockTakeLine {
 
   @@unique([stockTakeId, variantId])
   @@index([variantId])
+}
+
+/// PENDING until the next low-stock digest; SENT once listed in one; DROPPED when the variant recovered first (P4-B.2).
+enum LowStockAlertStatus {
+  PENDING
+  SENT
+  DROPPED
+}
+
+/// A variant whose available stock at a location fell to its low-stock threshold (from inventory.low_stock.v1),
+/// waiting for the staff digest. At most one PENDING alert per variant and location; eventId makes a redelivered
+/// event a no-op.
+model LowStockAlert {
+  id                String              @id @default(cuid())
+  variantId         String
+  locationId        String
+  eventId           String              @unique
+  availableAtAlert  Int
+  status            LowStockAlertStatus @default(PENDING)
+  /// The digest that listed it, and the available stock it showed
+  digestId          String?
+  availableAtDigest Int?
+  createdAt         DateTime            @default(now())
+  resolvedAt        DateTime?
+  variant           Variant             @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location          StockLocation       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, locationId], map: "LowStockAlert_one_pending_per_variant_location", where: raw("status = 'PENDING'::\"LowStockAlertStatus\""))
+  @@index([status, createdAt])
+  @@index([digestId])
+  @@index([locationId])
 }
 
 enum PriceChangeField {

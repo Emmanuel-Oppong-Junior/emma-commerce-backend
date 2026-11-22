@@ -86,7 +86,7 @@ feature/
 | Email | Resend |
 | Logging | Winston (via custom `LoggerService`) |
 | Tracing | OpenTelemetry (OTLP/HTTP exporter, opt-in via `OTEL_ENABLED=true`) |
-| Background jobs | BullMQ on Redis, run by a separate `ROLE=worker` process. Repeatable jobs, each run once per cluster: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), stock ledger reconciliation (02:30 UTC, reports only). Low-stock alerts are events raised by stock changes (`inventory.low_stock.v1`), not a scan |
+| Background jobs | BullMQ on Redis, run by a separate `ROLE=worker` process. Repeatable jobs, each run once per cluster: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), stock ledger reconciliation (02:30 UTC, reports only), low-stock staff digest (every 3 hours, 06:00-21:00 UTC). Low-stock alerts are events raised by stock changes (`inventory.low_stock.v1`), not a scan |
 | Rate Limiting | `@nestjs/throttler` with per-named-throttler rules |
 
 ### GraphQL Approach
@@ -2409,6 +2409,12 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 
 ---
 
+#### Low-stock digest (staff email)
+
+No API operation (P4-B.2). When a stock change takes a variant's available stock at a location from above its `lowStockThreshold` (default 5) to at or below it, the event `inventory.low_stock.v1` is recorded once per crossing and stored as a **pending low-stock alert**, at most one per variant and location until a digest lists it. Every 3 hours (06:00, 09:00, 12:00, 15:00, 18:00 and 21:00 UTC) the worker sends **one email to each active staff member holding `inventory.alerts`** (Owner, Manager and Inventory clerk by default), with a section per location listing the variants still at or below their level and their available stock. Variants that recovered above their level before the digest (restocked, order cancelled) are left out; nothing is sent when nothing is pending. To stop a staff member receiving it, give them a role without `inventory.alerts`.
+
+---
+
 #### Stock-takes
 
 A **stock-take** (P4-B.1) is a count session at one stock location. Counters (`inventory.adjust`) open it, enter what they find on the shelf and submit it; an approver (`inventory.stocktake.approve`, Owner and Manager) reviews the variances and approves them into stock, or cancels.
@@ -3260,6 +3266,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
 | `inventory.view` | `stockMovements`, `stockTakes`, `stockTake`, `stockTakeLines` (without expected quantities); the `Variant.onHand` and `Variant.reserved` fields |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock`, `openStockTake`, `recordStockTakeCounts`, `submitStockTake` |
+| `inventory.alerts` | No operation: holders receive the low-stock digest email (P4-B.2; held by Owner, Manager and Inventory clerk) |
 | `inventory.stocktake.approve` | `approveStockTake`, `cancelStockTake`, `stockTakeVarianceReport`; the `StockTakeLine.expectedAtOpen`, `expectedQuantity` and `variance` fields (P4-B.1; held by Owner and Manager) |
 | `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
 | `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |

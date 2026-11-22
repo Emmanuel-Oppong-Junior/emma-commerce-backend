@@ -2,6 +2,7 @@ import {
   emailChangeRequestedEmailHtml,
   emailVerificationEmailHtml,
   escapeHtml,
+  lowStockDigestEmailHtml,
   orderConfirmationEmailHtml,
   orderStatusEmailHtml,
   passwordResetEmailHtml,
@@ -80,5 +81,27 @@ describe('email templates', () => {
     expect(html).toContain('GHS 108.33');
     expect(html).toContain('Reason: Item arrived damaged');
     expect(html).toContain('<li>2 × Kente scarf</li><li>Delivery fee</li>');
+  });
+
+  it('lists the low-stock digest by location, one row per variant with its available stock', () => {
+    const html = lowStockDigestEmailHtml([
+      { locationName: 'Kumasi', items: [{ productName: 'Kente scarf', sku: 'KS-1', available: 0 }] },
+      { locationName: 'Main store', items: [{ productName: 'Shea butter', sku: 'SB-2', available: 3 }] },
+    ]);
+
+    expect(html).toContain('<h2>Kumasi</h2>');
+    expect(html).toContain('<tr><td>Kente scarf</td><td>KS-1</td><td>0</td></tr>');
+    expect(html.indexOf('Kumasi')).toBeLessThan(html.indexOf('Main store'));
+    expect(html).toContain('<tr><td>Shea butter</td><td>SB-2</td><td>3</td></tr>');
+  });
+
+  it('escapes product, SKU and location names in the low-stock digest', () => {
+    const html = lowStockDigestEmailHtml([
+      { locationName: SCRIPT, items: [{ productName: PHISHING_LINK, sku: SCRIPT, available: 1 }] },
+    ]);
+
+    expect(html).not.toContain('<script>');
+    expect(html).not.toContain('<a href=');
+    expect(html).toContain(ESCAPED_SCRIPT);
   });
 });

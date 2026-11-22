@@ -6,6 +6,7 @@ export enum MaintenanceJob {
   SweepPayments = 'payments.sweep',
   DiffPreviousDayPayments = 'payments.diff-previous-day',
   ReconcileStock = 'inventory.reconcile-stock',
+  SendLowStockDigest = 'inventory.low-stock-digest',
 }
 
 // Same cadence the in-process crons had. BullMQ creates one job per tick for the whole cluster.
@@ -14,4 +15,6 @@ export const MAINTENANCE_SCHEDULES: Record<MaintenanceJob, Omit<RepeatOptions, '
   [MaintenanceJob.SweepPayments]: { pattern: '*/5 * * * *', tz: 'UTC' },
   [MaintenanceJob.DiffPreviousDayPayments]: { pattern: '30 1 * * *', tz: 'UTC' },
   [MaintenanceJob.ReconcileStock]: { pattern: '30 2 * * *', tz: 'UTC' },
+  // Every 3 hours from 06:00 UTC (Ghana time): a few emails a day instead of one per crossing.
+  [MaintenanceJob.SendLowStockDigest]: { pattern: '0 6-21/3 * * *', tz: 'UTC' },
 };

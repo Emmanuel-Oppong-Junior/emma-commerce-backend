@@ -4,11 +4,12 @@ import { NotificationsService } from './notifications.service';
 import { NotificationSender } from './notification-sender';
 import { EmailService } from './email/email.service';
 import { CommonsModule } from '../commons/commons.module';
+import { InventoryModule } from '../inventory/inventory.module';
 import { SMS_PROVIDER } from './sms/sms-provider.port';
 import { SmsSender, smsProviderFrom } from './sms/sms-sender';
 
 @Module({
-  imports: [CommonsModule],
+  imports: [CommonsModule, InventoryModule],
   providers: [
     NotificationsService,
     NotificationSender,
