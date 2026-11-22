@@ -26,13 +26,13 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
-| 4 — Inventory | 0 / 7 | 🔄 in progress |
+| 4 — Inventory | 4 / 7 | 🔄 in progress |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **94 / 154** | |
+| **All** | **98 / 154** | |
 
 ---
 
@@ -363,15 +363,15 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ## Phase 4 — Inventory (ADR-0008)
 
-### P4-A — Locations  🔄 in progress
+### P4-A — Locations ✅ complete
 > Run: → · M · 🟥 A.1 / 🟧 A.2
-- [ ] 🔄 **P4-A.1** Multi-location stock + fulfilment location rule
-- [ ] 🔄 **P4-A.2** Transfers between locations
+- [x] **P4-A.1** [3d76487] Multi-location stock + fulfilment location rule
+- [x] **P4-A.2** [84923ab] Transfers between locations
 
-### P4-B — Operations  🔄 in progress
+### P4-B — Operations ✅ complete
 > Run: ∥ · M · 🟥
-- [ ] 🔄 **P4-B.1** Adjustments with reasons, stock-take with variance
-- [ ] 🔄 **P4-B.2** Low-stock events → staff notifications (replace 6-hourly scan)
+- [x] **P4-B.1** [13e59dc, 94825a8] Adjustments with reasons, stock-take with variance
+- [x] **P4-B.2** [76d7f00] Low-stock events → staff notifications (replace 6-hourly scan)
 
 ### P4-C — Lots & expiry
 > Run: → · L · 🟧 (🟥 for food/pharmacy clients)
