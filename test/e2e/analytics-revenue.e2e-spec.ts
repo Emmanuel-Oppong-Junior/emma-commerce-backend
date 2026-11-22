@@ -205,6 +205,7 @@ describe('Analytics revenue (e2e)', () => {
         status: RefundStatus.PROCESSED,
         providerRef: 'rf_analytics_return',
         idempotencyKey: `return:${returnRequest.id}`,
+        reason: 'RETURN',
       },
     });
 
@@ -229,6 +230,7 @@ describe('Analytics revenue (e2e)', () => {
         status: RefundStatus.PROCESSED,
         providerRef: 'rf_analytics_auto',
         idempotencyKey: `auto-refund:${lateAttempt.id}`,
+        reason: 'PAYMENT_NOT_ACCEPTED',
       },
     });
 

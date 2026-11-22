@@ -1,5 +1,13 @@
 import { BadGatewayException, BadRequestException, ConflictException, GatewayTimeoutException } from '@nestjs/common';
-import { PaymentProvider, PaymentStatus, Prisma, Refund, RefundStatus } from '../generated/prisma/client';
+import {
+  PaymentProvider,
+  PaymentStatus,
+  Prisma,
+  Refund,
+  RefundMethod,
+  RefundReason,
+  RefundStatus,
+} from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
 import { PaystackRequestRejected } from '../payment/paystack.client';
@@ -37,6 +45,7 @@ describe('RefundsService', () => {
   const repository = {
     findAll: jest.fn(),
     openForReturn: jest.fn(),
+    openForOrder: jest.fn(),
     claimForSending: jest.fn(),
     recordProcessed: jest.fn(),
     recordRejected: jest.fn(),
@@ -205,6 +214,93 @@ describe('RefundsService', () => {
       id: 'refund1',
       status: 'PROCESSED',
       providerRef: '77',
+    });
+  });
+
+  describe('refundOrder', () => {
+    const params = {
+      orderId: 'order1',
+      idempotencyKey: 'key-0001',
+      lines: [{ orderItemId: 'item1', quantity: 1 }],
+      shipping: false,
+      amount: null,
+      reason: RefundReason.DAMAGED,
+      note: '  box crushed ',
+    };
+    const plan = {
+      amount: new Prisma.Decimal('40.50'),
+      taxAmount: null,
+      shippingAmount: new Prisma.Decimal(0),
+      lines: [],
+    };
+    const opened = (overrides: Partial<Refund> = {}) =>
+      ({
+        ...refund,
+        returnRequestId: null,
+        idempotencyKey: 'staff:key-0001',
+        method: RefundMethod.PROVIDER,
+        ...overrides,
+      }) as Refund;
+    const openWith = (result: Refund, replayed = false, checkLedger: RefundLedger = ledger) =>
+      repository.openForOrder.mockImplementation(async (_request, check, onOpened) => {
+        if (!replayed) {
+          check(checkLedger, plan, result.method);
+          await onOpened(AUDIT_TX, result);
+        }
+        return { refund: result, replayed };
+      });
+
+    it('records the refund under a namespaced key with the trimmed note, then sends it through the provider', async () => {
+      openWith(opened());
+      paystack.createRefund.mockResolvedValue({ id: '88', status: 'pending' });
+
+      const result = await service.refundOrder(params, 'admin1');
+
+      expect(repository.openForOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderId: 'order1',
+          idempotencyKey: 'staff:key-0001',
+          note: 'box crushed',
+          createdById: 'admin1',
+          parts: { lines: params.lines, shipping: false, amount: null },
+        }),
+        expect.any(Function),
+        expect.any(Function),
+      );
+      expect(paystack.createRefund).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ status: 'PROCESSED', providerRef: '88' });
+      expect(auditService.log.mock.calls[0][0]).toMatchObject({ entity: 'Refund', action: 'CREATE', userId: 'admin1' });
+    });
+
+    it('returns the refund a repeated key recorded without sending anything', async () => {
+      openWith(opened({ status: RefundStatus.PROCESSED }), true);
+
+      await expect(service.refundOrder(params, 'admin1')).resolves.toMatchObject({ status: 'PROCESSED' });
+      expect(paystack.createRefund).not.toHaveBeenCalled();
+      expect(repository.claimForSending).not.toHaveBeenCalled();
+    });
+
+    it('records a cash-on-delivery refund as cash handed back, without a provider call', async () => {
+      const codLedger: RefundLedger = {
+        ...ledger,
+        attempt: { ...ledger.attempt, provider: PaymentProvider.CASH_ON_DELIVERY, reference: null },
+        refunds: [],
+      };
+      openWith(opened({ method: RefundMethod.CASH, status: RefundStatus.PROCESSED }), false, codLedger);
+
+      await expect(service.refundOrder(params, 'admin1')).resolves.toMatchObject({ method: 'CASH' });
+      expect(paystack.createRefund).not.toHaveBeenCalled();
+      expect(auditService.log.mock.calls[0][0]).toMatchObject({ action: 'REFUND' });
+    });
+
+    it('refuses a missing note for OTHER and a system reason before writing anything', async () => {
+      await expect(service.refundOrder({ ...params, reason: RefundReason.OTHER, note: ' ' }, 'admin1')).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.refundOrder({ ...params, reason: RefundReason.RETURN }, 'admin1')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(repository.openForOrder).not.toHaveBeenCalled();
     });
   });
 });

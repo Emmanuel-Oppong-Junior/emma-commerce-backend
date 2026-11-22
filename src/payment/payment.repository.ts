@@ -9,6 +9,7 @@ import {
   PaymentReviewReason,
   PaymentStatus,
   Prisma,
+  RefundReason,
   ShipmentStatus,
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -459,6 +460,7 @@ export class PaymentRepository {
             amount: fromSubunits(verified.amount),
             currency: verified.currency,
             idempotencyKey: autoRefundKey(attemptId),
+            reason: RefundReason.PAYMENT_NOT_ACCEPTED,
           },
         });
         refundId = refund.id;

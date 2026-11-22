@@ -89,7 +89,12 @@ describe('Payment ledger schema (e2e)', () => {
   it('records a refund once per idempotency key', async () => {
     const orderId = await createOrder();
     const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
-    const refund = { attemptId: paymentId, amount: 40, idempotencyKey: `return-request:${orderId}` };
+    const refund = {
+      attemptId: paymentId,
+      amount: 40,
+      idempotencyKey: `return-request:${orderId}`,
+      reason: 'RETURN' as const,
+    };
     await prisma.refund.create({ data: refund });
 
     await expect(prisma.refund.create({ data: refund })).rejects.toMatchObject({ code: 'P2002' });
@@ -109,7 +114,7 @@ describe('Payment ledger schema (e2e)', () => {
     const orderId = await createOrder();
     const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
     const refund = await prisma.refund.create({
-      data: { attemptId: paymentId, amount: 10, idempotencyKey: `delete-test:${orderId}` },
+      data: { attemptId: paymentId, amount: 10, idempotencyKey: `delete-test:${orderId}`, reason: 'OTHER' },
     });
     const collection = await prisma.cashCollection.create({ data: { orderId, amount: 100 } });
 

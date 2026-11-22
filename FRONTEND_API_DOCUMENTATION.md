@@ -1481,6 +1481,7 @@ All order operations require `Bearer` JWT.
   paymentStatus?: OrderPaymentStatus;          // PENDING | CAPTURED | PARTIALLY_REFUNDED | REFUNDED | FAILED | CANCELLED; null before any payment
   timeline: OrderStatusEvent[];                // Status history, oldest first (the customer's tracking timeline)
   shipments: Shipment[];                       // One per order for now; empty until the first fulfilment step
+  refunds: OrderRefund[];                      // P3-C.1: refunds of the order, oldest first (see below)
   fulfillmentType: FulfillmentType;            // DELIVERY | PICKUP
   paymentMethod: OrderPaymentMethod;           // ONLINE | CASH_ON_DELIVERY
   contactEmail: string;
@@ -1525,6 +1526,22 @@ All order operations require `Bearer` JWT.
   updatedAt: DateTime;
   product: Product;
   variant: Variant;           // The variant now (use sku/optionValues for what was ordered)
+}
+```
+
+**`OrderRefund` Object Type** (P3-C.1): a refund as the customer sees it, on their own orders (`order`, `userOrders`) and for staff (`orders`, `viewOrder`). It never carries the internal note, the staff member or Paystack details.
+
+```typescript
+{
+  id: string;
+  amount: Money;
+  taxAmount?: Money;          // tax included; null for orders placed before tax was recorded
+  shippingAmount: Money;      // the part that returns the delivery fee
+  reason: RefundReason;
+  reasonLabel: string;        // e.g. "Item arrived damaged", "Returned items"
+  status: OrderRefundStatus;  // PENDING (being processed; also while staff retry a refused send) | REFUNDED
+  lines: { orderItemId: string; productName: string; quantity: number; amount: Money }[];
+  createdAt: DateTime;
 }
 ```
 
@@ -2327,7 +2344,7 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 - **Response**: `ReturnRequestEntity!`
 - **Description**: Refund the approved amount through Paystack and move the request from `APPROVED` to `REFUNDED`. **Moves money only, never stock:** a cancelled order already had its stock restored at cancellation, and physically returned goods are put back with `restockVariant` (the order line's `variantId`) once received and inspected.
 - **How it runs**: the request is first claimed (`APPROVED → REFUND_PENDING`) and a `Refund` record is created, then Paystack is called once. On success the refund becomes `PROCESSED` (with Paystack's refund id in `providerRef`) and the request `REFUNDED`.
-- **Limits**: the amount must be greater than 0, and all refunds on the payment (including an auto-refund queued for a flagged payment) cannot exceed what was captured; otherwise `BAD_REQUEST` and nothing changes. Only Paystack payments can be refunded (cash-on-delivery: `BAD_REQUEST`).
+- **Limits**: the amount must be greater than 0, and all refunds on the payment (including an auto-refund queued for a flagged payment) cannot exceed what was captured; otherwise `BAD_REQUEST` and nothing changes. Only Paystack payments can be refunded here (cash-on-delivery: `BAD_REQUEST`; refund those with `refundOrder`, which records cash handed back).
 - **Errors and retries**:
   - Double-click or a second admin: `CONFLICT`; Paystack is never called twice.
   - Paystack refused the refund: `BAD_REQUEST` ("Nothing was refunded"). The request stays `REFUND_PENDING` and its refund is `FAILED`; call `processRefund` again to retry.
@@ -2357,15 +2374,63 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   amount: Money;
   taxAmount?: Money;          // P1-O.1: tax included in amount, from the order's stored tax lines in proportion
                               // (amount x taxTotal / grandTotal, half-up, capped at the tax not yet refunded); null for
-                              // orders placed before tax was recorded and for auto-refunds of charges that never paid the order
+                              // orders placed before tax was recorded and for auto-refunds of charges that never paid the order.
+                              // P3-C.1: refunded line units take their line's stored tax per unit instead (see refundOrder)
   currency: string;
   status: RefundStatusEnum;   // PENDING | SENDING | PROCESSED | FAILED
+  reason: RefundReason;       // P3-C.1, see refundOrder; RETURN for return refunds, PAYMENT_NOT_ACCEPTED for auto-refunds
+  note?: string;              // P3-C.1: internal staff note (never shown to the customer)
+  method: RefundMethod;       // P3-C.1: PROVIDER (Paystack) | CASH (cash-on-delivery money handed back by staff)
+  shippingAmount: Money;      // P3-C.1: the part of amount that returns the delivery fee ("0.00" if none)
+  createdById?: string;       // P3-C.1: the staff member who issued it with refundOrder (null for return and auto-refunds)
+  lines: RefundLine[];        // P3-C.1: the order line units it pays back (empty for amount-only refunds)
   providerRef?: string;       // Paystack refund id
   failureReason?: string;     // why the last send failed, or "Outcome unknown: ..."
   createdAt: DateTime;
   updatedAt: DateTime;
 }
+
+// RefundLine (P3-C.1)
+{
+  id: string;
+  orderItemId: string;
+  quantity: number;
+  amount: Money;              // what these units were charged (see refundOrder)
+}
 ```
+
+---
+
+#### `refundOrder` (permission `order.refund`, step-up) — P3-C.1
+- **Type**: Mutation
+- **Args**: `input: RefundOrderInput!`
+- **Response**: `RefundEntity!`
+- **Description**: Refunds a paid order outside the returns flow: chosen line units, the delivery fee and/or a free amount, in one request or several over time. **Money only:** nothing is restocked (returned goods go back with `restockVariant`). Needs `order.refund` and a recent step-up (`FORBIDDEN` + `reason: STEP_UP_REQUIRED`); audit-logged.
+
+```typescript
+// RefundOrderInput
+{
+  orderId: string;
+  idempotencyKey: string;     // Required. 8-100 letters, digits, "-" or "_", chosen by the client per refund. Sending it
+                              // again returns the refund it recorded (whatever its status) and refunds nothing more;
+                              // the same key on another order: CONFLICT
+  lines?: { orderItemId: string; quantity: number }[];   // quantity >= 1
+  shipping?: boolean;         // also refund the delivery fee
+  amount?: Decimal;           // a free amount (> 0) on top of the lines and the fee
+  reason: RefundReason;       // CUSTOMER_REQUEST | DAMAGED | WRONG_ITEM | NOT_DELIVERED | PRICE_ADJUSTMENT | DUPLICATE_CHARGE | OTHER
+  note?: string;              // internal, max 1000 characters; required for OTHER
+}
+```
+
+- **Amounts come from what the order stored at placement, never re-priced:** a line unit refunds `lineTotal / quantity` plus its share of the order's cart discounts (`OrderItem` stores each line's share; the units of a line add up to exactly what the line was charged, the last unit taking the rounding remainder). The delivery fee refunds `shippingTotal` (after free-shipping promotions). `taxAmount` = each refunded unit's stored tax + the free amount × `taxTotal / grandTotal`, never above the tax not yet refunded; shipping is untaxed; null for `pricingVersion` 0 orders.
+- **Caps (checked under a row lock, so two concurrent refunds cannot both pass):** all refunds of the payment (return refunds, auto-refunds and these; `FAILED` ones excluded) never exceed what it captured; a line's refunded units never exceed its quantity; the delivery fee is refunded at most once. Exceeding any of them: `CONFLICT` and nothing is written. Return requests have no lines, so they count towards the payment cap only.
+- **Validation (`BAD_REQUEST`):** nothing to refund, an unknown or repeated line, a fee the order does not have, `OTHER` without a note, or `RETURN` / `PAYMENT_NOT_ACCEPTED` (set by the system only). The order must have a captured payment (not one flagged for review).
+- **Online payments** are refunded through Paystack at once; the response is the refund `PROCESSED` (or the error rules of `processRefund`: refused → `BAD_REQUEST` and the refund `FAILED`, resend it with `processPendingRefund`; outcome unknown → it stays `SENDING`). Units of a `FAILED` refund are free to refund again.
+- **Cash on delivery:** there is no provider to send through; the refund is recorded as cash handed back (`method: CASH`, `PROCESSED` at once).
+- **Payment status:** each processed refund moves `Order.paymentStatus` to `PARTIALLY_REFUNDED`, or `REFUNDED` once the whole capture is back. The order status does not change.
+- **Customer email:** every processed refund (also return refunds and auto-refunds) emails the customer the amount, the reason label and the refunded lines. Failures are not emailed.
+
+**`RefundReason` Enum** (P3-C.1): `CUSTOMER_REQUEST`, `DAMAGED`, `WRONG_ITEM`, `NOT_DELIVERED`, `PRICE_ADJUSTMENT`, `DUPLICATE_CHARGE`, `OTHER` (staff choose these), `RETURN` (return refunds), `PAYMENT_NOT_ACCEPTED` (auto-refunds of charges that could not be accepted). **`RefundMethod` Enum**: `PROVIDER`, `CASH`.
 
 ---
 
@@ -3007,7 +3072,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `order.view` | `getOrders`, `viewOrder` |
 | `order.manage` | `adminCancelOrder`, `deleteOrder` |
 | `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |
-| `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund` |
+| `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund`, `refundOrder` |
 | `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
 | `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment` |
 | `payment.record` | `recordCodPayment` |
@@ -3108,7 +3173,7 @@ Time-based one-time passwords (RFC 6238: SHA1, 6 digits, 30-second steps, any au
 | Kind | Operations |
 |---|---|
 | Role and permission changes | `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, `createUser` with `role: ADMIN` |
-| Refunds | `approveReturn`, `processRefund`, `processPendingRefund` |
+| Refunds | `approveReturn`, `processRefund`, `processPendingRefund`, `refundOrder` |
 | Price changes | `updateProduct` when `isTaxable` is sent (it reprices every variant), `updateVariant` when `basePrice` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax` |
 | Data exports | `addresses` without `userId` |
 
@@ -4152,8 +4217,9 @@ All notifications are **email-only** via Resend. There are no in-app notificatio
 | Shipment dispatched (`OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`), order `COMPLETED` (`updateShipmentStatus(DELIVERED)` or `recordCodPayment`), or `updateShipping` with a tracking number | Status update (with tracking number when set) | Account email |
 | Online payment confirmed (webhook, `verifyPayment` or sweep), once per order | Payment confirmation | Account email |
 | `forgotPassword` for an existing account | Password reset token | Requesting address |
+| A refund processed (`refundOrder`, `processRefund`, `processPendingRefund`; P3-C.1) | Refund: amount, reason label, refunded lines and delivery fee | Account email |
 
-Not emailed: cancellations, expiries, refunds, other fulfilment steps.
+Not emailed: cancellations, expiries, refunds that failed or are still pending (staff see those in logs and `refunds`), other fulfilment steps.
 
 ### Asynchronous, queued and retried
 

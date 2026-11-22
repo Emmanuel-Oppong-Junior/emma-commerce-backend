@@ -1230,6 +1230,11 @@ type Mutation {
   """Refresh access and refresh tokens using a valid refresh token"""
   refreshToken(input: RefreshTokenInput!): AuthEntity!
 
+  """
+  Refund a paid order outside the returns flow: line units, the delivery fee and/or a free amount, with a reason. Money only (nothing is restocked). Online payments are refunded through Paystack at once; cash-on-delivery payments are recorded as cash handed back. CONFLICT when it would refund more than is left (units of a line, the delivery fee twice, or above what the payment captured). Admin only
+  """
+  refundOrder(input: RefundOrderInput!): RefundEntity!
+
   """Reject a return request (admin only)"""
   rejectReturn(input: RejectReturnInput!): ReturnRequestEntity!
 
@@ -1491,6 +1496,9 @@ type Order {
   1 for orders with a full price and tax snapshot; 0 for orders placed before it, whose breakdown may be partly null
   """
   pricingVersion: Int!
+
+  """Refunds of this order, oldest first"""
+  refunds: [OrderRefund!]!
   shipments: [Shipment!]!
 
   """Set when fulfillmentType is DELIVERY"""
@@ -1634,6 +1642,45 @@ enum OrderPaymentStatus {
   FAILED
   PARTIALLY_REFUNDED
   PENDING
+  REFUNDED
+}
+
+"""A refund of the order, as the customer sees it"""
+type OrderRefund {
+  amount: Money!
+  createdAt: DateTime!
+  id: ID!
+  lines: [OrderRefundLine!]!
+  reason: RefundReason!
+
+  """
+  The reason in words, e.g. "Item arrived damaged"
+  """
+  reasonLabel: String!
+
+  """The part of the amount that returns the delivery fee"""
+  shippingAmount: Money!
+  status: OrderRefundStatus!
+
+  """Tax included in the amount; null for older orders"""
+  taxAmount: Money
+}
+
+"""Units of an order line a refund paid back"""
+type OrderRefundLine {
+  amount: Money!
+  orderItemId: ID!
+
+  """The product name when ordered"""
+  productName: String!
+  quantity: Int!
+}
+
+enum OrderRefundStatus {
+  """Being processed"""
+  PENDING
+
+  """The money was sent back"""
   REFUNDED
 }
 
@@ -2723,17 +2770,31 @@ type RefundEntity {
   """The payment (attempt) the refund returns money from"""
   attemptId: ID!
   createdAt: DateTime!
+
+  """The staff member who issued it with refundOrder"""
+  createdById: ID
   currency: String!
 
   """Why the last send failed or has an unknown outcome"""
   failureReason: String
   id: ID!
 
+  """The order line units it pays back (empty for amount-only refunds)"""
+  lines: [RefundLine!]!
+  method: RefundMethod!
+
+  """Internal staff note; never shown to the customer"""
+  note: String
+
   """The refund id Paystack returned"""
   providerRef: String
+  reason: RefundReason!
 
   """Set when the refund belongs to a return request"""
   returnRequestId: ID
+
+  """The part of the amount that returns the order's delivery fee"""
+  shippingAmount: Money!
   status: RefundStatusEnum!
 
   """
@@ -2741,6 +2802,75 @@ type RefundEntity {
   """
   taxAmount: Money
   updatedAt: DateTime!
+}
+
+type RefundLine {
+  """
+  What these units were charged: their share of the line total and of the order's cart discounts
+  """
+  amount: Money!
+  id: ID!
+  orderItemId: ID!
+  quantity: Int!
+}
+
+enum RefundMethod {
+  """A cash-on-delivery payment: staff handed the cash back and recorded it"""
+  CASH
+
+  """Sent back through the payment's provider (Paystack)"""
+  PROVIDER
+}
+
+input RefundOrderInput {
+  """A free amount on top of the lines and the delivery fee"""
+  amount: Decimal
+
+  """
+  Chosen by the client for this refund (8-100 letters, digits, "-" or "_"). Sending the same key again returns the refund it recorded instead of refunding twice
+  """
+  idempotencyKey: String!
+
+  """Order line units to refund, at what the order stored for them"""
+  lines: [RefundOrderLineInput!]
+
+  """
+  Internal note, never shown to the customer; required when reason is OTHER
+  """
+  note: String
+  orderId: ID!
+  reason: RefundReason!
+
+  """Also refund the delivery fee the order was charged (once per order)"""
+  shipping: Boolean
+}
+
+input RefundOrderLineInput {
+  orderItemId: ID!
+  quantity: Int!
+}
+
+"""
+Why money was refunded. Staff choose any but RETURN and PAYMENT_NOT_ACCEPTED, which the system sets
+"""
+enum RefundReason {
+  CUSTOMER_REQUEST
+  DAMAGED
+  DUPLICATE_CHARGE
+  NOT_DELIVERED
+
+  """Anything else; a note is required"""
+  OTHER
+
+  """
+  Set by the system for a charge it could not accept (late, wrong amount or duplicate payment)
+  """
+  PAYMENT_NOT_ACCEPTED
+  PRICE_ADJUSTMENT
+
+  """Set by the returns flow (processRefund)"""
+  RETURN
+  WRONG_ITEM
 }
 
 enum RefundStatusEnum {

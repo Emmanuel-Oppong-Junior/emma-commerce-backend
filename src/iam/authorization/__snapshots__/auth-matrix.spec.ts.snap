@@ -62,6 +62,7 @@ Mutation processPendingRefund            permission: order.refund; step-up
 Mutation processRefund                   permission: order.refund; step-up
 Mutation recordCodPayment                permission: payment.record
 Mutation refreshToken                    public
+Mutation refundOrder                     permission: order.refund; step-up
 Mutation rejectReturn                    permission: return.manage
 Mutation removeAttributeDefinition       permission: catalog.taxonomy.write
 Mutation removeCategory                  permission: catalog.taxonomy.write
