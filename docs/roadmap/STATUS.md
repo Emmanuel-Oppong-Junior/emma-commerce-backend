@@ -5,7 +5,7 @@
 **Last checkpoint:** 2026-11-22 · **Current phase:** Phase 4 — Inventory (started 2026-11-22, Emmanuel; 4/7: P4-A, P4-B done; P4-C.1 ∥ P4-D.1 in progress); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-Two lanes in worktrees (agents), from the commit that records this start:
+Two lanes in worktrees (agents), from `d762c3f`:
 - **P4-C.1 — Lots with expiry, FEFO, expired unsellable, expiring-stock report** (ADR-0008) · branch `feat/p4-c-lots` · DB `emma_wt_lots_test`, Redis DB 13 · **State:** in progress
 - **P4-D.1 — Serial units (IMEI): captured at receipt, assigned at pick, warranty start** (ADR-0008) · branch `feat/p4-d-serials` · DB `emma_wt_serials_test`, Redis DB 12 · **State:** in progress
   - Decisions (Emmanuel, 2026-11-22): lots opt-in per product (lot + expiry on receipt, FEFO, expired unsellable); serials opt-in per product, recorded at receipt and picked at dispatch. P4-E.1 (purchasing, weighted-average cost) follows P4-C.
