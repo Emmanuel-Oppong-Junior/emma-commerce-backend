@@ -2,10 +2,14 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-22 · **Current phase:** Phase 4 — Inventory (started 2026-11-22, Emmanuel; 4/7: P4-A, P4-B done); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-22 · **Current phase:** Phase 4 — Inventory (started 2026-11-22, Emmanuel; 4/7: P4-A, P4-B done; P4-C.1 ∥ P4-D.1 in progress); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: P4-C.1 ∥ P4-D.1 (Up next #1), waiting for Emmanuel's go.
+Two lanes in worktrees (agents), from the commit that records this start:
+- **P4-C.1 — Lots with expiry, FEFO, expired unsellable, expiring-stock report** (ADR-0008) · branch `feat/p4-c-lots` · DB `emma_wt_lots_test`, Redis DB 13 · **State:** in progress
+- **P4-D.1 — Serial units (IMEI): captured at receipt, assigned at pick, warranty start** (ADR-0008) · branch `feat/p4-d-serials` · DB `emma_wt_serials_test`, Redis DB 12 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-22): lots opt-in per product (lot + expiry on receipt, FEFO, expired unsellable); serials opt-in per product, recorded at receipt and picked at dispatch. P4-E.1 (purchasing, weighted-average cost) follows P4-C.
+  - [ ] C.1 ← **Next step** (agent) · [ ] D.1 (agent) · [ ] merge both (second merge re-runs gates + full e2e), push
 
 **Last completed: P4-A Locations + P4-B Stock operations (2026-11-22)** (ADR-0008, ADR-0015, ADR-0013; INV-04, INV-10 updated; CRON-05 fixed): A.1 `3d76487`, A.2 `84923ab` (additive), B.1 `13e59dc` `[breaking-api]` + `94825a8`, B.2 `76d7f00`; merged into dev (`3052332` A, `0530967` B; conflicts in the ledger, inventory service/module/spec, adjust input, permissions, schema, docs: kept both; P4-B's migrations renamed to `20261203130000`–`150000` so they don't share timestamps with P4-A's; `schema.gql` and auth snapshot regenerated, delta = P4-B's 9 operations). P4-A ✅ P4-B ✅.
   - A.1: staff-managed `StockLocation`s (`inventory.location.manage`, Owner/Manager; default always active; delete refused with history, deactivate instead: never chosen, hidden from customers, existing reservations carry on). Ordered fulfilment lists per shipping zone / pickup point (empty = default). Placement locks the candidates' stock rows in a fixed order, then reserves the whole order at the first location that fills every line (`Order.stockLocationId` + reservations; none: BAD_REQUEST, new "not all in stock at one location" message). Consume, release, cancel, expiry and return restock act on the order's location. **Deviation from the decision note:** customer availability is the best *single* serving location, not the sum, because one order ships from one place (identical today with one location). Low-stock threshold on available summed over active locations.
@@ -175,7 +179,7 @@ None. Next: P4-C.1 ∥ P4-D.1 (Up next #1), waiting for Emmanuel's go.
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P4-C.1 lots/expiry ∥ P4-D.1 serials, then P4-E.1 purchasing | ∥ → | — (decided 2026-11-22; E after C, both touch receipts) |
+| 1 | P4-C.1 ∥ P4-D.1 (in progress), then P4-E.1 purchasing | ∥ → | E after C (both touch receipts) |
 | 2 | P3-C.2 MoMo refunds · P3-D Flutterwave | → | Paystack MoMo-refund confirmation · Flutterwave account |
 | 3 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
 | 4 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |

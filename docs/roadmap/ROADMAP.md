@@ -373,13 +373,13 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P4-B.1** [13e59dc, 94825a8] Adjustments with reasons, stock-take with variance
 - [x] **P4-B.2** [76d7f00] Low-stock events → staff notifications (replace 6-hourly scan)
 
-### P4-C — Lots & expiry
+### P4-C — Lots & expiry  🔄 in progress
 > Run: → · L · 🟧 (🟥 for food/pharmacy clients)
-- [ ] **P4-C.1** `Lot` with expiry; FEFO allocation; expired lots unsellable; expiring-stock report
+- [ ] 🔄 **P4-C.1** `Lot` with expiry; FEFO allocation; expired lots unsellable; expiring-stock report
 
-### P4-D — Serials
+### P4-D — Serials  🔄 in progress
 > Run: ∥ · M · 🟧
-- [ ] **P4-D.1** `SerialUnit` (IMEI) assignment at pick; warranty start
+- [ ] 🔄 **P4-D.1** `SerialUnit` (IMEI) assignment at pick; warranty start
 
 ### P4-E — Purchasing
 > Run: ∥ · L · ⬜
