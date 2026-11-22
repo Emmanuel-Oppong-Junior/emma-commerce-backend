@@ -225,6 +225,7 @@ model Variant {
   transferLines     StockTransferLine[]
   stockTakeLines    StockTakeLine[]
   lowStockAlerts    LowStockAlert[]
+  serialUnits       SerialUnit[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -273,6 +274,13 @@ enum AttributeDataType {
   TEXT
   NUMBER
   BOOLEAN
+}
+
+/// How a serial number is checked (P4-D.1): IMEI is 15 digits with a valid Luhn check digit; FREE_TEXT is 1-64
+/// letters, digits and - _ . /, stored upper case.
+enum SerialFormat {
+  FREE_TEXT
+  IMEI
 }
 
 enum FulfilmentKind {
@@ -326,6 +334,10 @@ model Product {
   shelfLifeDays        Int?
   trackLots            Boolean        @default(false)
   trackSerials         Boolean        @default(false)
+  /// How serials of a trackSerials product are validated and normalised (P4-D.1)
+  serialFormat         SerialFormat   @default(FREE_TEXT)
+  /// Warranty from delivery, in months, of each serialised unit sold (P4-D.1); null: no warranty
+  warrantyMonths       Int?
   fulfilmentKind       FulfilmentKind @default(PHYSICAL)
   unitOfMeasure        UnitOfMeasure  @default(EACH)
 
@@ -512,6 +524,7 @@ model OrderItem {
   adjustments          OrderAdjustment[]
   taxLines             OrderLineTax[]
   refundLines          RefundLine[]
+  serialUnits          SerialUnit[]
 
   @@index([orderId])
   @@index([productId, orderId])
@@ -1228,6 +1241,7 @@ model StockLocation {
   orders          Order[]
   transfersOut    StockTransfer[]               @relation("StockTransferFrom")
   transfersIn     StockTransfer[]               @relation("StockTransferTo")
+  serialUnits     SerialUnit[]
 
   @@unique([storeId], map: "StockLocation_one_default_per_store", where: raw("\"isDefault\""))
 }
@@ -1779,4 +1793,69 @@ model CodBlacklistEntry {
   createdAt   DateTime         @default(now())
 
   @@unique([kind, value])
+}
+
+/// Where a serialised unit is (P4-D.1, src/inventory/serials/serial-rules.ts): IN_STOCK on a location's shelf, ASSIGNED
+/// to an order line at pick (still on the shelf), SOLD once dispatched, IN_TRANSIT on a stock transfer, WRITTEN_OFF
+/// (adjusted away, or missing when a transfer was received).
+enum SerialUnitStatus {
+  IN_STOCK
+  ASSIGNED
+  SOLD
+  IN_TRANSIT
+  WRITTEN_OFF
+}
+
+/// One physical unit of a variant of a trackSerials product (P4-D.1). The serial is stored normalised and is unique
+/// per variant. Per (variant, location), IN_STOCK + ASSIGNED units = StockLevel.onHand + units sold online whose order
+/// is not dispatched yet (checked nightly by the stock reconciliation). CHECKs tie location and order line to the
+/// status. Every change writes a SerialUnitEvent in the same transaction.
+model SerialUnit {
+  id               String            @id @default(cuid())
+  variantId        String
+  serial           String
+  status           SerialUnitStatus  @default(IN_STOCK)
+  /// Set while IN_STOCK or ASSIGNED
+  locationId       String?
+  /// Set while ASSIGNED or SOLD
+  orderItemId      String?
+  receivedAt       DateTime          @default(now())
+  soldAt           DateTime?
+  /// Set at delivery when the product has a warranty
+  warrantyStartsAt DateTime?
+  warrantyEndsAt   DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  variant          Variant           @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location         StockLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  orderItem        OrderItem?        @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  events           SerialUnitEvent[]
+
+  @@unique([variantId, serial])
+  @@index([serial])
+  @@index([orderItemId])
+  @@index([variantId, locationId, status])
+}
+
+/// Append-only history of a serial unit (P4-D.1): one row per status change, with the stock movement that went with
+/// it (receipt, adjustment, transfer, return) and what caused it. Location, order line and movement are snapshots,
+/// not foreign keys. A trigger refuses updates and direct deletes.
+model SerialUnitEvent {
+  id           String            @id @default(cuid())
+  serialUnitId String
+  /// Null when the unit was first received
+  from         SerialUnitStatus?
+  to           SerialUnitStatus
+  locationId   String?
+  orderItemId  String?
+  movementId   String?
+  refType      String?
+  refId        String?
+  actorId      String?
+  note         String?
+  createdAt    DateTime          @default(now())
+  serialUnit   SerialUnit        @relation(fields: [serialUnitId], references: [id], onDelete: Cascade)
+
+  @@index([serialUnitId, createdAt])
+  @@index([refType, refId])
 }
