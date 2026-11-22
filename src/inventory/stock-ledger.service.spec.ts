@@ -141,6 +141,35 @@ describe('StockLedgerService', () => {
       expect(repository.insertMovement).not.toHaveBeenCalled();
     });
 
+    it('adjusts at the given location and records the adjustment reason on the movement', async () => {
+      await service.adjustAt(tx, 'var1', 'branch_2', -2, {
+        actorId: 'a1',
+        adjustmentReason: 'EXPIRED',
+        note: 'Batch 7',
+      });
+
+      expect(repository.defaultLocationId).not.toHaveBeenCalled();
+      expect(repository.ensureLevel).toHaveBeenCalledWith(tx, 'var1', 'branch_2');
+      expect(repository.insertMovement).toHaveBeenCalledWith(tx, {
+        variantId: 'var1',
+        locationId: 'branch_2',
+        onHandDelta: -2,
+        reservedDelta: 0,
+        reason: 'ADJUSTMENT',
+        actorId: 'a1',
+        adjustmentReason: 'EXPIRED',
+        note: 'Batch 7',
+      });
+    });
+
+    it('reads available stock at a given location', async () => {
+      repository.findLevel.mockResolvedValueOnce({ onHand: 9, reserved: 4 }).mockResolvedValueOnce(null);
+
+      await expect(service.availableAt(tx, 'var1', 'branch_2')).resolves.toBe(5);
+      await expect(service.availableAt(tx, 'var2', 'branch_2')).resolves.toBe(0);
+      expect(repository.findLevel).toHaveBeenCalledWith(tx, 'var1', 'branch_2');
+    });
+
     it('receives stock as the given reason', async () => {
       await service.receive(tx, 'var1', 5, 'RECEIPT', { note: 'Initial stock' });
 

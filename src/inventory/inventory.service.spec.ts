@@ -13,6 +13,7 @@ function movement(overrides: Partial<StockMovement> = {}): StockMovement {
     onHandDelta: 50,
     reservedDelta: 0,
     reason: 'RECEIPT',
+    adjustmentReason: null,
     refType: null,
     refId: null,
     actorId: 'admin1',
@@ -24,15 +25,25 @@ function movement(overrides: Partial<StockMovement> = {}): StockMovement {
 
 describe('InventoryService', () => {
   const tx = { variant: { count: jest.fn() } };
-  let ledger: { receive: jest.Mock; adjust: jest.Mock; available: jest.Mock };
-  let repository: { returnRequestExists: jest.Mock; findMovements: jest.Mock };
+  let ledger: { receive: jest.Mock; adjustAt: jest.Mock; availableAt: jest.Mock };
+  let repository: {
+    returnRequestExists: jest.Mock;
+    findMovements: jest.Mock;
+    defaultLocationId: jest.Mock;
+    findActiveLocation: jest.Mock;
+  };
   let audit: ReturnType<typeof createAuditServiceMock>;
   let service: InventoryService;
 
   beforeEach(() => {
     tx.variant.count.mockReset().mockResolvedValue(1);
-    ledger = { receive: jest.fn().mockResolvedValue(movement()), adjust: jest.fn(), available: jest.fn() };
-    repository = { returnRequestExists: jest.fn().mockResolvedValue(true), findMovements: jest.fn() };
+    ledger = { receive: jest.fn().mockResolvedValue(movement()), adjustAt: jest.fn(), availableAt: jest.fn() };
+    repository = {
+      returnRequestExists: jest.fn().mockResolvedValue(true),
+      findMovements: jest.fn(),
+      defaultLocationId: jest.fn().mockResolvedValue('store_main'),
+      findActiveLocation: jest.fn().mockResolvedValue(null),
+    };
     audit = createAuditServiceMock();
     const prisma = { $transaction: jest.fn((work: (t: unknown) => unknown) => work(tx)) };
     service = new InventoryService(ledger as never, repository as never, prisma as never, audit as never);
@@ -84,21 +95,64 @@ describe('InventoryService', () => {
   });
 
   describe('adjustVariantStock', () => {
-    it('moves on-hand stock by the signed delta with the reason as its note', async () => {
-      ledger.adjust.mockResolvedValue(movement({ reason: 'ADJUSTMENT', onHandDelta: -3 }));
+    it('moves on-hand stock at the default location by the signed delta with its reason and note', async () => {
+      ledger.adjustAt.mockResolvedValue(movement({ reason: 'ADJUSTMENT', onHandDelta: -3 }));
 
-      await service.adjustVariantStock({ variantId: 'var1', delta: -3, reason: 'Damaged in storage' }, 'admin1');
+      await service.adjustVariantStock(
+        { variantId: 'var1', delta: -3, reason: 'DAMAGED', note: ' Damaged in storage ' },
+        'admin1',
+      );
 
-      expect(ledger.adjust).toHaveBeenCalledWith(tx, 'var1', -3, { actorId: 'admin1', note: 'Damaged in storage' });
+      expect(ledger.adjustAt).toHaveBeenCalledWith(tx, 'var1', 'store_main', -3, {
+        actorId: 'admin1',
+        adjustmentReason: 'DAMAGED',
+        note: 'Damaged in storage',
+      });
+    });
+
+    it('adjusts at the location given when it is an active location', async () => {
+      repository.findActiveLocation.mockResolvedValue({ id: 'branch_2' });
+      ledger.adjustAt.mockResolvedValue(movement({ reason: 'ADJUSTMENT', onHandDelta: 2, locationId: 'branch_2' }));
+
+      await service.adjustVariantStock({ variantId: 'var1', locationId: 'branch_2', delta: 2, reason: 'FOUND' }, 'a1');
+
+      expect(repository.findActiveLocation).toHaveBeenCalledWith(tx, 'branch_2');
+      expect(ledger.adjustAt).toHaveBeenCalledWith(tx, 'var1', 'branch_2', 2, {
+        actorId: 'a1',
+        adjustmentReason: 'FOUND',
+        note: undefined,
+      });
+    });
+
+    it('reports an unknown or inactive location as not found', async () => {
+      await expect(
+        service.adjustVariantStock({ variantId: 'var1', locationId: 'gone', delta: -1, reason: 'LOST' }, 'admin1'),
+      ).rejects.toThrow(new NotFoundException('Stock location "gone" not found or inactive'));
+      expect(ledger.adjustAt).not.toHaveBeenCalled();
+    });
+
+    it('refuses a reason that does not fit the change before touching stock', async () => {
+      await expect(
+        service.adjustVariantStock({ variantId: 'var1', delta: 4, reason: 'DAMAGED' }, 'admin1'),
+      ).rejects.toThrow(new BadRequestException('DAMAGED can only remove stock: send a negative delta'));
+      await expect(
+        service.adjustVariantStock({ variantId: 'var1', delta: -1, reason: 'STOCK_TAKE' }, 'admin1'),
+      ).rejects.toThrow(new BadRequestException('STOCK_TAKE cannot be given by hand'));
+      await expect(
+        service.adjustVariantStock({ variantId: 'var1', delta: -1, reason: 'OTHER', note: ' ' }, 'admin1'),
+      ).rejects.toThrow(new BadRequestException('A note is required when the reason is OTHER'));
+      expect(tx.variant.count).not.toHaveBeenCalled();
+      expect(ledger.adjustAt).not.toHaveBeenCalled();
     });
 
     it('refuses to remove units that are not available, and audits nothing', async () => {
-      ledger.adjust.mockResolvedValue(null);
-      ledger.available.mockResolvedValue(7);
+      ledger.adjustAt.mockResolvedValue(null);
+      ledger.availableAt.mockResolvedValue(7);
 
       await expect(
-        service.adjustVariantStock({ variantId: 'var1', delta: -10, reason: 'Lost' }, 'admin1'),
+        service.adjustVariantStock({ variantId: 'var1', delta: -10, reason: 'LOST' }, 'admin1'),
       ).rejects.toThrow(new BadRequestException('Cannot remove 10 units from variant "var1": only 7 available'));
+      expect(ledger.availableAt).toHaveBeenCalledWith(tx, 'var1', 'store_main');
       expect(audit.log).not.toHaveBeenCalled();
     });
 
@@ -106,9 +160,9 @@ describe('InventoryService', () => {
       tx.variant.count.mockResolvedValue(0);
 
       await expect(
-        service.adjustVariantStock({ variantId: 'nope', delta: -1, reason: 'Lost' }, 'admin1'),
+        service.adjustVariantStock({ variantId: 'nope', delta: -1, reason: 'LOST' }, 'admin1'),
       ).rejects.toThrow(NotFoundException);
-      expect(ledger.adjust).not.toHaveBeenCalled();
+      expect(ledger.adjustAt).not.toHaveBeenCalled();
     });
   });
 
@@ -144,17 +198,22 @@ describe('InventoryService', () => {
       ],
       [
         'adjustVariantStock',
-        () => service.adjustVariantStock({ variantId: 'var1', delta: -3, reason: 'Damaged' }, 'admin1'),
-        movement({ id: 'mv2', reason: 'ADJUSTMENT', onHandDelta: -3, note: 'Damaged' }),
+        () => service.adjustVariantStock({ variantId: 'var1', delta: -3, reason: 'DAMAGED', note: 'Torn' }, 'admin1'),
+        movement({ id: 'mv2', reason: 'ADJUSTMENT', adjustmentReason: 'DAMAGED', onHandDelta: -3, note: 'Torn' }),
         {
           entity: 'Variant',
           entityId: 'var1',
-          details: expect.objectContaining({ stockMovementId: 'mv2', kind: 'ADJUSTMENT', onHandDelta: -3 }),
+          details: expect.objectContaining({
+            stockMovementId: 'mv2',
+            kind: 'ADJUSTMENT',
+            onHandDelta: -3,
+            adjustmentReason: 'DAMAGED',
+          }),
         },
       ],
     ])('%s audits the stock change on the transaction that moved the stock', async (_name, act, moved, expected) => {
       ledger.receive.mockResolvedValue(moved);
-      ledger.adjust.mockResolvedValue(moved);
+      ledger.adjustAt.mockResolvedValue(moved);
 
       await act();
 

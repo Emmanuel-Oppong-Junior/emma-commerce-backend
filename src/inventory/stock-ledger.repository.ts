@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   Prisma,
+  StockAdjustmentReason,
   StockMovement,
   StockMovementReason,
   StockReservation,
@@ -22,6 +23,7 @@ export interface NewMovement {
   refId?: string;
   actorId?: string;
   note?: string;
+  adjustmentReason?: StockAdjustmentReason;
 }
 
 export interface NewReservation {
@@ -52,6 +54,14 @@ export class StockLedgerRepository {
     });
     if (!location) throw new Error('No default stock location exists; apply the database migrations');
     return location.id;
+  }
+
+  /** An active stock location of the store, or null. */
+  async findActiveLocation(db: Db, id: string): Promise<{ id: string } | null> {
+    return db.stockLocation.findFirst({
+      where: { id, isActive: true, store: { singleton: true } },
+      select: { id: true },
+    });
   }
 
   async ensureLevel(db: Db, variantId: string, locationId: string): Promise<void> {

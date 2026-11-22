@@ -68,12 +68,20 @@ type Address {
 
 input AdjustVariantStockInput {
   """
-  Signed change: negative removes stock (damage, loss, count), positive adds it
+  Signed change to on-hand stock, never an absolute quantity: negative removes, positive adds
   """
   delta: Int!
 
-  """Why the stock changed"""
-  reason: String!
+  """Stock location; defaults to the store’s default location"""
+  locationId: ID
+
+  """Free text; required when the reason is OTHER"""
+  note: String
+
+  """
+  DAMAGED, LOST and EXPIRED only remove stock, FOUND only adds it, CORRECTION and OTHER go either way; STOCK_TAKE is refused (approved stock-takes only)
+  """
+  reason: StockAdjustmentReason!
   variantId: ID!
 }
 
@@ -1398,7 +1406,7 @@ type Mutation {
   addToWishlist(productId: String!): Wishlist!
 
   """
-  Change a variant’s on-hand stock by a signed amount with a reason, never below reserved (admin only)
+  Change a variant’s on-hand stock at a location by a signed amount with a reason, never below reserved (admin only)
   """
   adjustVariantStock(input: AdjustVariantStockInput!): StockMovement!
 
@@ -3741,10 +3749,39 @@ type StepUpResult {
   validUntil: DateTime!
 }
 
+"""Why staff adjusted stock (an ADJUSTMENT movement)"""
+enum StockAdjustmentReason {
+  """A correction of an earlier mistake (either way)"""
+  CORRECTION
+
+  """Damaged goods written off (removes stock)"""
+  DAMAGED
+
+  """Expired goods written off (removes stock)"""
+  EXPIRED
+
+  """Goods found that were not on the books (adds stock)"""
+  FOUND
+
+  """Missing or stolen goods (removes stock)"""
+  LOST
+
+  """Anything else; a note is required"""
+  OTHER
+
+  """The variance of an approved stock-take; never given by hand"""
+  STOCK_TAKE
+}
+
 """One entry of the append-only stock ledger"""
 type StockMovement {
   """The staff member or customer who caused it"""
   actorId: ID
+
+  """
+  Why staff adjusted: set on ADJUSTMENT movements recorded since P4-B.1, null otherwise
+  """
+  adjustmentReason: StockAdjustmentReason
   createdAt: DateTime!
   id: ID!
   locationId: ID!
@@ -3772,7 +3809,9 @@ type StockMovementPage {
 
 """Why stock moved (ADR-0008)"""
 enum StockMovementReason {
-  """Manual correction with a reason (damage, loss, stock count)"""
+  """
+  Manual change with an adjustmentReason, or a stock-take variance (STOCK_TAKE)
+  """
   ADJUSTMENT
 
   """

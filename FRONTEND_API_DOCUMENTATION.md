@@ -2345,12 +2345,13 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   refType?: string;            // What caused it: "Order", "ReturnRequest", "InventoryLog" (migrated), ...
   refId?: string;
   actorId?: string;            // Staff member or customer who caused it
-  note?: string;               // The reason text given by staff, or e.g. "Order cancelled"
+  adjustmentReason?: StockAdjustmentReason; // ADJUSTMENT only (P4-B.1): DAMAGED, LOST, FOUND, EXPIRED, CORRECTION, STOCK_TAKE, OTHER
+  note?: string;               // The note given by staff, or e.g. "Order cancelled"
   createdAt: DateTime;
 }
 ```
 
-**`StockMovementReason`**: `RECEIPT` (delivery or opening stock of a new variant), `RESERVE` (held for an order line), `SALE` (a hold consumed: online payment captured or cash-on-delivery order dispatched), `RELEASE` (hold given back on cancel or expiry), `RETURN_RESTOCK` (returned goods, or a paid order cancelled before dispatch), `ADJUSTMENT`, `OPENING_BALANCE` (stock the old inventory log did not explain, migration only), `TRANSFER` (not used yet).
+**`StockMovementReason`**: `RECEIPT` (delivery or opening stock of a new variant), `RESERVE` (held for an order line), `SALE` (a hold consumed: online payment captured or cash-on-delivery order dispatched), `RELEASE` (hold given back on cancel or expiry), `RETURN_RESTOCK` (returned goods, or a paid order cancelled before dispatch), `ADJUSTMENT` (a manual change or a stock-take variance; see `adjustmentReason`), `OPENING_BALANCE` (stock the old inventory log did not explain, migration only), `TRANSFER` (not used yet).
 
 ---
 
@@ -2376,22 +2377,28 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 ---
 
 #### `adjustVariantStock`
-- **Type**: Mutation
+- **Type**: Mutation (`inventory.adjust`)
 - **Args**: `input: AdjustVariantStockInput!`
-- **Response**: `StockMovement!` (reason `ADJUSTMENT`)
-- **Description**: Change a variant's on-hand stock by a signed amount, e.g. damage, loss or a stock count correction. Units reserved for open orders cannot be adjusted away.
+- **Response**: `StockMovement!` (reason `ADJUSTMENT`, with `adjustmentReason`)
+- **Description**: Change a variant's on-hand stock at a location by a signed amount, never an absolute quantity, with a reason from a fixed list: damage, loss, expiry, found goods, a correction. Units reserved for open orders cannot be adjusted away. One `ADJUSTMENT` stock movement and one audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`, with `adjustmentReason`).
 
 **Input: `AdjustVariantStockInput`**
 
 ```typescript
 {
-  variantId: string;  // Required.
-  delta: number;      // Required. Non-zero integer; negative removes stock.
-  reason: string;     // Required. 1–500 chars. Stored as the movement's note.
+  variantId: string;               // Required.
+  locationId?: string;             // Stock location; default: the store's default location.
+  delta: number;                   // Required. Non-zero integer; negative removes stock.
+  reason: StockAdjustmentReason;   // Required. See below.
+  note?: string;                   // Max 500 chars. Required (not blank) when reason is OTHER. Stored as the movement's note.
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (variant); `BAD_REQUEST` (`Cannot remove N units from variant "<id>": only M available`).
+**`StockAdjustmentReason`**: `DAMAGED`, `LOST`, `EXPIRED` (remove stock only: `delta` < 0), `FOUND` (adds stock only: `delta` > 0), `CORRECTION`, `OTHER` (either way; `OTHER` needs a `note`), `STOCK_TAKE` (set only by an approved stock-take, see [Stock-takes](#stock-takes); refused here).
+
+**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Stock location "<id>" not found or inactive`); `BAD_REQUEST` (`DAMAGED can only remove stock: send a negative delta`, `FOUND can only add stock: send a positive delta`, `STOCK_TAKE cannot be given by hand`, `A note is required when the reason is OTHER`, `Cannot remove N units from variant "<id>": only M available`); `BAD_USER_INPUT` (`delta` 0, unknown reason).
+
+**Breaking change (P4-B.1):** `AdjustVariantStockInput.reason` is now a `StockAdjustmentReason` enum (was free text, which moves to the new optional `note`); `locationId` is new. `StockMovement.adjustmentReason` is new (null on movements recorded before P4-B.1 and on every other kind of movement).
 
 ---
 

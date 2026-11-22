@@ -21,7 +21,8 @@ export class InventoryResolver {
 
   @RequirePermission('inventory.adjust')
   @Mutation(() => StockMovement, {
-    description: 'Change a variant’s on-hand stock by a signed amount with a reason, never below reserved (admin only)',
+    description:
+      'Change a variant’s on-hand stock at a location by a signed amount with a reason, never below reserved (admin only)',
   })
   adjustVariantStock(@ActiveUser('id') actorId: string, @Args('input') input: AdjustVariantStockInput) {
     return this.inventoryService.adjustVariantStock(input, actorId);

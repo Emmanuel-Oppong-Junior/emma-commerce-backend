@@ -273,7 +273,7 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
 
     const res = await gqlRequest(
       app,
-      `mutation { adjustVariantStock(input: { variantId: "${variantId}", delta: -2, reason: "Count" }) { id } }`,
+      `mutation { adjustVariantStock(input: { variantId: "${variantId}", delta: -2, reason: CORRECTION }) { id } }`,
       undefined,
       adminToken,
     ).expect(200);
