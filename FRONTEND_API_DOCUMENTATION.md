@@ -1922,16 +1922,18 @@ mutation {
 
 ---
 
-#### `recordCodPayment` (ADMIN, SUPER_ADMIN)
+#### `recordCodPayment` (staff: `payment.record`)
 - **Type**: Mutation
-- **Args**: `orderId: String!`
-- **Description**: Records that the grand total was collected in cash. In one step it captures the payment (attempt `CAPTURED`, provider `CASH_ON_DELIVERY`, amount = `grandTotal`, GHS), stores who recorded it, delivers the shipment (`DELIVERED`), completes the order (`COMPLETED`, customer emailed) and writes an audit entry.
-- **Rules**: only a non-deleted cash-on-delivery order in `IN_FULFILMENT` whose shipment has been dispatched (`OUT_FOR_DELIVERY`, or `READY_FOR_PICKUP` at the counter). Repeating the call for the same order (double click) records nothing more.
+- **Args**: `input: RecordCodPaymentInput!` — `{ orderId: ID!, riderId: ID!, amount: Decimal!, collectedAt: DateTime }`
+- **Description**: Records that a rider collected the grand total in cash. In one step it captures the payment (attempt `CAPTURED`, provider `CASH_ON_DELIVERY`, amount = `grandTotal`, GHS), stores the cash collection (who collected it, who recorded it, when), delivers the shipment (`DELIVERED`), completes the order (`COMPLETED`, customer emailed) and writes an audit entry (with the rider and collection time). The collection then waits to be handed in with `recordCashRemittance` (see [COD cash](#cod-cash-collection-remittances-and-report-p3-b3)).
+- **Rules**: only a non-deleted cash-on-delivery order in `IN_FULFILMENT` whose shipment has been dispatched (`OUT_FOR_DELIVERY`, or `READY_FOR_PICKUP` at the counter). `riderId` is the staff member who took the cash: riders are staff accounts for now (an active user with a store role). `amount` must equal the order's `grandTotal` exactly: a short collection is not recorded here (cash a rider fails to hand in shows up as a short remittance). `collectedAt` defaults to now; it may be backdated, but not to before dispatch nor into the future (5 minutes of clock skew allowed). Repeating the call for the same order (double click) records nothing more.
 - **Response**: `Payment!`
+
+**Breaking change (P3-B.3):** the argument `orderId: String!` → `input: RecordCodPaymentInput!`, with the new required `riderId` and `amount`.
 
 **Possible Errors**:
 - `NOT_FOUND` — order does not exist or is deleted.
-- `BAD_REQUEST` — the order is an `ONLINE` order.
+- `BAD_REQUEST` — the order is an `ONLINE` order; `reason: RIDER_NOT_STAFF` (unknown rider, no store role or archived); `reason: COLLECTION_AMOUNT_MISMATCH` (amount is not the grand total); `reason: INVALID_COLLECTION_TIME`.
 - `CONFLICT` — the order is not `IN_FULFILMENT` (e.g. `PLACED`, `CONFIRMED`, `CANCELLED`, already `COMPLETED`), its shipment has not been dispatched, or its payment was already recorded.
 
 ---
@@ -2010,6 +2012,57 @@ A rule fires when its count in the window, including the order or attempt being 
 - `updateVelocityLimits(input: { limits: [{ rule, softLimit, hardLimit }] }): [VelocityLimit!]!` (Owner, recent step-up, audited): whole numbers 1–1,000,000 with `hardLimit >= softLimit` (`BAD_REQUEST` otherwise, nothing saved); rules left out keep their limits.
 - `flaggedOrders(first: Int = 20): [FlaggedOrder!]!` (1-100) (staff: `order.view`): orders with open review flags, newest first: `{ id, orderNumber, userId, status, grandTotal, createdAt, reviewFlags: [OrderReviewFlag] }`; open `viewOrder` for the full order. `OrderReviewFlag`: `{ id, orderId, rule, level: VelocityLevel (SOFT | HARD), count, limit, createdAt, clearedAt, clearedById, clearNote }`. One open flag per order and rule.
 - `clearOrderReviewFlags(input: { orderId, note }): [OrderReviewFlag!]!` (staff: `order.manage`, audited): clears every open flag of the order with the note; `NOT_FOUND` when it has none. A flag does not hold the order: cancel it with `adminCancelOrder` if it is fraud.
+
+---
+
+#### COD cash: collection, remittances and report (P3-B.3)
+
+After `recordCodPayment` the cash is with the **rider** (a staff account for now; a Rider role comes later). The rider hands it to the store in a **remittance**, recorded by the staff member who receives it. Every operation below needs `cod.cash.manage` (Owner, Manager, Cashier). Money is exact (`Money` / `Decimal` strings).
+
+```typescript
+CashCollection {
+  id: string; orderId: string; orderNumber: number;
+  attemptId: string | null;        // the captured cash payment
+  riderId: string | null;          // null for collections recorded before P3-B.3
+  recordedById: string | null;
+  amount: Money; currency: string; collectedAt: DateTime;
+  remittanceId: string | null;     // null while outstanding
+}
+CashRemittance {
+  id: string; riderId: string; receivedById: string;
+  amount: Money;                   // cash handed in
+  expectedAmount: Money;           // sum of the covered collections
+  discrepancy: string;             // amount - expectedAmount, 2 decimals: "-20.00" short, "5.00" over, "0.00"
+  discrepancyKind: CashDiscrepancyKind | null; // SHORT | OVER | null when it matches
+  currency: string; note: string | null; receivedAt: DateTime; createdAt: DateTime;
+  collections: CashCollection[];   // empty for an adjusting entry
+}
+```
+
+- `unremittedCashCollections(riderId: ID!): [CashCollection!]!`: the rider's collections not handed in yet, oldest first (what a remittance can cover).
+- `recordCashRemittance(input: { riderId: ID!, amount: Decimal!, collectionIds: [ID!]!, receivedAt: DateTime, note: String }): CashRemittance!` (audited): `amount` 0 or more; `collectionIds` up to 500 of that rider's unremitted collections; `receivedAt` defaults to now. When `amount` differs from the collections' sum the difference is recorded as a discrepancy and `note` is required (`BAD_REQUEST`, `reason: DISCREPANCY_NOTE_REQUIRED`, nothing saved). Remittances can never be edited or deleted: correct one with a new **adjusting entry**, a remittance with no collections (e.g. the GHS 20 a rider brings the next day after a short remittance), which counts entirely as `OVER` and needs a note. Errors: unknown collection → `NOT_FOUND`; another rider's collection, a collection listed twice, no collections and amount 0 → `BAD_REQUEST`; a rider who is neither active staff nor has collected cash before → `BAD_REQUEST` `RIDER_NOT_STAFF`; a collection already remitted (also when two remittances race for it: one wins) → `CONFLICT`, `reason: COLLECTION_ALREADY_REMITTED`. A short or over remittance records `cod.remittance_discrepancy.v1` (logged by the worker) and counts in `cod_remittance_discrepancies_total`.
+- `cashRemittances(riderId: ID, first: Int = 20): [CashRemittance!]!` (1-100): newest first.
+- `codCashReport(input: { from: DateTime!, to: DateTime!, riderId: ID, first: Int = 20, after: ID }): CodCashReport!`: for `[from, to)` (`from` must be before `to`, else `BAD_REQUEST`). `riders` lists every rider with collections taken or remittances received in the range, ordered by id, paged with `first` (1-100) and `after` (the last `riderId` of the previous page); `totals` covers every rider of the range, not just the page.
+
+```typescript
+CodCashReport {
+  from: DateTime; to: DateTime;
+  riders: {
+    riderId: string; riderName: string | null;
+    collectionsCount: number; collectedTotal: Money;     // collections taken in the range
+    outstandingCount: number; outstandingTotal: Money;   // ...of which not remitted yet
+    remittancesCount: number; remittedTotal: Money;      // remittances received in the range
+    discrepancyCount: number; shortTotal: Money; overTotal: Money; // their short/over amounts (shortTotal is positive)
+    netDiscrepancy: string;                              // overTotal - shortTotal; negative: the rider owes cash
+  }[];
+  pageInfo: { hasNextPage; hasPreviousPage; pageSize; totalCount };
+  totals: { /* the same figures, without riderId/riderName */ };
+  uncollectedDeliveries: {                               // store-wide, ignores riderId
+    count: number; total: Money;                         // COD orders delivered in the range with no cash collection (cash not recorded)
+    orders: { orderId; orderNumber; grandTotal: Money; deliveredAt: DateTime }[]; // the oldest 100
+  };
+}
+```
 
 ---
 
@@ -3103,7 +3156,7 @@ Authorization is permission-based (ADR-0013). **Permissions** are fixed in code;
 | Owner (`OWNER`) | Every permission, including any added later | Yes |
 | Manager (`MANAGER`) | Everything the legacy `ADMIN` could do: every permission except `staff.manage`, `store.settings.manage`, `jobs.manage`, `customer.data.export` | Yes |
 | Inventory clerk (`INVENTORY_CLERK`) | `catalog.product.read`, `catalog.product.write`, `catalog.taxonomy.write`, `catalog.media.upload`, `inventory.view`, `inventory.adjust` | No (may opt in) |
-| Cashier (`CASHIER`) | `catalog.product.read`, `order.view`, `payment.view`, `payment.record` | No (may opt in) |
+| Cashier (`CASHIER`) | `catalog.product.read`, `order.view`, `order.fulfil`, `payment.view`, `payment.record`, `cod.cash.manage` | No (may opt in) |
 | Support (`SUPPORT`) | `order.view`, `return.manage`, `payment.view`, `user.view`, `review.moderate` | No (may opt in) |
 
 Pharmacist and Rider roles come with their verticals. The Owner can create **custom roles** from the catalogue (`createStaffRole`).
@@ -3133,6 +3186,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
 | `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment`, `disputes`, `dispute` (P3-E.2) |
 | `payment.record` | `recordCodPayment` |
+| `cod.cash.manage` | `unremittedCashCollections`, `recordCashRemittance`, `cashRemittances`, `codCashReport` (P3-B.3; held by Owner, Manager and Cashier) |
 | `payment.manage` | `softDeletePayment`, `restorePayment` |
 | `payment.dispute.manage` | `recordDispute`, `updateDisputeStatus`, `addDisputeNote` (P3-E.2; held by Owner and Manager) |
 | `promotion.manage` | `promotions`, `promotion`, `createPromotion`, `updatePromotion`, `deletePromotion`, `createCouponCode`, `updateCouponCode`, `deleteCouponCode`, `redemptions` (P2-B.1) |

@@ -14,6 +14,7 @@ export const PERMISSION_CATALOGUE = {
   'payment.record': 'Record cash collected for cash-on-delivery orders',
   'payment.manage': 'Soft-delete and restore payment records',
   'payment.dispute.manage': 'Record chargebacks and disputes, add evidence notes and change their status',
+  'cod.cash.manage': 'Record cash riders hand to the store (remittances) and read the cash-on-delivery cash report',
   'payment.settings.manage': 'Set the payment provider keys and switch payment methods on or off (Owner only)',
   'promotion.manage': 'Manage promotions, coupon codes and their redemptions',
   'customer.group.manage': 'Manage customer groups and their members',

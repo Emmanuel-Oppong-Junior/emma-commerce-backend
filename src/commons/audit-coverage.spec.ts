@@ -65,6 +65,7 @@ const AUDITED: Record<string, string> = {
   deleteOrder: 'order.service.spec',
   updateShipping: 'order.service.spec',
   recordCodPayment: 'payment.service.spec (recordCodPayment)',
+  recordCashRemittance: 'cash.service.spec (recordRemittance)',
   updateStoreSettings: 'store.service.spec',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
   retryFailedJob: 'failed-jobs.service.spec',

@@ -181,6 +181,22 @@ describe('NotificationSender', () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('refundId: gone'), 'NotificationSender');
   });
 
+  it('logs a COD remittance discrepancy with ids only and emails nobody', async () => {
+    const { sender, email, logger } = buildSender();
+
+    await sender.send(
+      'cod.remittance_discrepancy.v1',
+      event({ remittanceId: 'rem1', riderId: 'rider1', kind: 'SHORT' }),
+      'evt1',
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'COD remittance discrepancy | remittanceId: rem1 | riderId: rider1 | kind: SHORT',
+      'NotificationSender',
+    );
+    expect(Object.values(email).every((send) => send.mock.calls.length === 0)).toBe(true);
+  });
+
   it('skips with a warning, and does not fail, when the order no longer exists', async () => {
     const { sender, email, logger } = buildSender(null);
 

@@ -47,6 +47,9 @@ model User {
   customerGroups            CustomerGroupMember[]
   returnRequests            ReturnRequest[]
   storeMemberships          StoreMembership[]
+  cashCollected             CashCollection[]        @relation("CashCollectionRider")
+  cashRemitted              CashRemittance[]        @relation("CashRemittanceRider")
+  cashRemittancesReceived   CashRemittance[]        @relation("CashRemittanceReceiver")
   paymentProviderConfigs    PaymentProviderConfig[]
   /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
   mfaSecret                 String?
@@ -661,14 +664,44 @@ model CashCollection {
   order        Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
   attemptId    String?         @unique
   attempt      PaymentAttempt? @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  /// The staff member who took the cash (P3-B.3); null on collections recorded before riders were tracked
   riderId      String?
+  rider        User?           @relation("CashCollectionRider", fields: [riderId], references: [id], onDelete: Restrict)
   recordedById String?
   amount       Decimal         @db.Decimal(14, 2)
   currency     String          @default("GHS")
   collectedAt  DateTime        @default(now())
   createdAt    DateTime        @default(now())
+  /// Set once, when the rider hands the cash to the store; a trigger refuses any other update
+  remittanceId String?
+  remittance   CashRemittance? @relation(fields: [remittanceId], references: [id], onDelete: Restrict)
 
   @@index([orderId])
+  @@index([riderId, collectedAt])
+  @@index([remittanceId])
+}
+
+/// Cash a rider handed to the store (P3-B.3), covering a set of that rider's collections. Immutable: a correction is
+/// a new remittance. `discrepancy` = amount - expectedAmount (negative: short, positive: over); a note is required
+/// when it is not zero.
+model CashRemittance {
+  id             String           @id @default(cuid())
+  riderId        String
+  rider          User             @relation("CashRemittanceRider", fields: [riderId], references: [id], onDelete: Restrict)
+  receivedById   String
+  receivedBy     User             @relation("CashRemittanceReceiver", fields: [receivedById], references: [id], onDelete: Restrict)
+  amount         Decimal          @db.Decimal(14, 2)
+  /// The sum of the collections it covers
+  expectedAmount Decimal          @db.Decimal(14, 2)
+  discrepancy    Decimal          @db.Decimal(14, 2)
+  currency       String
+  note           String?
+  receivedAt     DateTime
+  createdAt      DateTime         @default(now())
+  collections    CashCollection[]
+
+  @@index([riderId, receivedAt])
+  @@index([receivedAt])
 }
 
 model WishList {

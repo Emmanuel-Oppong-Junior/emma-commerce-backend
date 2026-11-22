@@ -18,6 +18,7 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'payment.record',
   'payment.manage',
   'payment.dispute.manage',
+  'cod.cash.manage',
   'promotion.manage',
   'customer.group.manage',
   'pricelist.manage',

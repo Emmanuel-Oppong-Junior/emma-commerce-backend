@@ -27,6 +27,8 @@ export interface DomainEventPayloads {
   'refund.succeeded.v1': { orderId: string; refundId: string };
   /** A chargeback or dispute was opened on a payment (from the provider webhook or by staff). */
   'payment.dispute_opened.v1': { disputeId: string; paymentId: string; orderId: string; source: DisputeSource };
+  /** A rider's cash remittance did not match its collections (P3-B.3); the worker logs the ids. */
+  'cod.remittance_discrepancy.v1': { remittanceId: string; riderId: string; kind: 'SHORT' | 'OVER' };
   /** Available stock of a variant at a location fell to its low-stock threshold (raised once per crossing). */
   'inventory.low_stock.v1': { variantId: string; locationId: string; available: number; movementId: string };
 }
@@ -50,6 +52,7 @@ export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
   'payment.succeeded.v1': JobQueue.NOTIFICATIONS,
   'refund.succeeded.v1': JobQueue.NOTIFICATIONS,
   'payment.dispute_opened.v1': JobQueue.NOTIFICATIONS,
+  'cod.remittance_discrepancy.v1': JobQueue.NOTIFICATIONS,
   'inventory.low_stock.v1': JobQueue.NOTIFICATIONS,
 };
 

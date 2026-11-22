@@ -94,7 +94,10 @@ const mockPrismaOrder = {
   updateMany: jest.fn(),
 };
 
+const mockPrismaUser = { findUnique: jest.fn() };
+
 const mockTx = {
+  user: mockPrismaUser,
   paymentAttempt: mockPrismaAttempt,
   paymentIntent: mockPrismaIntent,
   cashCollection: mockPrismaCashCollection,
@@ -251,9 +254,12 @@ describe('PaymentRepository', () => {
     };
     const allowAll = jest.fn();
     const onRecorded = jest.fn();
+    const collectedAt = new Date('2026-11-22T10:00:00Z');
+    const request = { recordedById: 'admin1', riderId: 'rider1', collectedAt };
 
     beforeEach(() => {
       mockPrismaOrder.findUnique.mockResolvedValue(shippedCod);
+      mockPrismaUser.findUnique.mockResolvedValue({ isActive: true, storeMemberships: [{ id: 'm1' }] });
       mockPrismaIntent.upsert.mockResolvedValue({ id: 'intent1' });
       mockPrismaAttempt.create.mockResolvedValue({ id: 'pay1' });
       mockPrismaCashCollection.create.mockResolvedValue(collection);
@@ -269,10 +275,10 @@ describe('PaymentRepository', () => {
         throw refusal;
       });
 
-      await expect(repository.recordCashCollection('order1', 'admin1', refuse, onRecorded)).rejects.toBe(refusal);
+      await expect(repository.recordCashCollection('order1', request, refuse, onRecorded)).rejects.toBe(refusal);
 
       expect(mockTx.$queryRaw).toHaveBeenCalled();
-      expect(refuse).toHaveBeenCalledWith(shippedCod);
+      expect(refuse).toHaveBeenCalledWith(shippedCod, { isActive: true, isStaff: true });
       expect(mockPrismaIntent.upsert).not.toHaveBeenCalled();
       expect(mockPrismaAttempt.create).not.toHaveBeenCalled();
       expect(mockPrismaCashCollection.create).not.toHaveBeenCalled();
@@ -281,7 +287,7 @@ describe('PaymentRepository', () => {
     });
 
     it('captures the intent and records a captured cash attempt with its collection for the grand total', async () => {
-      await repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded);
+      await repository.recordCashCollection('order1', request, allowAll, onRecorded);
 
       expect(mockPrismaIntent.upsert).toHaveBeenCalledWith({
         where: { orderId: 'order1' },
@@ -303,12 +309,31 @@ describe('PaymentRepository', () => {
         },
       });
       expect(mockPrismaCashCollection.create).toHaveBeenCalledWith({
-        data: { orderId: 'order1', attemptId: 'pay1', amount, currency: 'GHS', recordedById: 'admin1' },
+        data: {
+          orderId: 'order1',
+          attemptId: 'pay1',
+          amount,
+          currency: 'GHS',
+          recordedById: 'admin1',
+          riderId: 'rider1',
+          collectedAt,
+        },
       });
     });
 
+    it('hands the re-check a rider without a store membership as not staff, and an unknown rider as null', async () => {
+      const check = jest.fn();
+      mockPrismaUser.findUnique.mockResolvedValueOnce({ isActive: true, storeMemberships: [] });
+      await repository.recordCashCollection('order1', request, check, onRecorded);
+      mockPrismaUser.findUnique.mockResolvedValueOnce(null);
+      await repository.recordCashCollection('order1', request, check, onRecorded);
+
+      expect(check).toHaveBeenNthCalledWith(1, shippedCod, { isActive: true, isStaff: false });
+      expect(check).toHaveBeenNthCalledWith(2, shippedCod, null);
+    });
+
     it('delivers the shipment and completes the order only from the status it was locked in, then hands the result to onRecorded', async () => {
-      const result = await repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded);
+      const result = await repository.recordCashCollection('order1', request, allowAll, onRecorded);
 
       const context = { actorId: 'admin1', reason: 'Cash collected on delivery' };
       expect(mockOrdersRepository.transitionShipment).toHaveBeenCalledWith(
@@ -341,7 +366,7 @@ describe('PaymentRepository', () => {
     it('rolls back if the order changed under the lock', async () => {
       mockOrdersRepository.transitionStatus.mockResolvedValue(null);
 
-      await expect(repository.recordCashCollection('order1', 'admin1', allowAll, onRecorded)).rejects.toThrow(
+      await expect(repository.recordCashCollection('order1', request, allowAll, onRecorded)).rejects.toThrow(
         ConflictException,
       );
       expect(onRecorded).not.toHaveBeenCalled();

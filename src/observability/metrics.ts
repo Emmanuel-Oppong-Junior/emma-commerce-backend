@@ -48,6 +48,7 @@ export class AppMetrics {
   private readonly stockMismatches: Counter;
   private readonly velocityHits: Counter;
   private readonly velocityErrors: Counter;
+  private readonly codRemittanceDiscrepancies: Counter;
   private readonly operationNames = new Set<string>();
 
   constructor(@Inject(METER) meter: Meter) {
@@ -89,6 +90,9 @@ export class AppMetrics {
     });
     this.velocityErrors = meter.createCounter('velocity_check_errors', {
       description: 'Velocity checks skipped (fail-open) or events not counted because Redis failed, by stage',
+    });
+    this.codRemittanceDiscrepancies = meter.createCounter('cod_remittance_discrepancies', {
+      description: 'Cash-on-delivery remittances that did not match their collections, by kind (SHORT or OVER)',
     });
   }
 
@@ -152,6 +156,10 @@ export class AppMetrics {
 
   recordVelocityCheckError(stage: VelocityCheckStage): void {
     this.velocityErrors.add(1, { stage });
+  }
+
+  recordCodRemittanceDiscrepancy(kind: 'SHORT' | 'OVER'): void {
+    this.codRemittanceDiscrepancies.add(1, { kind });
   }
 
   private boundedOperationName(name: string | null | undefined): string {

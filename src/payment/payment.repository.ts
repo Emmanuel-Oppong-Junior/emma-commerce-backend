@@ -73,10 +73,22 @@ export type OrderForPayment = Prisma.OrderGetPayload<{ include: typeof PAYABLE_O
 
 const COLLECTABLE_ORDER = {
   paymentIntent: { select: { status: true, attempts: { select: { status: true } } } },
-  shipments: { select: { id: true, status: true } },
+  shipments: { select: { id: true, status: true, dispatchedAt: true } },
 } as const;
 
 export type OrderForCollection = Prisma.OrderGetPayload<{ include: typeof COLLECTABLE_ORDER }>;
+
+/** Who took the cash and when; `collectedAt` defaults to the time of recording. */
+export interface CashCollectionRequest {
+  recordedById: string;
+  riderId: string;
+  collectedAt: Date;
+}
+
+export interface RiderOfCollection {
+  isActive: boolean;
+  isStaff: boolean;
+}
 
 export interface RecordedCollection {
   attempt: PaymentRecord;
@@ -189,19 +201,27 @@ export class PaymentRepository {
    * Records the grand total as cash collected and completes the order, in one transaction: the intent is captured, a
    * CAPTURED cash-on-delivery attempt and its cash collection are created, the dispatched shipment is DELIVERED, the
    * order moves IN_FULFILMENT -> COMPLETED (recording `order.status_changed.v2`), and `onRecorded` runs on the same
-   * transaction (for the audit row). `assertCollectable` re-checks the order under its row lock and throws to refuse,
-   * so a repeated call finds the order already COMPLETED and writes nothing.
+   * transaction (for the audit row). `assertCollectable` re-checks the order (and gets the rider) under its row lock
+   * and throws to refuse, so a repeated call finds the order already COMPLETED and writes nothing.
    */
   async recordCashCollection(
     orderId: string,
-    recordedById: string,
-    assertCollectable: (order: OrderForCollection | null) => asserts order is OrderForCollection,
+    request: CashCollectionRequest,
+    assertCollectable: (
+      order: OrderForCollection | null,
+      rider: RiderOfCollection | null,
+    ) => asserts order is OrderForCollection,
     onRecorded: (tx: Prisma.TransactionClient, recorded: RecordedCollection) => Promise<void>,
   ): Promise<RecordedCollection> {
+    const { recordedById, riderId, collectedAt } = request;
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
       const order = await tx.order.findUnique({ where: { id: orderId }, include: COLLECTABLE_ORDER });
-      assertCollectable(order);
+      const rider = await tx.user.findUnique({
+        where: { id: riderId },
+        select: { isActive: true, storeMemberships: { select: { id: true }, take: 1 } },
+      });
+      assertCollectable(order, rider && { isActive: rider.isActive, isStaff: rider.storeMemberships.length > 0 });
       const changed = () => new ConflictException(`Order "${orderId}" changed while its cash collection was recorded`);
 
       const amount = order.grandTotal;
@@ -227,7 +247,7 @@ export class PaymentRepository {
         },
       });
       const collection = await tx.cashCollection.create({
-        data: { orderId, attemptId: attempt.id, amount, currency, recordedById },
+        data: { orderId, attemptId: attempt.id, amount, currency, recordedById, riderId, collectedAt },
       });
       const shipment = collectableShipment(order);
       const context = { actorId: recordedById, reason: 'Cash collected on delivery' };

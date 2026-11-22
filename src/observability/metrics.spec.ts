@@ -194,6 +194,18 @@ describe('AppMetrics', () => {
     ]);
     expect(samples.velocity_check_errors).toEqual([{ value: 1, attributes: { stage: 'screen' } }]);
   });
+
+  it('counts COD remittance discrepancies by kind only', () => {
+    const { metrics, samples } = build();
+
+    metrics.recordCodRemittanceDiscrepancy('SHORT');
+    metrics.recordCodRemittanceDiscrepancy('OVER');
+
+    expect(samples.cod_remittance_discrepancies).toEqual([
+      { value: 1, attributes: { kind: 'SHORT' } },
+      { value: 1, attributes: { kind: 'OVER' } },
+    ]);
+  });
 });
 
 describe('routeTemplate', () => {

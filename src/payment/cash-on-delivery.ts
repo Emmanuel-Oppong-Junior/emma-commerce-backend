@@ -24,7 +24,7 @@ export interface CollectableOrder {
 }
 
 /** The dispatched shipment the cash is collected for; assertCodCollectable guarantees there is one. */
-export function collectableShipment(order: CollectableOrder): { id: string; status: ShipmentStatus } {
+export function collectableShipment<S extends { id: string; status: ShipmentStatus }>(order: { shipments: S[] }): S {
   const shipment = order.shipments.find((candidate) => isDispatch(candidate.status));
   if (!shipment) throw new Error('No dispatched shipment; call assertCodCollectable first');
   return shipment;
