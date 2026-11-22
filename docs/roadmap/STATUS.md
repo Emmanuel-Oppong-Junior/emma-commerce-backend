@@ -5,7 +5,7 @@
 **Last checkpoint:** 2026-11-22 · **Current phase:** Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 5/11: P3-A, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-Two lanes in worktrees (agents), from the commit that records this start:
+Two lanes in worktrees (agents), from `146b1e3`:
 - **P3-B.1→B.2 — SMS-OTP phone verification + COD risk gates** (ADR-0015, ADR-0007) · branch `feat/p3-b-otp` · DB `emma_wt_otp_test`, Redis DB 13 · **State:** in progress
 - **P3-B.3 — Cash collection + rider remittance + discrepancy report** · branch `feat/p3-b-cash` · DB `emma_wt_cash_test`, Redis DB 12 · **State:** in progress
   - Decisions (Emmanuel, 2026-11-22): SMS via Hubtel behind an `SmsProvider` port (REST through built-in fetch, no new package; credentials optional env, without them OTP SMS is logged masked outside production and refused in production); OTP once per phone (re-verify when the number changes); risk gates refuse COD with a reason and leave online payment open (open COD orders per phone, basket cap, COD-enabled zones, phone/address blacklist; store settings), no MoMo deposit; riders are staff accounts for now (P5-C adds the Rider role).
