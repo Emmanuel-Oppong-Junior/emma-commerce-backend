@@ -5,7 +5,11 @@
 **Last checkpoint:** 2026-11-22 · **Current phase:** Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 5/11: P3-A, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: see **Up next**.
+Two lanes in worktrees (agents), from the commit that records this start:
+- **P3-B.1→B.2 — SMS-OTP phone verification + COD risk gates** (ADR-0015, ADR-0007) · branch `feat/p3-b-otp` · DB `emma_wt_otp_test`, Redis DB 13 · **State:** in progress
+- **P3-B.3 — Cash collection + rider remittance + discrepancy report** · branch `feat/p3-b-cash` · DB `emma_wt_cash_test`, Redis DB 12 · **State:** in progress
+  - Decisions (Emmanuel, 2026-11-22): SMS via Hubtel behind an `SmsProvider` port (REST through built-in fetch, no new package; credentials optional env, without them OTP SMS is logged masked outside production and refused in production); OTP once per phone (re-verify when the number changes); risk gates refuse COD with a reason and leave online payment open (open COD orders per phone, basket cap, COD-enabled zones, phone/address blacklist; store settings), no MoMo deposit; riders are staff accounts for now (P5-C adds the Rider role).
+  - [ ] B.1 ← **Next step** (agent) · [ ] B.2 (agent) · [ ] B.3 (agent) · [ ] merge both (second merge re-runs gates), push
 
 **Last completed: P3-C.1 Partial refunds + P3-E Velocity checks and disputes (2026-11-22)** (ADR-0007; RET-07; RET-04 partly; RET-05, PAY-07 touched): C.1 `60049f5`, E.1 `49be665`, E.2 `ba4b120` (all additive, no `[breaking-api]`), merged into dev (`4b6228b`; conflicts in refunds.service/returns.module imports, domain events, notification sender, db helper TRUNCATE, CLAUDE.md events line: kept both sides). P3-E ✅; P3-C 1/2.
   - C.1: `refundOrder` (order.refund + step-up, audited, required `idempotencyKey` stored as `staff:<key>`): chosen line units (stored `lineTotal/quantity` + the line's stored share of cart adjustments, new `OrderItem.orderAdjustmentShare`), the stored `shippingTotal` once, and/or a free amount; caps under the attempt row lock (payment captured incl. return/auto refunds, FAILED excluded; per-line units; shipping once) → CONFLICT. Reasons CUSTOMER_REQUEST, DAMAGED, WRONG_ITEM, NOT_DELIVERED, PRICE_ADJUSTMENT, DUPLICATE_CHARGE, OTHER (note required) + system-only RETURN, PAYMENT_NOT_ACCEPTED. Tax from stored lines (`refundPartsTax`; null for pricingVersion 0). Money only (no restock). COD → `method: CASH`, PROCESSED at once. PaymentIntent PARTIALLY_REFUNDED/REFUNDED; order status unchanged. `refund.succeeded.v1` → customer email (amount, reason label, lines, delivery). `Order.refunds` (customer view without note/staff). Migration `20261201000000_partial_refunds` (enums, Refund columns, `RefundLine` append-only, re-runnable backfills of reasons and line shares; old-order shares are proportional, an approximation).
@@ -160,7 +164,7 @@ None. Next: see **Up next**.
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P3-B pay on delivery (SMS-OTP, risk gates, cash collection) | → | SMS provider choice + account (new dependency) |
+| 1 | P3-B pay on delivery (in progress) | ∥ | Hubtel account + sender ID for live SMS (not for the build) |
 | 2 | P3-C.2 MoMo refunds · P3-D Flutterwave | → | Paystack MoMo-refund confirmation · Flutterwave account |
 | 3 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
 | 4 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
@@ -216,6 +220,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-22 | P3-B: Hubtel SMS behind a port (no new package), OTP once per phone, risk gates refuse COD (online stays open, no deposit), riders = staff accounts until P5-C | STATUS (P3-B) |
 | 2026-11-21 | P3-C.1: refund lines, amount, shipping; money only. P3-E: block hard / flag soft velocity limits (store settings, Redis, hashed keys); disputes by webhook + manual, open dispute blocks refunds | STATUS (P3-C/E) |
 | 2026-11-21 | Phase 3 started. P3-A: provider secrets in the DB (encrypted, env fallback), Owner-only `payment.settings.manage`, methods switchable per store with a provider per method | STATUS (P3-A) |
 | 2026-11-21 | P2-W.1: promotions on price-list prices per list (default off); lowest price wins; normal price below MOQ; prices on product pages via optional sign-in | STATUS (P2-W) |

@@ -340,11 +340,11 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P3-A.1** `PaymentProvider` interface + Paystack adapter refactor (from P0-C) [80fa66c]
 - [x] **P3-A.2** Store-level encrypted provider config [df4f233]
 
-### P3-B — Pay on delivery
+### P3-B — Pay on delivery  🔄 in progress
 > Run: B.1 → B.2; B.3 ∥ · M · 🟥 (if COD at launch)
-- [ ] **P3-B.1** SMS-OTP phone verification before COD
-- [ ] **P3-B.2** Risk gates (open COD per phone/address, basket cap, area allow-list, blacklist, optional MoMo deposit)
-- [ ] **P3-B.3** Cash collection + rider remittance + discrepancy report
+- [ ] 🔄 **P3-B.1** SMS-OTP phone verification before COD
+- [ ] 🔄 **P3-B.2** Risk gates (open COD per phone/address, basket cap, area allow-list, blacklist, optional MoMo deposit)
+- [ ] 🔄 **P3-B.3** Cash collection + rider remittance + discrepancy report
 
 ### P3-C — Refund ops  🔄 in progress
 > Run: → · M · 🟥
