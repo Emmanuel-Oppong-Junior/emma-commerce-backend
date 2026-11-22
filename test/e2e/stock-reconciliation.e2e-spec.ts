@@ -56,7 +56,13 @@ describe('Nightly stock reconciliation (P1-N.3, e2e)', () => {
 
   it('finds every level in line with its movements and active reservations after real stock activity', async () => {
     await expect(task.reconcile()).resolves.toEqual([]);
-    expect(recorded).toHaveBeenCalledWith({ ON_HAND: 0, RESERVED_MOVEMENTS: 0, ACTIVE_RESERVATIONS: 0 });
+    expect(recorded).toHaveBeenCalledWith({
+      ON_HAND: 0,
+      RESERVED_MOVEMENTS: 0,
+      ACTIVE_RESERVATIONS: 0,
+      LOT_MOVEMENTS: 0,
+      LOT_TOTAL: 0,
+    });
   });
 
   it('flags a level changed outside the ledger, without correcting it', async () => {
@@ -73,7 +79,13 @@ describe('Nightly stock reconciliation (P1-N.3, e2e)', () => {
         actual: before.onHand + 2,
       }),
     ]);
-    expect(recorded).toHaveBeenCalledWith({ ON_HAND: 1, RESERVED_MOVEMENTS: 0, ACTIVE_RESERVATIONS: 0 });
+    expect(recorded).toHaveBeenCalledWith({
+      ON_HAND: 1,
+      RESERVED_MOVEMENTS: 0,
+      ACTIVE_RESERVATIONS: 0,
+      LOT_MOVEMENTS: 0,
+      LOT_TOTAL: 0,
+    });
     expect((await stockOf(prisma, VARIANT_ID)).onHand).toBe(before.onHand + 2);
     await prisma.$executeRaw`UPDATE "StockLevel" SET "onHand" = "onHand" - 2 WHERE "variantId" = ${VARIANT_ID}`;
   });

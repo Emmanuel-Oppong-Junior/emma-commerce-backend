@@ -15,6 +15,8 @@ import {
   User,
 } from '../generated/prisma/client';
 import { FOR_SALE, VariantForSale } from '../cart/cart.repository';
+import { findExpiredLotUnits } from '../inventory/lots/lot-stock.repository';
+import { ExpiredLotUnits } from '../inventory/lots/lots';
 import { PrismaService } from '../prisma/prisma.service';
 import { Quote, QuoteLine } from '../pricing/price';
 import { TransitionContext, transitionOrder } from './order-transition';
@@ -379,6 +381,11 @@ export class OrdersRepository {
       WHERE v.id = ${variantId} AND v."isActive" AND p."isActive" AND p.status = 'PUBLISHED'
       FOR SHARE OF v, p`;
     return rows.length === 1;
+  }
+
+  /** Units of the variants' expired lots per location, which are not sellable (P4-C.1). */
+  findExpiredLotUnits(variantIds: string[], now: Date): Promise<ExpiredLotUnits[]> {
+    return findExpiredLotUnits(this.prisma, variantIds, now);
   }
 
   async findVariant(variantId: string, db: Prisma.TransactionClient = this.prisma): Promise<VariantForSale | null> {

@@ -409,13 +409,6 @@ describe('OrdersRepository', () => {
             where: { location: SERVING_LOCATION },
             select: { onHand: true, reserved: true, locationId: true },
           },
-          lots: {
-            where: { stock: { some: { onHand: { gt: 0 } } } },
-            select: {
-              expiresAt: true,
-              stock: { where: { onHand: { gt: 0 } }, select: { locationId: true, onHand: true } },
-            },
-          },
         },
       });
     });

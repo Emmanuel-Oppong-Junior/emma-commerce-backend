@@ -128,7 +128,6 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       optionValues: {},
       price: new Prisma.Decimal(500),
       stockLevels: [{ onHand: 5, reserved: 0, locationId: 'loc_main' }],
-      lots: [],
       isActive: true,
       product: {
         id: 'product-1',
@@ -149,6 +148,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
         phone: '+233244123456',
       }),
       findVariant: jest.fn().mockResolvedValue(variant),
+      findExpiredLotUnits: jest.fn().mockResolvedValue([]),
       runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
       lockSellableVariant: jest.fn().mockResolvedValue(true),
       lockCart: jest.fn(),

@@ -76,20 +76,26 @@ export function fefoDraw(
   return drawInOrder([...fresh, ...expired], quantity);
 }
 
+/** Units of a variant's expired lots at one location. */
+export interface ExpiredLotUnits {
+  variantId: string;
+  locationId: string;
+  units: number;
+}
+
 /**
- * The levels with the units of expired lots taken off onHand, so availability (onHand - reserved) counts only what
- * can be sold. `lots` are the variant's lots with their units per location.
+ * The variant's levels with the units of its expired lots taken off onHand, so availability (onHand - reserved)
+ * counts only what can be sold.
  */
 export function sellableLevels<L extends { locationId: string; onHand: number }>(
+  variantId: string,
   levels: readonly L[],
-  lots: readonly { expiresAt: Date; stock: readonly { locationId: string; onHand: number }[] }[],
-  now: Date,
+  expired: readonly ExpiredLotUnits[],
 ): L[] {
-  const expiredAt = new Map<string, number>();
-  for (const lot of lots.filter((l) => isExpired(l.expiresAt, now))) {
-    for (const s of lot.stock) expiredAt.set(s.locationId, (expiredAt.get(s.locationId) ?? 0) + s.onHand);
-  }
-  return levels.map((level) => ({ ...level, onHand: level.onHand - (expiredAt.get(level.locationId) ?? 0) }));
+  return levels.map((level) => {
+    const units = expired.find((e) => e.variantId === variantId && e.locationId === level.locationId)?.units ?? 0;
+    return { ...level, onHand: level.onHand - units };
+  });
 }
 
 /** Units in lots that have expired: on hand but not sellable. */

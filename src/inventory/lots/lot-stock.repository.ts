@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Lot, Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StockCounts } from '../stock';
-import { ExpiringLotRow, LotQuantity, LotUnits } from './lots';
+import { ExpiredLotUnits, ExpiringLotRow, LotQuantity, LotUnits } from './lots';
 
 type Db = Prisma.TransactionClient;
 
@@ -18,6 +18,16 @@ export function expiredLotUnitsSql(level: string, now: Date): Prisma.Sql {
     WHERE lt."variantId" = ${alias}."variantId" AND ls."locationId" = ${alias}."locationId"
       AND lt."expiresAt" <= ${now}
   ), 0)::int`;
+}
+
+/** Units of the variants' lots expired by `now`, per location holding some (one query for a whole cart). */
+export function findExpiredLotUnits(db: Db, variantIds: readonly string[], now: Date): Promise<ExpiredLotUnits[]> {
+  if (variantIds.length === 0) return Promise.resolve([]);
+  return db.$queryRaw<ExpiredLotUnits[]>`
+    SELECT lt."variantId", ls."locationId", sum(ls."onHand")::int AS "units"
+    FROM "LotStock" ls JOIN "Lot" lt ON lt."id" = ls."lotId"
+    WHERE lt."variantId" IN (${Prisma.join([...variantIds])}) AND ls."onHand" > 0 AND lt."expiresAt" <= ${now}
+    GROUP BY lt."variantId", ls."locationId"`;
 }
 
 export interface ExpiringFilter {

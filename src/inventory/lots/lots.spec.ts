@@ -99,32 +99,26 @@ describe('expiredUnits and expiredInDraw', () => {
 });
 
 describe('sellableLevels', () => {
-  it('takes the units of expired lots off onHand at their location only', () => {
+  it("takes the units of the variant's expired lots off onHand at their location only", () => {
     const levels = [
       { locationId: 'main', onHand: 10, reserved: 1 },
       { locationId: 'branch', onHand: 4, reserved: 0 },
     ];
-    const lots = [
-      { expiresAt: day(-1), stock: [{ locationId: 'main', onHand: 6 }] },
-      {
-        expiresAt: day(30),
-        stock: [
-          { locationId: 'main', onHand: 4 },
-          { locationId: 'branch', onHand: 4 },
-        ],
-      },
+    const expired = [
+      { variantId: 'v1', locationId: 'main', units: 6 },
+      { variantId: 'v2', locationId: 'branch', units: 4 },
     ];
 
-    expect(sellableLevels(levels, lots, NOW)).toEqual([
+    expect(sellableLevels('v1', levels, expired)).toEqual([
       { locationId: 'main', onHand: 4, reserved: 1 },
       { locationId: 'branch', onHand: 4, reserved: 0 },
     ]);
   });
 
-  it('leaves an untracked variant (no lots) as it is', () => {
+  it('leaves a variant without expired lots as it is', () => {
     const levels = [{ locationId: 'main', onHand: 3, reserved: 0 }];
 
-    expect(sellableLevels(levels, [], NOW)).toEqual(levels);
+    expect(sellableLevels('v1', levels, [])).toEqual(levels);
   });
 });
 

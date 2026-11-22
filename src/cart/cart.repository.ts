@@ -3,25 +3,16 @@ import { Cart, CartItem, Prisma, Product, Variant } from '../generated/prisma/cl
 import { PrismaService } from '../prisma/prisma.service';
 import { StockCounts } from '../inventory/stock';
 import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
+import { findExpiredLotUnits } from '../inventory/lots/lot-stock.repository';
+import { ExpiredLotUnits } from '../inventory/lots/lots';
 
 type CartWithItems = Cart & { items: CartItem[] };
-export type VariantForSale = Variant & {
-  product: Product;
-  stockLevels: (StockCounts & { locationId: string })[];
-  lots: { expiresAt: Date; stock: { locationId: string; onHand: number }[] }[];
-};
+export type VariantForSale = Variant & { product: Product; stockLevels: (StockCounts & { locationId: string })[] };
 
-/**
- * What checking a variant for sale reads: the variant, its product, its stock at each location serving customers and
- * its lots holding units (whose expired ones are not sellable, see sellableLevels).
- */
+/** What checking a variant for sale reads: the variant, its product and its stock at each location serving customers. */
 export const FOR_SALE = {
   product: true,
   stockLevels: { where: { location: SERVING_LOCATION }, select: { onHand: true, reserved: true, locationId: true } },
-  lots: {
-    where: { stock: { some: { onHand: { gt: 0 } } } },
-    select: { expiresAt: true, stock: { where: { onHand: { gt: 0 } }, select: { locationId: true, onHand: true } } },
-  },
 } satisfies Prisma.VariantInclude;
 
 @Injectable()
@@ -43,6 +34,11 @@ export class CartRepository {
 
   async findVariant(variantId: string): Promise<VariantForSale | null> {
     return this.prisma.variant.findUnique({ where: { id: variantId }, include: FOR_SALE });
+  }
+
+  /** Units of the variants' expired lots per location, which are not sellable (P4-C.1). */
+  findExpiredLotUnits(variantIds: string[], now: Date): Promise<ExpiredLotUnits[]> {
+    return findExpiredLotUnits(this.prisma, variantIds, now);
   }
 
   async findCartItem(cartId: string, variantId: string): Promise<Pick<CartItem, 'id' | 'quantity'> | null> {
