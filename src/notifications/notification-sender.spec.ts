@@ -3,9 +3,21 @@ import { NotificationSender } from './notification-sender';
 
 const ORDER = { id: 'order1', grandTotal: new Prisma.Decimal('250.5'), user: { email: 'kwame@gmail.com' } };
 
-function buildSender(order: typeof ORDER | null = ORDER) {
-  const prisma = { order: { findUnique: jest.fn().mockResolvedValue(order) } };
+const REFUND = {
+  amount: new Prisma.Decimal('128.5'),
+  currency: 'GHS',
+  reason: 'DAMAGED',
+  shippingAmount: new Prisma.Decimal('20'),
+  lines: [{ quantity: 2, orderItem: { productName: 'Kente scarf' } }],
+};
+
+function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND | null = REFUND) {
+  const prisma = {
+    order: { findUnique: jest.fn().mockResolvedValue(order) },
+    refund: { findUnique: jest.fn().mockResolvedValue(refund) },
+  };
   const email = {
+    sendRefundEmail: jest.fn().mockResolvedValue(undefined),
     sendWelcomeEmail: jest.fn().mockResolvedValue(undefined),
     sendOrderConfirmationEmail: jest.fn().mockResolvedValue(undefined),
     sendOrderStatusEmail: jest.fn().mockResolvedValue(undefined),
@@ -138,6 +150,35 @@ describe('NotificationSender', () => {
     );
 
     expect(email.sendPaymentConfirmationEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order1', '250.50', 'evt1');
+  });
+
+  it('emails the refund for refund.succeeded.v1 with its amount, reason label, units and delivery fee', async () => {
+    const { sender, email, prisma } = buildSender();
+
+    await sender.send('refund.succeeded.v1', event({ orderId: 'order1', refundId: 'rf1' }), 'evt1');
+
+    expect(prisma.refund.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'rf1' } }));
+    expect(email.sendRefundEmail).toHaveBeenCalledWith(
+      'kwame@gmail.com',
+      'order1',
+      {
+        amount: '128.50',
+        currency: 'GHS',
+        reasonLabel: 'Item arrived damaged',
+        lines: [{ productName: 'Kente scarf', quantity: 2 }],
+        includesShipping: true,
+      },
+      'evt1',
+    );
+  });
+
+  it('skips a refund email with a warning when the refund no longer exists', async () => {
+    const { sender, email, logger } = buildSender(ORDER, null);
+
+    await sender.send('refund.succeeded.v1', event({ orderId: 'order1', refundId: 'gone' }), 'evt1');
+
+    expect(email.sendRefundEmail).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('refundId: gone'), 'NotificationSender');
   });
 
   it('skips with a warning, and does not fail, when the order no longer exists', async () => {

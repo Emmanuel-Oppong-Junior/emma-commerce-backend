@@ -1,9 +1,13 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   OrderStatus,
+  PaymentProvider,
   PaymentStatus,
   Prisma,
   Refund,
+  RefundLine,
+  RefundMethod,
+  RefundReason,
   RefundStatus,
   ReturnRequest,
   ReturnStatus,
@@ -12,7 +16,9 @@ import { autoRefundKey } from '../payment/payment-verification';
 import { intentAllowedFrom, statusAfterRefunds } from '../payment/payment-intent-status';
 import { transitionOrder } from '../order/order-transition';
 import { PrismaService } from '../prisma/prisma.service';
-import { RefundLedger } from './refund-cap';
+import { OutboxService } from '../outbox/outbox.service';
+import { RefundLedger, refundableAmount } from './refund-cap';
+import { planRefund, RefundableOrder, RefundPlan, RefundRequestParts } from './refund-plan';
 import { OrderTaxSnapshot, refundTax } from './refund-tax';
 
 type Tx = Prisma.TransactionClient;
@@ -22,6 +28,11 @@ const SENDABLE_REFUND_STATUSES: RefundStatus[] = [RefundStatus.PENDING, RefundSt
 
 export function returnRefundKey(returnRequestId: string): string {
   return `return:${returnRequestId}`;
+}
+
+/** Staff keys live in their own namespace, so they can never collide with the system's return or auto-refund keys. */
+export function staffRefundKey(idempotencyKey: string): string {
+  return `staff:${idempotencyKey}`;
 }
 
 export interface ClaimedRefund {
@@ -34,9 +45,32 @@ export interface RecordedRefund {
   returnRequest: ReturnRequest | null;
 }
 
+export interface StaffRefundRequest {
+  orderId: string;
+  /** Already namespaced with staffRefundKey. */
+  idempotencyKey: string;
+  reason: RefundReason;
+  note: string | null;
+  createdById: string;
+  parts: RefundRequestParts;
+}
+
+export interface OpenedRefund {
+  refund: Refund;
+  /** True when the idempotency key had already recorded this refund: nothing new was written. */
+  replayed: boolean;
+}
+
+export type RefundWithOrderLines = Refund & {
+  lines: (RefundLine & { orderItem: { productName: string } })[];
+};
+
 @Injectable()
 export class RefundRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly outbox: OutboxService,
+  ) {}
 
   async findByReturnRequest(returnRequestId: string): Promise<Refund | null> {
     return this.prisma.refund.findUnique({ where: { returnRequestId } });
@@ -44,6 +78,75 @@ export class RefundRepository {
 
   async findAll(status?: RefundStatus): Promise<Refund[]> {
     return this.prisma.refund.findMany({ where: { status }, orderBy: { createdAt: 'desc' } });
+  }
+
+  async findLines(refundId: string): Promise<RefundLine[]> {
+    return this.prisma.refundLine.findMany({ where: { refundId }, orderBy: { id: 'asc' } });
+  }
+
+  /** Every refund of the order's payments, oldest first, with the product name of each refunded line. */
+  async findForOrder(orderId: string): Promise<RefundWithOrderLines[]> {
+    return this.prisma.refund.findMany({
+      where: { attempt: { intent: { orderId } } },
+      include: { lines: { include: { orderItem: { select: { productName: true } } }, orderBy: { id: 'asc' } } },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  /**
+   * Records a staff refund of a paid order in one transaction, under the row lock of the attempt that paid it, so
+   * concurrent refunds of one order are serialised and the caps cannot race. A key that already recorded a refund
+   * returns that refund and writes nothing. The amount comes from planRefund over what the order stored; `check` sees
+   * the payment's refunds and throws to refuse. Cash-on-delivery payments have no provider to send through: the refund
+   * is recorded as handed back in cash (PROCESSED) and the payment machine follows at once.
+   */
+  async openForOrder(
+    request: StaffRefundRequest,
+    check: (ledger: RefundLedger, plan: RefundPlan, method: RefundMethod) => void,
+    onOpened: (tx: Tx, refund: Refund) => Promise<void>,
+  ): Promise<OpenedRefund> {
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.order.findUnique({ where: { id: request.orderId }, select: { deleted: true } });
+      if (!order || order.deleted) throw new NotFoundException(`Order "${request.orderId}" not found`);
+      const payment = await tx.paymentAttempt.findFirst({
+        where: { intent: { orderId: request.orderId }, status: PaymentStatus.CAPTURED, reviewReason: null },
+        select: { id: true },
+      });
+      if (!payment) throw new BadRequestException(`Order "${request.orderId}" has no captured payment to refund`);
+      const ledger = await this.lockLedger(tx, payment.id);
+
+      const existing = await tx.refund.findUnique({ where: { idempotencyKey: request.idempotencyKey } });
+      if (existing) {
+        if (existing.attemptId !== payment.id) {
+          throw new ConflictException('This idempotency key was already used for a refund of another order');
+        }
+        return { refund: existing, replayed: true };
+      }
+
+      const plan = planRefund(await this.refundableOrder(tx, request.orderId, ledger), request.parts);
+      const method =
+        ledger.attempt.provider === PaymentProvider.CASH_ON_DELIVERY ? RefundMethod.CASH : RefundMethod.PROVIDER;
+      check(ledger, plan, method);
+      const refund = await tx.refund.create({
+        data: {
+          attemptId: payment.id,
+          amount: plan.amount,
+          taxAmount: plan.taxAmount,
+          shippingAmount: plan.shippingAmount,
+          currency: ledger.attempt.currency,
+          idempotencyKey: request.idempotencyKey,
+          reason: request.reason,
+          note: request.note,
+          method,
+          createdById: request.createdById,
+          status: method === RefundMethod.CASH ? RefundStatus.PROCESSED : RefundStatus.PENDING,
+          lines: { create: plan.lines },
+        },
+      });
+      if (method === RefundMethod.CASH) await this.followProcessed(tx, refund);
+      await onOpened(tx, refund);
+      return { refund, replayed: false };
+    });
   }
 
   /**
@@ -76,6 +179,7 @@ export class RefundRepository {
           taxAmount,
           currency: ledger.attempt.currency,
           idempotencyKey: returnRefundKey(returnRequest.id),
+          reason: RefundReason.RETURN,
         },
       });
       await onOpened(tx, refund);
@@ -137,7 +241,7 @@ export class RefundRepository {
         }
         returnRequest = await tx.returnRequest.findUniqueOrThrow({ where: { id: refund.returnRequestId } });
       }
-      await this.followRefund(tx, refund);
+      await this.followProcessed(tx, refund);
       const recorded = { refund, returnRequest };
       await onRecorded(tx, recorded);
       return recorded;
@@ -171,7 +275,18 @@ export class RefundRepository {
     return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
   }
 
-  private async followRefund(tx: Tx, refund: Refund): Promise<void> {
+  /** A refund has moved money: the payment machine follows and the customer is told (by the worker, via the outbox). */
+  private async followProcessed(tx: Tx, refund: Refund): Promise<void> {
+    const orderId = await this.followRefund(tx, refund);
+    await this.outbox.record(tx, {
+      type: 'refund.succeeded.v1',
+      aggregateId: orderId,
+      payload: { orderId, refundId: refund.id },
+    });
+  }
+
+  /** Moves the payment machine after a processed refund and returns the order's id. */
+  private async followRefund(tx: Tx, refund: Refund): Promise<string> {
     const attempt = await tx.paymentAttempt.findUniqueOrThrow({
       where: { id: refund.attemptId },
       select: {
@@ -194,18 +309,67 @@ export class RefundRepository {
         data: { status: to },
       });
     }
-    if (refund.idempotencyKey !== autoRefundKey(attempt.id)) return;
+    const { orderId } = attempt.intent;
+    if (refund.idempotencyKey !== autoRefundKey(attempt.id)) return orderId;
     const unrefunded = await tx.refund.count({
       where: {
-        attempt: { intent: { orderId: attempt.intent.orderId } },
+        attempt: { intent: { orderId } },
         idempotencyKey: { startsWith: 'auto-refund:' },
         status: { not: RefundStatus.PROCESSED },
       },
     });
-    if (unrefunded > 0) return;
-    await transitionOrder(tx, attempt.intent.orderId, OrderStatus.CANCELLED, [OrderStatus.PAYMENT_REVIEW], {
+    if (unrefunded > 0) return orderId;
+    await transitionOrder(tx, orderId, OrderStatus.CANCELLED, [OrderStatus.PAYMENT_REVIEW], {
       reason: 'Payment received after the order closed was refunded',
     });
+    return orderId;
+  }
+
+  /** What the order stored at placement and what its refunds (FAILED excluded) have already taken. */
+  private async refundableOrder(tx: Tx, orderId: string, ledger: RefundLedger): Promise<RefundableOrder> {
+    const order = await tx.order.findUniqueOrThrow({
+      where: { id: orderId },
+      select: {
+        pricingVersion: true,
+        grandTotal: true,
+        shippingTotal: true,
+        items: {
+          select: {
+            id: true,
+            quantity: true,
+            lineTotal: true,
+            orderAdjustmentShare: true,
+            taxLines: { select: { amount: true } },
+          },
+        },
+      },
+    });
+    const refunds = await tx.refund.findMany({
+      where: { attempt: { intent: { orderId } }, status: { not: RefundStatus.FAILED } },
+      select: { taxAmount: true, shippingAmount: true, lines: { select: { orderItemId: true, quantity: true } } },
+    });
+    const refundedUnits = new Map<string, number>();
+    for (const line of refunds.flatMap((refund) => refund.lines)) {
+      refundedUnits.set(line.orderItemId, (refundedUnits.get(line.orderItemId) ?? 0) + line.quantity);
+    }
+    return {
+      pricingVersion: order.pricingVersion,
+      grandTotal: order.grandTotal,
+      shippingTotal: order.shippingTotal,
+      currency: ledger.attempt.currency,
+      taxLineAmounts: order.items.flatMap((item) => item.taxLines.map((tax) => tax.amount)),
+      refundedTax: refunds.flatMap((refund) => (refund.taxAmount === null ? [] : [refund.taxAmount])),
+      shippingRefunded: refunds.some((refund) => refund.shippingAmount.gt(0)),
+      lines: order.items.map((item) => ({
+        id: item.id,
+        quantity: item.quantity,
+        lineTotal: item.lineTotal,
+        orderAdjustmentShare: item.orderAdjustmentShare,
+        taxLineAmounts: item.taxLines.map((tax) => tax.amount),
+        refundedQuantity: refundedUnits.get(item.id) ?? 0,
+      })),
+      refundable: refundableAmount(ledger),
+    };
   }
 
   /** The order's stored tax snapshot and the tax its earlier refunds already returned. */

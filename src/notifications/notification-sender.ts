@@ -5,6 +5,7 @@ import { EmailService } from './email/email.service';
 import { EmailJobData } from './email-jobs';
 import { DomainEventJobData } from '../outbox/domain-events';
 import { OrderStatus, ShipmentStatus } from '../generated/prisma/client';
+import { REFUND_REASON_LABELS } from '../returns/refund-reason';
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -112,6 +113,25 @@ export class NotificationSender {
         }
         return;
       }
+      case 'refund.succeeded.v1': {
+        const { payload } = data as DomainEventJobData<'refund.succeeded.v1'>;
+        const refund = await this.findRefund(payload.refundId, jobName);
+        const order = refund && (await this.findOrder(payload.orderId, jobName));
+        if (!refund || !order) return;
+        await this.email.sendRefundEmail(
+          order.user.email,
+          order.id,
+          {
+            amount: refund.amount.toFixed(2),
+            currency: refund.currency,
+            reasonLabel: REFUND_REASON_LABELS[refund.reason],
+            lines: refund.lines.map((line) => ({ productName: line.orderItem.productName, quantity: line.quantity })),
+            includesShipping: refund.shippingAmount.gt(0),
+          },
+          idempotencyKey,
+        );
+        return;
+      }
       case 'inventory.low_stock.v1': {
         // No staff email template exists yet: the alert is a structured warning for log-based alerting.
         const { payload } = data as DomainEventJobData<'inventory.low_stock.v1'>;
@@ -150,5 +170,21 @@ export class NotificationSender {
     });
     if (!order) this.logger.warn(`No email sent: order not found | job: ${jobName} | orderId: ${orderId}`, CONTEXT);
     return order;
+  }
+
+  // Refunds are never deleted; only test cleanups truncate the ledger under a queued event.
+  private async findRefund(refundId: string, jobName: string) {
+    const refund = await this.prisma.refund.findUnique({
+      where: { id: refundId },
+      select: {
+        amount: true,
+        currency: true,
+        reason: true,
+        shippingAmount: true,
+        lines: { select: { quantity: true, orderItem: { select: { productName: true } } }, orderBy: { id: 'asc' } },
+      },
+    });
+    if (!refund) this.logger.warn(`No email sent: refund not found | job: ${jobName} | refundId: ${refundId}`, CONTEXT);
+    return refund;
   }
 }

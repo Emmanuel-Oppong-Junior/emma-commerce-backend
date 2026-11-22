@@ -10,6 +10,8 @@ import {
   passwordResetEmailHtml,
   emailVerificationEmailHtml,
   emailChangeRequestedEmailHtml,
+  RefundEmail,
+  refundEmailHtml,
 } from './templates/email.templates';
 
 export function maskEmail(email: string): string {
@@ -77,6 +79,10 @@ export class EmailService {
       paymentConfirmationEmailHtml(orderId, amount),
       idempotencyKey,
     );
+  }
+
+  async sendRefundEmail(to: string, orderId: string, refund: RefundEmail, idempotencyKey?: string): Promise<void> {
+    await this.send(to, `Refund for order #${orderId}`, refundEmailHtml(orderId, refund), idempotencyKey);
   }
 
   async sendPasswordResetEmail(to: string, resetToken: string, idempotencyKey?: string): Promise<void> {

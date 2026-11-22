@@ -16,6 +16,7 @@ const AUDITED: Record<string, string> = {
   rejectReturn: 'returns.service.spec',
   processRefund: 'refunds.service.spec (claim, outcome and return audit rows)',
   processPendingRefund: 'refunds.service.spec',
+  refundOrder: 'refunds.service.spec (CREATE, or REFUND for cash, then the send audit rows)',
   createProduct: 'products.service.spec (audit trail)',
   updateProduct: 'products.service.spec (audit trail)',
   permanentlyDeleteProduct: 'products.service.spec (audit trail)',

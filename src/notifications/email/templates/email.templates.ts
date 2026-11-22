@@ -27,6 +27,23 @@ export function paymentConfirmationEmailHtml(orderId: string, amount: string): s
   return `<h1>Payment Confirmed</h1><p>We received your payment of <strong>${escapeHtml(amount)}</strong> for order <strong>#${escapeHtml(orderId)}</strong>.</p>`;
 }
 
+export interface RefundEmail {
+  amount: string;
+  currency: string;
+  reasonLabel: string;
+  lines: { productName: string; quantity: number }[];
+  includesShipping: boolean;
+}
+
+export function refundEmailHtml(orderId: string, refund: RefundEmail): string {
+  const items = [
+    ...refund.lines.map((line) => `${escapeHtml(line.quantity)} × ${escapeHtml(line.productName)}`),
+    ...(refund.includesShipping ? ['Delivery fee'] : []),
+  ];
+  const list = items.length > 0 ? `<ul>${items.map((item) => `<li>${item}</li>`).join('')}</ul>` : '';
+  return `<h1>Refund Sent</h1><p>We refunded <strong>${escapeHtml(refund.currency)} ${escapeHtml(refund.amount)}</strong> for order <strong>#${escapeHtml(orderId)}</strong>.</p><p>Reason: ${escapeHtml(refund.reasonLabel)}</p>${list}`;
+}
+
 export function passwordResetEmailHtml(resetToken: string): string {
   return `<h1>Password Reset</h1><p>Use the token below to reset your password. It expires in 15 minutes.</p><p><strong>${escapeHtml(resetToken)}</strong></p>`;
 }

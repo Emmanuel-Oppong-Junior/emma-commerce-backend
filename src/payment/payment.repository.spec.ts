@@ -705,6 +705,7 @@ describe('PaymentRepository', () => {
           amount: new Prisma.Decimal('99.99'),
           currency: 'GHS',
           idempotencyKey: 'auto-refund:pay1',
+          reason: 'PAYMENT_NOT_ACCEPTED',
         },
       });
       expect(mockPrismaIntent.updateMany).not.toHaveBeenCalled();

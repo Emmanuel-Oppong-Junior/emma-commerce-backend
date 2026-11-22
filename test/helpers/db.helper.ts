@@ -110,7 +110,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
  */
 export async function clearPaymentLedger(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "Refund", "CashCollection", "PaymentAttempt", "PaymentIntent", "WebhookEvent"',
+    'TRUNCATE "RefundLine", "Refund", "CashCollection", "PaymentAttempt", "PaymentIntent", "WebhookEvent"',
   );
 }
 

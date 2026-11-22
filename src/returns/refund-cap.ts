@@ -39,16 +39,27 @@ export function assertRefundable(ledger: RefundLedger, refund: { id?: string; am
       `Payment "${attempt.id}" is a ${attempt.provider} payment without a Paystack reference and cannot be refunded through Paystack`,
     );
   }
+  assertWithinCaptured(ledger, refund);
+}
+
+/** What is still refundable on the attempt: captured minus its committed refunds (other than `excludeRefundId`). */
+export function refundableAmount(ledger: RefundLedger, excludeRefundId?: string): Prisma.Decimal {
+  const committed = ledger.refunds
+    .filter((other) => other.id !== excludeRefundId && COMMITTED_REFUND_STATUSES.includes(other.status))
+    .reduce((sum, other) => sum.add(other.amount), new Prisma.Decimal(0));
+  return Prisma.Decimal.max(capturedAmount(ledger).sub(committed), 0);
+}
+
+/** Refuses a refund of nothing, or one that would take the attempt's committed refunds above what it captured. */
+export function assertWithinCaptured(ledger: RefundLedger, refund: { id?: string; amount: Prisma.Decimal }): void {
+  const { attempt } = ledger;
   if (refund.amount.lte(0)) {
     throw new BadRequestException(`Refund amount must be greater than 0, got ${refund.amount.toFixed(2)}`);
   }
-  const committed = ledger.refunds
-    .filter((other) => other.id !== refund.id && COMMITTED_REFUND_STATUSES.includes(other.status))
-    .reduce((sum, other) => sum.add(other.amount), new Prisma.Decimal(0));
-  const remaining = capturedAmount(ledger).sub(committed);
+  const remaining = refundableAmount(ledger, refund.id);
   if (refund.amount.gt(remaining)) {
     throw new BadRequestException(
-      `Refund of ${refund.amount.toFixed(2)} ${attempt.currency} exceeds the ${Prisma.Decimal.max(remaining, 0).toFixed(2)} ${attempt.currency} still refundable on payment "${attempt.id}"`,
+      `Refund of ${refund.amount.toFixed(2)} ${attempt.currency} exceeds the ${remaining.toFixed(2)} ${attempt.currency} still refundable on payment "${attempt.id}"`,
     );
   }
 }

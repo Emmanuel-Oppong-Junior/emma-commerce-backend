@@ -147,7 +147,11 @@ export class OrdersRepository {
         statusEvents: { create: { from: null, to: OrderStatus.PLACED, actorId: userId } },
       },
     });
-    for (const line of snapshot.lines) {
+    for (const [index, line] of snapshot.lines.entries()) {
+      const orderAdjustmentShare = snapshot.adjustments.reduce(
+        (share, adjustment) => share.add(adjustment.allocations[index]),
+        new Prisma.Decimal(0),
+      );
       await tx.orderItem.create({
         data: {
           orderId: order.id,
@@ -162,6 +166,7 @@ export class OrdersRepository {
           unitNet: line.unitNet,
           unitTax: line.unitTax,
           lineTotal: line.lineTotal,
+          orderAdjustmentShare,
           priceListId: line.priceList?.priceListId ?? null,
           taxLines: { create: line.taxLines },
           adjustments: { create: line.adjustments.map((adjustment) => ({ ...adjustment, orderId: order.id })) },
