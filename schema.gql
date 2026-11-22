@@ -68,15 +68,20 @@ type Address {
 
 input AdjustVariantStockInput {
   """
-  Signed change: negative removes stock (damage, loss, count), positive adds it
+  Signed change to on-hand stock, never an absolute quantity: negative removes, positive adds
   """
   delta: Int!
 
-  """Where the stock changes; defaults to the default location"""
+  """Stock location; defaults to the store’s default location"""
   locationId: ID
 
-  """Why the stock changed"""
-  reason: String!
+  """Free text; required when the reason is OTHER"""
+  note: String
+
+  """
+  DAMAGED, LOST and EXPIRED only remove stock, FOUND only adds it, CORRECTION and OTHER go either way; STOCK_TAKE is refused (approved stock-takes only)
+  """
+  reason: StockAdjustmentReason!
   variantId: ID!
 }
 
@@ -1430,7 +1435,7 @@ type Mutation {
   addToWishlist(productId: String!): Wishlist!
 
   """
-  Change a variant’s on-hand stock by a signed amount with a reason, never below reserved (admin only)
+  Change a variant’s on-hand stock at a location by a signed amount with a reason, never below reserved (admin only)
   """
   adjustVariantStock(input: AdjustVariantStockInput!): StockMovement!
 
@@ -1442,6 +1447,11 @@ type Mutation {
 
   """Approve a return request (admin only)"""
   approveReturn(input: ApproveReturnInput!): ReturnRequestEntity!
+
+  """
+  Approve a SUBMITTED stock-take: every non-zero variance becomes a STOCK_TAKE adjustment
+  """
+  approveStockTake(id: ID!): StockTake!
   archiveProduct(productId: String!): Product!
 
   """Archive (soft delete) a user"""
@@ -1454,6 +1464,9 @@ type Mutation {
 
   """Cancels the authenticated user's own order and restores stock"""
   cancelOrder(orderId: String!, reason: String): Order!
+
+  """Cancel an OPEN or SUBMITTED stock-take; no stock moves"""
+  cancelStockTake(id: ID!, reason: String): StockTake!
 
   """Cancel a DRAFT transfer; nothing has moved yet (staff)"""
   cancelStockTransfer(id: ID!, input: CancelStockTransferInput): StockTransfer!
@@ -1617,6 +1630,11 @@ type Mutation {
 
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
+
+  """
+  Open a stock count at a location for a category, a list of variants or everything (admin only)
+  """
+  openStockTake(input: OpenStockTakeInput!): StockTake!
   permanentlyDeleteProduct(productId: String!): Product!
 
   """
@@ -1646,6 +1664,9 @@ type Mutation {
   Record a dispute against a captured online payment by hand (e.g. a chargeback notice by email). Owner, Manager, audited
   """
   recordDispute(input: RecordDisputeInput!): DisputeEntity!
+
+  """Record counted quantities on an OPEN stock-take (admin only)"""
+  recordStockTakeCounts(input: RecordStockTakeCountsInput!): [StockTakeLine!]!
 
   """Refresh access and refresh tokens using a valid refresh token"""
   refreshToken(input: RefreshTokenInput!): AuthEntity!
@@ -1782,6 +1803,9 @@ type Mutation {
   Verify this session with an authenticator or recovery code. Sensitive actions (role changes, refunds, price changes, exports) are then allowed for 10 minutes. Audited.
   """
   stepUp(code: String!): StepUpResult!
+
+  """Close counting on an OPEN stock-take for approval (admin only)"""
+  submitStockTake(id: ID!): StockTake!
 
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
@@ -1922,6 +1946,20 @@ enum OnlinePaymentMethod {
 
 enum OnlinePaymentProvider {
   PAYSTACK
+}
+
+input OpenStockTakeInput {
+  """
+  Count the variants of this category’s products (not with variantIds); neither = every variant
+  """
+  categoryId: ID
+
+  """Stock location to count; defaults to the store’s default location"""
+  locationId: ID
+  note: String
+
+  """Count exactly these variants, 1-500 (not with categoryId)"""
+  variantIds: [ID!]
 }
 
 type Order {
@@ -3153,6 +3191,38 @@ type Query {
     variantId: ID
   ): StockMovementPage!
 
+  """One stock-take (admin only)"""
+  stockTake(id: ID!): StockTake!
+
+  """
+  Lines of a stock-take in SKU order; expected quantities need inventory.stocktake.approve
+  """
+  stockTakeLines(
+    """Id of the last line of the previous page"""
+    after: ID
+
+    """true: counted lines only; false: lines still to count; omitted: all"""
+    counted: Boolean
+
+    """1-200"""
+    first: Int! = 50
+    stockTakeId: ID!
+  ): StockTakeLinePage!
+
+  """Counted lines with their variance and its value"""
+  stockTakeVarianceReport(id: ID!): StockTakeVarianceReport!
+
+  """Stock-takes, newest first (admin only)"""
+  stockTakes(
+    """Id of the last stock-take of the previous page"""
+    after: ID
+
+    """1-200"""
+    first: Int! = 20
+    locationId: ID
+    status: StockTakeStatus
+  ): StockTakePage!
+
   """A stock transfer (staff)"""
   stockTransfer(id: ID!): StockTransfer!
 
@@ -3417,6 +3487,12 @@ input RecordDisputeInput {
 
   """OPEN (default), AWAITING_EVIDENCE or UNDER_REVIEW"""
   status: DisputeStatus
+}
+
+input RecordStockTakeCountsInput {
+  """1-200 counts, each variant once"""
+  counts: [StockTakeCountInput!]!
+  stockTakeId: ID!
 }
 
 """One promotion used by one order (staff view)"""
@@ -3877,6 +3953,30 @@ type StepUpResult {
   validUntil: DateTime!
 }
 
+"""Why staff adjusted stock (an ADJUSTMENT movement)"""
+enum StockAdjustmentReason {
+  """A correction of an earlier mistake (either way)"""
+  CORRECTION
+
+  """Damaged goods written off (removes stock)"""
+  DAMAGED
+
+  """Expired goods written off (removes stock)"""
+  EXPIRED
+
+  """Goods found that were not on the books (adds stock)"""
+  FOUND
+
+  """Missing or stolen goods (removes stock)"""
+  LOST
+
+  """Anything else; a note is required"""
+  OTHER
+
+  """The variance of an approved stock-take; never given by hand"""
+  STOCK_TAKE
+}
+
 """A place that holds stock: warehouse, branch or pickup point (staff)"""
 type StockLocation {
   createdAt: DateTime!
@@ -3907,6 +4007,11 @@ enum StockLocationType {
 type StockMovement {
   """The staff member or customer who caused it"""
   actorId: ID
+
+  """
+  Why staff adjusted: set on ADJUSTMENT movements recorded since P4-B.1, null otherwise
+  """
+  adjustmentReason: StockAdjustmentReason
   createdAt: DateTime!
   id: ID!
   locationId: ID!
@@ -3934,7 +4039,9 @@ type StockMovementPage {
 
 """Why stock moved (ADR-0008)"""
 enum StockMovementReason {
-  """Manual correction with a reason (damage, loss, stock count)"""
+  """
+  Manual change with an adjustmentReason, or a stock-take variance (STOCK_TAKE)
+  """
   ADJUSTMENT
 
   """
@@ -3965,6 +4072,154 @@ enum StockMovementReason {
   Moved between locations: negative at the source on dispatch, positive at the destination on receipt
   """
   TRANSFER
+}
+
+"""A stock count session at one location"""
+type StockTake {
+  approvedAt: DateTime
+  approvedById: ID
+  cancelReason: String
+  cancelledAt: DateTime
+  cancelledById: ID
+
+  """The category counted; null for a list of variants or a full count"""
+  categoryId: ID
+
+  """Variants counted so far"""
+  countedCount: Int!
+  id: ID!
+
+  """Variants in the session"""
+  lineCount: Int!
+  locationId: ID!
+  note: String
+  openedAt: DateTime!
+  openedById: ID!
+  status: StockTakeStatus!
+  submittedAt: DateTime
+  submittedById: ID
+}
+
+input StockTakeCountInput {
+  """Units found on the shelf, 0-1,000,000"""
+  countedQuantity: Int!
+  variantId: ID!
+}
+
+"""One variant to count in a stock-take"""
+type StockTakeLine {
+  countedAt: DateTime
+  countedById: ID
+
+  """Units counted; null until counted"""
+  countedQuantity: Int
+
+  """
+  Units expected on the shelf when the session opened (inventory.stocktake.approve only)
+  """
+  expectedAtOpen: Int!
+
+  """
+  Units expected on the shelf when the line was counted (inventory.stocktake.approve only)
+  """
+  expectedQuantity: Int
+  id: ID!
+
+  """The STOCK_TAKE adjustment posted on approval"""
+  movementId: ID
+  productName: String!
+  sku: String!
+  stockTakeId: ID!
+
+  """countedQuantity - expectedQuantity (inventory.stocktake.approve only)"""
+  variance: Int
+  variantId: ID!
+}
+
+type StockTakeLinePage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [StockTakeLine!]!
+  totalCount: Int!
+}
+
+type StockTakePage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [StockTake!]!
+  totalCount: Int!
+}
+
+"""Where a stock-take is (P4-B.1)"""
+enum StockTakeStatus {
+  """Variances posted to stock as STOCK_TAKE adjustments"""
+  APPROVED
+
+  """Stopped before approval; no stock moved"""
+  CANCELLED
+
+  """Counting: counts can be recorded"""
+  OPEN
+
+  """Counts closed, waiting for an approver"""
+  SUBMITTED
+}
+
+"""A counted line of a stock-take with its variance"""
+type StockTakeVarianceLine {
+  """
+  How the expected quantity moved between opening and the count (sales, receipts)
+  """
+  changeSinceOpen: Int!
+  countedQuantity: Int!
+
+  """Units expected on the shelf when the session opened"""
+  expectedAtOpen: Int!
+
+  """Units expected on the shelf when the line was counted"""
+  expectedQuantity: Int!
+  productName: String!
+  sku: String!
+
+  """The variant’s current price; null when it has none"""
+  unitPrice: Money
+
+  """countedQuantity - expectedQuantity: negative is a shortage"""
+  variance: Int!
+
+  """variance × unitPrice"""
+  varianceValue: Money
+  variantId: ID!
+}
+
+"""
+Variances of a stock-take, valued at current prices (cost is not tracked yet)
+"""
+type StockTakeVarianceReport {
+  lines: [StockTakeVarianceLine!]!
+  stockTake: StockTake!
+  totals: StockTakeVarianceTotals!
+}
+
+type StockTakeVarianceTotals {
+  countedCount: Int!
+  lineCount: Int!
+  linesWithVariance: Int!
+
+  """surplusUnits - shortageUnits"""
+  netVarianceUnits: Int!
+  netVarianceValue: Money!
+
+  """Units missing, summed over shortages"""
+  shortageUnits: Int!
+  shortageValue: Money!
+
+  """Units found over what was expected"""
+  surplusUnits: Int!
+  surplusValue: Money!
+
+  """Lines not counted: approval leaves their stock as it is"""
+  uncountedCount: Int!
 }
 
 """

@@ -9,6 +9,7 @@ import { AppMetrics } from '../observability/metrics';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
 import { StockReconciliationTask } from '../inventory/tasks/stock-reconciliation.task';
+import { LowStockDigestTask } from '../inventory/tasks/low-stock-digest.task';
 import { MaintenanceJob } from './maintenance-jobs';
 
 const CONTEXT = 'MaintenanceProcessor';
@@ -25,6 +26,7 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly stock: StockReconciliationTask,
     private readonly logger: LoggerService,
     private readonly metrics: AppMetrics,
+    private readonly lowStockDigest: LowStockDigestTask,
   ) {
     super();
   }
@@ -43,6 +45,9 @@ export class MaintenanceProcessor extends WorkerHost {
         return this.payments.diffPreviousDay();
       case MaintenanceJob.ReconcileStock:
         await this.stock.reconcile();
+        return;
+      case MaintenanceJob.SendLowStockDigest:
+        await this.lowStockDigest.send();
         return;
       default:
         throw new Error(`Unknown maintenance job "${job.name}"`);

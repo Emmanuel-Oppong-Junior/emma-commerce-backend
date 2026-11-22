@@ -14,10 +14,12 @@ Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
 Mutation adminDeleteReview               permission: review.moderate
 Mutation approveReturn                   permission: return.manage + order.refund; step-up
+Mutation approveStockTake                permission: inventory.stocktake.approve
 Mutation archiveProduct                  permission: catalog.product.write
 Mutation archiveUser                     permission: user.manage
 Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
+Mutation cancelStockTake                 permission: inventory.stocktake.approve
 Mutation cancelStockTransfer             permission: inventory.transfer
 Mutation changeUserPassword              authenticated
 Mutation clearCart                       authenticated
@@ -65,6 +67,7 @@ Mutation deleteTax                       permission: tax.manage; step-up
 Mutation deleteVariant                   permission: catalog.product.write
 Mutation dispatchStockTransfer           permission: inventory.transfer
 Mutation forgotPassword                  public
+Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
 Mutation processRefund                   permission: order.refund; step-up
@@ -72,6 +75,7 @@ Mutation receiveStockTransfer            permission: inventory.transfer
 Mutation recordCashRemittance            permission: cod.cash.manage
 Mutation recordCodPayment                permission: payment.record
 Mutation recordDispute                   permission: payment.dispute.manage
+Mutation recordStockTakeCounts           permission: inventory.adjust
 Mutation refreshToken                    public
 Mutation refundOrder                     permission: order.refund; step-up
 Mutation rejectReturn                    permission: return.manage
@@ -108,6 +112,7 @@ Mutation signUp                          public
 Mutation softDeletePayment               permission: payment.manage
 Mutation startMfaEnrollment              authenticated
 Mutation stepUp                          authenticated
+Mutation submitStockTake                 permission: inventory.adjust
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
@@ -200,6 +205,10 @@ Query stockInTransit                     permission: inventory.view
 Query stockLocation                      permission: inventory.view
 Query stockLocations                     permission: inventory.view
 Query stockMovements                     permission: inventory.view
+Query stockTake                          permission: inventory.view
+Query stockTakeLines                     permission: inventory.view
+Query stockTakes                         permission: inventory.view
+Query stockTakeVarianceReport            permission: inventory.stocktake.approve
 Query stockTransfer                      permission: inventory.view
 Query stockTransfers                     permission: inventory.view
 Query storeSettings                      public

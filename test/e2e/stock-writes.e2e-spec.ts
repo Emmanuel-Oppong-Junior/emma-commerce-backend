@@ -73,7 +73,7 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
     const before = await defaultVariantStock();
 
     const res = await admin(
-      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: -3, reason: "Damaged in storage" }) {
+      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: -3, reason: DAMAGED, note: "Damaged in storage" }) {
         reason onHandDelta reservedDelta note } }`,
     );
 
@@ -92,7 +92,7 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
     const logsBefore = await prisma.stockMovement.count({ where: { variantId: 'seed_var1' } });
 
     const res = await admin(
-      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: -${before + 1}, reason: "Write-off" }) { id } }`,
+      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: -${before + 1}, reason: LOST }) { id } }`,
     );
 
     expect(res.body.errors?.[0].extensions.code).toBe('BAD_REQUEST');
@@ -102,7 +102,7 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
 
   it('adjustVariantStock moves variant stock and records it against the variant', async () => {
     const res = await admin(
-      `mutation { adjustVariantStock(input: { variantId: "${variantId}", delta: -4, reason: "Stock count" }) {
+      `mutation { adjustVariantStock(input: { variantId: "${variantId}", delta: -4, reason: CORRECTION }) {
         variantId reason onHandDelta } }`,
     );
 
@@ -113,7 +113,7 @@ describe('Stock changes only through logged restock/adjust (e2e)', () => {
 
   it('rejects a zero delta', async () => {
     const res = await admin(
-      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: 0, reason: "Nothing" }) { id } }`,
+      `mutation { adjustVariantStock(input: { variantId: "seed_var1", delta: 0, reason: CORRECTION }) { id } }`,
     );
 
     expect(res.body.errors?.[0].extensions.code).toBe('BAD_USER_INPUT');

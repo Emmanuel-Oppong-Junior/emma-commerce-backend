@@ -9,6 +9,7 @@ function buildProcessor() {
     diffPreviousDay: jest.fn().mockResolvedValue(undefined),
   };
   const stock = { reconcile: jest.fn().mockResolvedValue([]) };
+  const lowStockDigest = { send: jest.fn().mockResolvedValue(null) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const processor = new MaintenanceProcessor(
     expiredOrders as never,
@@ -16,8 +17,9 @@ function buildProcessor() {
     stock as never,
     logger as never,
     { observeJob: (_job: unknown, work: () => Promise<unknown>) => work() } as never,
+    lowStockDigest as never,
   );
-  return { processor, expiredOrders, payments, stock, logger };
+  return { processor, expiredOrders, payments, stock, lowStockDigest, logger };
 }
 
 const job = (name: string) => ({ name, id: '1', queueName: 'maintenance', attemptsMade: 1, opts: {} }) as Job;
@@ -28,6 +30,7 @@ describe('MaintenanceProcessor', () => {
     [MaintenanceJob.SweepPayments, 'payments', 'sweep'],
     [MaintenanceJob.DiffPreviousDayPayments, 'payments', 'diffPreviousDay'],
     [MaintenanceJob.ReconcileStock, 'stock', 'reconcile'],
+    [MaintenanceJob.SendLowStockDigest, 'lowStockDigest', 'send'],
   ] as const)('runs %s through %s.%s exactly once', async (name, target, method) => {
     const built = buildProcessor();
 
@@ -40,6 +43,7 @@ describe('MaintenanceProcessor', () => {
       built.payments.sweep,
       built.payments.diffPreviousDay,
       built.stock.reconcile,
+      built.lowStockDigest.send,
     ].reduce((total, mock) => total + mock.mock.calls.length, 0);
     expect(allCalls).toBe(1);
   });

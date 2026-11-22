@@ -44,6 +44,26 @@ export function refundEmailHtml(orderId: string, refund: RefundEmail): string {
   return `<h1>Refund Sent</h1><p>We refunded <strong>${escapeHtml(refund.currency)} ${escapeHtml(refund.amount)}</strong> for order <strong>#${escapeHtml(orderId)}</strong>.</p><p>Reason: ${escapeHtml(refund.reasonLabel)}</p>${list}`;
 }
 
+export interface LowStockDigestSection {
+  locationName: string;
+  items: { productName: string; sku: string; available: number }[];
+}
+
+export function lowStockDigestEmailHtml(sections: LowStockDigestSection[]): string {
+  const body = sections
+    .map((section) => {
+      const rows = section.items
+        .map(
+          (item) =>
+            `<tr><td>${escapeHtml(item.productName)}</td><td>${escapeHtml(item.sku)}</td><td>${escapeHtml(item.available)}</td></tr>`,
+        )
+        .join('');
+      return `<h2>${escapeHtml(section.locationName)}</h2><table><tr><th>Product</th><th>SKU</th><th>Available</th></tr>${rows}</table>`;
+    })
+    .join('');
+  return `<h1>Low stock</h1><p>These variants went low since the last digest and are still at or below their low-stock level.</p>${body}`;
+}
+
 export function passwordResetEmailHtml(resetToken: string): string {
   return `<h1>Password Reset</h1><p>Use the token below to reset your password. It expires in 15 minutes.</p><p><strong>${escapeHtml(resetToken)}</strong></p>`;
 }

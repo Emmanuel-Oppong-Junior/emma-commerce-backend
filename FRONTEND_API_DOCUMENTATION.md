@@ -86,7 +86,7 @@ feature/
 | Email | Resend |
 | Logging | Winston (via custom `LoggerService`) |
 | Tracing | OpenTelemetry (OTLP/HTTP exporter, opt-in via `OTEL_ENABLED=true`) |
-| Background jobs | BullMQ on Redis, run by a separate `ROLE=worker` process. Repeatable jobs, each run once per cluster: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), stock ledger reconciliation (02:30 UTC, reports only). Low-stock alerts are events raised by stock changes (`inventory.low_stock.v1`), not a scan |
+| Background jobs | BullMQ on Redis, run by a separate `ROLE=worker` process. Repeatable jobs, each run once per cluster: unpaid-order expiry (hourly), payment reconciliation sweep (every 5 minutes), Paystack daily diff (01:30 UTC), stock ledger reconciliation (02:30 UTC, reports only), low-stock staff digest (every 3 hours, 06:00-21:00 UTC). Low-stock alerts are events raised by stock changes (`inventory.low_stock.v1`), not a scan |
 | Rate Limiting | `@nestjs/throttler` with per-named-throttler rules |
 
 ### GraphQL Approach
@@ -2352,7 +2352,8 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   refType?: string;            // What caused it: "Order", "ReturnRequest", "InventoryLog" (migrated), ...
   refId?: string;
   actorId?: string;            // Staff member or customer who caused it
-  note?: string;               // The reason text given by staff, or e.g. "Order cancelled"
+  adjustmentReason?: StockAdjustmentReason; // ADJUSTMENT only (P4-B.1): DAMAGED, LOST, FOUND, EXPIRED, CORRECTION, STOCK_TAKE, OTHER
+  note?: string;               // The note given by staff, or e.g. "Order cancelled"
   createdAt: DateTime;
 }
 ```
@@ -2373,7 +2374,7 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 
 **`VariantStockLevel`** (the `Variant.stockLevels` field, `inventory.view`, the default location first): `{ locationId: ID!, locationName: String!, onHand: Int!, reserved: Int!, available: Int! }`.
 
-**`StockMovementReason`**: `RECEIPT` (delivery or opening stock of a new variant), `RESERVE` (held for an order line), `SALE` (a hold consumed: online payment captured or cash-on-delivery order dispatched), `RELEASE` (hold given back on cancel or expiry), `RETURN_RESTOCK` (returned goods, or a paid order cancelled before dispatch), `ADJUSTMENT`, `OPENING_BALANCE` (stock the old inventory log did not explain, migration only), `TRANSFER` (P4-A.2: negative at the source when a transfer is dispatched, positive at the destination when it is received; `refType` `StockTransfer`).
+**`StockMovementReason`**: `RECEIPT` (delivery or opening stock of a new variant), `RESERVE` (held for an order line), `SALE` (a hold consumed: online payment captured or cash-on-delivery order dispatched), `RELEASE` (hold given back on cancel or expiry), `RETURN_RESTOCK` (returned goods, or a paid order cancelled before dispatch), `ADJUSTMENT` (a manual change or a stock-take variance; see `adjustmentReason`), `OPENING_BALANCE` (stock the old inventory log did not explain, migration only), `TRANSFER` (P4-A.2: negative at the source when a transfer is dispatched, positive at the destination when it is received; `refType` `StockTransfer`).
 
 ---
 
@@ -2400,23 +2401,28 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 ---
 
 #### `adjustVariantStock`
-- **Type**: Mutation
+- **Type**: Mutation (`inventory.adjust`)
 - **Args**: `input: AdjustVariantStockInput!`
-- **Response**: `StockMovement!` (reason `ADJUSTMENT`)
-- **Description**: Change a variant's on-hand stock by a signed amount, e.g. damage, loss or a stock count correction. Units reserved for open orders cannot be adjusted away.
+- **Response**: `StockMovement!` (reason `ADJUSTMENT`, with `adjustmentReason`)
+- **Description**: Change a variant's on-hand stock at a location by a signed amount, never an absolute quantity, with a reason from a fixed list: damage, loss, expiry, found goods, a correction. Units reserved for open orders cannot be adjusted away. One `ADJUSTMENT` stock movement and one audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`, with `adjustmentReason`).
 
 **Input: `AdjustVariantStockInput`**
 
 ```typescript
 {
-  variantId: string;  // Required.
-  delta: number;      // Required. Non-zero integer; negative removes stock.
-  reason: string;     // Required. 1–500 chars. Stored as the movement's note.
-  locationId?: string; // P4-A.1. Where the stock changes (default: the default location); "available" in the error is at that location.
+  variantId: string;               // Required.
+  locationId?: string;             // Stock location; default: the store's default location.
+  delta: number;                   // Required. Non-zero integer; negative removes stock.
+  reason: StockAdjustmentReason;   // Required. See below.
+  note?: string;                   // Max 500 chars. Required (not blank) when reason is OTHER. Stored as the movement's note.
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (variant, stock location); `BAD_REQUEST` (`Cannot remove N units from variant "<id>": only M available`).
+**`StockAdjustmentReason`**: `DAMAGED`, `LOST`, `EXPIRED` (remove stock only: `delta` < 0), `FOUND` (adds stock only: `delta` > 0), `CORRECTION`, `OTHER` (either way; `OTHER` needs a `note`), `STOCK_TAKE` (set only by an approved stock-take, see [Stock-takes](#stock-takes); refused here).
+
+**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Stock location "<id>" not found or inactive`); `BAD_REQUEST` (`DAMAGED can only remove stock: send a negative delta`, `FOUND can only add stock: send a positive delta`, `STOCK_TAKE cannot be given by hand`, `A note is required when the reason is OTHER`, `Cannot remove N units from variant "<id>": only M available`); `BAD_USER_INPUT` (`delta` 0, unknown reason).
+
+**Breaking change (P4-B.1):** `AdjustVariantStockInput.reason` is now a `StockAdjustmentReason` enum (was free text, which moves to the new optional `note`); `locationId` is new. `StockMovement.adjustmentReason` is new (null on movements recorded before P4-B.1 and on every other kind of movement).
 
 ---
 
@@ -2519,6 +2525,57 @@ Stock moves between two locations in **two steps**. `createStockTransfer` makes 
 - **Type**: Query (`inventory.view`)
 - **Args**: `stockTransfers(status?: StockTransferStatus, locationId?: ID (leaving or arriving there), variantId?: ID, first: Int = 50 (1–100), after?: ID)`; `stockTransfer(id: ID!)`; `stockInTransit(variantIds?: [ID!])`
 - **Response**: `StockTransferPage! { nodes, totalCount, hasNextPage }` newest first; `StockTransfer!` (`NOT_FOUND` when unknown); `[VariantInTransit!]! { variantId, quantity }`, the units on dispatched transfers per variant (variants with none in transit are left out).
+
+---
+
+#### Low-stock digest (staff email)
+
+No API operation (P4-B.2). When a stock change takes a variant's available stock at a location from above its `lowStockThreshold` (default 5) to at or below it, the event `inventory.low_stock.v1` is recorded once per crossing and stored as a **pending low-stock alert**, at most one per variant and location until a digest lists it. Every 3 hours (06:00, 09:00, 12:00, 15:00, 18:00 and 21:00 UTC) the worker sends **one email to each active staff member holding `inventory.alerts`** (Owner, Manager and Inventory clerk by default), with a section per location listing the variants still at or below their level and their available stock. Variants that recovered above their level before the digest (restocked, order cancelled) are left out; nothing is sent when nothing is pending. To stop a staff member receiving it, give them a role without `inventory.alerts`.
+
+---
+
+#### Stock-takes
+
+A **stock-take** (P4-B.1) is a count session at one stock location. Counters (`inventory.adjust`) open it, enter what they find on the shelf and submit it; an approver (`inventory.stocktake.approve`, Owner and Manager) reviews the variances and approves them into stock, or cancels.
+
+- **Status** (`StockTakeStatus`): `OPEN` (counting) → `SUBMITTED` (counts closed) → `APPROVED` (variances posted); `OPEN` or `SUBMITTED` → `CANCELLED` (no stock moves). Anything else is `CONFLICT`. At most one `OPEN` or `SUBMITTED` stock-take per location.
+- **Scope**: a category's variants (`categoryId`), a list of variants (`variantIds`, up to 500) or, with neither, every variant. A category or full count covers active variants plus archived ones that still have stock at the location.
+- **Blind counts**: counters see SKUs, product names and their own counts; the expected quantities and variances (`StockTakeLine.expectedAtOpen`, `expectedQuantity`, `variance`, and `stockTakeVarianceReport`) need `inventory.stocktake.approve` (`FORBIDDEN` otherwise).
+- **Expected quantity** = units that should be on the shelf: on hand at the location **plus units already sold but not yet dispatched** (paid online orders whose shipment is still `PENDING`, `PICKING` or `PACKED`; goods at the pickup counter or out for delivery count as gone). `expectedAtOpen` is read when the session opens; `expectedQuantity` is read again **when each line is counted**, so sales, receipts and adjustments that happen between opening and counting are not variances. Counting a line again replaces the count and re-reads its expected quantity.
+- **Variance** = `countedQuantity - expectedQuantity` (negative = shortage). Approval posts each non-zero variance as **one `ADJUSTMENT` stock movement with `adjustmentReason: STOCK_TAKE`** (`refType: "StockTake"`, `refId`: the stock-take id), all in one transaction. Variances are deltas, so stock that moves after a line was counted is kept. Uncounted lines are left as they are. A second approval gets `CONFLICT` and posts nothing.
+- A shortage that would take on-hand stock below the units reserved for open orders refuses the whole approval: `CONFLICT` + `reason: STOCK_TAKE_BELOW_RESERVED` (recount, or cancel the stock-take); nothing is posted and the session stays `SUBMITTED`.
+- Every open, count batch, submit, approve (with the posted movement ids) and cancel writes an audit entry (entity `StockTake`).
+
+```typescript
+StockTake {
+  id: string; locationId: string; status: StockTakeStatus;
+  categoryId?: string; note?: string;
+  openedById: string; openedAt: DateTime;
+  submittedById?: string; submittedAt?: DateTime;
+  approvedById?: string; approvedAt?: DateTime;
+  cancelledById?: string; cancelledAt?: DateTime; cancelReason?: string;
+  lineCount: number;      // variants in the session
+  countedCount: number;   // variants counted so far
+}
+StockTakeLine {
+  id: string; stockTakeId: string; variantId: string; sku: string; productName: string;
+  countedQuantity?: number; countedById?: string; countedAt?: DateTime;
+  expectedAtOpen: number;     // inventory.stocktake.approve only
+  expectedQuantity?: number;  // inventory.stocktake.approve only; null until counted
+  variance?: number;          // inventory.stocktake.approve only; null until counted
+  movementId?: string;        // the STOCK_TAKE movement posted on approval
+}
+```
+
+- `openStockTake(input: { locationId?, categoryId?, variantIds?: [ID!], note? })` → `StockTake!` (`inventory.adjust`). `locationId` defaults to the store's default location. Errors: `BAD_REQUEST` (both `categoryId` and `variantIds`; "There are no variants to count in this scope"), `NOT_FOUND` (location, category, variants), `CONFLICT` + `reason: STOCK_TAKE_ALREADY_OPEN`.
+- `recordStockTakeCounts(input: { stockTakeId, counts: [{ variantId, countedQuantity }] })` → `[StockTakeLine!]!` (`inventory.adjust`; 1-200 counts per call, `countedQuantity` 0-1,000,000). Errors: `NOT_FOUND`, `CONFLICT` (not `OPEN`), `BAD_REQUEST` (a variant twice, or not in the stock-take).
+- `submitStockTake(id)` → `StockTake!` (`inventory.adjust`). `BAD_REQUEST` when nothing was counted; `CONFLICT` when not `OPEN`.
+- `approveStockTake(id)` → `StockTake!` (`inventory.stocktake.approve`). `CONFLICT` when not `SUBMITTED` or `STOCK_TAKE_BELOW_RESERVED`.
+- `cancelStockTake(id, reason?: String)` → `StockTake!` (`inventory.stocktake.approve`; reason up to 500 characters). `CONFLICT` once approved or cancelled.
+- `stockTakes(status?, locationId?, first = 20 (1-200), after?)` → `StockTakePage! { nodes, totalCount, hasNextPage }`, newest first (`inventory.view`).
+- `stockTake(id)` → `StockTake!` (`inventory.view`).
+- `stockTakeLines(stockTakeId, counted?: Boolean, first = 50 (1-200), after?)` → `StockTakeLinePage!`, in SKU order (`inventory.view`; `counted: false` lists what is left to count).
+- `stockTakeVarianceReport(id)` → `StockTakeVarianceReport! { stockTake, lines, totals }` (`inventory.stocktake.approve`): each counted line with `expectedAtOpen`, `changeSinceOpen` (how the expected quantity moved before the count), `expectedQuantity`, `countedQuantity`, `variance`, `unitPrice` and `varianceValue` (`Money`, at the variant's **current price**; cost is not tracked yet; null without a price); `totals`: `lineCount`, `countedCount`, `uncountedCount`, `linesWithVariance`, `shortageUnits`, `surplusUnits`, `netVarianceUnits`, `shortageValue`, `surplusValue`, `netVarianceValue`.
 
 ---
 
@@ -3326,9 +3383,11 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
-| `inventory.view` | `stockMovements`, `stockLocations`, `stockLocation`, `stockTransfers`, `stockTransfer`, `stockInTransit`; the `Variant.onHand`, `Variant.reserved` and `Variant.stockLevels` fields; `ShippingZone.fulfilmentLocations`, `PickupLocation.fulfilmentLocations` |
-| `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
+| `inventory.view` | `stockMovements`, `stockLocations`, `stockLocation`, `stockTransfers`, `stockTransfer`, `stockInTransit`, `stockTakes`, `stockTake`, `stockTakeLines` (without expected quantities); the `Variant.onHand`, `Variant.reserved` and `Variant.stockLevels` fields; `ShippingZone.fulfilmentLocations`, `PickupLocation.fulfilmentLocations` |
+| `inventory.adjust` | `restockVariant`, `adjustVariantStock`, `openStockTake`, `recordStockTakeCounts`, `submitStockTake` |
+| `inventory.alerts` | No operation: holders receive the low-stock digest email (P4-B.2; held by Owner, Manager and Inventory clerk) |
 | `inventory.location.manage` | `createStockLocation`, `updateStockLocation`, `deleteStockLocation`, `setShippingZoneFulfilmentLocations`, `setPickupLocationFulfilmentLocations` (P4-A.1; held by Owner and Manager) |
+| `inventory.stocktake.approve` | `approveStockTake`, `cancelStockTake`, `stockTakeVarianceReport`; the `StockTakeLine.expectedAtOpen`, `expectedQuantity` and `variance` fields (P4-B.1; held by Owner and Manager) |
 | `inventory.transfer` | `createStockTransfer`, `dispatchStockTransfer`, `receiveStockTransfer`, `cancelStockTransfer` (P4-A.2; held by Owner, Manager and Inventory clerk) |
 | `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
 | `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |

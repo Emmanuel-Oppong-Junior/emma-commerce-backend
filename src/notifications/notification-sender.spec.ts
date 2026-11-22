@@ -11,10 +11,16 @@ const REFUND = {
   lines: [{ quantity: 2, orderItem: { productName: 'Kente scarf' } }],
 };
 
+const SECTION = {
+  locationName: 'Main store',
+  items: [{ locationName: 'Main store', productName: 'Kente scarf', sku: 'KS-1', available: 2, threshold: 5 }],
+};
+
 function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND | null = REFUND) {
   const prisma = {
     order: { findUnique: jest.fn().mockResolvedValue(order) },
     refund: { findUnique: jest.fn().mockResolvedValue(refund) },
+    user: { findUnique: jest.fn().mockResolvedValue({ email: 'ama@store.example', isActive: true }) },
   };
   const email = {
     sendRefundEmail: jest.fn().mockResolvedValue(undefined),
@@ -25,12 +31,24 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
     sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
     sendEmailVerificationEmail: jest.fn().mockResolvedValue(undefined),
     sendEmailChangeRequestedEmail: jest.fn().mockResolvedValue(undefined),
+    sendLowStockDigestEmail: jest.fn().mockResolvedValue(undefined),
   };
   const sms = { send: jest.fn().mockResolvedValue(undefined) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+  const lowStockAlerts = {
+    recordPending: jest.fn().mockResolvedValue(true),
+    digestSections: jest.fn().mockResolvedValue([SECTION]),
+  };
   return {
     sms,
-    sender: new NotificationSender(prisma as never, email as never, sms as never, logger as never),
+    lowStockAlerts,
+    sender: new NotificationSender(
+      prisma as never,
+      email as never,
+      sms as never,
+      logger as never,
+      lowStockAlerts as never,
+    ),
     prisma,
     email,
     logger,
@@ -261,6 +279,37 @@ describe('NotificationSender', () => {
       '123456 is your verification code. It expires in 10 minutes. Never share it with anyone.',
       'phone_otp',
     );
+  });
+
+  it('stores inventory.low_stock.v1 as a pending alert keyed on the event id, and emails nobody yet', async () => {
+    const { sender, lowStockAlerts, email } = buildSender();
+    const payload = { variantId: 'v1', locationId: 'store_main', available: 2, movementId: 'mv1' };
+
+    await sender.send('inventory.low_stock.v1', event(payload), 'evt1');
+
+    expect(lowStockAlerts.recordPending).toHaveBeenCalledWith('evt1', payload);
+    expect(email.sendLowStockDigestEmail).not.toHaveBeenCalled();
+  });
+
+  it('emails one staff member their low-stock digest, reading the address and the digest when sending', async () => {
+    const { sender, lowStockAlerts, email, prisma } = buildSender();
+
+    await sender.send('inventory.low_stock_digest.v1', event({ digestId: 'dg1', recipientId: 'staff1' }), 'evt9');
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'staff1' } }));
+    expect(lowStockAlerts.digestSections).toHaveBeenCalledWith('dg1');
+    expect(email.sendLowStockDigestEmail).toHaveBeenCalledWith('ama@store.example', [SECTION], 'evt9');
+  });
+
+  it('skips the digest with a warning (ids only) when the staff member is gone or deactivated', async () => {
+    const { sender, email, prisma, logger } = buildSender();
+    prisma.user.findUnique.mockResolvedValueOnce({ email: 'gone@store.example', isActive: false });
+
+    await sender.send('inventory.low_stock_digest.v1', event({ digestId: 'dg1', recipientId: 'staff1' }), 'evt9');
+
+    expect(email.sendLowStockDigestEmail).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('userId: staff1'), 'NotificationSender');
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('gone@store.example');
   });
 
   it('fails a job with an unknown name', async () => {

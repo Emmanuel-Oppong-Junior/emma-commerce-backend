@@ -31,6 +31,8 @@ export interface DomainEventPayloads {
   'cod.remittance_discrepancy.v1': { remittanceId: string; riderId: string; kind: 'SHORT' | 'OVER' };
   /** Available stock of a variant at a location fell to its low-stock threshold (raised once per crossing). */
   'inventory.low_stock.v1': { variantId: string; locationId: string; available: number; movementId: string };
+  /** One staff member's copy of a low-stock digest (P4-B.2); the email lists the digest's alerts. */
+  'inventory.low_stock_digest.v1': { digestId: string; recipientId: string };
 }
 
 export type DomainEventType = keyof DomainEventPayloads;
@@ -54,6 +56,7 @@ export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
   'payment.dispute_opened.v1': JobQueue.NOTIFICATIONS,
   'cod.remittance_discrepancy.v1': JobQueue.NOTIFICATIONS,
   'inventory.low_stock.v1': JobQueue.NOTIFICATIONS,
+  'inventory.low_stock_digest.v1': JobQueue.NOTIFICATIONS,
 };
 
 export function isDomainEventType(type: string): type is DomainEventType {

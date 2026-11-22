@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, StockMovement, StockMovementReason, StockReservationStatus } from '../generated/prisma/client';
+import {
+  Prisma,
+  StockAdjustmentReason,
+  StockMovement,
+  StockMovementReason,
+  StockReservationStatus,
+} from '../generated/prisma/client';
 import { OutboxService } from '../outbox/outbox.service';
 import { StockLedgerRepository } from './stock-ledger.repository';
 import {
@@ -19,6 +25,7 @@ export interface MovementSource {
   refId?: string;
   actorId?: string;
   note?: string;
+  adjustmentReason?: StockAdjustmentReason;
 }
 
 /**
@@ -73,6 +80,33 @@ export class StockLedgerService {
       { onHandDelta: delta, reservedDelta: 0, reason: StockMovementReason.ADJUSTMENT },
       source,
     );
+  }
+
+  /**
+   * Changes on-hand stock at `locationId` by a signed delta, as an ADJUSTMENT with its reason; null when that would
+   * take it below the units reserved there.
+   */
+  async adjustAt(
+    tx: Tx,
+    variantId: string,
+    locationId: string,
+    delta: number,
+    source: MovementSource & { adjustmentReason: StockAdjustmentReason },
+  ): Promise<StockMovement | null> {
+    await this.repository.ensureLevel(tx, variantId, locationId);
+    return this.move(
+      tx,
+      variantId,
+      locationId,
+      { onHandDelta: delta, reservedDelta: 0, reason: StockMovementReason.ADJUSTMENT },
+      source,
+    );
+  }
+
+  /** Units of the variant that can still be sold or adjusted away at `locationId`. */
+  async availableAt(tx: Tx, variantId: string, locationId: string): Promise<number> {
+    const level = await this.repository.findLevel(tx, variantId, locationId);
+    return level ? level.onHand - level.reserved : 0;
   }
 
   /**

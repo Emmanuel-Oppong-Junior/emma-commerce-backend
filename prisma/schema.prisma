@@ -223,6 +223,8 @@ model Variant {
   priceChanges      PriceChange[]
   priceListEntries  PriceListEntry[]
   transferLines     StockTransferLine[]
+  stockTakeLines    StockTakeLine[]
+  lowStockAlerts    LowStockAlert[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1219,6 +1221,8 @@ model StockLocation {
   levels          StockLevel[]
   reservations    StockReservation[]
   movements       StockMovement[]
+  stockTakes      StockTake[]
+  lowStockAlerts  LowStockAlert[]
   shippingZones   ShippingZoneStockLocation[]
   pickupLocations PickupLocationStockLocation[]
   orders          Order[]
@@ -1364,29 +1368,131 @@ enum StockMovementReason {
   RELEASE
 }
 
+/// Why staff adjusted stock (P4-B.1). STOCK_TAKE is set only by an approved stock-take, never by hand.
+enum StockAdjustmentReason {
+  DAMAGED
+  LOST
+  FOUND
+  EXPIRED
+  CORRECTION
+  STOCK_TAKE
+  OTHER
+}
+
 /// Append-only stock ledger (ADR-0008): one row per StockLevel change, in the same transaction. Per (variant,
 /// location), the sum of onHandDelta is onHand and the sum of reservedDelta is reserved. A trigger refuses updates
 /// and direct deletes.
 model StockMovement {
-  id            String              @id @default(cuid())
-  variantId     String
-  locationId    String
-  onHandDelta   Int
-  reservedDelta Int                 @default(0)
-  reason        StockMovementReason
+  id               String                 @id @default(cuid())
+  variantId        String
+  locationId       String
+  onHandDelta      Int
+  reservedDelta    Int                    @default(0)
+  reason           StockMovementReason
   /// What caused the movement, e.g. ("Order", orderId) or ("ReturnRequest", returnRequestId)
-  refType       String?
-  refId         String?
-  actorId       String?
-  note          String?
-  createdAt     DateTime            @default(now())
-  variant       Variant             @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  location      StockLocation       @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  refType          String?
+  refId            String?
+  actorId          String?
+  note             String?
+  createdAt        DateTime               @default(now())
+  variant          Variant                @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location         StockLocation          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  /// Why staff adjusted (P4-B.1): set on ADJUSTMENT movements only (a CHECK refuses it elsewhere); null before P4-B.1
+  adjustmentReason StockAdjustmentReason?
 
   @@index([variantId, createdAt])
   @@index([locationId])
   @@index([refType, refId])
   @@index([createdAt])
+}
+
+/// OPEN (counting) -> SUBMITTED (counts closed) -> APPROVED (variances posted), or CANCELLED before approval (P4-B.1).
+enum StockTakeStatus {
+  OPEN
+  SUBMITTED
+  APPROVED
+  CANCELLED
+}
+
+/// A stock count session at one location (P4-B.1): lines for a category's variants, a list of variants, or every
+/// variant. Approval posts each non-zero variance as an ADJUSTMENT (STOCK_TAKE) referencing the session. At most one
+/// OPEN or SUBMITTED stock-take per location.
+model StockTake {
+  id            String          @id @default(cuid())
+  locationId    String
+  status        StockTakeStatus @default(OPEN)
+  /// The category whose variants were counted; null for a list of variants or a full count
+  categoryId    String?
+  note          String?
+  openedById    String
+  openedAt      DateTime        @default(now())
+  submittedById String?
+  submittedAt   DateTime?
+  approvedById  String?
+  approvedAt    DateTime?
+  cancelledById String?
+  cancelledAt   DateTime?
+  cancelReason  String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  location      StockLocation   @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  lines         StockTakeLine[]
+
+  @@unique([locationId], map: "StockTake_one_open_per_location", where: raw("status = ANY (ARRAY['OPEN'::\"StockTakeStatus\", 'SUBMITTED'::\"StockTakeStatus\"])"))
+  @@index([status, openedAt])
+}
+
+/// One variant to count. Expected quantities are the units that should be on the shelf: onHand plus units sold but not
+/// yet dispatched. expectedAtOpen is read when the session opens; expectedQuantity when the count is recorded, so
+/// stock that moved during the count is not mistaken for a variance. variance = countedQuantity - expectedQuantity.
+model StockTakeLine {
+  id               String    @id @default(cuid())
+  stockTakeId      String
+  variantId        String
+  expectedAtOpen   Int
+  expectedQuantity Int?
+  countedQuantity  Int?
+  variance         Int?
+  countedById      String?
+  countedAt        DateTime?
+  /// The STOCK_TAKE adjustment posted on approval (none for a zero variance)
+  movementId       String?
+  stockTake        StockTake @relation(fields: [stockTakeId], references: [id], onDelete: Cascade)
+  variant          Variant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([stockTakeId, variantId])
+  @@index([variantId])
+}
+
+/// PENDING until the next low-stock digest; SENT once listed in one; DROPPED when the variant recovered first (P4-B.2).
+enum LowStockAlertStatus {
+  PENDING
+  SENT
+  DROPPED
+}
+
+/// A variant whose available stock at a location fell to its low-stock threshold (from inventory.low_stock.v1),
+/// waiting for the staff digest. At most one PENDING alert per variant and location; eventId makes a redelivered
+/// event a no-op.
+model LowStockAlert {
+  id                String              @id @default(cuid())
+  variantId         String
+  locationId        String
+  eventId           String              @unique
+  availableAtAlert  Int
+  status            LowStockAlertStatus @default(PENDING)
+  /// The digest that listed it, and the available stock it showed
+  digestId          String?
+  availableAtDigest Int?
+  createdAt         DateTime            @default(now())
+  resolvedAt        DateTime?
+  variant           Variant             @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  location          StockLocation       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, locationId], map: "LowStockAlert_one_pending_per_variant_location", where: raw("status = 'PENDING'::\"LowStockAlertStatus\""))
+  @@index([status, createdAt])
+  @@index([digestId])
+  @@index([locationId])
 }
 
 enum PriceChangeField {

@@ -16,6 +16,11 @@ import {
 import { StockTransfersRepository } from './transfers/stock-transfers.repository';
 import { StockTransfersService } from './transfers/stock-transfers.service';
 import { StockTransferLineResolver, StockTransfersResolver } from './transfers/stock-transfers.resolver';
+import { StockTakeRepository } from './stock-take/stock-take.repository';
+import { LowStockAlertsRepository } from './low-stock/low-stock-alerts.repository';
+import { LowStockAlertsService } from './low-stock/low-stock-alerts.service';
+import { StockTakeService } from './stock-take/stock-take.service';
+import { StockTakeLineCountLoader, StockTakeResolver } from './stock-take/stock-take.resolver';
 
 @Module({
   imports: [CommonsModule, OutboxModule],
@@ -35,6 +40,12 @@ import { StockTransferLineResolver, StockTransfersResolver } from './transfers/s
     StockTransfersService,
     StockTransfersResolver,
     StockTransferLineResolver,
+    StockTakeRepository,
+    StockTakeService,
+    StockTakeResolver,
+    StockTakeLineCountLoader,
+    LowStockAlertsRepository,
+    LowStockAlertsService,
   ],
   exports: [
     InventoryService,
@@ -42,6 +53,7 @@ import { StockTransferLineResolver, StockTransfersResolver } from './transfers/s
     StockLedgerRepository,
     StockLocationsService,
     StockLocationsRepository,
+    LowStockAlertsService,
   ],
 })
 export class InventoryModule {}

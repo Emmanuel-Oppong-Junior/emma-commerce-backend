@@ -1,5 +1,5 @@
 import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { StockMovementReason } from '../../generated/prisma/client';
+import { StockAdjustmentReason, StockMovementReason } from '../../generated/prisma/client';
 
 registerEnumType(StockMovementReason, {
   name: 'StockMovementReason',
@@ -11,13 +11,27 @@ registerEnumType(StockMovementReason, {
     RETURN_RESTOCK: {
       description: 'Goods back on hand: a return restocked, or a paid order cancelled before dispatch',
     },
-    ADJUSTMENT: { description: 'Manual correction with a reason (damage, loss, stock count)' },
+    ADJUSTMENT: { description: 'Manual change with an adjustmentReason, or a stock-take variance (STOCK_TAKE)' },
     TRANSFER: {
       description:
         'Moved between locations: negative at the source on dispatch, positive at the destination on receipt',
     },
     RESERVE: { description: 'Units held for an order line; on hand, no longer available' },
     RELEASE: { description: 'A hold given back because the order was cancelled or expired' },
+  },
+});
+
+registerEnumType(StockAdjustmentReason, {
+  name: 'StockAdjustmentReason',
+  description: 'Why staff adjusted stock (an ADJUSTMENT movement)',
+  valuesMap: {
+    DAMAGED: { description: 'Damaged goods written off (removes stock)' },
+    LOST: { description: 'Missing or stolen goods (removes stock)' },
+    FOUND: { description: 'Goods found that were not on the books (adds stock)' },
+    EXPIRED: { description: 'Expired goods written off (removes stock)' },
+    CORRECTION: { description: 'A correction of an earlier mistake (either way)' },
+    STOCK_TAKE: { description: 'The variance of an approved stock-take; never given by hand' },
+    OTHER: { description: 'Anything else; a note is required' },
   },
 });
 
@@ -40,6 +54,12 @@ export class StockMovement {
 
   @Field(() => StockMovementReason)
   reason: StockMovementReason;
+
+  @Field(() => StockAdjustmentReason, {
+    nullable: true,
+    description: 'Why staff adjusted: set on ADJUSTMENT movements recorded since P4-B.1, null otherwise',
+  })
+  adjustmentReason: StockAdjustmentReason | null;
 
   @Field(() => String, { nullable: true, description: 'What caused it: Order, ReturnRequest, InventoryLog, ...' })
   refType: string | null;

@@ -61,6 +61,9 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.wishList.deleteMany();
   await prisma.review.deleteMany();
 
+  // Stock-takes hold their location; their lines go with them
+  await prisma.stockTake.deleteMany();
+
   // Product hierarchy (variants before products; implicit join-table rows cascade)
   await prisma.variant.deleteMany();
   await prisma.product.deleteMany();

@@ -12,6 +12,8 @@ import {
   emailChangeRequestedEmailHtml,
   RefundEmail,
   refundEmailHtml,
+  LowStockDigestSection,
+  lowStockDigestEmailHtml,
 } from './templates/email.templates';
 
 export function maskEmail(email: string): string {
@@ -83,6 +85,16 @@ export class EmailService {
 
   async sendRefundEmail(to: string, orderId: string, refund: RefundEmail, idempotencyKey?: string): Promise<void> {
     await this.send(to, `Refund for order #${orderId}`, refundEmailHtml(orderId, refund), idempotencyKey);
+  }
+
+  async sendLowStockDigestEmail(to: string, sections: LowStockDigestSection[], idempotencyKey?: string): Promise<void> {
+    const count = sections.reduce((total, section) => total + section.items.length, 0);
+    await this.send(
+      to,
+      `Low stock: ${count} variant${count === 1 ? '' : 's'}`,
+      lowStockDigestEmailHtml(sections),
+      idempotencyKey,
+    );
   }
 
   async sendPasswordResetEmail(to: string, resetToken: string, idempotencyKey?: string): Promise<void> {

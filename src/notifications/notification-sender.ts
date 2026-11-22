@@ -8,6 +8,7 @@ import { OrderStatus, ShipmentStatus } from '../generated/prisma/client';
 import { REFUND_REASON_LABELS } from '../returns/refund-reason';
 import { SmsSender } from './sms/sms-sender';
 import { phoneOtpText, SmsJobData } from './sms/sms-jobs';
+import { LowStockAlertsService } from '../inventory/low-stock/low-stock-alerts.service';
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -25,6 +26,7 @@ export class NotificationSender {
     private readonly email: EmailService,
     private readonly sms: SmsSender,
     private readonly logger: LoggerService,
+    private readonly lowStockAlerts: LowStockAlertsService,
   ) {}
 
   async send(jobName: string, data: unknown, idempotencyKey: string): Promise<void> {
@@ -154,12 +156,26 @@ export class NotificationSender {
         return;
       }
       case 'inventory.low_stock.v1': {
-        // No staff email template exists yet: the alert is a structured warning for log-based alerting.
-        const { payload } = data as DomainEventJobData<'inventory.low_stock.v1'>;
-        this.logger.warn(
-          `Low stock | variantId: ${payload.variantId} | locationId: ${payload.locationId} | available: ${payload.available}`,
-          CONTEXT,
-        );
+        // Staff are emailed in the next digest (LowStockDigestTask), one pending alert per variant and location.
+        const { eventId, payload } = data as DomainEventJobData<'inventory.low_stock.v1'>;
+        await this.lowStockAlerts.recordPending(eventId, payload);
+        return;
+      }
+      case 'inventory.low_stock_digest.v1': {
+        const { payload } = data as DomainEventJobData<'inventory.low_stock_digest.v1'>;
+        const recipient = await this.prisma.user.findUnique({
+          where: { id: payload.recipientId },
+          select: { email: true, isActive: true },
+        });
+        if (!recipient?.isActive) {
+          this.logger.warn(
+            `No email sent: digest recipient gone or inactive | digestId: ${payload.digestId} | userId: ${payload.recipientId}`,
+            CONTEXT,
+          );
+          return;
+        }
+        const sections = await this.lowStockAlerts.digestSections(payload.digestId);
+        await this.email.sendLowStockDigestEmail(recipient.email, sections, idempotencyKey);
         return;
       }
       case 'email.welcome.v1': {

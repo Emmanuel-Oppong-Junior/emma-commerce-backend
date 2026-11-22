@@ -7,6 +7,8 @@ export const PERMISSION_CATALOGUE = {
   'inventory.adjust': 'Restock and adjust product and variant stock',
   'inventory.location.manage': 'Manage stock locations and which of them fulfil each shipping zone and pickup point',
   'inventory.transfer': 'Create, dispatch, receive and cancel stock transfers between locations',
+  'inventory.stocktake.approve': 'Review stock-take variances, approve them into stock or cancel a stock-take',
+  'inventory.alerts': 'Receive the low-stock digest email',
   'order.view': 'Read every order',
   'order.manage': 'Cancel and delete orders',
   'order.fulfil': 'Move shipments through picking, packing, dispatch and delivery, and set carrier and tracking',

@@ -6,6 +6,7 @@ import { AdjustVariantStockInput } from './dto/adjust-stock.input';
 import { AuditService } from '../commons/audit.service';
 import { StockLedgerService } from './stock-ledger.service';
 import { MovementFilter, StockLedgerRepository } from './stock-ledger.repository';
+import { manualAdjustmentError } from './stock-adjustment';
 
 export interface StockMovementPage {
   nodes: StockMovement[];
@@ -58,23 +59,24 @@ export class InventoryService {
   }
 
   /**
-   * Moves a variant's on-hand stock by a signed delta with a reason, as an ADJUSTMENT. Units reserved for open orders
-   * cannot be adjusted away.
-   * @throws NotFoundException if the variant does not exist; BadRequestException if too few units are available.
+   * Moves a variant's on-hand stock at a location (default: the store's default location) by a signed delta, as one
+   * ADJUSTMENT with its reason. Units reserved for open orders cannot be adjusted away.
+   * @throws BadRequestException for a reason/direction mismatch, OTHER without a note, or too few units available;
+   * NotFoundException if the variant or an active location does not exist.
    */
   async adjustVariantStock(input: AdjustVariantStockInput, actorId: string): Promise<StockMovement> {
+    const refusal = manualAdjustmentError(input);
+    if (refusal) throw new BadRequestException(refusal);
     return this.prisma.$transaction(async (tx) => {
       await this.ensureVariant(tx, input.variantId);
-      const locationId = input.locationId && (await this.ensureLocation(tx, input.locationId));
-      const movement = await this.ledger.adjust(
-        tx,
-        input.variantId,
-        input.delta,
-        { actorId, note: input.reason },
-        locationId || undefined,
-      );
+      const locationId = await this.resolveLocation(tx, input.locationId);
+      const movement = await this.ledger.adjustAt(tx, input.variantId, locationId, input.delta, {
+        actorId,
+        adjustmentReason: input.reason,
+        note: input.note?.trim() || undefined,
+      });
       if (!movement) {
-        const available = await this.ledger.available(tx, input.variantId, locationId || undefined);
+        const available = await this.ledger.availableAt(tx, input.variantId, locationId);
         throw new BadRequestException(
           `Cannot remove ${-input.delta} units from variant "${input.variantId}": only ${available} available`,
         );
@@ -102,6 +104,13 @@ export class InventoryService {
     return locationId;
   }
 
+  private async resolveLocation(tx: Prisma.TransactionClient, locationId: string | undefined): Promise<string> {
+    if (!locationId) return this.repository.defaultLocationId(tx);
+    const location = await this.repository.findActiveLocation(tx, locationId);
+    if (!location) throw new NotFoundException(`Stock location "${locationId}" not found or inactive`);
+    return location.id;
+  }
+
   private async auditStockChange(tx: Prisma.TransactionClient, movement: StockMovement): Promise<void> {
     await this.auditService.log(
       {
@@ -115,6 +124,7 @@ export class InventoryService {
           locationId: movement.locationId,
           onHandDelta: movement.onHandDelta,
           reason: movement.note,
+          ...(movement.adjustmentReason && { adjustmentReason: movement.adjustmentReason }),
           ...(movement.refType && { refType: movement.refType, refId: movement.refId }),
         },
       },
