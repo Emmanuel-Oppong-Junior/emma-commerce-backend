@@ -1,4 +1,5 @@
-import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { Args, Context, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { Request } from 'express';
 import { Order } from './entities/order.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateOrderInput } from './dto/create-order.input';
@@ -82,9 +83,14 @@ export class OrdersResolver {
     name: 'createOrder',
     description:
       'Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with ' +
-      'reason QUOTE_CHANGED if the cart no longer prices to it',
+      'reason QUOTE_CHANGED if the cart no longer prices to it; FORBIDDEN with reason VELOCITY_LIMIT when too many ' +
+      'orders came from the same account, phone number or network in a short time',
   })
-  async createOrder(@ActiveUser('id') userId: string, @Args('input') input: CreateOrderInput) {
+  async createOrder(
+    @ActiveUser('id') userId: string,
+    @Args('input') input: CreateOrderInput,
+    @Context('req') req: Request,
+  ) {
     return this.ordersService.createOrderFromCart(userId, {
       fulfillmentType: input.fulfillmentType as unknown as FulfillmentType,
       shippingAddressId: input.shippingAddressId,
@@ -94,6 +100,7 @@ export class OrdersResolver {
       couponCode: input.couponCode,
       paymentMethod: input.paymentMethod as PaymentMethod,
       quoteHash: input.quoteHash,
+      clientIp: req.ip,
     });
   }
 

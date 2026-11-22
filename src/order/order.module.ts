@@ -15,6 +15,7 @@ import { UsersModule } from '../users/users.module';
 import { StoreModule } from '../store/store.module';
 import { TaxModule } from '../tax/tax.module';
 import { PaymentProvidersModule } from '../payment/providers/payment-providers.module';
+import { FraudModule } from '../fraud/fraud.module';
 
 @Module({
   providers: [OrdersService, OrdersResolver, OrdersRepository],
@@ -32,6 +33,7 @@ import { PaymentProvidersModule } from '../payment/providers/payment-providers.m
     StoreModule,
     TaxModule,
     PaymentProvidersModule,
+    FraudModule,
   ],
   exports: [OrdersService, OrdersRepository],
 })

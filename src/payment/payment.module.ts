@@ -12,9 +12,20 @@ import { StoreModule } from '../store/store.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentProvidersModule } from './providers/payment-providers.module';
+import { FraudModule } from '../fraud/fraud.module';
+import { DisputesModule } from './disputes/disputes.module';
 
 @Module({
-  imports: [CommonsModule, OutboxModule, OrderModule, StoreModule, InventoryModule, PaymentProvidersModule],
+  imports: [
+    CommonsModule,
+    OutboxModule,
+    OrderModule,
+    StoreModule,
+    InventoryModule,
+    PaymentProvidersModule,
+    FraudModule,
+    DisputesModule,
+  ],
   providers: [
     PaymentResolver,
     PaymentService,

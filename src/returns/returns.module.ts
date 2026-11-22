@@ -9,9 +9,10 @@ import { RefundRepository } from './refund.repository';
 import { OrderRefundsResolver } from './order-refunds.resolver';
 import { PaymentProvidersModule } from '../payment/providers/payment-providers.module';
 import { OutboxModule } from '../outbox/outbox.module';
+import { DisputesModule } from '../payment/disputes/disputes.module';
 
 @Module({
-  imports: [CommonsModule, PaymentProvidersModule, OutboxModule],
+  imports: [CommonsModule, PaymentProvidersModule, OutboxModule, DisputesModule],
   providers: [
     ReturnsService,
     ReturnsResolver,

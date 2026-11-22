@@ -4,6 +4,7 @@ exports[`Authorization matrix matches the reviewed matrix 1`] = `
 "
 Mutation addAttributeDefinition          permission: catalog.taxonomy.write
 Mutation addCustomerGroupMembers         permission: customer.group.manage
+Mutation addDisputeNote                  permission: payment.dispute.manage
 Mutation addProductsToTag                permission: catalog.taxonomy.write
 Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
@@ -18,6 +19,7 @@ Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
 Mutation changeUserPassword              authenticated
 Mutation clearCart                       authenticated
+Mutation clearOrderReviewFlags           permission: order.manage
 Mutation clearWishlist                   authenticated
 Mutation completeMfaSignIn               public
 Mutation confirmMfaEnrollment            authenticated
@@ -61,6 +63,7 @@ Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
 Mutation processRefund                   permission: order.refund; step-up
 Mutation recordCodPayment                permission: payment.record
+Mutation recordDispute                   permission: payment.dispute.manage
 Mutation refreshToken                    public
 Mutation refundOrder                     permission: order.refund; step-up
 Mutation rejectReturn                    permission: return.manage
@@ -99,6 +102,7 @@ Mutation updateCartItem                  authenticated
 Mutation updateCategory                  permission: catalog.taxonomy.write
 Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
+Mutation updateDisputeStatus             permission: payment.dispute.manage
 Mutation updateMyProfile                 authenticated
 Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
 Mutation updatePickupLocation            permission: shipping.manage
@@ -117,6 +121,7 @@ Mutation updateTag                       permission: catalog.taxonomy.write
 Mutation updateTax                       permission: tax.manage; step-up
 Mutation updateUser                      permission: user.manage
 Mutation updateVariant                   permission: catalog.product.write; step-up when input.basePrice is set
+Mutation updateVelocityLimits            permission: payment.settings.manage; step-up
 Mutation verifyEmail                     public
 Mutation verifyPayment                   customer only
 Query activePickupLocations              public
@@ -135,7 +140,10 @@ Query checkoutQuote                      authenticated
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
+Query dispute                            permission: payment.view
+Query disputes                           permission: payment.view
 Query failedJobs                         permission: jobs.manage
+Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only
 Query getShippingFee                     authenticated
 Query getUserPayment                     permission: payment.view
@@ -187,6 +195,7 @@ Query users                              permission: user.view
 Query validateCouponCode                 authenticated
 Query variant                            permission: catalog.product.read
 Query variants                           permission: catalog.product.read
+Query velocityLimits                     permission: payment.settings.manage
 Query viewOrder                          permission: order.view
 Query wishlist                           authenticated
 REST GET /                               authenticated

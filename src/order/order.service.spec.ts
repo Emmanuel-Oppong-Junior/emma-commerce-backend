@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentSettingsService } from '../payment/settings/payment-settings.service';
 import { CartService } from '../cart/cart.service';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '../generated/prisma/client';
 import { CreateOrderParams, ORDER_EXPIRY_LOCK_KEY, OrdersService } from './order.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
@@ -18,6 +18,8 @@ import { PromotionsService } from '../promotions/promotions.service';
 import { PriceListsService } from '../price-lists/price-lists.service';
 import { PricingCouponCode, PricingPromotion } from '../pricing/price';
 import { StoreService } from '../store/store.service';
+import { VelocityService } from '../fraud/velocity.service';
+import { velocityStub } from '../../test/helpers/velocity.helper';
 
 const mockAuditService = { log: jest.fn() };
 const mockTaxService = { findActive: jest.fn() };
@@ -234,6 +236,7 @@ const mockUser = {
 };
 
 const mockPaymentSettings = { assertOrderPaymentMethod: jest.fn() };
+const mockVelocity = velocityStub();
 
 describe('OrdersService', () => {
   let ordersService: OrdersService;
@@ -258,6 +261,7 @@ describe('OrdersService', () => {
         { provide: PriceListsService, useValue: mockPriceListsService },
         { provide: StoreService, useValue: mockStoreService },
         { provide: PaymentSettingsService, useValue: mockPaymentSettings },
+        { provide: VelocityService, useValue: mockVelocity },
       ],
     }).compile();
 
@@ -293,6 +297,45 @@ describe('OrdersService', () => {
   });
 
   describe('createOrderFromCart', () => {
+    describe('velocity checks', () => {
+      const softHit = { rule: 'ORDERS_PER_CUSTOMER_1H', level: 'SOFT', count: 4, limit: 3 };
+
+      beforeEach(() => {
+        mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+        mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+        mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+        mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
+        mockOrdersRepository.create.mockResolvedValue(mockOrder);
+      });
+
+      it('screens the customer, phone and IP before placing, flags soft hits in the order transaction, then counts the order', async () => {
+        mockVelocity.screenOrRefuse.mockResolvedValueOnce([softHit]);
+        const { quoteHash } = await ordersService.checkoutQuote(mockUserId, deliveryParams);
+
+        await ordersService.createOrderFromCart(mockUserId, {
+          ...deliveryParams,
+          quoteHash,
+          clientIp: '::ffff:41.66.1.2',
+        });
+
+        const subjects = { CUSTOMER: mockUserId, PHONE: '+233244000000', IP: '41.66.1.2' };
+        expect(mockVelocity.screenOrRefuse).toHaveBeenCalledWith('ORDER_PLACEMENT', subjects);
+        expect(mockVelocity.flagOrder).toHaveBeenCalledWith(mockOrder.id, [softHit], expect.anything());
+        expect(mockVelocity.record).toHaveBeenCalledWith('ORDER_PLACED', subjects);
+      });
+
+      it('places nothing and counts nothing when a hard limit refuses the order', async () => {
+        const { quoteHash } = await ordersService.checkoutQuote(mockUserId, deliveryParams);
+        mockVelocity.screenOrRefuse.mockRejectedValueOnce(new ForbiddenException('Too many orders'));
+
+        await expect(ordersService.createOrderFromCart(mockUserId, { ...deliveryParams, quoteHash })).rejects.toThrow(
+          ForbiddenException,
+        );
+        expect(mockOrdersRepository.create).not.toHaveBeenCalled();
+        expect(mockVelocity.record).not.toHaveBeenCalled();
+      });
+    });
+
     it('should create an order successfully', async () => {
       mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
       mockOrdersRepository.findAddressForUser.mockResolvedValue({

@@ -39,6 +39,8 @@ import { TaxService } from '../tax/tax.service';
 import { assertDeliverableAddress } from '../addresses/deliverable-address';
 import { toAddressSnapshot } from '../addresses/address-snapshot';
 import { PaymentSettingsService } from '../payment/settings/payment-settings.service';
+import { VelocityService } from '../fraud/velocity.service';
+import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -62,6 +64,8 @@ export interface CreateOrderParams extends CheckoutParams {
   contactPhone: string;
   /** quoteHash of the checkoutQuote the customer confirmed. */
   quoteHash: string;
+  /** The client's IP address, for velocity checks. */
+  clientIp?: string;
 }
 
 /** The cart priced for checkout, with each line's cart item and each order adjustment's share per cart item. */
@@ -139,6 +143,7 @@ export class OrdersService {
     private readonly storeService: StoreService,
     private readonly taxService: TaxService,
     private readonly paymentSettings: PaymentSettingsService,
+    private readonly velocity: VelocityService,
   ) {}
 
   /**
@@ -173,11 +178,17 @@ export class OrdersService {
    */
   async createOrderFromCart(userId: string, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
-    return this.ordersRepository.runTransaction(async (tx) => {
+    const subjects = velocitySubjects({ customerId: userId, phone: params.contactPhone, ip: params.clientIp });
+    const softHits = await this.velocity.screenOrRefuse(VelocityCheckpoint.ORDER_PLACEMENT, subjects);
+    const order = await this.ordersRepository.runTransaction(async (tx) => {
       const checkout = await this.priceCheckout(userId, params, tx);
       if (checkout.snapshot.quoteHash !== params.quoteHash) throw quoteChanged();
-      return this.placeOrder(tx, userId, checkout, params);
+      const placed = await this.placeOrder(tx, userId, checkout, params);
+      await this.velocity.flagOrder(placed.id, softHits, tx);
+      return placed;
     });
+    await this.velocity.record(VelocityEvent.ORDER_PLACED, subjects);
+    return order;
   }
 
   /**

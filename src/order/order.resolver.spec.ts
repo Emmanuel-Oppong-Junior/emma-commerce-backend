@@ -126,7 +126,7 @@ describe('OrdersResolver', () => {
     it('should create an order from the user’s cart', async () => {
       mockOrdersService.createOrderFromCart.mockResolvedValue(mockOrder);
 
-      const result = await resolver.createOrder(mockUserId, mockCreateOrderInput);
+      const result = await resolver.createOrder(mockUserId, mockCreateOrderInput, { ip: '41.66.1.2' } as never);
 
       expect(ordersService.createOrderFromCart).toHaveBeenCalledWith(mockUserId, {
         fulfillmentType: 'DELIVERY',
@@ -137,6 +137,7 @@ describe('OrdersResolver', () => {
         couponCode: undefined,
         paymentMethod: undefined,
         quoteHash: 'a'.repeat(64),
+        clientIp: '41.66.1.2',
       });
       expect(result).toEqual(mockOrder);
     });

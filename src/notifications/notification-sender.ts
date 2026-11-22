@@ -132,6 +132,15 @@ export class NotificationSender {
         );
         return;
       }
+      case 'payment.dispute_opened.v1': {
+        // No staff notification yet: a structured warning with ids only, for log-based alerting.
+        const { payload } = data as DomainEventJobData<'payment.dispute_opened.v1'>;
+        this.logger.warn(
+          `Dispute opened | disputeId: ${payload.disputeId} | paymentId: ${payload.paymentId} | orderId: ${payload.orderId} | source: ${payload.source}`,
+          CONTEXT,
+        );
+        return;
+      }
       case 'inventory.low_stock.v1': {
         // No staff email template exists yet: the alert is a structured warning for log-based alerting.
         const { payload } = data as DomainEventJobData<'inventory.low_stock.v1'>;

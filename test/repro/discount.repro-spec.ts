@@ -3,6 +3,7 @@ import { join } from 'path';
 import { Prisma } from '../../src/generated/prisma/client';
 import { PromotionsService } from '../../src/promotions/promotions.service';
 import { OrdersService } from '../../src/order/order.service';
+import { velocityStub } from '../helpers/velocity.helper';
 import { price } from '../../src/pricing/price';
 
 const IN_DATE = { startsAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 86_400_000) };
@@ -171,6 +172,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,
       { findActive: jest.fn().mockResolvedValue([]) } as never,
       { assertOrderPaymentMethod: jest.fn() } as never,
+      velocityStub() as never,
     );
 
     const params = {

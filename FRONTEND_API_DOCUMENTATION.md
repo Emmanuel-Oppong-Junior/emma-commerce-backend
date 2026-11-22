@@ -1726,6 +1726,8 @@ query {
 
 **Breaking change (P2-A.2):** `CreateOrderInput.quoteHash` is new and **required**: call `checkoutQuote` with the same fulfilment and coupon first and send its `quoteHash`. If anything that determines the charge changed in between (a price, a discount, the coupon's value, a tax rate, the shipping fee, the cart), `createOrder` fails with `CONFLICT` and `extensions.reason: "QUOTE_CHANGED"`: nothing is reserved, charged or recorded; quote again and show the new total.
 
+**Velocity checks (P3-E.1):** too many orders in a short time from the same account, phone number (`contactPhone`) or network (IP address) fail with `FORBIDDEN` and `extensions.reason: "VELOCITY_LIMIT"`; nothing is reserved or recorded. Show the message ("Too many orders in a short time ... Try again later or contact the store"); it names no limit. Below that, an order can be accepted but flagged for staff review (invisible to the customer). See [Velocity checks](#velocity-checks-p3-e1).
+
 **Input: `CreateOrderInput`**
 
 ```typescript
@@ -1983,6 +1985,60 @@ query { availablePaymentMethods { cashOnDelivery online { method provider public
 - `setPaystackConfig(input: { secretKey: String!, publicKey: String, callbackUrl: String })`: replaces the whole Paystack config. `secretKey` must start with `sk_test_` or `sk_live_` (the mode follows it); `publicKey`, if sent, must be a `pk_` key of the same mode (`BAD_REQUEST` otherwise). The secret is stored AES-256-GCM encrypted. From then on these keys open checkouts and check webhook signatures; `PAYSTACK_SECRET_KEY` is no longer used. `callbackUrl` replaces `PAYSTACK_CALLBACK_URL` when set.
 - `removePaystackConfig`: deletes the stored keys, so `PAYSTACK_SECRET_KEY` (if set) applies again. `NOT_FOUND` when none are stored.
 - `updatePaymentMethods(input: { cardPaymentsEnabled, mobileMoneyPaymentsEnabled, cashOnDeliveryEnabled, cardPaymentProvider, mobileMoneyPaymentProvider })`: omitted fields keep their value. A switched-off method is refused at `checkoutQuote`/`createOrder` (order level) and `POST /payment/initialize` (online method), with `BAD_REQUEST` and reason `PAYMENT_METHOD_UNAVAILABLE`. Orders already placed keep their method.
+
+---
+
+#### Velocity checks (P3-E.1)
+
+Counters per **customer account**, **phone number** (the order's `contactPhone`, Ghana numbers in E.164), **IP address** and **card** (Paystack's card fingerprint, known only once a charge is verified) over fixed 1-hour or 24-hour windows. Counters live in Redis under SHA-256 hashed keys; no phone number, IP address or card value is stored or logged. Each rule has two limits, set by the Owner: above the **soft** limit the action goes through and the order gets a **review flag** for staff; above the **hard** limit the action is refused (`FORBIDDEN`, `reason: VELOCITY_LIMIT`). Card rules can only flag (the card is known after the charge), at level `SOFT` or `HARD`. If Redis is down the checks let everything through (logged and counted in `velocity_check_errors_total`).
+
+| `VelocityRule` | Counts | Per | Window | Default soft / hard |
+|---|---|---|---|---|
+| `ORDERS_PER_CUSTOMER_1H` | orders placed | customer | 1 h | 3 / 6 |
+| `ORDERS_PER_CUSTOMER_24H` | orders placed | customer | 24 h | 6 / 15 |
+| `ORDERS_PER_PHONE_24H` | orders placed | phone | 24 h | 6 / 15 |
+| `ORDERS_PER_IP_1H` | orders placed | IP | 1 h | 10 / 30 |
+| `ORDERS_PER_IP_24H` | orders placed | IP | 24 h | 40 / 120 |
+| `PAYMENT_ATTEMPTS_PER_CUSTOMER_1H` | payment attempts started | customer | 1 h | 8 / 20 |
+| `PAYMENT_ATTEMPTS_PER_IP_1H` | payment attempts started | IP | 1 h | 20 / 60 |
+| `FAILED_PAYMENTS_PER_CUSTOMER_24H` | failed payments | customer | 24 h | 4 / 10 (hard: refuses new attempts) |
+| `FAILED_PAYMENTS_PER_CARD_24H` | failed payments | card | 24 h | 3 / 6 (flags only) |
+
+A rule fires when its count in the window, including the order or attempt being made, goes above the limit (soft 3 = the 4th order in the hour is flagged). Windows start at the first counted event.
+
+- `velocityLimits: [VelocityLimit!]!` (Owner: `payment.settings.manage`): every rule with `{ rule, event, subject, windowSeconds, softLimit, hardLimit, isDefault }` (`VelocityEvent`: `ORDER_PLACED | PAYMENT_STARTED | PAYMENT_FAILED`; `VelocitySubject`: `CUSTOMER | PHONE | IP | CARD`; `isDefault` true while the code default applies).
+- `updateVelocityLimits(input: { limits: [{ rule, softLimit, hardLimit }] }): [VelocityLimit!]!` (Owner, recent step-up, audited): whole numbers 1–1,000,000 with `hardLimit >= softLimit` (`BAD_REQUEST` otherwise, nothing saved); rules left out keep their limits.
+- `flaggedOrders(first: Int = 20): [FlaggedOrder!]!` (1-100) (staff: `order.view`): orders with open review flags, newest first: `{ id, orderNumber, userId, status, grandTotal, createdAt, reviewFlags: [OrderReviewFlag] }`; open `viewOrder` for the full order. `OrderReviewFlag`: `{ id, orderId, rule, level: VelocityLevel (SOFT | HARD), count, limit, createdAt, clearedAt, clearedById, clearNote }`. One open flag per order and rule.
+- `clearOrderReviewFlags(input: { orderId, note }): [OrderReviewFlag!]!` (staff: `order.manage`, audited): clears every open flag of the order with the note; `NOT_FOUND` when it has none. A flag does not hold the order: cancel it with `adminCancelOrder` if it is fraud.
+
+---
+
+#### Disputes and chargebacks (P3-E.2)
+
+A `Dispute` is a chargeback or dispute on a captured online payment (attempt). Paystack's dispute webhooks create and move it (source `PROVIDER`); staff can also record one by hand (source `STAFF`, e.g. a chargeback notice that arrived by email). An unresolved dispute blocks refunds on its payment (see `processPendingRefund`).
+
+`DisputeStatus`: `OPEN` → `AWAITING_EVIDENCE` (answer by `evidenceDueAt`) ⇄ `UNDER_REVIEW` (with the bank) → `WON` | `LOST` | `ACCEPTED` (the merchant accepted the claim). `OPEN` may also go straight to any later status; resolved statuses are final. Paystack mapping: `pending` → `OPEN`, `awaiting-merchant-feedback` → `AWAITING_EVIDENCE`, `awaiting-bank-feedback` → `UNDER_REVIEW`, `resolved` with resolution `declined` → `WON`, `merchant-accepted` → `ACCEPTED`; any other value leaves the status unchanged (logged; staff set it by hand). A late webhook the table does not allow (a reminder after the resolution) changes nothing.
+
+```typescript
+Dispute {
+  id: string; attemptId: string; orderId: string;
+  provider: PaymentProvider;           // PAYSTACK | CASH_ON_DELIVERY
+  providerDisputeId: string | null;    // unique per provider
+  amount: Money; currency: string;
+  category: string | null; reason: string | null;
+  status: DisputeStatus; source: DisputeSource;  // PROVIDER | STAFF
+  evidenceDueAt: DateTime | null; openedAt: DateTime; resolvedAt: DateTime | null;
+  createdById: string | null;          // staff who recorded it
+  notes: { id; authorId; body; createdAt }[];                                          // append-only, oldest first
+  history: { id; fromStatus: DisputeStatus | null; toStatus; source; actorId; providerStatus; note; createdAt }[];
+  createdAt: DateTime; updatedAt: DateTime;
+}
+```
+
+- `disputes(status: DisputeStatus, paymentId: ID, first: Int = 20): [Dispute!]!` and `dispute(id: ID!): Dispute!` (staff: `payment.view`; `NOT_FOUND` for an unknown id).
+- `recordDispute(input: { paymentId, amount: Decimal, category, reason, providerDisputeId, evidenceDueAt, status }): Dispute!` (`payment.dispute.manage`: Owner, Manager; audited): the payment must be a `CAPTURED` online payment (`CONFLICT` otherwise; cash on delivery `BAD_REQUEST`), the amount more than 0 and at most the payment amount (`BAD_REQUEST`), `status` `OPEN` (default), `AWAITING_EVIDENCE` or `UNDER_REVIEW`. A `providerDisputeId` already recorded → `CONFLICT`.
+- `updateDisputeStatus(input: { disputeId, status, note }): Dispute!` (`payment.dispute.manage`, audited): `CONFLICT` for a move the table does not allow.
+- `addDisputeNote(input: { disputeId, body }): Dispute!` (`payment.dispute.manage`, audited): appends an evidence note (max 5000 characters); notes cannot be edited or deleted.
 
 ---
 
@@ -2358,6 +2414,7 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 - **Args**: `refundId: ID!`
 - **Response**: `RefundEntity`
 - **Description**: Sends a `PENDING` refund through Paystack, or resends a `FAILED` one. Used for auto-refunds that payment verification queues when money arrives for a cancelled, already-paid or wrong-amount payment (these are never sent automatically). A refund linked to a return request also completes that request. Same cap, claim and error rules as `processRefund`: a second call gets `CONFLICT`.
+- **Disputes (P3-E.2):** every refund send (`processRefund`, `processPendingRefund`) is refused with `CONFLICT` and `extensions.reason: "PAYMENT_DISPUTED"` while the payment has an unresolved dispute (`OPEN`, `AWAITING_EVIDENCE`, `UNDER_REVIEW`): the bank may still return the money. A dispute resolved `LOST` or `ACCEPTED` counts as money already returned, so only what is left after it (and earlier refunds) can be refunded, else the same `CONFLICT`. Nothing is sent.
 
 ---
 
@@ -3069,14 +3126,15 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
 | `inventory.view` | `stockMovements`; the `Variant.onHand` and `Variant.reserved` fields |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
-| `order.view` | `getOrders`, `viewOrder` |
-| `order.manage` | `adminCancelOrder`, `deleteOrder` |
+| `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
+| `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |
 | `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |
 | `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund`, `refundOrder` |
 | `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
-| `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment` |
+| `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment`, `disputes`, `dispute` (P3-E.2) |
 | `payment.record` | `recordCodPayment` |
 | `payment.manage` | `softDeletePayment`, `restorePayment` |
+| `payment.dispute.manage` | `recordDispute`, `updateDisputeStatus`, `addDisputeNote` (P3-E.2; held by Owner and Manager) |
 | `promotion.manage` | `promotions`, `promotion`, `createPromotion`, `updatePromotion`, `deletePromotion`, `createCouponCode`, `updateCouponCode`, `deleteCouponCode`, `redemptions` (P2-B.1) |
 | `customer.group.manage` | `customerGroups`, `customerGroup` (with `members`), `createCustomerGroup`, `updateCustomerGroup`, `deleteCustomerGroup`, `addCustomerGroupMembers`, `removeCustomerGroupMembers` (P2-B.3; held by Owner and Manager) |
 | `pricelist.manage` | `priceLists`, `priceList` (with `entries`), and with step-up `createPriceList`, `updatePriceList`, `deletePriceList`, `setPriceListEntries`, `removePriceListEntries` (P2-W.1; held by Owner and Manager) |
@@ -3299,6 +3357,7 @@ The amount is always the order total at the first initialization; any other fiel
 - Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `CANCELLED`; it is kept, and if the customer still completes that older checkout the payment is matched.
 - Repeating an `idempotencyKey` for the same order returns the same attempt and the same `authorizationUrl` without opening a new checkout. It returns **409** if that attempt is still being set up (retry shortly) or is no longer `PENDING` (use a new key).
 - If Paystack cannot open the checkout the request fails and the same key may be retried.
+- **Velocity checks (P3-E.1):** too many payment attempts in a short time from the same account or IP address, or too many failed payments on the account, return **403** with `"reason": "VELOCITY_LIMIT"` before any attempt is opened. A repeated `idempotencyKey` is not counted as a new attempt.
 - The checkout is opened with the provider the store configured for the method (Paystack), limited to that channel (`card` or `mobile_money`). Paystack's `callback_url` is the store's configured callback URL, else `PAYSTACK_CALLBACK_URL` (a frontend page; see [Section 8](#8-payment-integration-paystack)).
 
 **Response** (`201`): the payment attempt plus `authorizationUrl`. Decimal amounts are JSON strings here.
@@ -3347,6 +3406,7 @@ The endpoint no longer answers `503` when processing fails: the stored event is 
 **Handled Events** (each delivery is stored once per event type and Paystack `data.id`, or `data.reference` when there is no id; repeats are no-ops):
 - `charge.success` → re-verifies the reference with Paystack; marks payment `CAPTURED`, order status → `CONFIRMED` (same rule as `verifyPayment`).
 - `charge.failed` → re-verifies; marks payment `FAILED`.
+- `charge.dispute.create` / `charge.dispute.remind` / `charge.dispute.resolve` (P3-E.2) → creates or updates the [dispute](#disputes-and-chargebacks-p3-e2) of the transaction (`data.transaction.reference`). Keyed per dispute id and `data.updatedAt`, so each reminder is processed once and a redelivery is a no-op. Only the validated dispute fields are stored (no customer or card data). A signed dispute body without a valid dispute id, transaction reference, amount (`refund_amount`, subunits) or currency gets `400` and nothing is stored.
 - All other events: stored and acknowledged (`200 OK`) but not processed.
 
 ---

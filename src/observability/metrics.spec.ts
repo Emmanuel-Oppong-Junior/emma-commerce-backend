@@ -182,6 +182,18 @@ describe('AppMetrics', () => {
       { value: 3, attributes: { kind: 'ACTIVE_RESERVATIONS' } },
     ]);
   });
+
+  it('counts velocity limit hits by rule and level, and velocity check errors by stage', () => {
+    const { metrics, samples } = build();
+
+    metrics.recordVelocityLimitHit('ORDERS_PER_IP_1H', 'HARD');
+    metrics.recordVelocityCheckError('screen');
+
+    expect(samples.velocity_limit_hits).toEqual([
+      { value: 1, attributes: { rule: 'ORDERS_PER_IP_1H', level: 'HARD' } },
+    ]);
+    expect(samples.velocity_check_errors).toEqual([{ value: 1, attributes: { stage: 'screen' } }]);
+  });
 });
 
 describe('routeTemplate', () => {

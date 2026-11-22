@@ -13,11 +13,13 @@ import { randomBytes } from 'node:crypto';
 import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
-import { decideVerification, isSettled } from './payment-verification';
+import { decideVerification, isSettled, ProviderVerification } from './payment-verification';
 import { assertCodCollectable } from './cash-on-delivery';
 import { AuditService } from '../commons/audit.service';
 import { StoreService } from '../store/store.service';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
+import { VelocityService } from '../fraud/velocity.service';
+import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
 
 @Injectable()
 export class PaymentService {
@@ -28,23 +30,28 @@ export class PaymentService {
     private readonly providers: PaymentProviderRegistry,
     private readonly storeService: StoreService,
     private readonly paymentSettings: PaymentSettingsService,
+    private readonly velocity: VelocityService,
   ) {}
 
   /**
    * Opens a checkout for a PENDING online order with the provider the store configured for the chosen method (card
    * or mobile money); BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer it. The amount
    * and currency come from the order's payment intent. Repeating an idempotency key returns the attempt already
-   * opened under it instead of a new one.
+   * opened under it instead of a new one. FORBIDDEN with reason VELOCITY_LIMIT when the account or network started
+   * or failed too many payments in a short time.
    */
   async initiatePayment(
     userId: string,
     createPaymentDto: CreatePaymentDto,
+    clientIp?: string,
   ): Promise<PaymentRecord & { authorizationUrl: string }> {
     const { orderId, idempotencyKey, paymentMethod } = createPaymentDto;
     await this.assertStoreCurrency(createPaymentDto.currency);
     const order = await this.paymentRepository.findOrderWithUser(orderId);
     assertOrderPayable(order, orderId, userId);
     const provider = await this.paymentSettings.onlineProviderFor(paymentMethod);
+    const subjects = velocitySubjects({ customerId: userId, ip: clientIp });
+    const softHits = await this.velocity.screenOrRefuse(VelocityCheckpoint.PAYMENT_INITIATION, subjects);
 
     const reference = this.generateReference(orderId);
     const opened = await this.paymentRepository.openAttempt(
@@ -64,6 +71,8 @@ export class PaymentService {
       });
       return { ...opened.attempt, authorizationUrl };
     }
+    await this.velocity.flagOrder(orderId, softHits);
+    await this.velocity.record(VelocityEvent.PAYMENT_STARTED, subjects);
 
     const authorizationUrl = await this.openCheckout(
       provider,
@@ -231,6 +240,22 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Counts a failed payment against the customer and the card, then flags the order when the customer's or the card's
+   * failures are above a limit. Settlement is never refused: the money has already moved (or not) at the provider.
+   */
+  private async checkSettlementVelocity(
+    attempt: PaymentRecord,
+    failed: boolean,
+    verified: ProviderVerification,
+  ): Promise<void> {
+    if (!failed && !verified.cardFingerprint) return;
+    const subjects = velocitySubjects({ customerId: attempt.order?.userId, card: verified.cardFingerprint });
+    if (failed) await this.velocity.record(VelocityEvent.PAYMENT_FAILED, subjects);
+    const hits = await this.velocity.screen(VelocityCheckpoint.PAYMENT_SETTLEMENT, subjects);
+    await this.velocity.flagOrder(attempt.orderId, hits);
+  }
+
   // The random suffix keeps two initiations in the same millisecond from colliding on the unique reference.
   private generateReference(orderId: string): string {
     return `${orderId}-${Date.now()}-${randomBytes(4).toString('hex')}`;
@@ -254,6 +279,7 @@ export class PaymentService {
     );
 
     const { outcome, attempt } = settled;
+    await this.checkSettlementVelocity(attempt, outcome.kind === 'failed', verified);
     if (outcome.kind === 'review') {
       this.logger.warn(
         `Payment needs review, order left unchanged and refund queued | reason: ${outcome.reason} | orderId: ${attempt.orderId} | paymentId: ${attempt.id} | refundId: ${settled.refundId} | provider amount: ${verified.amount} ${verified.currency}`,

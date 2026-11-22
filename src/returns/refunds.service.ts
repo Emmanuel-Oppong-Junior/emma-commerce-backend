@@ -25,6 +25,7 @@ export interface RefundOrderParams {
   reason: RefundReason;
   note?: string | null;
 }
+import { DisputesService } from '../payment/disputes/disputes.service';
 
 /**
  * Sends refunds through the attempt's payment provider. A refund is claimed (PENDING/FAILED -> SENDING) in a committed
@@ -38,6 +39,7 @@ export class RefundsService {
     private readonly providers: PaymentProviderRegistry,
     private readonly auditService: AuditService,
     private readonly logger: LoggerService,
+    private readonly disputes: DisputesService,
   ) {}
 
   async findAll(status?: RefundStatus): Promise<Refund[]> {
@@ -143,6 +145,7 @@ export class RefundsService {
    * the refund, so it must be checked there before anyone sends money again.
    */
   async send(refundId: string, adminUserId: string): Promise<RecordedRefund> {
+    await this.disputes.assertRefundAllowed(refundId);
     const { refund, ledger } = await this.refundRepository.claimForSending(
       refundId,
       (locked, claimed) => assertRefundable(locked, claimed),

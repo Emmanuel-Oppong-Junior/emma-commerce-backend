@@ -452,6 +452,8 @@ model Order {
   stockReservations       StockReservation[]
   shipments               Shipment[]
   statusEvents            OrderStatusEvent[]
+  reviewFlags             OrderReviewFlag[]
+  disputes                Dispute[]
 
   @@index([userId, status])
   @@index([createdAt])
@@ -583,6 +585,7 @@ model PaymentAttempt {
   deletedAt        DateTime?
   refunds          Refund[]
   cashCollection   CashCollection?
+  disputes         Dispute[]
 
   @@unique([intentId, idempotencyKey])
   @@index([intentId])
@@ -932,6 +935,7 @@ model Store {
   memberships                StoreMembership[]
   stockLocations             StockLocation[]
   paymentProviderConfigs     PaymentProviderConfig[]
+  velocityLimits             VelocityLimit[]
 }
 
 /// Test or live keys, from the secret key's prefix (sk_test_ / sk_live_).
@@ -958,6 +962,145 @@ model PaymentProviderConfig {
   updatedAt          DateTime            @updatedAt
 
   @@unique([storeId, provider])
+}
+
+/// A velocity rule (P3-E.1): one event counted per subject over a fixed window. The catalogue (event, subject, window,
+/// default limits) lives in src/fraud/velocity-rules.ts.
+enum VelocityRule {
+  ORDERS_PER_CUSTOMER_1H
+  ORDERS_PER_CUSTOMER_24H
+  ORDERS_PER_PHONE_24H
+  ORDERS_PER_IP_1H
+  ORDERS_PER_IP_24H
+  PAYMENT_ATTEMPTS_PER_CUSTOMER_1H
+  PAYMENT_ATTEMPTS_PER_IP_1H
+  FAILED_PAYMENTS_PER_CUSTOMER_24H
+  FAILED_PAYMENTS_PER_CARD_24H
+}
+
+/// SOFT lets the action through and flags the order for review; HARD refuses it (or, where nothing is left to refuse,
+/// flags the order at HARD).
+enum VelocityLevel {
+  SOFT
+  HARD
+}
+
+/// The store's limits for one velocity rule, replacing the code default (P3-E.1). A rule fires when its count in the
+/// window goes above the limit. CHECKs: softLimit >= 1 and hardLimit >= softLimit.
+model VelocityLimit {
+  id          String       @id @default(cuid())
+  storeId     String
+  store       Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  rule        VelocityRule
+  softLimit   Int
+  hardLimit   Int
+  updatedById String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([storeId, rule])
+}
+
+/// A velocity rule that fired on this order and needs staff review (P3-E.1). One open flag per order and rule. Holds
+/// the count and the limit only, never the subject (phone, IP, card).
+model OrderReviewFlag {
+  id          String        @id @default(cuid())
+  orderId     String
+  order       Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  rule        VelocityRule
+  level       VelocityLevel
+  /// The count in the window when the rule fired
+  count       Int
+  /// The limit the count went above
+  limit       Int
+  createdAt   DateTime      @default(now())
+  clearedAt   DateTime?
+  clearedById String?
+  clearNote   String?
+
+  @@unique([orderId, rule], map: "OrderReviewFlag_one_open_per_rule", where: raw("\"clearedAt\" IS NULL"))
+  @@index([clearedAt, createdAt])
+  @@index([orderId])
+}
+
+/// Dispute lifecycle (P3-E.2); transitions in src/payment/disputes/dispute-status.ts. LOST and ACCEPTED (the merchant
+/// accepted the claim) both returned the money to the customer.
+enum DisputeStatus {
+  OPEN
+  AWAITING_EVIDENCE
+  UNDER_REVIEW
+  WON
+  LOST
+  ACCEPTED
+}
+
+enum DisputeSource {
+  PROVIDER
+  STAFF
+}
+
+/// A chargeback or dispute on a captured payment attempt (P3-E.2), from the provider's dispute webhooks or recorded
+/// by staff. A provider's dispute id is unique per provider (staff may record one without an id).
+model Dispute {
+  id                String          @id @default(cuid())
+  attemptId         String
+  attempt           PaymentAttempt  @relation(fields: [attemptId], references: [id], onDelete: Restrict)
+  orderId           String
+  order             Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  provider          PaymentProvider
+  providerDisputeId String?
+  amount            Decimal         @db.Decimal(14, 2)
+  currency          String
+  category          String?
+  reason            String?
+  status            DisputeStatus   @default(OPEN)
+  source            DisputeSource
+  evidenceDueAt     DateTime?
+  openedAt          DateTime        @default(now())
+  resolvedAt        DateTime?
+  /// The staff user who recorded it by hand
+  createdById       String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  notes             DisputeNote[]
+  events            DisputeEvent[]
+
+  @@unique([provider, providerDisputeId])
+  @@index([attemptId, status])
+  @@index([orderId])
+  @@index([status, openedAt])
+}
+
+/// A staff evidence note on a dispute. Append-only (a trigger refuses updates and direct deletes).
+model DisputeNote {
+  id        String   @id @default(cuid())
+  disputeId String
+  dispute   Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([disputeId, createdAt])
+}
+
+/// One status change of a dispute, the first one opening it (fromStatus null). Append-only like DisputeNote.
+model DisputeEvent {
+  id             String         @id @default(cuid())
+  disputeId      String
+  dispute        Dispute        @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  fromStatus     DisputeStatus?
+  toStatus       DisputeStatus
+  source         DisputeSource
+  /// The staff user, for STAFF changes
+  actorId        String?
+  /// The provider's own status and resolution, for PROVIDER changes
+  providerStatus String?
+  /// The stored webhook delivery that caused a PROVIDER change
+  webhookEventId String?
+  note           String?
+  createdAt      DateTime       @default(now())
+
+  @@index([disputeId, createdAt])
 }
 
 /// A staff role (ADR-0013). Permissions are code constants (src/iam/authorization/permissions.ts); system roles are

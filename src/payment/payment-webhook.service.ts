@@ -11,6 +11,8 @@ import { PaymentService } from './payment.service';
 import { WebhookEventRepository } from './webhook-event.repository';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
 import { VerifiedEvent, WebhookHeaders, WebhookSignatureRejected } from './providers/payment-provider.port';
+import { DisputesService } from './disputes/disputes.service';
+import { storedDisputeNotice } from './disputes/dispute-notice';
 
 export const PAYSTACK_WEBHOOK_JOB = 'paystack.webhook.v1';
 
@@ -31,6 +33,7 @@ export class PaymentWebhookService {
     private readonly logger: LoggerService,
     @InjectQueue(JobQueue.WEBHOOKS) private readonly webhookQueue: Queue,
     private readonly metrics: AppMetrics,
+    private readonly disputes: DisputesService,
   ) {}
 
   /**
@@ -59,8 +62,11 @@ export class PaymentWebhookService {
     }
     this.logger.log(`Webhook ${created ? 'received' : 'redelivered before processing'} | ${summary}`, CONTEXT);
 
-    if (!provider.settlesPayment(event.event) || !event.reference) {
-      this.logger.log(`Webhook stored without processing | ${summary} | reason: not a settling event`, CONTEXT);
+    if (!this.needsProcessing(event)) {
+      this.logger.log(
+        `Webhook stored without processing | ${summary} | reason: not a settling or dispute event`,
+        CONTEXT,
+      );
       await this.webhookEvents.markProcessed(event.id, 0);
       return;
     }
@@ -90,18 +96,26 @@ export class PaymentWebhookService {
     return (await this.processOnce(event)).outcome;
   }
 
+  /** Settling events (with a reference) re-verify the payment; dispute events update the dispute record. */
+  private needsProcessing(event: WebhookEvent): boolean {
+    const settles = this.providers.get(event.provider).settlesPayment(event.event) && !!event.reference;
+    return settles || storedDisputeNotice(event.payload) !== null;
+  }
+
   private async processOnce(event: WebhookEvent): Promise<{ outcome: ReprocessOutcome; error?: string }> {
     const summary = describeEvent(event);
-    if (!this.providers.get(event.provider).settlesPayment(event.event) || !event.reference) {
+    if (!this.needsProcessing(event)) {
       await this.webhookEvents.markProcessed(event.id, 0);
       return { outcome: 'skipped' };
     }
+    const dispute = storedDisputeNotice(event.payload);
     try {
-      await this.paymentService.verifyPayment(event.reference);
+      if (dispute) await this.disputes.applyProviderNotice(event.provider, dispute, event.id);
+      else await this.paymentService.verifyPayment(event.reference as string);
     } catch (error) {
       const lastError = describeErrorForLog(error);
       await this.webhookEvents.recordFailure(event.id, 1, lastError);
-      this.metrics.recordWebhookFailure('settlement_failed');
+      this.metrics.recordWebhookFailure(dispute ? 'dispute_failed' : 'settlement_failed');
       this.logger.warn(
         `Webhook processing failed | ${summary} | attempts: ${event.attempts + 1} | ${lastError}`,
         CONTEXT,
