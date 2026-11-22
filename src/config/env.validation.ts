@@ -11,6 +11,7 @@ const PRODUCTION_SECRET_KEYS = [
   'CLOUDINARY_API_SECRET',
   'REDIS_PASSWORD',
   'RESEND_API_KEY',
+  'HUBTEL_CLIENT_SECRET',
   'MFA_ENCRYPTION_KEY',
   'PAYMENT_CONFIG_ENCRYPTION_KEY',
 ] as const;
@@ -114,6 +115,15 @@ export const envValidationSchema = Joi.object({
   JWT_RESET_SECRET: Joi.string().min(32).required(),
   JWT_RESET_TOKEN_TTL: Joi.number().default(900),
 
+  // SMS (Hubtel), all three or none. Without them SMS is skipped (logged with the masked number) outside production,
+  // and phone verification is refused in production.
+  HUBTEL_CLIENT_ID: Joi.string().optional(),
+  HUBTEL_CLIENT_SECRET: Joi.string().optional(),
+  HUBTEL_SENDER_ID: Joi.string()
+    .pattern(/^[A-Za-z0-9 ]{1,11}$/)
+    .optional()
+    .messages({ 'string.pattern.base': 'HUBTEL_SENDER_ID must be 1 to 11 letters, digits or spaces' }),
+
   // AES-256-GCM key for TOTP secrets at rest: 32 random bytes as hex (`openssl rand -hex 32`).
   MFA_ENCRYPTION_KEY: Joi.string()
     .pattern(/^[0-9a-fA-F]{64}$/)
@@ -149,4 +159,6 @@ export const envValidationSchema = Joi.object({
   SENTRY_ENVIRONMENT: Joi.string().optional(),
   SENTRY_RELEASE: Joi.string().optional(),
   SENTRY_TRACES_SAMPLE_RATE: Joi.number().min(0).max(1).default(0),
-}).custom(rejectUnsafeProductionSecrets);
+})
+  .and('HUBTEL_CLIENT_ID', 'HUBTEL_CLIENT_SECRET', 'HUBTEL_SENDER_ID')
+  .custom(rejectUnsafeProductionSecrets);

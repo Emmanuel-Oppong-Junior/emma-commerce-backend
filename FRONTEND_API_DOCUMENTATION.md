@@ -1678,6 +1678,13 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   taxTotal: Money;                   // Tax included in the line totals
   shippingTotal: Money;              // The delivery fee after free-shipping promotions (P2-B.6); 0 for pickup
   grandTotal: Money;                 // What createOrder charges: subtotal - discountTotal + shippingTotal
+  cashOnDelivery: CashOnDeliveryAvailability; // P3-B: could this checkout be paid on delivery? (whatever paymentMethod was asked for)
+}
+
+CashOnDeliveryAvailability {
+  available: boolean;
+  reason?: CodUnavailableReason;     // The first gate refusing it: NOT_OFFERED | PHONE_NOT_VERIFIED | BLOCKED | SHIPPING_ZONE_EXCLUDED | OPEN_ORDER_LIMIT | ORDER_TOTAL_ABOVE_CAP
+  phoneVerified: boolean;            // The account's current phone number is verified
 }
 
 QuoteLine {
@@ -1727,6 +1734,8 @@ query {
 **Breaking change (P2-A.2):** `CreateOrderInput.quoteHash` is new and **required**: call `checkoutQuote` with the same fulfilment and coupon first and send its `quoteHash`. If anything that determines the charge changed in between (a price, a discount, the coupon's value, a tax rate, the shipping fee, the cart), `createOrder` fails with `CONFLICT` and `extensions.reason: "QUOTE_CHANGED"`: nothing is reserved, charged or recorded; quote again and show the new total.
 
 **Velocity checks (P3-E.1):** too many orders in a short time from the same account, phone number (`contactPhone`) or network (IP address) fail with `FORBIDDEN` and `extensions.reason: "VELOCITY_LIMIT"`; nothing is reserved or recorded. Show the message ("Too many orders in a short time ... Try again later or contact the store"); it names no limit. Below that, an order can be accepted but flagged for staff review (invisible to the customer). See [Velocity checks](#velocity-checks-p3-e1).
+
+**Cash on delivery (P3-B.1/B.2), behaviour change:** `paymentMethod: CASH_ON_DELIVERY` now needs the account's phone number verified by SMS code (once per number) and passes the store's risk gates. Refusals are `BAD_REQUEST` with `extensions.reason: "PHONE_NOT_VERIFIED"` (send the customer through `requestPhoneVerification` / `verifyPhone`), or `extensions.reason: "COD_NOT_AVAILABLE"` with `extensions.codReason` one of `BLOCKED`, `SHIPPING_ZONE_EXCLUDED`, `OPEN_ORDER_LIMIT`, `ORDER_TOTAL_ABOVE_CAP` (rarely `NOT_OFFERED`); nothing is reserved or recorded and the customer can still pay online. `checkoutQuote.cashOnDelivery` reports the same answer beforehand, so hide or explain the COD option there. See [Cash on delivery: phone verification and risk gates](#cash-on-delivery-phone-verification-and-risk-gates-p3-b1b2).
 
 **Input: `CreateOrderInput`**
 
@@ -2010,6 +2019,27 @@ A rule fires when its count in the window, including the order or attempt being 
 - `updateVelocityLimits(input: { limits: [{ rule, softLimit, hardLimit }] }): [VelocityLimit!]!` (Owner, recent step-up, audited): whole numbers 1–1,000,000 with `hardLimit >= softLimit` (`BAD_REQUEST` otherwise, nothing saved); rules left out keep their limits.
 - `flaggedOrders(first: Int = 20): [FlaggedOrder!]!` (1-100) (staff: `order.view`): orders with open review flags, newest first: `{ id, orderNumber, userId, status, grandTotal, createdAt, reviewFlags: [OrderReviewFlag] }`; open `viewOrder` for the full order. `OrderReviewFlag`: `{ id, orderId, rule, level: VelocityLevel (SOFT | HARD), count, limit, createdAt, clearedAt, clearedById, clearNote }`. One open flag per order and rule.
 - `clearOrderReviewFlags(input: { orderId, note }): [OrderReviewFlag!]!` (staff: `order.manage`, audited): clears every open flag of the order with the note; `NOT_FOUND` when it has none. A flag does not hold the order: cancel it with `adminCancelOrder` if it is fraud.
+
+---
+
+#### Cash on delivery: phone verification and risk gates (P3-B.1/B.2)
+
+**Phone verification (customer, any signed-in user).** The phone verified is the account's `phoneNumber` (set with `updateMyProfile`); verifying records the number and the time, and changing the number clears it (verify again). The SMS (sent from the worker through Hubtel) reads "`123456` is your verification code. It expires in 10 minutes. Never share it with anyone."
+
+- `myPhoneVerification: PhoneVerificationStatus!`: `{ phoneVerified: Boolean!, phoneVerifiedAt: DateTime }`.
+- `requestPhoneVerification: PhoneVerificationRequest!`: texts a new 6-digit code (replacing an earlier one), valid 10 minutes. Returns `{ phoneLast3, expiresInSeconds: 600, resendAfterSeconds: 60 }`. `BAD_REQUEST` with `reason`: `PHONE_REQUIRED` (no number on the profile), `PHONE_ALREADY_VERIFIED`, or `OTP_RATE_LIMITED` with `limit` (`COOLDOWN`: 60 s between codes; `PHONE_DAILY`: 5 codes a day per number, across accounts; `ACCOUNT_DAILY`: 10 a day per account) and `retryAfterSeconds`. In production without SMS credentials it fails with a server error (503).
+- `verifyPhone(input: { code: String! }): PhoneVerificationStatus!`: `code` is the 6 digits (`BAD_USER_INPUT` otherwise). `BAD_REQUEST` with `reason`: `OTP_INVALID` (`attemptsRemaining`), `OTP_ATTEMPTS_EXCEEDED` (the 5th wrong code: that code is dead, request a new one) or `OTP_EXPIRED` (no live code, or the number changed since it was sent). Rate limited to 5 calls a minute per client.
+
+**Risk gates.** A cash-on-delivery checkout must pass, in this order: the store offers COD (`NOT_OFFERED`); the account's phone is verified (`PHONE_NOT_VERIFIED`); none of its phones (account, `contactPhone`, address phone) and not the delivery address (GhanaPost GPS code, or street + city) is on the blacklist (`BLOCKED`; the customer is not told which); the delivery zone takes COD (`SHIPPING_ZONE_EXCLUDED`; pickup has no zone gate); the verified phone has fewer open COD orders (placed, confirmed or in fulfilment, under that phone or by the account) than `maxOpenOrdersPerPhone` (`OPEN_ORDER_LIMIT`); `grandTotal` is at most `maxOrderTotal` (`ORDER_TOTAL_ABOVE_CAP`). Each refusal at `createOrder` is counted in `cod_gate_refusals_total{gate}`. A COD order stores the verified phone it was placed under.
+
+Owner operations (`payment.settings.manage`; every change needs a recent step-up and is audited):
+
+- `codRiskSettings: CodRiskSettings!`: `{ maxOpenOrdersPerPhone: Int!, maxOrderTotal: Money! }` (defaults 2 and GHS 2,000.00).
+- `updateCodRiskSettings(input: { maxOpenOrdersPerPhone: Int, maxOrderTotal: Decimal }): CodRiskSettings!`: whole number 1-100; amount above 0 with at most 2 decimals (`BAD_USER_INPUT` otherwise). Omitted fields keep their value.
+- `setShippingZoneCashOnDelivery(id: ID!, enabled: Boolean!): ShippingZoneEntity!`: allow or refuse COD for deliveries to a zone (`ShippingZoneEntity.codEnabled`; existing and new zones start allowed). `NOT_FOUND` for an unknown zone.
+- `codBlacklist(first: Int = 50): [CodBlacklistEntry!]!` (1-200, newest first): `{ id, kind: CodBlacklistKind (PHONE | GHANA_POST_GPS | STREET_ADDRESS), value, reason, createdById, createdAt }`. `value` is the normalised form compared at checkout: E.164 phone (`+233...`), GPS code without separators (`GA1838164`), or `street|city` in lower case without punctuation (`12 oxford st|accra`).
+- `addCodBlacklistEntry(input: { phone, ghanaPostGps, street, city, reason: String! }): CodBlacklistEntry!`: exactly one of `phone`, `ghanaPostGps`, or `street` with `city` (`BAD_REQUEST` otherwise); `CONFLICT` when the normalised value is listed already. A street matches only the same words after normalisation ("St" and "Street" differ); prefer the GPS code.
+- `removeCodBlacklistEntry(id: ID!): CodBlacklistEntry!`: `NOT_FOUND` for an unknown id.
 
 ---
 
@@ -2880,6 +2910,7 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
   cities: string[];  // Stored normalised (lower-case, single spaces)
   fee: Money;        // GHS
   isActive: boolean;
+  codEnabled: boolean; // P3-B.2: cash on delivery may be chosen for deliveries here (setShippingZoneCashOnDelivery, Owner)
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -4412,7 +4443,7 @@ Backend configuration, validated at startup (`src/config/env.validation.ts`); li
 | `JWT_ACCESS_TOKEN_TTL` | ❌ | `3600` | Access token TTL in seconds |
 | `JWT_REFRESH_TOKEN_TTL` | ❌ | `86400` | Refresh token TTL in seconds |
 | `JWT_RESET_TOKEN_TTL` | ❌ | `900` | Reset token TTL in seconds |
-| `MFA_ENCRYPTION_KEY` | ✅ | — | AES-256-GCM key for TOTP secrets at rest and recovery-code hashing: 64 hex characters (`openssl rand -hex 32`). A key made of a repeated pattern is rejected in production. Changing it invalidates every enrolment. |
+| `MFA_ENCRYPTION_KEY` | ✅ | — | AES-256-GCM key for TOTP secrets at rest, recovery-code and phone-verification-code hashing: 64 hex characters (`openssl rand -hex 32`). A key made of a repeated pattern is rejected in production. Changing it invalidates every enrolment. |
 
 ### OAuth
 
@@ -4422,6 +4453,16 @@ Backend configuration, validated at startup (`src/config/env.validation.ts`); li
 | `GOOGLE_CLIENT_SECRET` | ✅ | Google OAuth app secret |
 | `FACEBOOK_APP_ID` | ✅ | Facebook App ID |
 | `FACEBOOK_APP_SECRET` | ✅ | Facebook App Secret |
+
+### SMS (Hubtel)
+
+All three or none. Without them, outside production the phone verification SMS is not sent (a log line with the masked number records it); in production `requestPhoneVerification` fails.
+
+| Variable | Required | Description |
+|---|---|---|
+| `HUBTEL_CLIENT_ID` | ❌ | Hubtel SMS API client id |
+| `HUBTEL_CLIENT_SECRET` | ❌ | Hubtel SMS API client secret |
+| `HUBTEL_SENDER_ID` | ❌ | Registered sender id shown to recipients (1-11 letters, digits or spaces) |
 
 ### Paystack
 

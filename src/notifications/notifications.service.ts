@@ -5,10 +5,12 @@ import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
 import { withJobMeta } from '../jobs/job-context';
 import { EmailJobData, EmailJobName, TOKEN_EMAIL_JOB_OPTIONS } from './email-jobs';
+import { PHONE_OTP_JOB_OPTIONS } from './sms/sms-jobs';
 
 /**
- * Queues the emails that are not tied to a business transaction; the worker sends them with retries. Each method
- * returns at once and never fails the caller: a queueing failure is logged (without the address or token).
+ * Queues the emails that are not tied to a business transaction, and the phone verification SMS; the worker sends them
+ * with retries. Each email method returns at once and never fails the caller: a queueing failure is logged (without
+ * the address or token).
  */
 @Injectable()
 export class NotificationsService {
@@ -32,6 +34,11 @@ export class NotificationsService {
   /** Tells the account's current address that a change to `newEmail` was requested (shown masked). */
   sendEmailChangeRequested(to: string, newEmail: string): void {
     this.enqueue('email.change_requested.v1', { to, newEmail });
+  }
+
+  /** Queues the phone verification SMS. Unlike the emails it fails the caller when it cannot be queued. */
+  async queuePhoneOtpSms(to: string, code: string, expiresInMinutes: number): Promise<void> {
+    await this.queue.add('sms.phone_otp.v1', withJobMeta({ to, code, expiresInMinutes }), PHONE_OTP_JOB_OPTIONS);
   }
 
   private enqueue<N extends EmailJobName>(name: N, data: EmailJobData[N], opts?: JobsOptions): void {

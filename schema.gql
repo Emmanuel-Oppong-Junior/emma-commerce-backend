@@ -2,6 +2,17 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+"""Exactly one of phone, ghanaPostGps, or street with city, and why"""
+input AddCodBlacklistEntryInput {
+  city: String
+
+  """GhanaPost GPS code, e.g. GA-183-8164"""
+  ghanaPostGps: String
+  phone: String
+  reason: String!
+  street: String
+}
+
 input AddDisputeNoteInput {
   """Evidence or a step taken; notes cannot be edited or deleted"""
   body: String!
@@ -230,6 +241,19 @@ type CartItem {
   variantId: ID!
 }
 
+"""Whether this checkout could be paid on delivery"""
+type CashOnDeliveryAvailability {
+  available: Boolean!
+
+  """
+  Whether the account's phone number is verified (required once for cash on delivery)
+  """
+  phoneVerified: Boolean!
+
+  """The first gate refusing it, when not available"""
+  reason: CodUnavailableReason
+}
+
 type Category {
   """Timestamp when the category was created"""
   createdAt: DateTime!
@@ -275,6 +299,11 @@ The cart priced for checkout. createOrder charges exactly grandTotal when it is 
 type CheckoutQuote {
   """The cart promotions (the coupon among them) that take anything off"""
   adjustments: [QuoteOrderAdjustment!]!
+
+  """
+  Whether this checkout could be paid on delivery, whatever paymentMethod was asked for; when not, the first gate refusing it (createOrder refuses it with that gate, online payment stays open)
+  """
+  cashOnDelivery: CashOnDeliveryAvailability!
   currency: Currency!
 
   """
@@ -347,6 +376,54 @@ input ClearOrderReviewFlagsInput {
   """
   note: String!
   orderId: ID!
+}
+
+"""A phone number or delivery address refused cash on delivery"""
+type CodBlacklistEntryEntity {
+  createdAt: DateTime!
+
+  """The staff member who added it"""
+  createdById: String
+  id: ID!
+  kind: CodBlacklistKind!
+  reason: String!
+
+  """
+  The normalised value matched: E.164 phone, GPS code without separators, or "street|city"
+  """
+  value: String!
+}
+
+"""
+What a cash-on-delivery blacklist entry matches: a phone number, a GhanaPost GPS code or a street
+"""
+enum CodBlacklistKind {
+  GHANA_POST_GPS
+  PHONE
+  STREET_ADDRESS
+}
+
+"""Cash-on-delivery risk limits of the store"""
+type CodRiskSettingsEntity {
+  """
+  Open cash-on-delivery orders (placed, confirmed or in fulfilment) per verified phone
+  """
+  maxOpenOrdersPerPhone: Int!
+
+  """Highest grand total that may be paid on delivery"""
+  maxOrderTotal: Money!
+}
+
+"""
+Why cash on delivery is not available for a checkout (the customer can still pay online)
+"""
+enum CodUnavailableReason {
+  BLOCKED
+  NOT_OFFERED
+  OPEN_ORDER_LIMIT
+  ORDER_TOTAL_ABOVE_CAP
+  PHONE_NOT_VERIFIED
+  SHIPPING_ZONE_EXCLUDED
 }
 
 input CompleteMfaSignInInput {
@@ -1144,6 +1221,11 @@ type Mutation {
   """
   addAttributeDefinition(input: AttributeDefinitionInput!, productTypeId: ID!): ProductType!
 
+  """
+  Refuse cash on delivery to a phone number, GhanaPost GPS code or street in a city, stored normalised. CONFLICT when it is listed already. Owner, recent step-up, audited
+  """
+  addCodBlacklistEntry(input: AddCodBlacklistEntryInput!): CodBlacklistEntryEntity!
+
   """Admin: add customers to a group (members already in it are kept)"""
   addCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
 
@@ -1369,6 +1451,11 @@ type Mutation {
     id: String!
   ): Category!
 
+  """
+  Take an entry off the cash-on-delivery blacklist, returning it. Owner, recent step-up, audited
+  """
+  removeCodBlacklistEntry(id: ID!): CodBlacklistEntryEntity!
+
   """Admin: remove customers from a group"""
   removeCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
 
@@ -1405,6 +1492,11 @@ type Mutation {
   removeUser(id: String!): User!
 
   """
+  Text a 6-digit code to the current user's phone number (valid 10 minutes, replacing an earlier one). BAD_REQUEST with reason PHONE_REQUIRED (no number on the profile), PHONE_ALREADY_VERIFIED, or OTP_RATE_LIMITED (limit: COOLDOWN 60 s between codes, PHONE_DAILY 5 per number or ACCOUNT_DAILY 10 per account a day; retryAfterSeconds)
+  """
+  requestPhoneVerification: PhoneVerificationRequest!
+
+  """
   Send a new verification email to the signed-in user: to the pending new email if a change is in progress, otherwise to the unverified current email
   """
   resendVerificationEmail: Boolean!
@@ -1433,6 +1525,11 @@ type Mutation {
   Admin: set variants' prices in a price list; each entry replaces the variant's entry and tiers
   """
   setPriceListEntries(input: SetPriceListEntriesInput!): PriceList!
+
+  """
+  Allow or refuse cash on delivery for deliveries to a shipping zone (pickup is not affected). Owner, recent step-up, audited
+  """
+  setShippingZoneCashOnDelivery(enabled: Boolean!, id: ID!): ShippingZoneEntity!
 
   """Sign in an existing user with email and password"""
   signIn(input: SignInInput!): AuthEntity!
@@ -1478,6 +1575,11 @@ type Mutation {
     id: String!
     input: UpdateCategoryInput!
   ): Category!
+
+  """
+  Change the cash-on-delivery limits; fields left out keep their value. Owner, recent step-up, audited
+  """
+  updateCodRiskSettings(input: UpdateCodRiskSettingsInput!): CodRiskSettingsEntity!
 
   """Admin: change a coupon code"""
   updateCouponCode(id: ID!, input: UpdateCouponCodeInput!): CouponCode!
@@ -1574,6 +1676,11 @@ type Mutation {
   """
   verifyEmail(input: VerifyEmailInput!): Boolean!
   verifyPayment(verifyPaymentInput: VerifyPaymentInput!): Payment!
+
+  """
+  Confirm the phone number with the code from the SMS. BAD_REQUEST with reason OTP_INVALID (attemptsRemaining), OTP_ATTEMPTS_EXCEEDED (5 wrong codes: the code is dead) or OTP_EXPIRED (none live: request a new one)
+  """
+  verifyPhone(input: VerifyPhoneInput!): PhoneVerificationStatusEntity!
 }
 
 """How an ONLINE order is paid; chosen per payment attempt"""
@@ -1961,6 +2068,29 @@ type PaystackSettings {
 
   """The staff user who last set the config"""
   updatedById: ID
+}
+
+"""A verification code was sent by SMS"""
+type PhoneVerificationRequest {
+  """Seconds the code stays valid"""
+  expiresInSeconds: Int!
+
+  """Last 3 digits of the number the code was sent to"""
+  phoneLast3: String!
+
+  """Seconds before another code can be requested"""
+  resendAfterSeconds: Int!
+}
+
+"""Whether the account's current phone number is verified"""
+type PhoneVerificationStatusEntity {
+  """
+  True once a code sent to the current phone number was confirmed; false again after a change
+  """
+  phoneVerified: Boolean!
+
+  """When the current phone number was verified"""
+  phoneVerifiedAt: DateTime
 }
 
 type PickupLocationEntity {
@@ -2565,6 +2695,19 @@ type Query {
   """
   checkoutQuote(input: CheckoutQuoteInput!): CheckoutQuote!
 
+  """
+  Phone numbers and delivery addresses refused cash on delivery, newest first (Owner)
+  """
+  codBlacklist(
+    """How many entries, newest first (1 to 200)"""
+    first: Int! = 50
+  ): [CodBlacklistEntryEntity!]!
+
+  """
+  The cash-on-delivery limits: open orders per verified phone and the grand total cap (Owner)
+  """
+  codRiskSettings: CodRiskSettingsEntity!
+
   """Admin: one customer group"""
   customerGroup(id: ID!): CustomerGroup!
 
@@ -2610,6 +2753,11 @@ type Query {
   """Get the shipping fee for a saved address"""
   getShippingFee(addressId: ID!): Money!
   getUserPayment(userId: String!): [Payment!]!
+
+  """
+  Whether the current user's phone number is verified (cash on delivery needs it)
+  """
+  myPhoneVerification: PhoneVerificationStatusEntity!
 
   """Get return requests for the current user"""
   myReturnRequests: [ReturnRequestEntity!]!
@@ -3282,6 +3430,9 @@ type ShipmentStatusEvent {
 type ShippingZoneEntity {
   """List of cities covered by this zone (case-insensitive)"""
   cities: [String!]!
+
+  """Whether cash on delivery may be chosen for deliveries to this zone"""
+  codEnabled: Boolean!
   createdAt: DateTime!
 
   """Shipping fee applied for orders delivered to cities in this zone"""
@@ -3612,6 +3763,14 @@ input UpdateCategoryInput {
 
   """The name of the category (e.g., "Electronics")"""
   name: String
+}
+
+input UpdateCodRiskSettingsInput {
+  """Whole number from 1 to 100"""
+  maxOpenOrdersPerPhone: Int
+
+  """Above 0, at most 2 decimals, in the store currency"""
+  maxOrderTotal: Decimal
 }
 
 """
@@ -4260,6 +4419,11 @@ input VerifyEmailInput {
 
 input VerifyPaymentInput {
   reference: String!
+}
+
+input VerifyPhoneInput {
+  """The 6-digit code from the SMS"""
+  code: String!
 }
 
 type Wishlist {

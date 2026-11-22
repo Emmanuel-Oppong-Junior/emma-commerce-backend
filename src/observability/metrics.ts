@@ -48,6 +48,7 @@ export class AppMetrics {
   private readonly stockMismatches: Counter;
   private readonly velocityHits: Counter;
   private readonly velocityErrors: Counter;
+  private readonly codGateRefusals: Counter;
   private readonly operationNames = new Set<string>();
 
   constructor(@Inject(METER) meter: Meter) {
@@ -89,6 +90,9 @@ export class AppMetrics {
     });
     this.velocityErrors = meter.createCounter('velocity_check_errors', {
       description: 'Velocity checks skipped (fail-open) or events not counted because Redis failed, by stage',
+    });
+    this.codGateRefusals = meter.createCounter('cod_gate_refusals', {
+      description: 'Cash-on-delivery orders refused at createOrder, by the gate that refused them',
     });
   }
 
@@ -152,6 +156,11 @@ export class AppMetrics {
 
   recordVelocityCheckError(stage: VelocityCheckStage): void {
     this.velocityErrors.add(1, { stage });
+  }
+
+  /** `gate` is a CodUnavailableReason value from code, so the series stay bounded. */
+  recordCodGateRefusal(gate: string): void {
+    this.codGateRefusals.add(1, { gate });
   }
 
   private boundedOperationName(name: string | null | undefined): string {

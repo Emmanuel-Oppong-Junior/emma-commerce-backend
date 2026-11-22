@@ -19,6 +19,9 @@ export class ShippingZoneEntity {
   @Field({ description: 'Whether this zone is currently active' })
   isActive: boolean;
 
+  @Field({ description: 'Whether cash on delivery may be chosen for deliveries to this zone' })
+  codEnabled: boolean;
+
   @Field()
   createdAt: Date;
 

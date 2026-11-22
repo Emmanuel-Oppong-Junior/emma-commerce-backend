@@ -12,6 +12,7 @@ const greaterAccra = {
   cities: ['accra', 'tema'],
   fee: new Decimal('15'),
   isActive: true,
+  codEnabled: true,
   createdAt: fixedDate,
   updatedAt: fixedDate,
 };

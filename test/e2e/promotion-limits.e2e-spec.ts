@@ -4,7 +4,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { OrdersService } from '../../src/order/order.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
+import { resetDb, seedMinimal, stockOf, verifyPhoneForCod } from '../helpers/db.helper';
 import { signInAdmin, signInSuperAdmin, signUpUser } from '../helpers/auth.helper';
 import { createCoupon, createPromotion } from '../helpers/promotion.helper';
 
@@ -172,6 +172,7 @@ describe('Promotion limits, first order and customer groups (P2-B.3, e2e)', () =
     await fillCart(userId);
     expect(applied(await orders.checkoutQuote(userId, pickup))).toContain('welcome');
     // A cash-on-delivery order is confirmed when placed: it counts, even if cancelled later.
+    await verifyPhoneForCod(prisma, userId, '+233244000777');
     const confirmed = await place(userId, { paymentMethod: PaymentMethod.CASH_ON_DELIVERY });
     expect(confirmed.status).toBe('CONFIRMED');
     await orders.cancelOrder(userId, confirmed.id);

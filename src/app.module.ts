@@ -49,6 +49,7 @@ import { PickupLocationsModule } from './pickup-locations/pickup-locations.modul
 import { ShippingZonesModule } from './shipping-zones/shipping-zones.module';
 import { StoreModule } from './store/store.module';
 import { FailedJobsModule } from './jobs/failed-jobs.module';
+import { PhoneVerificationModule } from './phone-verification/phone-verification.module';
 import { AppMetrics } from './observability/metrics';
 import { graphqlMetricsPlugin } from './observability/graphql-metrics.plugin';
 import { HttpMetricsMiddleware } from './observability/http-metrics.middleware';
@@ -164,6 +165,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     ShippingZonesModule,
     StoreModule,
     FailedJobsModule,
+    PhoneVerificationModule,
   ],
   controllers: [AppController],
   providers: [

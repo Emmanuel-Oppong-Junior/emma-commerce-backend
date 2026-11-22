@@ -7,7 +7,7 @@ import { decideVerification } from '../../src/payment/payment-verification';
 import { StockLedgerService } from '../../src/inventory/stock-ledger.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { resetDb, seedMinimal, seedPaymentAttempt, setStock, stockOf } from '../helpers/db.helper';
+import { resetDb, seedMinimal, seedPaymentAttempt, setStock, stockOf, verifyPhoneForCod } from '../helpers/db.helper';
 import { signInAdmin } from '../helpers/auth.helper';
 import { placeOrderFromCart } from '../helpers/checkout.helper';
 
@@ -166,6 +166,7 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
 
   it('holds cash-on-delivery stock without expiry and consumes it once when the order is dispatched', async () => {
     const variantId = await newVariant(5);
+    await verifyPhoneForCod(prisma, BUYERS[0]);
     const order = await placeOrder(variantId, 2, { paymentMethod: PaymentMethod.CASH_ON_DELIVERY });
     const [held] = await prisma.stockReservation.findMany({ where: { orderId: order.id } });
     const move = (status: string) =>

@@ -26,8 +26,15 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
     sendEmailVerificationEmail: jest.fn().mockResolvedValue(undefined),
     sendEmailChangeRequestedEmail: jest.fn().mockResolvedValue(undefined),
   };
+  const sms = { send: jest.fn().mockResolvedValue(undefined) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
-  return { sender: new NotificationSender(prisma as never, email as never, logger as never), prisma, email, logger };
+  return {
+    sms,
+    sender: new NotificationSender(prisma as never, email as never, sms as never, logger as never),
+    prisma,
+    email,
+    logger,
+  };
 }
 
 const event = (payload: object) => ({ eventId: 'evt1', aggregateId: 'order1', payload });
@@ -226,6 +233,18 @@ describe('NotificationSender', () => {
     await expect(
       sender.send('payment.succeeded.v1', event({ orderId: 'order1', paymentId: 'pay1', amount: '1.00' }), 'evt1'),
     ).rejects.toThrow('Email not delivered');
+  });
+
+  it('texts the phone verification code for sms.phone_otp.v1', async () => {
+    const { sender, sms } = buildSender();
+
+    await sender.send('sms.phone_otp.v1', { to: '+233244123456', code: '123456', expiresInMinutes: 10 }, 'job1');
+
+    expect(sms.send).toHaveBeenCalledWith(
+      '+233244123456',
+      '123456 is your verification code. It expires in 10 minutes. Never share it with anyone.',
+      'phone_otp',
+    );
   });
 
   it('fails a job with an unknown name', async () => {

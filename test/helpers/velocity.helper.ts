@@ -7,3 +7,11 @@ export function velocityStub() {
     flagOrder: jest.fn().mockResolvedValue(undefined),
   };
 }
+
+/** A CodRiskService stand-in for unit tests: cash on delivery is available and every gate passes. */
+export function codRiskStub() {
+  return {
+    availability: jest.fn().mockResolvedValue({ available: true, reason: null, phoneVerified: true }),
+    assertCodAllowed: jest.fn().mockResolvedValue('+233244000000'),
+  };
+}

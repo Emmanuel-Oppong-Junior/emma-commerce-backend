@@ -3,7 +3,7 @@ import { StoreService } from './store.service';
 import { StoreRepository } from './store.repository';
 import { AuditService } from '../commons/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { Store } from '../generated/prisma/client';
+import { Prisma, Store } from '../generated/prisma/client';
 
 const fixedDate = new Date('2026-11-18T00:00:00.000Z');
 const store: Store = {
@@ -23,6 +23,8 @@ const store: Store = {
   cashOnDeliveryEnabled: true,
   cardPaymentProvider: 'PAYSTACK',
   mobileMoneyPaymentProvider: 'PAYSTACK',
+  codMaxOpenOrdersPerPhone: 2,
+  codMaxOrderTotal: new Prisma.Decimal(2000),
   createdAt: fixedDate,
   updatedAt: fixedDate,
 };

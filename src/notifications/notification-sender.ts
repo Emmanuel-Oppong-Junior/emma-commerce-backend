@@ -6,6 +6,8 @@ import { EmailJobData } from './email-jobs';
 import { DomainEventJobData } from '../outbox/domain-events';
 import { OrderStatus, ShipmentStatus } from '../generated/prisma/client';
 import { REFUND_REASON_LABELS } from '../returns/refund-reason';
+import { SmsSender } from './sms/sms-sender';
+import { phoneOtpText, SmsJobData } from './sms/sms-jobs';
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -13,7 +15,7 @@ const EMAILED_ORDER_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED];
 const EMAILED_SHIPMENT_STATUSES: ShipmentStatus[] = [ShipmentStatus.READY_FOR_PICKUP, ShipmentStatus.OUT_FOR_DELIVERY];
 
 /**
- * Turns one notifications-queue job into the email it stands for. Outbox events carry ids only, so the recipient is
+ * Turns one notifications-queue job into the email (or SMS) it stands for. Outbox events carry ids only, so the recipient is
  * read when sending; direct email jobs carry their recipient. Throws on a failed send so the queue retries.
  */
 @Injectable()
@@ -21,6 +23,7 @@ export class NotificationSender {
   constructor(
     private readonly prisma: PrismaService,
     private readonly email: EmailService,
+    private readonly sms: SmsSender,
     private readonly logger: LoggerService,
   ) {}
 
@@ -165,6 +168,10 @@ export class NotificationSender {
       case 'email.password_reset.v1': {
         const { to, resetToken } = data as EmailJobData['email.password_reset.v1'];
         return this.email.sendPasswordResetEmail(to, resetToken, idempotencyKey);
+      }
+      case 'sms.phone_otp.v1': {
+        const { to, code, expiresInMinutes } = data as SmsJobData['sms.phone_otp.v1'];
+        return this.sms.send(to, phoneOtpText(code, expiresInMinutes), 'phone_otp');
       }
       default:
         throw new Error(`Unknown notification job "${jobName}"`);

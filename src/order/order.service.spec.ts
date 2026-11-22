@@ -12,14 +12,15 @@ import { OutboxService } from '../outbox/outbox.service';
 import { Decimal } from '@prisma/client/runtime/client';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
-import { FulfillmentType } from '../generated/prisma/client';
+import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
 import { ReturnsService } from '../returns/returns.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { PriceListsService } from '../price-lists/price-lists.service';
 import { PricingCouponCode, PricingPromotion } from '../pricing/price';
 import { StoreService } from '../store/store.service';
 import { VelocityService } from '../fraud/velocity.service';
-import { velocityStub } from '../../test/helpers/velocity.helper';
+import { codRiskStub, velocityStub } from '../../test/helpers/velocity.helper';
+import { CodRiskService } from '../cod/cod-risk.service';
 
 const mockAuditService = { log: jest.fn() };
 const mockTaxService = { findActive: jest.fn() };
@@ -237,6 +238,7 @@ const mockUser = {
 
 const mockPaymentSettings = { assertOrderPaymentMethod: jest.fn() };
 const mockVelocity = velocityStub();
+const mockCodRisk = codRiskStub();
 
 describe('OrdersService', () => {
   let ordersService: OrdersService;
@@ -262,6 +264,7 @@ describe('OrdersService', () => {
         { provide: StoreService, useValue: mockStoreService },
         { provide: PaymentSettingsService, useValue: mockPaymentSettings },
         { provide: VelocityService, useValue: mockVelocity },
+        { provide: CodRiskService, useValue: mockCodRisk },
       ],
     }).compile();
 
@@ -274,6 +277,7 @@ describe('OrdersService', () => {
     ordersRepository = module.get<OrdersRepository>(OrdersRepository) as jest.Mocked<OrdersRepository>;
     cartService = module.get(CartService);
     jest.resetAllMocks();
+    Object.assign(mockCodRisk, codRiskStub());
     mockStoreService.getCurrency.mockResolvedValue('GHS');
     mockTaxService.findActive.mockResolvedValue([]);
 
@@ -384,6 +388,69 @@ describe('OrdersService', () => {
         expect(line.expiresAt!.getTime()).toBeGreaterThanOrEqual(before + expiresInMs);
         expect(line.expiresAt!.getTime()).toBeLessThanOrEqual(Date.now() + expiresInMs);
       }
+    });
+
+    describe('cash-on-delivery risk gates', () => {
+      beforeEach(() => {
+        mockCartService.getCartOrThrow.mockResolvedValue(mockCart);
+        mockOrdersRepository.findAddressForUser.mockResolvedValue(mockAddress);
+        mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
+        mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
+        mockOrdersRepository.create.mockResolvedValue(mockOrder);
+      });
+
+      it('reports in the quote whether the checkout could be paid on delivery, with the zone and address', async () => {
+        mockCodRisk.availability.mockResolvedValueOnce({
+          available: false,
+          reason: 'ORDER_TOTAL_ABOVE_CAP',
+          phoneVerified: true,
+        });
+
+        const quote = await ordersService.checkoutQuote(mockUserId, deliveryParams);
+
+        expect(quote.cashOnDelivery).toEqual({
+          available: false,
+          reason: 'ORDER_TOTAL_ABOVE_CAP',
+          phoneVerified: true,
+        });
+        expect(mockCodRisk.availability).toHaveBeenCalledWith(mockUserId, {
+          grandTotal: quote.grandTotal,
+          shippingZoneId: zoneWithFee('5').id,
+          address: mockAddress,
+        });
+      });
+
+      it('checks the gates in the order transaction and records the verified phone on a COD order', async () => {
+        const stubTx = { id: 'tx' };
+        mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
+
+        await placeOrder({ ...deliveryParams, paymentMethod: PaymentMethod.CASH_ON_DELIVERY });
+
+        expect(mockCodRisk.assertCodAllowed).toHaveBeenCalledWith(
+          stubTx,
+          mockUserId,
+          expect.objectContaining({ address: mockAddress, contactPhone: deliveryParams.contactPhone }),
+        );
+        const [, , details] = mockOrdersRepository.create.mock.calls[0];
+        expect(details.codPhone).toBe('+233244000000');
+      });
+
+      it('places nothing when a gate refuses cash on delivery', async () => {
+        mockCodRisk.assertCodAllowed.mockRejectedValueOnce(new BadRequestException('COD refused'));
+
+        await expect(placeOrder({ ...deliveryParams, paymentMethod: PaymentMethod.CASH_ON_DELIVERY })).rejects.toThrow(
+          'COD refused',
+        );
+        expect(mockOrdersRepository.create).not.toHaveBeenCalled();
+      });
+
+      it('does not gate an online order', async () => {
+        await placeOrder(deliveryParams);
+
+        expect(mockCodRisk.assertCodAllowed).not.toHaveBeenCalled();
+        const [, , details] = mockOrdersRepository.create.mock.calls[0];
+        expect(details.codPhone).toBeUndefined();
+      });
     });
 
     it('records order.placed.v1 in the order transaction, after the order row is written', async () => {

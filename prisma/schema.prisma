@@ -55,6 +55,11 @@ model User {
   /// Last accepted TOTP time step; codes for this step or earlier are replays
   mfaLastUsedStep           Int?
   mfaRecoveryCodes          MfaRecoveryCode[]
+  /// Set when an SMS code sent to phoneVerifiedNumber was confirmed (P3-B.1); a trigger clears both when phoneNumber
+  /// changes. The phone counts as verified only while phoneVerifiedNumber equals phoneNumber.
+  phoneVerifiedAt           DateTime?
+  phoneVerifiedNumber       String?
+  codBlacklistEntries       CodBlacklistEntry[]
 }
 
 /// Single-use MFA recovery code, stored as a keyed hash (src/iam/mfa/mfa-crypto.ts).
@@ -454,8 +459,11 @@ model Order {
   statusEvents            OrderStatusEvent[]
   reviewFlags             OrderReviewFlag[]
   disputes                Dispute[]
+  /// Cash on delivery only: the account's verified phone (E.164) the order was placed under (P3-B.2 open-order cap)
+  codPhone                String?
 
   @@index([userId, status])
+  @@index([codPhone])
   @@index([createdAt])
   @@index([status, createdAt])
 }
@@ -902,6 +910,8 @@ model ShippingZone {
   cities     String[]
   fee        Decimal     @db.Decimal(14, 2)
   isActive   Boolean     @default(true)
+  /// Cash on delivery may be chosen for deliveries to this zone (P3-B.2)
+  codEnabled Boolean     @default(true)
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
   /// Free-shipping promotions limited to this zone
@@ -930,6 +940,9 @@ model Store {
   cardPaymentProvider        PaymentProvider         @default(PAYSTACK)
   /// An online provider; a CHECK constraint refuses CASH_ON_DELIVERY.
   mobileMoneyPaymentProvider PaymentProvider         @default(PAYSTACK)
+  /// Cash-on-delivery risk gates (P3-B.2): open COD orders allowed per verified phone, and the highest COD grand total.
+  codMaxOpenOrdersPerPhone   Int                     @default(2)
+  codMaxOrderTotal           Decimal                 @default(2000) @db.Decimal(14, 2)
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
   memberships                StoreMembership[]
@@ -1515,4 +1528,24 @@ model PriceListTier {
   entry       PriceListEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
 
   @@unique([entryId, minQuantity])
+}
+
+enum CodBlacklistKind {
+  PHONE
+  GHANA_POST_GPS
+  STREET_ADDRESS
+}
+
+/// A phone or delivery address refused cash on delivery (P3-B.2). `value` is the normalised form the checkout compares
+/// (src/cod/cod-blacklist.ts): E.164 phone, GPS code without separators, or "street|city" in lower case.
+model CodBlacklistEntry {
+  id          String           @id @default(cuid())
+  kind        CodBlacklistKind
+  value       String
+  reason      String
+  createdById String?
+  createdBy   User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime         @default(now())
+
+  @@unique([kind, value])
 }

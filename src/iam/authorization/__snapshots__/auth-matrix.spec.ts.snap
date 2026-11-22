@@ -3,6 +3,7 @@
 exports[`Authorization matrix matches the reviewed matrix 1`] = `
 "
 Mutation addAttributeDefinition          permission: catalog.taxonomy.write
+Mutation addCodBlacklistEntry            permission: payment.settings.manage; step-up
 Mutation addCustomerGroupMembers         permission: customer.group.manage
 Mutation addDisputeNote                  permission: payment.dispute.manage
 Mutation addProductsToTag                permission: catalog.taxonomy.write
@@ -69,6 +70,7 @@ Mutation refundOrder                     permission: order.refund; step-up
 Mutation rejectReturn                    permission: return.manage
 Mutation removeAttributeDefinition       permission: catalog.taxonomy.write
 Mutation removeCategory                  permission: catalog.taxonomy.write
+Mutation removeCodBlacklistEntry         permission: payment.settings.manage; step-up
 Mutation removeCustomerGroupMembers      permission: customer.group.manage
 Mutation removeFromCart                  authenticated
 Mutation removeFromWishlist              authenticated
@@ -79,6 +81,7 @@ Mutation removeStaffRole                 permission: staff.manage; step-up
 Mutation removeSubCategory               permission: catalog.taxonomy.write
 Mutation removeTagFromProduct            permission: catalog.product.write
 Mutation removeUser                      permission: user.manage
+Mutation requestPhoneVerification        authenticated
 Mutation resendVerificationEmail         authenticated
 Mutation resetPassword                   public
 Mutation restockVariant                  permission: inventory.adjust
@@ -87,6 +90,7 @@ Mutation restoreProduct                  permission: catalog.product.write
 Mutation retryFailedJob                  permission: jobs.manage
 Mutation setPaystackConfig               permission: payment.settings.manage; step-up
 Mutation setPriceListEntries             permission: pricelist.manage; step-up
+Mutation setShippingZoneCashOnDelivery   permission: payment.settings.manage; step-up
 Mutation signIn                          public
 Mutation signInWithFacebook              public
 Mutation signInWithGoogle                public
@@ -100,6 +104,7 @@ Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
 Mutation updateCartItem                  authenticated
 Mutation updateCategory                  permission: catalog.taxonomy.write
+Mutation updateCodRiskSettings           permission: payment.settings.manage; step-up
 Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateDisputeStatus             permission: payment.dispute.manage
@@ -124,6 +129,7 @@ Mutation updateVariant                   permission: catalog.product.write; step
 Mutation updateVelocityLimits            permission: payment.settings.manage; step-up
 Mutation verifyEmail                     public
 Mutation verifyPayment                   customer only
+Mutation verifyPhone                     authenticated
 Query activePickupLocations              public
 Query activeShippingZones                public
 Query address                            authenticated
@@ -137,6 +143,8 @@ Query cart                               authenticated
 Query categories                         public, optional sign-in
 Query category                           authenticated
 Query checkoutQuote                      authenticated
+Query codBlacklist                       permission: payment.settings.manage
+Query codRiskSettings                    permission: payment.settings.manage
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
@@ -147,6 +155,7 @@ Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only
 Query getShippingFee                     authenticated
 Query getUserPayment                     permission: payment.view
+Query myPhoneVerification                authenticated
 Query myReturnRequests                   authenticated
 Query order                              authenticated
 Query orders                             permission: order.view

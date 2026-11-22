@@ -1,5 +1,5 @@
 import { OrdersService } from '../../src/order/order.service';
-import { velocityStub } from '../helpers/velocity.helper';
+import { codRiskStub, velocityStub } from '../helpers/velocity.helper';
 
 function buildOrdersService(order: Record<string, unknown>) {
   const repository = {
@@ -29,6 +29,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     { findActive: jest.fn().mockResolvedValue([]) } as never,
     { assertOrderPaymentMethod: jest.fn() } as never,
     velocityStub() as never,
+    codRiskStub() as never,
   );
   return { service, repository };
 }

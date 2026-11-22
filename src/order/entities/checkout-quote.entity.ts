@@ -6,6 +6,7 @@ import { MoneyObject } from '../../commons/money/money.object';
 import { GraphQLDecimal } from '../../commons/money/decimal.scalar';
 import { CurrencyEnum } from '../../products/enums/product.enum';
 import { OrderAdjustmentTypeEnum } from '../enums/order.enum';
+import { CashOnDeliveryAvailability } from '../../cod/cod-risk.entities';
 
 @ObjectType({ description: 'A tax included in a quote line' })
 export class QuoteTaxLine {
@@ -177,4 +178,11 @@ export class CheckoutQuote {
     description: 'The amount createOrder will charge: subtotal - discountTotal + shippingTotal',
   })
   grandTotal: Decimal;
+
+  @Field(() => CashOnDeliveryAvailability, {
+    description:
+      'Whether this checkout could be paid on delivery, whatever paymentMethod was asked for; when not, the first ' +
+      'gate refusing it (createOrder refuses it with that gate, online payment stays open)',
+  })
+  cashOnDelivery: CashOnDeliveryAvailability;
 }
