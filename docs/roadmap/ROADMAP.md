@@ -25,14 +25,14 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 0 — Stabilise | 46 / 46 | ✅ complete |
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
-| 3 — Payments & Ghana methods | 2 / 11 | 🔄 in progress |
+| 3 — Payments & Ghana methods | 5 / 11 | 🔄 in progress |
 | 4 — Inventory | 0 / 7 | ⬜ not started |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **88 / 154** | |
+| **All** | **91 / 154** | |
 
 ---
 
@@ -348,7 +348,7 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ### P3-C — Refund ops  🔄 in progress
 > Run: → · M · 🟥
-- [ ] 🔄 **P3-C.1** Partial refunds per line/amount; refund reasons; customer notifications
+- [x] **P3-C.1** [60049f5] Partial refunds per line/amount; refund reasons; customer notifications
 - [ ] **P3-C.2** MoMo refund path (confirm Paystack support)
 
 ### P3-D — Second provider
@@ -356,10 +356,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P3-D.1** Flutterwave adapter (API re-verify on every webhook)
 - [ ] **P3-D.2** Provider routing/fallback
 
-### P3-E — Fraud & chargebacks  🔄 in progress
+### P3-E — Fraud & chargebacks  ✅ complete
 > Run: ∥ · M · 🟧
-- [ ] 🔄 **P3-E.1** Velocity checks (orders/payments per phone/IP/card)
-- [ ] 🔄 **P3-E.2** Chargeback/dispute records
+- [x] **P3-E.1** [49be665] Velocity checks (orders/payments per phone/IP/card)
+- [x] **P3-E.2** [ba4b120] Chargeback/dispute records
 
 ## Phase 4 — Inventory (ADR-0008)
 
