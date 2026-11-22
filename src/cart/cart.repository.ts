@@ -3,6 +3,8 @@ import { Cart, CartItem, Prisma, Product, Variant } from '../generated/prisma/cl
 import { PrismaService } from '../prisma/prisma.service';
 import { StockCounts } from '../inventory/stock';
 import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
+import { findExpiredLotUnits } from '../inventory/lots/lot-stock.repository';
+import { ExpiredLotUnits } from '../inventory/lots/lots';
 
 type CartWithItems = Cart & { items: CartItem[] };
 export type VariantForSale = Variant & { product: Product; stockLevels: (StockCounts & { locationId: string })[] };
@@ -32,6 +34,11 @@ export class CartRepository {
 
   async findVariant(variantId: string): Promise<VariantForSale | null> {
     return this.prisma.variant.findUnique({ where: { id: variantId }, include: FOR_SALE });
+  }
+
+  /** Units of the variants' expired lots per location, which are not sellable (P4-C.1). */
+  findExpiredLotUnits(variantIds: string[], now: Date): Promise<ExpiredLotUnits[]> {
+    return findExpiredLotUnits(this.prisma, variantIds, now);
   }
 
   async findCartItem(cartId: string, variantId: string): Promise<Pick<CartItem, 'id' | 'quantity'> | null> {

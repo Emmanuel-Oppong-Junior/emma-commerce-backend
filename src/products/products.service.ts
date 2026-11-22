@@ -19,6 +19,7 @@ import {
 } from '../product-types/domain/attribute-validation';
 import { VariantOptions } from './products.repository';
 import { VariantService } from '../variant/variant.service';
+import { LotsService } from '../inventory/lots/lots.service';
 
 export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
 
@@ -51,6 +52,7 @@ export class ProductsService {
     private readonly auditService: AuditService,
     private readonly productTypesRepository: ProductTypesRepository,
     private readonly variantService: VariantService,
+    private readonly lots: LotsService,
   ) {}
 
   /**
@@ -83,7 +85,10 @@ export class ProductsService {
     );
   }
 
-  /** Updates a product. Turning tax on or off reprices its variants (from their basePrice) in the same transaction. */
+  /**
+   * Updates a product. Turning tax on or off reprices its variants (from their basePrice) in the same transaction.
+   * Lot tracking (trackLots) switches only while the product holds no stock (P4-C.1).
+   */
   async update(id: string, updateProductInput: UpdateProductInput, actorId: string): Promise<Product> {
     const existing = await this.productsRepository.findById(id);
     if (!existing) throw new NotFoundException('Product not found');
@@ -94,8 +99,11 @@ export class ProductsService {
     const retyped = await this.retype(existing, updateProductInput, updateData);
     const reprice = rest.isTaxable !== undefined && rest.isTaxable !== existing.isTaxable;
     const rate = reprice ? await this.taxService.getTotalActiveRate() : undefined;
+    const trackLots = rest.trackLots;
+    const switchesLots = typeof trackLots === 'boolean' && trackLots !== existing.trackLots;
     return this.auditService.record(
       async (tx) => {
+        if (switchesLots) await this.lots.assertTrackingChange(tx, id, trackLots);
         for (const variant of retyped) await this.productsRepository.updateVariantOptions(variant, tx);
         if (rate !== undefined)
           await this.productsRepository.repriceVariants(

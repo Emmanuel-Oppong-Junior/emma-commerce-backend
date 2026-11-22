@@ -3,6 +3,7 @@ import { Prisma, StockTransferStatus } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../commons/audit.service';
 import { StockLedgerService } from '../stock-ledger.service';
+import { LotsService } from '../lots/lots.service';
 import { canTransferTransition, ReceivedLine, receiptOf, transferDraftProblem } from './stock-transfer-rules';
 import { StockTransfersRepository, TransferFilter, TransferWithLines } from './stock-transfers.repository';
 
@@ -30,7 +31,8 @@ export interface StockTransferPage {
  * destination (TRANSFER movements) and records any shortfall on its line as a variance: the missing units already
  * left the source's books at dispatch, so no further movement is written for them. Each step claims the transfer
  * with a conditional status update, so of two concurrent dispatches or receipts one wins and the other gets CONFLICT.
- * Every step is audited.
+ * Every step is audited. A lot-tracked variant (P4-C.1) ships unexpired lots, first expiry first, and arrives in the
+ * same lots; a shortfall falls on the lots that expire last (assignTransferReceipt).
  */
 @Injectable()
 export class StockTransfersService {
@@ -39,6 +41,7 @@ export class StockTransfersService {
     private readonly ledger: StockLedgerService,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly lots: LotsService,
   ) {}
 
   async findOne(id: string): Promise<TransferWithLines> {
@@ -140,12 +143,16 @@ export class StockTransfersService {
       for (const line of outcome.lines) {
         await this.repository.recordReceipt(tx, transfer.id, line);
         if (line.receivedQuantity === 0) continue;
-        await this.ledger.transferIn(tx, line.variantId, transfer.toLocationId, line.receivedQuantity, {
+        const source = {
           refType: 'StockTransfer',
           refId: transfer.id,
           actorId,
           ...(line.variance > 0 && { note: `Short by ${line.variance}: ${line.varianceNote}` }),
-        });
+        };
+        const lots = await this.lots.transferReceiptLots(tx, transfer, line.variantId, line.receivedQuantity);
+        if (lots)
+          await this.ledger.transferIn(tx, line.variantId, transfer.toLocationId, line.receivedQuantity, source, lots);
+        else await this.ledger.transferIn(tx, line.variantId, transfer.toLocationId, line.receivedQuantity, source);
       }
       await this.auditStatus(tx, transfer, StockTransferStatus.DISPATCHED, outcome.status, actorId, {
         variances: outcome.lines

@@ -1,4 +1,4 @@
-import { countByKind, LedgerTotals, StockMismatchKind, stockMismatches } from './stock-reconciliation';
+import { countByKind, LedgerTotals, lotMismatches, StockMismatchKind, stockMismatches } from './stock-reconciliation';
 
 const balanced: LedgerTotals = {
   variantId: 'v1',
@@ -40,6 +40,27 @@ describe('stock reconciliation', () => {
       ...stockMismatches({ ...balanced, variantId: 'v2', onHand: 2 }),
     ];
 
-    expect(countByKind(mismatches)).toEqual({ ON_HAND: 2, RESERVED_MOVEMENTS: 0, ACTIVE_RESERVATIONS: 0 });
+    expect(countByKind(mismatches)).toEqual({
+      ON_HAND: 2,
+      RESERVED_MOVEMENTS: 0,
+      ACTIVE_RESERVATIONS: 0,
+      LOT_MOVEMENTS: 0,
+      LOT_TOTAL: 0,
+    });
+  });
+});
+
+describe('lotMismatches', () => {
+  it('maps the lot rows that disagree to mismatches, with the lot id where there is one', () => {
+    expect(
+      lotMismatches([
+        { kind: 'LOT_MOVEMENTS', variantId: 'v1', locationId: 'main', lotId: 'lot1', expected: 5, actual: 4 },
+        { kind: 'LOT_TOTAL', variantId: 'v1', locationId: 'main', lotId: null, expected: 9, actual: 4 },
+        { kind: 'LOT_TOTAL', variantId: 'v2', locationId: 'main', lotId: null, expected: 3, actual: 3 },
+      ]),
+    ).toEqual([
+      { kind: 'LOT_MOVEMENTS', variantId: 'v1', locationId: 'main', lotId: 'lot1', expected: 5, actual: 4 },
+      { kind: 'LOT_TOTAL', variantId: 'v1', locationId: 'main', expected: 9, actual: 4 },
+    ]);
   });
 });

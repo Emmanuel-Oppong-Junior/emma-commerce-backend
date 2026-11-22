@@ -19,6 +19,7 @@ describe('StockReconciliationTask', () => {
     repository = {
       runWithAdvisoryLock: jest.fn((_key, _ms, fn: () => Promise<unknown>) => fn()),
       findLedgerDisagreements: jest.fn().mockResolvedValue([drifted]),
+      findLotDisagreements: jest.fn().mockResolvedValue([]),
       countLevels: jest.fn().mockResolvedValue(40),
     };
     logger = { log: jest.fn(), warn: jest.fn() };
@@ -39,6 +40,8 @@ describe('StockReconciliationTask', () => {
       ON_HAND: 1,
       RESERVED_MOVEMENTS: 0,
       ACTIVE_RESERVATIONS: 0,
+      LOT_MOVEMENTS: 0,
+      LOT_TOTAL: 0,
     });
     expect(logger.warn).toHaveBeenCalledWith('Stock ledger mismatch | kind: ON_HAND', 'StockReconciliationTask', {
       kind: 'ON_HAND',
@@ -47,6 +50,18 @@ describe('StockReconciliationTask', () => {
       expected: 10,
       actual: 9,
     });
+  });
+
+  it('reports lots that disagree with their movements or with the level (P4-C.1)', async () => {
+    repository.findLedgerDisagreements.mockResolvedValue([]);
+    repository.findLotDisagreements.mockResolvedValue([
+      { kind: 'LOT_TOTAL', variantId: 'v2', locationId: 'loc', lotId: null, expected: 5, actual: 3 },
+    ]);
+
+    const mismatches = await task.reconcile();
+
+    expect(mismatches).toEqual([{ kind: 'LOT_TOTAL', variantId: 'v2', locationId: 'loc', expected: 5, actual: 3 }]);
+    expect(metrics.recordStockMismatches).toHaveBeenCalledWith(expect.objectContaining({ LOT_TOTAL: 1 }));
   });
 
   it('skips the run, recording nothing, while another instance holds the lock', async () => {

@@ -44,6 +44,7 @@ import { VelocityService } from '../fraud/velocity.service';
 import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
 import { CodAvailability, CodRiskService } from '../cod/cod-risk.service';
 import { DeliveryAddressFacts } from '../cod/cod-blacklist';
+import { ExpiredLotUnits, sellableLevels } from '../inventory/lots/lots';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -592,10 +593,13 @@ export class OrdersService {
     const now = new Date();
     const currency = await this.storeService.getCurrency(tx);
     const variants: VariantForSale[] = [];
+    const expired: ExpiredLotUnits[] = [];
     for (const item of cartItems) {
-      variants.push(await this.checkVariantAvailability(item, currency, shipping.fulfilmentLocationIds, tx));
+      const checked = await this.checkVariantAvailability(item, currency, shipping.fulfilmentLocationIds, now, tx);
+      variants.push(checked.variant);
+      expired.push(...checked.expired);
     }
-    this.assertOneLocationFills(cartItems, variants, shipping.fulfilmentLocationIds);
+    this.assertOneLocationFills(cartItems, variants, shipping.fulfilmentLocationIds, expired);
     const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => id !== null))];
     const promotions = await this.promotionsService.findForPricing(
       {
@@ -670,8 +674,9 @@ export class OrdersService {
     item: CartItem,
     currency: Currency,
     locationIds: string[],
+    now: Date,
     tx: Prisma.TransactionClient | undefined,
-  ): Promise<VariantForSale> {
+  ): Promise<{ variant: VariantForSale; expired: ExpiredLotUnits[] }> {
     const variant = await this.ordersRepository.findVariant(item.variantId, tx);
     if (!variant) throw new NotFoundException(`Variant "${item.variantId}" not found`);
     const reason = notSellableReason(variant);
@@ -682,19 +687,32 @@ export class OrdersService {
         `"${variant.product.name}" is priced in ${variant.product.currency ?? 'no currency'}; only ${currency} products can be checked out`,
       );
     }
-    const available = sellableQuantity(variant.stockLevels.filter((level) => locationIds.includes(level.locationId)));
+    // Only lot-tracked variants have expired units. Inside the order transaction the locked levels already leave
+    // them out (lockLevels), so the read is skipped there to keep the locked section short.
+    const expired =
+      variant.product.trackLots && !tx ? await this.ordersRepository.findExpiredLotUnits([variant.id], now) : [];
+    const available = sellableQuantity(
+      sellableLevels(variant.id, variant.stockLevels, expired).filter((level) =>
+        locationIds.includes(level.locationId),
+      ),
+    );
     if (available < item.quantity) {
       throw new BadRequestException(
         `Insufficient stock for "${variant.product.name}" (${variant.sku}): ${available} available, ${item.quantity} requested`,
       );
     }
-    return variant;
+    return { variant, expired };
   }
 
   /** Every line passed on its own; the whole order must also come from one location (see placeOrder). */
-  private assertOneLocationFills(cartItems: CartItem[], variants: VariantForSale[], locationIds: string[]): void {
+  private assertOneLocationFills(
+    cartItems: CartItem[],
+    variants: VariantForSale[],
+    locationIds: string[],
+    expired: ExpiredLotUnits[],
+  ): void {
     const levels = variants.flatMap((variant) =>
-      variant.stockLevels.map((level) => ({ ...level, variantId: variant.id })),
+      sellableLevels(variant.id, variant.stockLevels, expired).map((level) => ({ ...level, variantId: variant.id })),
     );
     if (!chooseFulfilmentLocation(locationIds, cartItems, levels)) throw notAllAtOneLocation();
   }

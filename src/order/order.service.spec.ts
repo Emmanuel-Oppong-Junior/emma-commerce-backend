@@ -118,6 +118,7 @@ const mockOrdersRepository = {
   lockCart: jest.fn(),
   lockVariants: jest.fn(),
   findVariant: jest.fn(),
+  findExpiredLotUnits: jest.fn(),
   clearCartItems: jest.fn(),
   runTransaction: jest.fn(),
   runWithAdvisoryLock: jest.fn(),
@@ -280,6 +281,7 @@ describe('OrdersService', () => {
     ordersRepository = module.get<OrdersRepository>(OrdersRepository) as jest.Mocked<OrdersRepository>;
     cartService = module.get(CartService);
     jest.resetAllMocks();
+    mockOrdersRepository.findExpiredLotUnits.mockResolvedValue([]);
     Object.assign(mockCodRisk, codRiskStub());
     mockStoreService.getCurrency.mockResolvedValue('GHS');
     mockTaxService.findActive.mockResolvedValue([]);

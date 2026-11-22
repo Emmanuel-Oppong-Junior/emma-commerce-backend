@@ -10,6 +10,7 @@ import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
 import { StockReconciliationTask } from '../inventory/tasks/stock-reconciliation.task';
 import { LowStockDigestTask } from '../inventory/tasks/low-stock-digest.task';
+import { LotExpiryTask } from '../inventory/tasks/lot-expiry.task';
 import { MaintenanceJob } from './maintenance-jobs';
 
 const CONTEXT = 'MaintenanceProcessor';
@@ -27,6 +28,7 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly logger: LoggerService,
     private readonly metrics: AppMetrics,
     private readonly lowStockDigest: LowStockDigestTask,
+    private readonly lotExpiry: LotExpiryTask,
   ) {
     super();
   }
@@ -48,6 +50,9 @@ export class MaintenanceProcessor extends WorkerHost {
         return;
       case MaintenanceJob.SendLowStockDigest:
         await this.lowStockDigest.send();
+        return;
+      case MaintenanceJob.WriteOffExpiredLots:
+        await this.lotExpiry.writeOffExpired();
         return;
       default:
         throw new Error(`Unknown maintenance job "${job.name}"`);

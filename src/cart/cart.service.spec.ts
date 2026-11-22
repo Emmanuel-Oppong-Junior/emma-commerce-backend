@@ -10,6 +10,7 @@ const mockCartRepository = {
   findByUser: jest.fn(),
   findOrCreate: jest.fn(),
   findVariant: jest.fn(),
+  findExpiredLotUnits: jest.fn(),
   findCartItem: jest.fn(),
   upsertCartItem: jest.fn(),
   updateCartItem: jest.fn(),
@@ -68,6 +69,7 @@ describe('CartService', () => {
     service = module.get<CartService>(CartService);
     cartRepository = module.get<CartRepository>(CartRepository) as jest.Mocked<CartRepository>;
     jest.resetAllMocks();
+    mockCartRepository.findExpiredLotUnits.mockResolvedValue([]);
   });
 
   describe('getCart', () => {
@@ -140,6 +142,24 @@ describe('CartService', () => {
         new BadRequestException('Cannot add 5 of "T-Shirt" (TSHIRT-M) to cart; only 1 in stock'),
       );
       expect(cartRepository.upsertCartItem).not.toHaveBeenCalled();
+    });
+
+    it('leaves the units of expired lots out of the stock (P4-C.1)', async () => {
+      mockCartRepository.findVariant.mockResolvedValue({
+        ...mockVariant,
+        product: { ...mockVariant.product, trackLots: true },
+        stockLevels: [{ onHand: 5, reserved: 0, locationId: 'loc_main' }],
+      });
+      mockCartRepository.findExpiredLotUnits.mockResolvedValue([
+        { variantId: 'var1', locationId: 'loc_main', units: 3 },
+      ]);
+      mockCartRepository.findOrCreate.mockResolvedValue({ id: 'cart1', userId: mockUserId });
+      mockCartRepository.findCartItem.mockResolvedValue(null);
+
+      await expect(service.addToCart(mockUserId, { variantId: 'var1', quantity: 3 })).rejects.toThrow(
+        new BadRequestException('Cannot add 3 of "T-Shirt" (TSHIRT-M) to cart; only 2 in stock'),
+      );
+      expect(mockCartRepository.findExpiredLotUnits).toHaveBeenCalledWith(['var1'], expect.any(Date));
     });
 
     it('counts the quantity already in the cart against the variant stock', async () => {

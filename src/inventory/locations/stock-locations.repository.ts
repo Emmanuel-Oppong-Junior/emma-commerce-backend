@@ -3,6 +3,7 @@ import { Prisma, StockLocation, StockLocationType } from '../../generated/prisma
 import { PrismaService } from '../../prisma/prisma.service';
 import { FulfilmentListEntry, StockAtLocation } from '../fulfilment-location';
 import { SERVING_LOCATION_SQL } from './serving-locations';
+import { expiredLotUnitsSql } from '../lots/lot-stock.repository';
 
 type Db = Prisma.TransactionClient;
 
@@ -135,22 +136,29 @@ export class StockLocationsRepository {
 
   /**
    * Locks the stock levels of the variants at the locations (in a fixed order, so concurrent placements cannot
-   * deadlock) and returns them; a variant with no level at a location is absent.
+   * deadlock) and returns them; a variant with no level at a location is absent. onHand leaves out the units of
+   * expired lots, which cannot be sold (P4-C.1).
    */
   async lockLevels(tx: Db, variantIds: string[], locationIds: string[]): Promise<StockAtLocation[]> {
     if (variantIds.length === 0 || locationIds.length === 0) return [];
     return tx.$queryRaw<StockAtLocation[]>`
-      SELECT "variantId", "locationId", "onHand", "reserved" FROM "StockLevel"
-      WHERE "variantId" IN (${Prisma.join(variantIds)}) AND "locationId" IN (${Prisma.join(locationIds)})
-      ORDER BY "variantId", "locationId"
-      FOR UPDATE`;
+      SELECT sl."variantId", sl."locationId", sl."onHand" - ${expiredLotUnitsSql('sl', new Date())} AS "onHand",
+             sl."reserved"
+      FROM "StockLevel" sl
+      WHERE sl."variantId" IN (${Prisma.join(variantIds)}) AND sl."locationId" IN (${Prisma.join(locationIds)})
+      ORDER BY sl."variantId", sl."locationId"
+      FOR UPDATE OF sl`;
   }
 
-  /** For each variant, the most available at any one location that serves customers (see SERVING_LOCATION). */
+  /**
+   * For each variant, the most available at any one location that serves customers (see SERVING_LOCATION), units of
+   * expired lots left out.
+   */
   async findSellable(variantIds: readonly string[]): Promise<Map<string, number>> {
     if (variantIds.length === 0) return new Map();
     const rows = await this.prisma.$queryRaw<{ variantId: string; sellable: number }[]>`
-      SELECT sl."variantId", GREATEST(max(sl."onHand" - sl."reserved"), 0)::int AS sellable
+      SELECT sl."variantId",
+             GREATEST(max(sl."onHand" - sl."reserved" - ${expiredLotUnitsSql('sl', new Date())}), 0)::int AS sellable
       FROM "StockLevel" sl JOIN "StockLocation" l ON l."id" = sl."locationId"
       WHERE sl."variantId" IN (${Prisma.join([...variantIds])}) AND ${SERVING_LOCATION_SQL}
       GROUP BY sl."variantId"`;

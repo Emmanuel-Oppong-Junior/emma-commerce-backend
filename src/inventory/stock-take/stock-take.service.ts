@@ -4,6 +4,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../commons/audit.service';
 import { StockLedgerRepository } from '../stock-ledger.repository';
 import { StockLedgerService } from '../stock-ledger.service';
+import { LotsService } from '../lots/lots.service';
+import { LotQuantity } from '../lots/lots';
 import { assertStockTakeTransition, stockTakeStatusesFrom } from './stock-take-status';
 import { VarianceReport, varianceOf, varianceReport, variancesToPost } from './stock-take-variance';
 import { StockTakeLineView, StockTakeListFilter, StockTakeRepository } from './stock-take.repository';
@@ -14,6 +16,7 @@ type Tx = Prisma.TransactionClient;
 
 export const STOCK_TAKE_ALREADY_OPEN = 'STOCK_TAKE_ALREADY_OPEN';
 export const STOCK_TAKE_BELOW_RESERVED = 'STOCK_TAKE_BELOW_RESERVED';
+export const STOCK_TAKE_NO_LOT = 'STOCK_TAKE_NO_LOT';
 
 const MAX_PAGE_SIZE = 200;
 const MAX_REASON_LENGTH = 500;
@@ -30,6 +33,8 @@ export interface Page<T> {
  * Stock-takes (P4-B.1): staff open a count session at a location, record counted quantities per variant and submit;
  * an approver posts every non-zero variance as an ADJUSTMENT (STOCK_TAKE) through the ledger in one transaction, or
  * cancels. Status moves are conditional updates on the session row, so a repeated approve or cancel changes nothing.
+ * Counts stay per variant for lot-tracked variants too (P4-C.1): a shortage is drawn first expiry first out, a
+ * surplus goes into the variant's latest-expiring lot.
  */
 @Injectable()
 export class StockTakeService {
@@ -39,6 +44,7 @@ export class StockTakeService {
     private readonly ledger: StockLedgerService,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly lots: LotsService,
   ) {}
 
   /**
@@ -185,13 +191,25 @@ export class StockTakeService {
       });
       const posted: { variantId: string; variance: number; movementId: string }[] = [];
       for (const line of variancesToPost(await this.repository.countedLines(tx, id))) {
-        const movement = await this.ledger.adjustAt(tx, line.variantId, session.locationId, line.variance, {
+        const source = {
           actorId,
           adjustmentReason: StockAdjustmentReason.STOCK_TAKE,
           refType: 'StockTake',
           refId: id,
           note: `Stock-take ${id}`,
-        });
+        };
+        const movement = (await this.lots.isTracked(tx, line.variantId))
+          ? ((
+              await this.ledger.adjustLots(
+                tx,
+                line.variantId,
+                session.locationId,
+                line.variance,
+                source,
+                await this.surplusLots(tx, line),
+              )
+            )?.[0] ?? null)
+          : await this.ledger.adjustAt(tx, line.variantId, session.locationId, line.variance, source);
         if (!movement) {
           const available = await this.ledger.availableAt(tx, line.variantId, session.locationId);
           throw new ConflictException({
@@ -207,6 +225,24 @@ export class StockTakeService {
       await this.auditStatus(tx, id, actorId, StockTakeStatus.SUBMITTED, StockTakeStatus.APPROVED, { posted });
       return this.findOrFail(tx, id);
     }, LONG_TRANSACTION);
+  }
+
+  /**
+   * The lot a surplus of a lot-tracked variant goes into (undefined for a shortage, drawn by FEFO).
+   * @throws ConflictException (STOCK_TAKE_NO_LOT) when the variant has never had a lot.
+   */
+  private async surplusLots(tx: Tx, line: { variantId: string; variance: number }): Promise<LotQuantity[] | undefined> {
+    if (line.variance < 0) return undefined;
+    const lot = await this.lots.surplusLot(tx, line.variantId);
+    if (!lot) {
+      throw new ConflictException({
+        message:
+          `Variant "${line.variantId}" tracks lots but has none to put the ${line.variance} extra units in: ` +
+          'receive them with a lot number (restockVariant), recount it or cancel the stock-take',
+        extensions: { reason: STOCK_TAKE_NO_LOT },
+      });
+    }
+    return [{ lotId: lot.id, quantity: line.variance }];
   }
 
   /**

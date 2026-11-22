@@ -1,5 +1,7 @@
 import { Field, ID, InputType, Int } from '@nestjs/graphql';
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
+import { LotInput } from '../lots/dto/lot.input';
 
 @InputType()
 export class RestockVariantInput {
@@ -34,4 +36,15 @@ export class RestockVariantInput {
   @IsOptional()
   @IsString()
   locationId?: string;
+
+  @Field(() => LotInput, {
+    nullable: true,
+    description:
+      'Lot-tracked variants only (P4-C.1). A receipt needs the lot number and expiry (in the future); a return restock ' +
+      "may name an existing lot, else the units go back into the lots the order's sale drew from",
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LotInput)
+  lot?: LotInput;
 }

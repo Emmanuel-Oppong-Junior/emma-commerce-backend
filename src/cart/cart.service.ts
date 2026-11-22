@@ -5,6 +5,7 @@ import { UpdateCartItemInput } from './dto/update-cart.input';
 import { CartRepository, VariantForSale } from './cart.repository';
 import { notSellableReason } from '../variant/sellable';
 import { sellableQuantity } from '../inventory/fulfilment-location';
+import { sellableLevels } from '../inventory/lots/lots';
 
 /**
  * Service for managing user carts. A cart line is one variant (SKU) and is priced and stocked from it.
@@ -27,7 +28,7 @@ export class CartService {
     const cart = await this.cartRepository.findOrCreate(userId);
     const existingItem = await this.cartRepository.findCartItem(cart.id, variant.id);
     const newQuantity = (existingItem?.quantity ?? 0) + input.quantity;
-    this.ensureInStock(variant, newQuantity);
+    await this.ensureInStock(variant, newQuantity);
     await this.cartRepository.upsertCartItem(existingItem?.id, cart.id, variant, variant.price!, newQuantity);
     return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
   }
@@ -46,7 +47,7 @@ export class CartService {
     if (quantity <= 0) {
       await this.cartRepository.deleteCartItem(item.id);
     } else {
-      this.ensureInStock(await this.findSellableVariant(item.variantId), quantity);
+      await this.ensureInStock(await this.findSellableVariant(item.variantId), quantity);
       await this.cartRepository.updateCartItem(item.id, { quantity });
     }
     return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
@@ -80,9 +81,13 @@ export class CartService {
     return variant;
   }
 
-  private ensureInStock(variant: VariantForSale, quantity: number): void {
+  private async ensureInStock(variant: VariantForSale, quantity: number): Promise<void> {
     // One order takes a variant from one location, so the cart allows what the best serving location holds.
-    const available = sellableQuantity(variant.stockLevels);
+    // Only lot-tracked variants have expired units (P4-C.1).
+    const expired = variant.product.trackLots
+      ? await this.cartRepository.findExpiredLotUnits([variant.id], new Date())
+      : [];
+    const available = sellableQuantity(sellableLevels(variant.id, variant.stockLevels, expired));
     if (quantity > available) {
       throw new BadRequestException(
         `Cannot add ${quantity} of "${variant.product.name}" (${variant.sku}) to cart; only ${available} in stock`,

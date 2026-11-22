@@ -148,6 +148,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
         phone: '+233244123456',
       }),
       findVariant: jest.fn().mockResolvedValue(variant),
+      findExpiredLotUnits: jest.fn().mockResolvedValue([]),
       runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
       lockSellableVariant: jest.fn().mockResolvedValue(true),
       lockCart: jest.fn(),

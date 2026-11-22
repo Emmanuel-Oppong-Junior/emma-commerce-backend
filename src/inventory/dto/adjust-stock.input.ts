@@ -1,5 +1,7 @@
 import { Field, ID, InputType, Int } from '@nestjs/graphql';
-import { IsEnum, IsInt, IsOptional, IsString, MaxLength, NotEquals } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsString, MaxLength, NotEquals, ValidateNested } from 'class-validator';
+import { LotInput } from '../lots/dto/lot.input';
 import { StockAdjustmentReason } from '../../generated/prisma/client';
 
 @InputType()
@@ -32,4 +34,15 @@ export class AdjustVariantStockInput {
   @IsString()
   @MaxLength(500)
   note?: string;
+
+  @Field(() => LotInput, {
+    nullable: true,
+    description:
+      'Lot-tracked variants only (P4-C.1): required when adding (an existing lot, or a new one with its expiry); ' +
+      'optional when removing (default: first expiry first out)',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LotInput)
+  lot?: LotInput;
 }

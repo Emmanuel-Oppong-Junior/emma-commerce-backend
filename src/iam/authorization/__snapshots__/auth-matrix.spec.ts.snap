@@ -167,6 +167,7 @@ Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
 Query dispute                            permission: payment.view
 Query disputes                           permission: payment.view
+Query expiringStock                      permission: inventory.view
 Query failedJobs                         permission: jobs.manage
 Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only
@@ -230,6 +231,7 @@ Query userReviews                        authenticated
 Query users                              permission: user.view
 Query validateCouponCode                 authenticated
 Query variant                            permission: catalog.product.read
+Query variantLots                        permission: inventory.view
 Query variants                           permission: catalog.product.read
 Query velocityLimits                     permission: payment.settings.manage
 Query viewOrder                          permission: order.view
