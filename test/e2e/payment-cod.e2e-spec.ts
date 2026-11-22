@@ -44,7 +44,7 @@ describe('Cash-on-delivery collection (e2e)', () => {
   const recordCod = (orderId: string) =>
     gqlRequest(
       app,
-      `mutation { recordCodPayment(orderId: "${orderId}") { id status amount { amount currency } currency paymentMethod } }`,
+      `mutation { recordCodPayment(input: { orderId: "${orderId}", riderId: "seed_admin", amount: "250.50" }) { id status amount { amount currency } currency paymentMethod } }`,
       undefined,
       adminToken,
     ).expect(200);

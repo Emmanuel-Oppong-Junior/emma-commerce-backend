@@ -210,7 +210,10 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
 
     const handOver = await moveShipment(orderId, 'DELIVERED');
     expect(codeOf(handOver)).toBe('BAD_REQUEST');
-    const cash = await gql(`mutation { recordCodPayment(orderId: "${orderId}") { status } }`);
+    const { grandTotal } = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    const cash = await gql(
+      `mutation { recordCodPayment(input: { orderId: "${orderId}", riderId: "seed_admin", amount: "${grandTotal.toFixed(2)}" }) { status } }`,
+    );
     expect(cash.errors).toBeUndefined();
     const completed = await viewOrder(orderId);
     expect(completed).toMatchObject({ status: 'COMPLETED', paymentStatus: 'CAPTURED' });

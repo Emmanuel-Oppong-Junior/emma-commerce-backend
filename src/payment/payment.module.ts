@@ -14,6 +14,7 @@ import { PaymentReconciliationService } from './payment-reconciliation.service';
 import { PaymentProvidersModule } from './providers/payment-providers.module';
 import { FraudModule } from '../fraud/fraud.module';
 import { DisputesModule } from './disputes/disputes.module';
+import { CashModule } from './cash/cash.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { DisputesModule } from './disputes/disputes.module';
     PaymentProvidersModule,
     FraudModule,
     DisputesModule,
+    CashModule,
   ],
   providers: [
     PaymentResolver,

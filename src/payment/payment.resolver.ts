@@ -2,6 +2,7 @@ import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { PaymentService } from './payment.service';
 import { Payment } from './entities/payment.entity';
 import { VerifyPaymentInput } from './dto/verify-payment.input';
+import { RecordCodPaymentInput } from './dto/record-cod-payment.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
@@ -49,10 +50,10 @@ export class PaymentResolver {
   @RequirePermission('payment.record')
   @Mutation(() => Payment, {
     description:
-      'Record the order total as cash collected for a SHIPPED cash-on-delivery order (delivery or pickup). Marks the payment complete and the order DELIVERED. Any other order is refused (CONFLICT for the wrong status or an already-recorded payment, BAD_REQUEST for a non-COD order) and nothing changes.',
+      'Record the order total as cash collected by a rider (a staff member) for a dispatched cash-on-delivery order (out for delivery or ready for pickup). Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a rider who is not active staff (reason RIDER_NOT_STAFF), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.',
   })
-  recordCodPayment(@Args('orderId', { type: () => String }) orderId: string, @ActiveUser('id') adminId: string) {
-    return this.paymentService.recordCodPayment(orderId, adminId);
+  recordCodPayment(@Args('input') input: RecordCodPaymentInput, @ActiveUser('id') adminId: string) {
+    return this.paymentService.recordCodPayment(input, adminId);
   }
 
   @RequirePermission('payment.manage')

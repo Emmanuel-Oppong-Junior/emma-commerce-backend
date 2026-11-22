@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { OrderStatus, PaymentProvider } from '../generated/prisma/client';
+import { OrderStatus, PaymentProvider, Prisma } from '../generated/prisma/client';
 import { OnlinePaymentMethod } from './settings/payment-methods';
 import { PaymentSettingsService } from './settings/payment-settings.service';
 import { randomBytes } from 'node:crypto';
@@ -14,12 +14,20 @@ import { LoggerService } from '../commons/logger.service';
 import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
 import { decideVerification, isSettled, ProviderVerification } from './payment-verification';
-import { assertCodCollectable } from './cash-on-delivery';
+import { assertCodCollectable, collectableShipment } from './cash-on-delivery';
+import { assertCollectedAmount, assertCollectedAt, assertStaffRider } from './cash/cash-collection';
 import { AuditService } from '../commons/audit.service';
 import { StoreService } from '../store/store.service';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
 import { VelocityService } from '../fraud/velocity.service';
 import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
+
+export interface RecordCodPaymentParams {
+  orderId: string;
+  riderId: string;
+  amount: Prisma.Decimal;
+  collectedAt?: Date;
+}
 
 @Injectable()
 export class PaymentService {
@@ -140,14 +148,23 @@ export class PaymentService {
 
   /**
    * Records the grand total as cash collected for a dispatched cash-on-delivery order (staff, payment.record): the
-   * payment is captured, the shipment DELIVERED and the order COMPLETED, with an audit row, in one transaction. Any
-   * other order is refused and nothing is written.
+   * payment is captured, the shipment DELIVERED and the order COMPLETED, with the collection (rider, time) and an audit
+   * row, in one transaction. The rider must be an active staff member and the amount must equal the grand total
+   * (BAD_REQUEST otherwise); any other order is refused. Nothing is written when anything is refused.
    */
-  async recordCodPayment(orderId: string, adminId: string): Promise<PaymentRecord> {
+  async recordCodPayment(input: RecordCodPaymentParams, adminId: string): Promise<PaymentRecord> {
+    const { orderId, riderId, amount } = input;
+    const now = new Date();
+    const collectedAt = input.collectedAt ?? now;
     const { attempt, collection } = await this.paymentRepository.recordCashCollection(
       orderId,
-      adminId,
-      (order) => assertCodCollectable(order, orderId),
+      { recordedById: adminId, riderId, collectedAt },
+      (order, rider) => {
+        assertCodCollectable(order, orderId);
+        assertStaffRider(rider, riderId);
+        assertCollectedAmount(order.grandTotal, amount);
+        assertCollectedAt(collectedAt, now, collectableShipment(order).dispatchedAt);
+      },
       (tx, recorded) =>
         this.auditService.log(
           {
@@ -162,13 +179,15 @@ export class PaymentService {
               paymentId: recorded.attempt.id,
               amount: recorded.collection.amount.toFixed(2),
               currency: recorded.collection.currency,
+              riderId,
+              collectedAt: recorded.collection.collectedAt.toISOString(),
             },
           },
           tx,
         ),
     );
     this.logger.log(
-      `COD payment recorded | orderId: ${orderId} | paymentId: ${attempt.id} | cashCollectionId: ${collection.id} | adminId: ${adminId}`,
+      `COD payment recorded | orderId: ${orderId} | paymentId: ${attempt.id} | cashCollectionId: ${collection.id} | riderId: ${riderId} | adminId: ${adminId}`,
       'PaymentService',
     );
     return attempt;

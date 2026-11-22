@@ -618,46 +618,70 @@ describe('PaymentService', () => {
   describe('recordCodPayment', () => {
     const tx = { tx: true };
     const attempt = { id: 'pay1', orderId: 'order1', status: PaymentStatus.CAPTURED };
+    const collectedAt = new Date('2026-11-22T10:00:00Z');
     const recorded = {
       attempt,
-      collection: { id: 'cc1', amount: new Prisma.Decimal(250), currency: 'GHS' },
+      collection: { id: 'cc1', amount: new Prisma.Decimal(250), currency: 'GHS', collectedAt },
       from: 'IN_FULFILMENT',
     };
     const shippedCod = {
       status: 'IN_FULFILMENT',
       deleted: false,
       paymentMethod: 'CASH_ON_DELIVERY',
+      grandTotal: new Prisma.Decimal('250.00'),
       paymentIntent: null,
-      shipments: [{ id: 'ship1', status: 'OUT_FOR_DELIVERY' }],
+      shipments: [{ id: 'ship1', status: 'OUT_FOR_DELIVERY', dispatchedAt: new Date('2026-11-22T08:00:00Z') }],
     };
+    const staffRider = { isActive: true, isStaff: true };
+    const input = { orderId: 'order1', riderId: 'rider1', amount: new Prisma.Decimal('250'), collectedAt };
 
-    const runRecording = (order: unknown) =>
+    const runRecording = (order: unknown, rider: unknown = staffRider) =>
       mockPaymentRepository.recordCashCollection.mockImplementation(
-        async (_orderId, _adminId, assertCollectable, onRecorded) => {
-          assertCollectable(order);
+        async (_orderId, _request, assertCollectable, onRecorded) => {
+          assertCollectable(order, rider);
           await onRecorded(tx, recorded);
           return recorded;
         },
       );
 
-    it('records the collection for the order and returns the completed payment', async () => {
+    const reasonOf = async (promise: Promise<unknown>) => {
+      const error = await promise.then(
+        () => null,
+        (caught: BadRequestException) => caught,
+      );
+      expect(error).toBeInstanceOf(BadRequestException);
+      return (error?.getResponse() as { extensions?: { reason?: string } }).extensions?.reason;
+    };
+
+    it('records the collection for the order with the rider and time, and returns the completed payment', async () => {
       runRecording(shippedCod);
 
-      const result = await service.recordCodPayment('order1', 'admin1');
+      const result = await service.recordCodPayment(input, 'admin1');
 
       expect(paymentRepository.recordCashCollection).toHaveBeenCalledWith(
         'order1',
-        'admin1',
+        { recordedById: 'admin1', riderId: 'rider1', collectedAt },
         expect.any(Function),
         expect.any(Function),
       );
       expect(result).toEqual(attempt);
     });
 
-    it('writes the audit row on the recording transaction with the actor, amount and status change', async () => {
+    it('collects at the time of recording when no collectedAt is sent', async () => {
+      runRecording(shippedCod);
+      const before = Date.now();
+
+      await service.recordCodPayment({ ...input, collectedAt: undefined }, 'admin1');
+
+      const [, request] = mockPaymentRepository.recordCashCollection.mock.calls[0];
+      expect(request.collectedAt.getTime()).toBeGreaterThanOrEqual(before);
+      expect(request.collectedAt.getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    it('writes the audit row on the recording transaction with the actor, rider, amount and status change', async () => {
       runRecording(shippedCod);
 
-      await service.recordCodPayment('order1', 'admin1');
+      await service.recordCodPayment(input, 'admin1');
 
       expect(mockAuditService.log).toHaveBeenCalledWith(
         {
@@ -672,6 +696,8 @@ describe('PaymentService', () => {
             paymentId: 'pay1',
             amount: '250.00',
             currency: 'GHS',
+            riderId: 'rider1',
+            collectedAt: '2026-11-22T10:00:00.000Z',
           },
         },
         tx,
@@ -683,7 +709,7 @@ describe('PaymentService', () => {
       async (status) => {
         runRecording({ ...shippedCod, status });
 
-        await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(ConflictException);
+        await expect(service.recordCodPayment(input, 'admin1')).rejects.toThrow(ConflictException);
         expect(mockAuditService.log).not.toHaveBeenCalled();
       },
     );
@@ -691,13 +717,13 @@ describe('PaymentService', () => {
     it('refuses an online order', async () => {
       runRecording({ ...shippedCod, paymentMethod: 'ONLINE' });
 
-      await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(BadRequestException);
+      await expect(service.recordCodPayment(input, 'admin1')).rejects.toThrow(BadRequestException);
     });
 
     it('refuses a second collection for an order whose payment is already recorded', async () => {
       runRecording({ ...shippedCod, paymentIntent: { status: 'CAPTURED', attempts: [{ status: 'CAPTURED' }] } });
 
-      await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(
+      await expect(service.recordCodPayment(input, 'admin1')).rejects.toThrow(
         new ConflictException('Payment for order "order1" has already been recorded'),
       );
     });
@@ -705,7 +731,42 @@ describe('PaymentService', () => {
     it('treats a missing order as not found', async () => {
       runRecording(null);
 
-      await expect(service.recordCodPayment('order1', 'admin1')).rejects.toThrow(NotFoundException);
+      await expect(service.recordCodPayment(input, 'admin1')).rejects.toThrow(NotFoundException);
+    });
+
+    it.each([
+      ['unknown', null],
+      ['without a store role', { isActive: true, isStaff: false }],
+      ['archived', { isActive: false, isStaff: true }],
+    ])('refuses a rider who is %s (RIDER_NOT_STAFF) and audits nothing', async (_case, rider) => {
+      runRecording(shippedCod, rider);
+
+      expect(await reasonOf(service.recordCodPayment(input, 'admin1'))).toBe('RIDER_NOT_STAFF');
+      expect(mockAuditService.log).not.toHaveBeenCalled();
+    });
+
+    it.each(['249.99', '250.01', '0'])(
+      'refuses %s collected for a 250.00 order (COLLECTION_AMOUNT_MISMATCH)',
+      async (amount) => {
+        runRecording(shippedCod);
+
+        expect(
+          await reasonOf(service.recordCodPayment({ ...input, amount: new Prisma.Decimal(amount) }, 'admin1')),
+        ).toBe('COLLECTION_AMOUNT_MISMATCH');
+      },
+    );
+
+    it('refuses a collection time before dispatch or in the future (INVALID_COLLECTION_TIME)', async () => {
+      runRecording(shippedCod);
+      const beforeDispatch = new Date('2026-11-22T07:59:59Z');
+      const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      expect(await reasonOf(service.recordCodPayment({ ...input, collectedAt: beforeDispatch }, 'admin1'))).toBe(
+        'INVALID_COLLECTION_TIME',
+      );
+      expect(await reasonOf(service.recordCodPayment({ ...input, collectedAt: tomorrow }, 'admin1'))).toBe(
+        'INVALID_COLLECTION_TIME',
+      );
     });
   });
 });

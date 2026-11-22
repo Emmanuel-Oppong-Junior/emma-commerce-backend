@@ -241,6 +241,36 @@ type CartItem {
   variantId: ID!
 }
 
+"""Cash a rider collected for one cash-on-delivery order"""
+type CashCollectionEntity {
+  amount: Money!
+
+  """The captured cash payment (attempt)"""
+  attemptId: ID
+  collectedAt: DateTime!
+  currency: String!
+  id: ID!
+  orderId: ID!
+  orderNumber: Int!
+
+  """The staff member who recorded it"""
+  recordedById: ID
+
+  """The remittance it was handed in with; null while outstanding"""
+  remittanceId: ID
+
+  """The staff member who took the cash; null before P3-B.3"""
+  riderId: ID
+}
+
+"""
+SHORT: the rider handed in less than the collections add up to; OVER: more
+"""
+enum CashDiscrepancyKind {
+  OVER
+  SHORT
+}
+
 """Whether this checkout could be paid on delivery"""
 type CashOnDeliveryAvailability {
   available: Boolean!
@@ -252,6 +282,37 @@ type CashOnDeliveryAvailability {
 
   """The first gate refusing it, when not available"""
   reason: CodUnavailableReason
+}
+
+"""
+Cash a rider handed to the store; immutable (a correction is a new remittance)
+"""
+type CashRemittanceEntity {
+  """The cash handed in"""
+  amount: Money!
+
+  """The collections it covers (none for an adjusting entry)"""
+  collections: [CashCollectionEntity!]!
+  createdAt: DateTime!
+  currency: String!
+
+  """
+  amount - expectedAmount with 2 decimals, e.g. "-20.00" (short) or "5.00" (over); "0.00" when it matches
+  """
+  discrepancy: String!
+
+  """Null when the remittance matches its collections"""
+  discrepancyKind: CashDiscrepancyKind
+
+  """What the covered collections add up to"""
+  expectedAmount: Money!
+  id: ID!
+  note: String
+  receivedAt: DateTime!
+
+  """The staff member who received the cash and recorded it"""
+  receivedById: ID!
+  riderId: ID!
 }
 
 type Category {
@@ -403,6 +464,81 @@ enum CodBlacklistKind {
   STREET_ADDRESS
 }
 
+"""Cash-on-delivery cash per rider for a date range"""
+type CodCashReport {
+  from: DateTime!
+  pageInfo: PageInfo!
+
+  """Riders with collections or remittances in the range, by id"""
+  riders: [CodRiderCashSummary!]!
+  to: DateTime!
+  totals: CodCashTotals!
+
+  """Store-wide; not filtered by rider"""
+  uncollectedDeliveries: CodUncollectedDeliveries!
+}
+
+input CodCashReportInput {
+  """The last riderId of the previous page"""
+  after: ID
+
+  """Riders per page, 1-100"""
+  first: Int! = 20
+
+  """Start of the range (inclusive)"""
+  from: DateTime!
+
+  """Only this rider"""
+  riderId: ID
+
+  """End of the range (exclusive)"""
+  to: DateTime!
+}
+
+"""The figures of every rider in the range (not only this page)"""
+type CodCashTotals {
+  collectedTotal: Money!
+  collectionsCount: Int!
+  discrepancyCount: Int!
+  netDiscrepancy: String!
+  outstandingCount: Int!
+  outstandingTotal: Money!
+  overTotal: Money!
+  remittancesCount: Int!
+  remittedTotal: Money!
+  shortTotal: Money!
+}
+
+"""One rider's cash for the range"""
+type CodRiderCashSummary {
+  collectedTotal: Money!
+
+  """Collections taken in the range"""
+  collectionsCount: Int!
+
+  """Remittances received in the range that were short or over"""
+  discrepancyCount: Int!
+
+  """
+  overTotal - shortTotal with 2 decimals; negative when the rider owes cash
+  """
+  netDiscrepancy: String!
+
+  """Collections taken in the range and not remitted yet"""
+  outstandingCount: Int!
+  outstandingTotal: Money!
+  overTotal: Money!
+
+  """Remittances received in the range"""
+  remittancesCount: Int!
+  remittedTotal: Money!
+  riderId: ID!
+  riderName: String
+
+  """Sum of the shortfalls (a positive amount)"""
+  shortTotal: Money!
+}
+
 """Cash-on-delivery risk limits of the store"""
 type CodRiskSettingsEntity {
   """
@@ -424,6 +560,25 @@ enum CodUnavailableReason {
   ORDER_TOTAL_ABOVE_CAP
   PHONE_NOT_VERIFIED
   SHIPPING_ZONE_EXCLUDED
+}
+
+"""
+Cash-on-delivery orders delivered in the range without a cash collection (cash not recorded)
+"""
+type CodUncollectedDeliveries {
+  count: Int!
+
+  """The oldest 100, by delivery time"""
+  orders: [CodUncollectedDelivery!]!
+  total: Money!
+}
+
+"""A cash-on-delivery order delivered with no cash collection recorded"""
+type CodUncollectedDelivery {
+  deliveredAt: DateTime!
+  grandTotal: Money!
+  orderId: ID!
+  orderNumber: Int!
 }
 
 input CompleteMfaSignInInput {
@@ -1422,9 +1577,14 @@ type Mutation {
   processRefund(returnRequestId: ID!): ReturnRequestEntity!
 
   """
-  Record the order total as cash collected for a SHIPPED cash-on-delivery order (delivery or pickup). Marks the payment complete and the order DELIVERED. Any other order is refused (CONFLICT for the wrong status or an already-recorded payment, BAD_REQUEST for a non-COD order) and nothing changes.
+  Record cash a rider handed in, covering some of the rider's unremitted collections. A short or over amount needs a note (BAD_REQUEST reason DISCREPANCY_NOTE_REQUIRED); a collection already remitted gives CONFLICT (COLLECTION_ALREADY_REMITTED). Immutable once recorded; audited
   """
-  recordCodPayment(orderId: String!): Payment!
+  recordCashRemittance(input: RecordCashRemittanceInput!): CashRemittanceEntity!
+
+  """
+  Record the order total as cash collected by a rider (a staff member) for a dispatched cash-on-delivery order (out for delivery or ready for pickup). Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a rider who is not active staff (reason RIDER_NOT_STAFF), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.
+  """
+  recordCodPayment(input: RecordCodPaymentInput!): Payment!
 
   """
   Record a dispute against a captured online payment by hand (e.g. a chargeback notice by email). Owner, Manager, audited
@@ -2681,6 +2841,13 @@ type Query {
   """Retrieves the current user’s cart"""
   cart: Cart
 
+  """Cash remittances, newest first, optionally of one rider"""
+  cashRemittances(
+    """1-100, newest first"""
+    first: Int! = 20
+    riderId: ID
+  ): [CashRemittanceEntity!]!
+
   """Retrieves a list of all categories, sorted alphabetically by name"""
   categories: [Category!]!
 
@@ -2702,6 +2869,11 @@ type Query {
     """How many entries, newest first (1 to 200)"""
     first: Int! = 50
   ): [CodBlacklistEntryEntity!]!
+
+  """
+  Cash-on-delivery cash per rider for [from, to): collected, outstanding, remitted, short/over; and COD orders delivered with no cash recorded
+  """
+  codCashReport(input: CodCashReportInput!): CodCashReport!
 
   """
   The cash-on-delivery limits: open orders per verified phone and the grand total cap (Owner)
@@ -2920,6 +3092,11 @@ type Query {
   """
   topProducts(limit: Int! = 10): [TopProduct!]!
 
+  """
+  A rider's cash collections not handed in yet, oldest first (staff: Owner, Manager, Cashier)
+  """
+  unremittedCashCollections(riderId: ID!): [CashCollectionEntity!]!
+
   """Retrieves all addresses for the current user"""
   userAddresses: [Address!]!
 
@@ -3061,6 +3238,41 @@ type QuoteTaxLine {
 
   """The tax rate it comes from"""
   taxId: ID!
+}
+
+input RecordCashRemittanceInput {
+  """The cash handed in (0 or more)"""
+  amount: Decimal!
+
+  """
+  The rider's unremitted collections this cash covers (at most 500); empty for an adjusting entry
+  """
+  collectionIds: [ID!]!
+
+  """Required when the amount differs from the collections"""
+  note: String
+
+  """When the cash was received (default now)"""
+  receivedAt: DateTime
+
+  """The rider handing in the cash"""
+  riderId: ID!
+}
+
+input RecordCodPaymentInput {
+  """The cash taken; must equal the order's grandTotal"""
+  amount: Decimal!
+
+  """
+  When the cash was taken (default now); not in the future nor before dispatch
+  """
+  collectedAt: DateTime
+  orderId: ID!
+
+  """
+  The staff member who took the cash (an active account with a store role)
+  """
+  riderId: ID!
 }
 
 input RecordDisputeInput {

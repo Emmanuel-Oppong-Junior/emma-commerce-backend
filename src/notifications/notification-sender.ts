@@ -144,6 +144,15 @@ export class NotificationSender {
         );
         return;
       }
+      case 'cod.remittance_discrepancy.v1': {
+        // No staff notification yet: a structured warning with ids only, for log-based alerting.
+        const { payload } = data as DomainEventJobData<'cod.remittance_discrepancy.v1'>;
+        this.logger.warn(
+          `COD remittance discrepancy | remittanceId: ${payload.remittanceId} | riderId: ${payload.riderId} | kind: ${payload.kind}`,
+          CONTEXT,
+        );
+        return;
+      }
       case 'inventory.low_stock.v1': {
         // No staff email template exists yet: the alert is a structured warning for log-based alerting.
         const { payload } = data as DomainEventJobData<'inventory.low_stock.v1'>;

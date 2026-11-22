@@ -63,6 +63,7 @@ Mutation forgotPassword                  public
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
 Mutation processRefund                   permission: order.refund; step-up
+Mutation recordCashRemittance            permission: cod.cash.manage
 Mutation recordCodPayment                permission: payment.record
 Mutation recordDispute                   permission: payment.dispute.manage
 Mutation refreshToken                    public
@@ -140,10 +141,12 @@ Query availablePaymentMethods            public
 Query brand                              public, optional sign-in
 Query brands                             public, optional sign-in
 Query cart                               authenticated
+Query cashRemittances                    permission: cod.cash.manage
 Query categories                         public, optional sign-in
 Query category                           authenticated
 Query checkoutQuote                      authenticated
 Query codBlacklist                       permission: payment.settings.manage
+Query codCashReport                      permission: cod.cash.manage
 Query codRiskSettings                    permission: payment.settings.manage
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
@@ -193,6 +196,7 @@ Query tags                               authenticated
 Query tax                                permission: tax.manage
 Query taxes                              permission: tax.manage
 Query topProducts                        permission: report.view
+Query unremittedCashCollections          permission: cod.cash.manage
 Query userAddresses                      authenticated
 Query userByEmail                        permission: user.view
 Query userById                           permission: user.view
