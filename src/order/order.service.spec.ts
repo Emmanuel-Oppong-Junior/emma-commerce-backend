@@ -4,6 +4,7 @@ import { CartService } from '../cart/cart.service';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '../generated/prisma/client';
 import { CreateOrderParams, ORDER_EXPIRY_LOCK_KEY, OrdersService } from './order.service';
+import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { AuditService } from '../commons/audit.service';
 import { TaxService } from '../tax/tax.service';
@@ -268,6 +269,10 @@ describe('OrdersService', () => {
         { provide: VelocityService, useValue: mockVelocity },
         { provide: CodRiskService, useValue: mockCodRisk },
         { provide: StockLocationsService, useValue: mockStockLocations },
+        {
+          provide: SerialUnitsService,
+          useValue: { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() },
+        },
       ],
     }).compile();
 

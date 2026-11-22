@@ -6,6 +6,7 @@ import { LoggerService } from '../../src/commons/logger.service';
 import { AppMetrics } from '../../src/observability/metrics';
 import { StockLedgerRepository } from '../../src/inventory/stock-ledger.repository';
 import { StockReconciliationTask } from '../../src/inventory/tasks/stock-reconciliation.task';
+import { SerialUnitsRepository } from '../../src/inventory/serials/serial-units.repository';
 import { createTestApp } from '../helpers/app.helper';
 import { resetDb, seedMinimal, stockOf } from '../helpers/db.helper';
 import { placeOrderFromCart } from '../helpers/checkout.helper';
@@ -26,7 +27,12 @@ describe('Nightly stock reconciliation (P1-N.3, e2e)', () => {
     await seedMinimal(prisma);
     const metrics = app.get(AppMetrics);
     recorded = jest.spyOn(metrics, 'recordStockMismatches');
-    task = new StockReconciliationTask(app.get(StockLedgerRepository), app.get(LoggerService), metrics);
+    task = new StockReconciliationTask(
+      app.get(StockLedgerRepository),
+      app.get(LoggerService),
+      metrics,
+      app.get(SerialUnitsRepository),
+    );
 
     const address = await prisma.address.create({
       data: {

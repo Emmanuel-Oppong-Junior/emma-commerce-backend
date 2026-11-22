@@ -23,7 +23,14 @@ describe('StockReconciliationTask', () => {
     };
     logger = { log: jest.fn(), warn: jest.fn() };
     metrics = { recordStockMismatches: jest.fn() };
-    task = new StockReconciliationTask(repository as never, logger as never, metrics as never);
+    task = new StockReconciliationTask(
+      repository as never,
+      logger as never,
+      metrics as never,
+      {
+        findShelfDisagreements: jest.fn().mockResolvedValue([]),
+      } as never,
+    );
   });
 
   it('runs under its advisory lock and records each mismatch as a metric and a log line with ids only', async () => {

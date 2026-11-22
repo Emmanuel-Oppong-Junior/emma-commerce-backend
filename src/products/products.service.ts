@@ -19,6 +19,8 @@ import {
 } from '../product-types/domain/attribute-validation';
 import { VariantOptions } from './products.repository';
 import { VariantService } from '../variant/variant.service';
+import { SerialUnitsService } from '../inventory/serials/serial-units.service';
+import { assertNoSerialisedOpeningStock } from '../inventory/serials/serial-rules';
 
 export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
 
@@ -39,6 +41,8 @@ const AUDITED_PRODUCT_FIELDS = [
   'shelfLifeDays',
   'trackLots',
   'trackSerials',
+  'serialFormat',
+  'warrantyMonths',
   'fulfilmentKind',
   'unitOfMeasure',
 ] as const satisfies readonly (keyof Product)[];
@@ -51,6 +55,7 @@ export class ProductsService {
     private readonly auditService: AuditService,
     private readonly productTypesRepository: ProductTypesRepository,
     private readonly variantService: VariantService,
+    private readonly serialUnits: SerialUnitsService,
   ) {}
 
   /**
@@ -62,6 +67,7 @@ export class ProductsService {
     const { variants, isTaxable, productTypeId, attributes: rawAttributes, ...rest } = createProductInput;
     const productType = await this.findProductType(productTypeId ?? GENERAL_PRODUCT_TYPE_ID);
     const attributes = this.checkAttributes(productType, rawAttributes);
+    assertNoSerialisedOpeningStock(rest.trackSerials ?? false, variants);
     const prepared = await this.variantService.prepare({ isTaxable: isTaxable ?? false, productType }, variants);
     return this.auditService.record(
       async (tx) => {
@@ -83,7 +89,11 @@ export class ProductsService {
     );
   }
 
-  /** Updates a product. Turning tax on or off reprices its variants (from their basePrice) in the same transaction. */
+  /**
+   * Updates a product. Turning tax on or off reprices its variants (from their basePrice) in the same transaction.
+   * Serial tracking turns on only while the product has no untracked stock, and off only while none of its serial
+   * units is in stock, assigned or in transit (trackSerialsChangeProblem).
+   */
   async update(id: string, updateProductInput: UpdateProductInput, actorId: string): Promise<Product> {
     const existing = await this.productsRepository.findById(id);
     if (!existing) throw new NotFoundException('Product not found');
@@ -93,9 +103,11 @@ export class ProductsService {
     const updateData: Prisma.ProductUpdateInput = { ...rest };
     const retyped = await this.retype(existing, updateProductInput, updateData);
     const reprice = rest.isTaxable !== undefined && rest.isTaxable !== existing.isTaxable;
+    const retrack = rest.trackSerials !== undefined && rest.trackSerials !== existing.trackSerials;
     const rate = reprice ? await this.taxService.getTotalActiveRate() : undefined;
     return this.auditService.record(
       async (tx) => {
+        if (retrack) await this.serialUnits.assertTrackingChange(tx, id, rest.trackSerials!);
         for (const variant of retyped) await this.productsRepository.updateVariantOptions(variant, tx);
         if (rate !== undefined)
           await this.productsRepository.repriceVariants(

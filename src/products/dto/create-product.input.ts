@@ -1,4 +1,5 @@
 import { Field, GraphQLISODateTime, InputType, Int } from '@nestjs/graphql';
+import { SerialFormat } from '../../inventory/serials/entities/serial-unit.entity';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -146,6 +147,24 @@ export class CreateProductInput {
   @IsOptional()
   @IsBoolean()
   trackSerials?: boolean;
+
+  @Field(() => SerialFormat, {
+    nullable: true,
+    description: 'How serials are checked when the product tracks them: FREE_TEXT (default) or IMEI (15 digits, Luhn)',
+  })
+  @IsOptional()
+  @IsEnum(SerialFormat)
+  serialFormat?: SerialFormat;
+
+  @Field(() => Int, {
+    nullable: true,
+    description: 'Warranty of each serialised unit from delivery, in months (1-120); omit for no warranty',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  warrantyMonths?: number | null;
 
   @Field(() => FulfilmentKindEnum, { nullable: true, description: 'Defaults to PHYSICAL' })
   @IsOptional()

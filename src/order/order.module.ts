@@ -17,9 +17,19 @@ import { TaxModule } from '../tax/tax.module';
 import { PaymentProvidersModule } from '../payment/providers/payment-providers.module';
 import { FraudModule } from '../fraud/fraud.module';
 import { CodModule } from '../cod/cod.module';
+import { OrderSerialsService } from './order-serials.service';
+import { OrderItemSerialsLoader, OrderItemSerialsResolver, OrderSerialsResolver } from './order-serials.resolver';
 
 @Module({
-  providers: [OrdersService, OrdersResolver, OrdersRepository],
+  providers: [
+    OrdersService,
+    OrdersResolver,
+    OrdersRepository,
+    OrderSerialsService,
+    OrderSerialsResolver,
+    OrderItemSerialsResolver,
+    OrderItemSerialsLoader,
+  ],
   imports: [
     CartModule,
     PromotionsModule,

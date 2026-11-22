@@ -69,6 +69,7 @@ describe('StockTakeService', () => {
       ledger as never,
       prisma as never,
       audit as never,
+      { trackedVariantIds: jest.fn().mockResolvedValue([]) } as never,
     );
   });
 

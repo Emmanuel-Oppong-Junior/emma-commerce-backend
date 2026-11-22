@@ -7,6 +7,7 @@ import { AuditService } from '../commons/audit.service';
 import { StockLedgerService } from './stock-ledger.service';
 import { MovementFilter, StockLedgerRepository } from './stock-ledger.repository';
 import { manualAdjustmentError } from './stock-adjustment';
+import { SerialUnitsService } from './serials/serial-units.service';
 
 export interface StockMovementPage {
   nodes: StockMovement[];
@@ -24,12 +25,14 @@ export class InventoryService {
     private readonly repository: StockLedgerRepository,
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly serialUnits: SerialUnitsService,
   ) {}
 
   /**
    * Adds stock to a variant as a RECEIPT, or as a RETURN_RESTOCK when it is goods from a return request, with an
    * audit entry in the same transaction. Returned goods go back to the location their order was fulfilled from unless
-   * a location is given.
+   * a location is given. A variant whose product tracks serials needs one serial per unit: new ones for a receipt,
+   * units sold on the return's order for a return (SerialUnitsService).
    * @throws NotFoundException if the variant, the return request or the location does not exist.
    */
   async restockVariant(input: RestockVariantInput, actorId: string): Promise<StockMovement> {
@@ -53,14 +56,29 @@ export class InventoryService {
         },
         locationId || undefined,
       );
-      await this.auditStockChange(tx, movement);
+      const change = {
+        variantId: input.variantId,
+        quantity: input.quantity,
+        serials: input.serials,
+        source: {
+          movementId: movement.id,
+          actorId,
+          refType: movement.refType ?? undefined,
+          refId: movement.refId ?? undefined,
+        },
+      };
+      const serials = input.returnRequestId
+        ? await this.serialUnits.restockReturned(tx, change, input.returnRequestId, movement.locationId)
+        : await this.serialUnits.receive(tx, change, movement.locationId);
+      await this.auditStockChange(tx, movement, serials);
       return movement;
     });
   }
 
   /**
    * Moves a variant's on-hand stock at a location (default: the store's default location) by a signed delta, as one
-   * ADJUSTMENT with its reason. Units reserved for open orders cannot be adjusted away.
+   * ADJUSTMENT with its reason. Units reserved for open orders cannot be adjusted away. A serial-tracked variant names
+   * its units: those removed (IN_STOCK there, then WRITTEN_OFF), or those added (new, or WRITTEN_OFF ones found).
    * @throws BadRequestException for a reason/direction mismatch, OTHER without a note, or too few units available;
    * NotFoundException if the variant or an active location does not exist.
    */
@@ -81,7 +99,17 @@ export class InventoryService {
           `Cannot remove ${-input.delta} units from variant "${input.variantId}": only ${available} available`,
         );
       }
-      await this.auditStockChange(tx, movement);
+      const change = {
+        variantId: input.variantId,
+        quantity: Math.abs(input.delta),
+        serials: input.serials,
+        source: { movementId: movement.id, actorId, note: movement.note ?? undefined },
+      };
+      const serials =
+        input.delta < 0
+          ? await this.serialUnits.writeOff(tx, change, locationId)
+          : await this.serialUnits.receive(tx, change, locationId, { readmitWrittenOff: true });
+      await this.auditStockChange(tx, movement, serials);
       return movement;
     });
   }
@@ -111,7 +139,11 @@ export class InventoryService {
     return location.id;
   }
 
-  private async auditStockChange(tx: Prisma.TransactionClient, movement: StockMovement): Promise<void> {
+  private async auditStockChange(
+    tx: Prisma.TransactionClient,
+    movement: StockMovement,
+    serials: string[],
+  ): Promise<void> {
     await this.auditService.log(
       {
         entity: 'Variant',
@@ -126,6 +158,7 @@ export class InventoryService {
           reason: movement.note,
           ...(movement.adjustmentReason && { adjustmentReason: movement.adjustmentReason }),
           ...(movement.refType && { refType: movement.refType, refId: movement.refId }),
+          ...(serials.length > 0 && { serials }),
         },
       },
       tx,

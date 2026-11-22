@@ -16,6 +16,7 @@ import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helpe
 import { Decimal } from '@prisma/client/runtime/client';
 import { ProductTypesRepository } from '../product-types/product-types.repository';
 import { VariantService } from '../variant/variant.service';
+import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 
 const AVAILABLE_STOCK = { stockLevels: { some: { onHand: { gt: 'reserved' } } } };
 const mockProductsRepository = {
@@ -59,6 +60,7 @@ describe('ProductsService', () => {
         { provide: AuditService, useValue: mockAuditService },
         { provide: ProductTypesRepository, useValue: mockProductTypesRepository },
         { provide: VariantService, useValue: mockVariantService },
+        { provide: SerialUnitsService, useValue: { assertTrackingChange: jest.fn() } },
       ],
     }).compile();
 

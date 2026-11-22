@@ -17,6 +17,7 @@ import { OrdersRepository } from '../order/order.repository';
 import { StoreRepository } from '../store/store.repository';
 import { OutboxService } from '../outbox/outbox.service';
 import { StockLedgerService } from '../inventory/stock-ledger.service';
+import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import {
   AttemptState,
   autoRefundKey,
@@ -128,6 +129,7 @@ export class PaymentRepository {
     private readonly storeRepository: StoreRepository,
     private readonly outbox: OutboxService,
     private readonly stockLedger: StockLedgerService,
+    private readonly serialUnits: SerialUnitsService,
   ) {}
 
   /**
@@ -259,6 +261,7 @@ export class PaymentRepository {
         context,
       );
       if (!delivered) throw changed();
+      await this.serialUnits.startWarranty(tx, orderId, delivered.deliveredAt!);
       const completed = await this.ordersRepository.transitionStatus(
         tx,
         orderId,

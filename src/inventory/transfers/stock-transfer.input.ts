@@ -16,6 +16,7 @@ import {
 } from 'class-validator';
 import { StockTransferStatus } from '../../generated/prisma/client';
 import { MAX_TRANSFER_LINES } from './stock-transfer-rules';
+import { MAX_SERIALS_PER_CHANGE, SerialsField } from '../serials/dto/serials.field';
 
 @InputType()
 export class StockTransferLineInput {
@@ -65,6 +66,11 @@ export class ReceivedTransferLineInput {
   @Min(0)
   receivedQuantity: number;
 
+  @SerialsField(
+    'Serial-tracked variants: the units that arrived (one per unit received); the rest of the line is written off',
+  )
+  serials?: string[];
+
   @Field({ nullable: true, description: 'Required when fewer units arrived than were dispatched' })
   @IsOptional()
   @IsString()
@@ -84,6 +90,35 @@ export class ReceiveStockTransferInput {
   @ValidateNested({ each: true })
   @Type(() => ReceivedTransferLineInput)
   lines?: ReceivedTransferLineInput[];
+}
+
+@InputType()
+export class TransferLineSerialsInput {
+  @Field(() => ID)
+  @IsString()
+  variantId: string;
+
+  @Field(() => [String], { description: 'One serial per unit sent, each in stock at the source' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(MAX_SERIALS_PER_CHANGE)
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  serials: string[];
+}
+
+@InputType()
+export class DispatchStockTransferInput {
+  @Field(() => [TransferLineSerialsInput], {
+    nullable: true,
+    description: 'The units sent on each line of a serial-tracked variant (required for those, refused for others)',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TRANSFER_LINES)
+  @ValidateNested({ each: true })
+  @Type(() => TransferLineSerialsInput)
+  lines?: TransferLineSerialsInput[];
 }
 
 @InputType()

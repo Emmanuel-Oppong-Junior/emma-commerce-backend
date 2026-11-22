@@ -310,6 +310,17 @@ export class OrdersRepository {
     });
   }
 
+  /** The order an order line belongs to; null when the line does not exist. */
+  async findItemOrderId(tx: Prisma.TransactionClient, orderItemId: string): Promise<string | null> {
+    const item = await tx.orderItem.findUnique({ where: { id: orderItemId }, select: { orderId: true } });
+    return item?.orderId ?? null;
+  }
+
+  /** The order's shipment, or null before its first fulfilment step. */
+  async findShipment(tx: Prisma.TransactionClient, orderId: string): Promise<Shipment | null> {
+    return tx.shipment.findFirst({ where: { orderId }, orderBy: { createdAt: 'asc' } });
+  }
+
   async findForTransaction(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems> {
     return this.findInTransaction(tx, orderId);
   }

@@ -47,6 +47,9 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   // Leaf-level usage tables (stock levels, reservations and movements go with their variants and orders)
   await prisma.redemption.deleteMany();
 
+  // Serial units hold their order lines (their append-only history goes with them through the cascade)
+  await prisma.serialUnit.deleteMany();
+
   // Payment and order hierarchy (refunds reference return requests)
   await clearPaymentLedger(prisma);
   await prisma.returnRequest.deleteMany();

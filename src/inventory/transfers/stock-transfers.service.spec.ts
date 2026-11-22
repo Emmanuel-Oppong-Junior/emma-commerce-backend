@@ -37,7 +37,16 @@ describe('StockTransfersService', () => {
     };
     audit = createAuditServiceMock();
     const prisma = { $transaction: jest.fn((work: (t: unknown) => unknown) => work(tx)) };
-    service = new StockTransfersService(repository as never, ledger as never, prisma as never, audit as never);
+    service = new StockTransfersService(
+      repository as never,
+      ledger as never,
+      prisma as never,
+      audit as never,
+      {
+        dispatchTransfer: jest.fn(),
+        receiveTransfer: jest.fn(),
+      } as never,
+    );
   });
 
   describe('create', () => {

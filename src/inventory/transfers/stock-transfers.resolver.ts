@@ -5,6 +5,7 @@ import { StockTransfer, StockTransferLine, StockTransferPage, VariantInTransit }
 import {
   CancelStockTransferInput,
   CreateStockTransferInput,
+  DispatchStockTransferInput,
   ReceiveStockTransferInput,
   StockTransfersArgs,
 } from './stock-transfer.input';
@@ -44,10 +45,16 @@ export class StockTransfersResolver {
 
   @RequirePermission('inventory.transfer')
   @Mutation(() => StockTransfer, {
-    description: 'Dispatch a DRAFT transfer: its units leave the source and are in transit (staff)',
+    description:
+      'Dispatch a DRAFT transfer: its units leave the source and are in transit; serial-tracked lines name their ' +
+      'units (staff)',
   })
-  dispatchStockTransfer(@ActiveUser('id') actorId: string, @Args('id', { type: () => ID }) id: string) {
-    return this.transfers.dispatch(id, actorId);
+  dispatchStockTransfer(
+    @ActiveUser('id') actorId: string,
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input', { nullable: true }) input?: DispatchStockTransferInput,
+  ) {
+    return this.transfers.dispatch(id, actorId, input?.lines ?? []);
   }
 
   @RequirePermission('inventory.transfer')

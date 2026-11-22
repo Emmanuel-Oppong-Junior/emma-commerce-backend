@@ -82,6 +82,11 @@ input AdjustVariantStockInput {
   DAMAGED, LOST and EXPIRED only remove stock, FOUND only adds it, CORRECTION and OTHER go either way; STOCK_TAKE is refused (approved stock-takes only)
   """
   reason: StockAdjustmentReason!
+
+  """
+  One serial per unit, required when the product tracks serials (and refused otherwise): units in stock at the location for a removal, new or written-off serials for an addition
+  """
+  serials: [String!]
   variantId: ID!
 }
 
@@ -845,6 +850,11 @@ input CreateProductInput {
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
 
+  """
+  How serials are checked when the product tracks them: FREE_TEXT (default) or IMEI (15 digits, Luhn)
+  """
+  serialFormat: SerialFormat
+
   """Shelf life in days for perishable goods (1-3650)"""
   shelfLifeDays: Int
 
@@ -870,6 +880,11 @@ input CreateProductInput {
   The variants (SKUs) to sell, at least one; a product without options has one, with no optionValues
   """
   variants: [VariantFieldsInput!]!
+
+  """
+  Warranty of each serialised unit from delivery, in months (1-120); omit for no warranty
+  """
+  warrantyMonths: Int
 }
 
 input CreateProductTypeInput {
@@ -1202,6 +1217,13 @@ enum DeliveryOptions {
   SELECTED_REGIONS
 }
 
+input DispatchStockTransferInput {
+  """
+  The units sent on each line of a serial-tracked variant (required for those, refused for others)
+  """
+  lines: [TransferLineSerialsInput!]
+}
+
 """A chargeback or dispute on a captured payment"""
 type DisputeEntity {
   amount: Money!
@@ -1458,6 +1480,11 @@ type Mutation {
   archiveUser(id: String!): User!
 
   """
+  Assign picked units, by serial, to a serial-tracked order line while its shipment is PICKING or PACKED (staff). Each must be IN_STOCK at the order’s location: CONFLICT with reason SERIAL_NOT_AVAILABLE otherwise
+  """
+  assignOrderItemSerials(input: OrderItemSerialsInput!): Order!
+
+  """
   Give a user a staff role, replacing their current one (staff.manage). You may only assign a role whose permissions you all hold; only an Owner assigns or changes an Owner; the last Owner cannot be demoted. Audited.
   """
   assignStaffRole(roleKey: String!, userId: ID!): StaffMember!
@@ -1624,9 +1651,9 @@ type Mutation {
   deleteVariant(variantId: String!): Variant!
 
   """
-  Dispatch a DRAFT transfer: its units leave the source and are in transit (staff)
+  Dispatch a DRAFT transfer: its units leave the source and are in transit; serial-tracked lines name their units (staff)
   """
-  dispatchStockTransfer(id: ID!): StockTransfer!
+  dispatchStockTransfer(id: ID!, input: DispatchStockTransferInput): StockTransfer!
 
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
@@ -1806,6 +1833,11 @@ type Mutation {
 
   """Close counting on an OPEN stock-take for approval (admin only)"""
   submitStockTake(id: ID!): StockTake!
+
+  """
+  Put units assigned to an order line back in stock, before dispatch (staff)
+  """
+  unassignOrderItemSerials(input: OrderItemSerialsInput!): Order!
 
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
@@ -2100,6 +2132,11 @@ type OrderItem {
   productName: String!
   quantity: Int!
 
+  """
+  Serialised units picked for (ASSIGNED) or sold on (SOLD) this line, with their warranty
+  """
+  serials: [OrderItemSerial!]!
+
   """SKU when ordered (null on lines ordered before variants were sold)"""
   sku: String
 
@@ -2126,6 +2163,21 @@ type OrderItem {
 
   """The variant (SKU) ordered"""
   variantId: ID!
+}
+
+type OrderItemSerial {
+  serial: String!
+  soldAt: DateTime
+  status: SerialUnitStatus!
+  warrantyEndsAt: DateTime
+  warrantyStartsAt: DateTime
+}
+
+input OrderItemSerialsInput {
+  orderItemId: ID!
+
+  """Serials as typed or scanned; normalised by the product’s serial format"""
+  serials: [String!]!
 }
 
 """A tax included in an order line, as computed when the order was placed"""
@@ -2597,6 +2649,9 @@ type Product {
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
 
+  """How serials of this product are checked (P4-D.1)"""
+  serialFormat: SerialFormat!
+
   """Shelf life in days for perishable goods"""
   shelfLifeDays: Int
 
@@ -2624,6 +2679,9 @@ type Product {
 
   """The active variants (SKUs): what a customer chooses and buys"""
   variants: [Variant!]!
+
+  """Warranty of each serialised unit from delivery, in months"""
+  warrantyMonths: Int
 }
 
 type ProductConnection {
@@ -3149,6 +3207,11 @@ type Query {
   """
   salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
 
+  """
+  Find serialised units by serial (any variant): status, order, customer id, sale date and warranty (staff)
+  """
+  serialUnitLookup(serial: String!): [SerialUnitLookup!]!
+
   """Get a shipping zone by ID (admin only)"""
   shippingZone(id: ID!): ShippingZoneEntity!
 
@@ -3434,6 +3497,11 @@ input ReceivedTransferLineInput {
 
   """Units that arrived, 0 to the quantity dispatched"""
   receivedQuantity: Int!
+
+  """
+  Serial-tracked variants: the units that arrived (one per unit received); the rest of the line is written off
+  """
+  serials: [String!]
   variantId: ID!
 }
 
@@ -3697,6 +3765,11 @@ input RestockVariantInput {
   Goods returned under this return request: recorded as RETURN_RESTOCK instead of RECEIPT
   """
   returnRequestId: ID
+
+  """
+  One serial per unit, required when the product tracks serials (and refused otherwise): new serials for a receipt, units sold on the return's order for a return restock
+  """
+  serials: [String!]
   variantId: ID!
 }
 
@@ -3779,6 +3852,65 @@ type SalesReport {
   """Refunds processed in the period against accepted payments"""
   refunds: Money!
   totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
+}
+
+"""
+How serial numbers are checked: FREE_TEXT (1-64 letters, digits, - _ . /) or IMEI (15 digits, Luhn)
+"""
+enum SerialFormat {
+  FREE_TEXT
+  IMEI
+}
+
+type SerialUnit {
+  id: ID!
+
+  """Where the unit is, while IN_STOCK or ASSIGNED"""
+  locationId: ID
+
+  """The order line, while ASSIGNED or SOLD"""
+  orderItemId: ID
+  receivedAt: DateTime!
+
+  """Stored form: upper case, no spaces (an IMEI also without dashes)"""
+  serial: String!
+  soldAt: DateTime
+  status: SerialUnitStatus!
+  variantId: ID!
+  warrantyEndsAt: DateTime
+
+  """Delivery date, when the product has a warranty"""
+  warrantyStartsAt: DateTime
+}
+
+type SerialUnitLookup {
+  """The customer's user id on that order"""
+  customerId: ID
+
+  """The order it was assigned to or sold on"""
+  orderId: ID
+  orderNumber: Int
+  productName: String!
+  sku: String!
+  unit: SerialUnit!
+}
+
+"""Where a serialised unit is"""
+enum SerialUnitStatus {
+  """Picked for an order line; still on the shelf until dispatch"""
+  ASSIGNED
+
+  """On the shelf at its location"""
+  IN_STOCK
+
+  """On a stock transfer between locations"""
+  IN_TRANSIT
+
+  """Dispatched to the customer (or waiting at the pickup counter)"""
+  SOLD
+
+  """Adjusted away, or missing when its transfer was received"""
+  WRITTEN_OFF
 }
 
 """The whole Paystack config; it replaces the current one"""
@@ -4374,6 +4506,12 @@ type TopProduct {
   totalRevenue: Money!
 }
 
+input TransferLineSerialsInput {
+  """One serial per unit sent, each in stock at the source"""
+  serials: [String!]!
+  variantId: ID!
+}
+
 """Unit the product is sold in"""
 enum UnitOfMeasure {
   EACH
@@ -4587,6 +4725,11 @@ input UpdateProductInput {
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
 
+  """
+  How serials are checked when the product tracks them: FREE_TEXT (default) or IMEI (15 digits, Luhn)
+  """
+  serialFormat: SerialFormat
+
   """Shelf life in days for perishable goods (1-3650)"""
   shelfLifeDays: Int
 
@@ -4607,6 +4750,11 @@ input UpdateProductInput {
 
   """Defaults to EACH"""
   unitOfMeasure: UnitOfMeasure
+
+  """
+  Warranty of each serialised unit from delivery, in months (1-120); omit for no warranty
+  """
+  warrantyMonths: Int
 }
 
 input UpdateProductTypeInput {

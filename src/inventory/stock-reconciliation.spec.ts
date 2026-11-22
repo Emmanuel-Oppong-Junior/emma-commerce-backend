@@ -1,4 +1,10 @@
-import { countByKind, LedgerTotals, StockMismatchKind, stockMismatches } from './stock-reconciliation';
+import {
+  countByKind,
+  LedgerTotals,
+  serialUnitsMismatch,
+  StockMismatchKind,
+  stockMismatches,
+} from './stock-reconciliation';
 
 const balanced: LedgerTotals = {
   variantId: 'v1',
@@ -41,5 +47,16 @@ describe('stock reconciliation', () => {
     ];
 
     expect(countByKind(mismatches)).toEqual({ ON_HAND: 2, RESERVED_MOVEMENTS: 0, ACTIVE_RESERVATIONS: 0 });
+  });
+
+  it('reports a serial-tracked variant whose units on the shelf differ from what the ledger expects there', () => {
+    expect(serialUnitsMismatch({ variantId: 'v1', locationId: 'loc', expected: 3, units: 3 })).toBeNull();
+    expect(serialUnitsMismatch({ variantId: 'v1', locationId: 'loc', expected: 3, units: 2 })).toEqual({
+      kind: 'SERIAL_UNITS',
+      variantId: 'v1',
+      locationId: 'loc',
+      expected: 3,
+      actual: 2,
+    });
   });
 });

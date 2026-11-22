@@ -17,6 +17,7 @@ import { StoreModule } from '../store/store.module';
 import { CommonsModule } from '../commons/commons.module';
 import { ProductTypesModule } from '../product-types/product-types.module';
 import { VariantModule } from '../variant/variant.module';
+import { InventoryModule } from '../inventory/inventory.module';
 import {
   BrandProductsResolver,
   CategoryProductsResolver,
@@ -48,6 +49,7 @@ import {
     CommonsModule,
     ProductTypesModule,
     VariantModule,
+    InventoryModule,
   ],
   exports: [ProductsLoader],
 })
