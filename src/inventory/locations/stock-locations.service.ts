@@ -111,8 +111,8 @@ export class StockLocationsService {
   }
 
   /**
-   * Deletes a location that never held stock. A location with stock history (movements, reservations, orders) is
-   * kept for the ledger: deactivate it instead.
+   * Deletes a location that never held stock. A location with stock history (movements, reservations, orders,
+   * transfers) is kept for the ledger: deactivate it instead.
    * @throws ConflictException for the default location or one with history.
    */
   async delete(id: string, actorId: string): Promise<StockLocation> {

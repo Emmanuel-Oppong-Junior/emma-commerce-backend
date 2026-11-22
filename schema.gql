@@ -198,6 +198,10 @@ type Brand {
   updatedAt: DateTime!
 }
 
+input CancelStockTransferInput {
+  reason: String
+}
+
 type Cart {
   """Timestamp when the cart was created"""
   createdAt: DateTime!
@@ -1006,6 +1010,15 @@ input CreateStockLocationInput {
   type: StockLocationType
 }
 
+input CreateStockTransferInput {
+  fromLocationId: ID!
+
+  """1-100 lines, one per variant"""
+  lines: [StockTransferLineInput!]!
+  note: String
+  toLocationId: ID!
+}
+
 input CreateSubCategoryInput {
   """The ID of the parent category"""
   categoryId: String!
@@ -1442,6 +1455,9 @@ type Mutation {
   """Cancels the authenticated user's own order and restores stock"""
   cancelOrder(orderId: String!, reason: String): Order!
 
+  """Cancel a DRAFT transfer; nothing has moved yet (staff)"""
+  cancelStockTransfer(id: ID!, input: CancelStockTransferInput): StockTransfer!
+
   """Change the password of the active user"""
   changeUserPassword(input: ChangeUserPasswordInput!): User!
 
@@ -1513,6 +1529,9 @@ type Mutation {
 
   """Create a stock location (staff)"""
   createStockLocation(input: CreateStockLocationInput!): StockLocation!
+
+  """Create a DRAFT transfer between two active locations (staff)"""
+  createStockTransfer(input: CreateStockTransferInput!): StockTransfer!
 
   """Creates a new subcategory (admin only)"""
   createSubCategory(
@@ -1591,6 +1610,11 @@ type Mutation {
   """
   deleteVariant(variantId: String!): Variant!
 
+  """
+  Dispatch a DRAFT transfer: its units leave the source and are in transit (staff)
+  """
+  dispatchStockTransfer(id: ID!): StockTransfer!
+
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
   permanentlyDeleteProduct(productId: String!): Product!
@@ -1602,6 +1626,11 @@ type Mutation {
 
   """Process a refund for an approved return (admin only)"""
   processRefund(returnRequestId: ID!): ReturnRequestEntity!
+
+  """
+  Receive a dispatched transfer at the destination, recording any shortfall per line (staff)
+  """
+  receiveStockTransfer(id: ID!, input: ReceiveStockTransferInput): StockTransfer!
 
   """
   Record cash a rider handed in, covering some of the rider's unremitted collections. A short or over amount needs a note (BAD_REQUEST reason DISCREPANCY_NOTE_REQUIRED); a collection already remitted gives CONFLICT (COLLECTION_ALREADY_REMITTED). Immutable once recorded; audited
@@ -3097,6 +3126,11 @@ type Query {
   """System and custom staff roles with their permissions (staff.view)"""
   staffRoles: [StaffRole!]!
 
+  """
+  Units dispatched and not yet received, per variant; only variants with some in transit (staff)
+  """
+  stockInTransit(variantIds: [ID!]): [VariantInTransit!]!
+
   """A stock location (staff)"""
   stockLocation(id: ID!): StockLocation!
 
@@ -3118,6 +3152,27 @@ type Query {
     reason: StockMovementReason
     variantId: ID
   ): StockMovementPage!
+
+  """A stock transfer (staff)"""
+  stockTransfer(id: ID!): StockTransfer!
+
+  """
+  Stock transfers, newest first, optionally by status, location or variant (staff)
+  """
+  stockTransfers(
+    """Id of the last transfer of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+
+    """Transfers leaving or arriving at this location"""
+    locationId: ID
+    status: StockTransferStatus
+
+    """Transfers with a line of this variant"""
+    variantId: ID
+  ): StockTransferPage!
 
   """
   The store settings: names, tax registration, currency, contact (public)
@@ -3296,6 +3351,20 @@ type QuoteTaxLine {
 
   """The tax rate it comes from"""
   taxId: ID!
+}
+
+input ReceiveStockTransferInput {
+  """Only lines that arrived short; every other line is received in full"""
+  lines: [ReceivedTransferLineInput!]
+}
+
+input ReceivedTransferLineInput {
+  """Required when fewer units arrived than were dispatched"""
+  note: String
+
+  """Units that arrived, 0 to the quantity dispatched"""
+  receivedQuantity: Int!
+  variantId: ID!
 }
 
 input RecordCashRemittanceInput {
@@ -3892,8 +3961,79 @@ enum StockMovementReason {
   """
   SALE
 
-  """Moved between locations (not used yet)"""
+  """
+  Moved between locations: negative at the source on dispatch, positive at the destination on receipt
+  """
   TRANSFER
+}
+
+"""
+Stock moved from one location to another in two steps: dispatch, then receipt (staff)
+"""
+type StockTransfer {
+  cancelledAt: DateTime
+  cancelledById: ID
+  createdAt: DateTime!
+  createdById: ID!
+  dispatchedAt: DateTime
+  dispatchedById: ID
+  fromLocationId: ID!
+  id: ID!
+  lines: [StockTransferLine!]!
+  note: String
+  receivedAt: DateTime
+  receivedById: ID
+  status: StockTransferStatus!
+  toLocationId: ID!
+  updatedAt: DateTime!
+}
+
+type StockTransferLine {
+  id: ID!
+
+  """Units dispatched (or to dispatch)"""
+  quantity: Int!
+
+  """Units that arrived; null until received"""
+  receivedQuantity: Int
+
+  """quantity - receivedQuantity once received: units lost on the way"""
+  variance: Int
+
+  """Why units are missing"""
+  varianceNote: String
+  variantId: ID!
+}
+
+input StockTransferLineInput {
+  """Units to send, at least 1"""
+  quantity: Int!
+  variantId: ID!
+}
+
+type StockTransferPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [StockTransfer!]!
+  totalCount: Int!
+}
+
+"""Where a stock transfer between locations stands (P4-A.2)"""
+enum StockTransferStatus {
+  """Cancelled before dispatch; no stock moved"""
+  CANCELLED
+
+  """Stock has left the source and is in transit on the lines"""
+  DISPATCHED
+
+  """Created; no stock has moved. Can be dispatched or cancelled"""
+  DRAFT
+
+  """Received with a shortfall on some lines, recorded as their variance"""
+  PARTIALLY_RECEIVED
+
+  """Every unit arrived at the destination"""
+  RECEIVED
 }
 
 """The settings of the store this deployment serves"""
@@ -4653,6 +4793,14 @@ input VariantFieldsInput {
   sku: String
   weightGrams: Int
   widthMm: Int
+}
+
+"""
+Units of a variant dispatched and not yet received, over every open transfer
+"""
+type VariantInTransit {
+  quantity: Int!
+  variantId: ID!
 }
 
 """

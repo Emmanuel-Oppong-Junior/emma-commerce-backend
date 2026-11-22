@@ -18,6 +18,7 @@ Mutation archiveProduct                  permission: catalog.product.write
 Mutation archiveUser                     permission: user.manage
 Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
+Mutation cancelStockTransfer             permission: inventory.transfer
 Mutation changeUserPassword              authenticated
 Mutation clearCart                       authenticated
 Mutation clearOrderReviewFlags           permission: order.manage
@@ -40,6 +41,7 @@ Mutation createReview                    customer only
 Mutation createShippingZone              permission: shipping.manage
 Mutation createStaffRole                 permission: staff.manage; step-up
 Mutation createStockLocation             permission: inventory.location.manage
+Mutation createStockTransfer             permission: inventory.transfer
 Mutation createSubCategory               permission: catalog.taxonomy.write
 Mutation createTag                       permission: catalog.taxonomy.write
 Mutation createTax                       permission: tax.manage; step-up
@@ -61,10 +63,12 @@ Mutation deleteStockLocation             permission: inventory.location.manage
 Mutation deleteTag                       permission: catalog.taxonomy.write
 Mutation deleteTax                       permission: tax.manage; step-up
 Mutation deleteVariant                   permission: catalog.product.write
+Mutation dispatchStockTransfer           permission: inventory.transfer
 Mutation forgotPassword                  public
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
 Mutation processRefund                   permission: order.refund; step-up
+Mutation receiveStockTransfer            permission: inventory.transfer
 Mutation recordCashRemittance            permission: cod.cash.manage
 Mutation recordCodPayment                permission: payment.record
 Mutation recordDispute                   permission: payment.dispute.manage
@@ -192,9 +196,12 @@ Query shippingZones                      permission: shipping.manage
 Query staffMembers                       permission: staff.view
 Query staffPermissions                   permission: staff.view
 Query staffRoles                         permission: staff.view
+Query stockInTransit                     permission: inventory.view
 Query stockLocation                      permission: inventory.view
 Query stockLocations                     permission: inventory.view
 Query stockMovements                     permission: inventory.view
+Query stockTransfer                      permission: inventory.view
+Query stockTransfers                     permission: inventory.view
 Query storeSettings                      public
 Query subCategories                      authenticated
 Query subCategory                        authenticated

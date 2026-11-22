@@ -162,6 +162,40 @@ describe('StockLedgerService', () => {
     });
   });
 
+  describe('transfers', () => {
+    it('takes transferred units off available stock at the source as a negative TRANSFER', async () => {
+      await service.transferOut(tx, 'var1', 'loc_a', 3, { refType: 'StockTransfer', refId: 't1' });
+
+      expect(repository.ensureLevel).toHaveBeenCalledWith(tx, 'var1', 'loc_a');
+      expect(repository.applyEffect).toHaveBeenCalledWith(tx, 'var1', 'loc_a', {
+        onHandDelta: -3,
+        reservedDelta: 0,
+        reason: 'TRANSFER',
+      });
+    });
+
+    it('writes nothing when the source has too few units available', async () => {
+      repository.applyEffect.mockResolvedValue(null);
+
+      await expect(service.transferOut(tx, 'var1', 'loc_a', 3, {})).resolves.toBeNull();
+      expect(repository.insertMovement).not.toHaveBeenCalled();
+    });
+
+    it('adds received units at the destination as a positive TRANSFER', async () => {
+      await service.transferIn(tx, 'var1', 'loc_b', 3, { refType: 'StockTransfer', refId: 't1' });
+
+      expect(repository.insertMovement).toHaveBeenCalledWith(tx, {
+        variantId: 'var1',
+        locationId: 'loc_b',
+        onHandDelta: 3,
+        reservedDelta: 0,
+        reason: 'TRANSFER',
+        refType: 'StockTransfer',
+        refId: 't1',
+      });
+    });
+  });
+
   describe('low-stock event', () => {
     it('records inventory.low_stock.v1 once when available stock falls to the threshold', async () => {
       repository.applyEffect.mockResolvedValue({ onHand: 10, reserved: 5 });

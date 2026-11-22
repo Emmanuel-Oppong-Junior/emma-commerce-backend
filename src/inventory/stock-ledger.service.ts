@@ -2,7 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, StockMovement, StockMovementReason, StockReservationStatus } from '../generated/prisma/client';
 import { OutboxService } from '../outbox/outbox.service';
 import { StockLedgerRepository } from './stock-ledger.repository';
-import { consumeEffect, crossesLowStock, releaseEffect, reserveEffect, StockEffect } from './stock';
+import {
+  consumeEffect,
+  crossesLowStock,
+  releaseEffect,
+  reserveEffect,
+  StockEffect,
+  transferInEffect,
+  transferOutEffect,
+} from './stock';
 
 type Tx = Prisma.TransactionClient;
 
@@ -65,6 +73,35 @@ export class StockLedgerService {
       { onHandDelta: delta, reservedDelta: 0, reason: StockMovementReason.ADJUSTMENT },
       source,
     );
+  }
+
+  /**
+   * Takes `quantity` units off the location's available stock for a transfer (TRANSFER, negative); null (nothing
+   * written) when fewer are available, so units reserved for orders never leave.
+   */
+  async transferOut(
+    tx: Tx,
+    variantId: string,
+    locationId: string,
+    quantity: number,
+    source: MovementSource,
+  ): Promise<StockMovement | null> {
+    await this.repository.ensureLevel(tx, variantId, locationId);
+    return this.move(tx, variantId, locationId, transferOutEffect(quantity), source);
+  }
+
+  /** Adds `quantity` units that arrived at the location on a transfer (TRANSFER, positive). */
+  async transferIn(
+    tx: Tx,
+    variantId: string,
+    locationId: string,
+    quantity: number,
+    source: MovementSource,
+  ): Promise<StockMovement> {
+    await this.repository.ensureLevel(tx, variantId, locationId);
+    const movement = await this.move(tx, variantId, locationId, transferInEffect(quantity), source);
+    if (!movement) throw new Error(`Stock level of variant "${variantId}" refused a transfer receipt of ${quantity}`);
+    return movement;
   }
 
   /** Units of the variant that can still be sold or adjusted away at the location (default). */

@@ -12,7 +12,10 @@ registerEnumType(StockMovementReason, {
       description: 'Goods back on hand: a return restocked, or a paid order cancelled before dispatch',
     },
     ADJUSTMENT: { description: 'Manual correction with a reason (damage, loss, stock count)' },
-    TRANSFER: { description: 'Moved between locations (not used yet)' },
+    TRANSFER: {
+      description:
+        'Moved between locations: negative at the source on dispatch, positive at the destination on receipt',
+    },
     RESERVE: { description: 'Units held for an order line; on hand, no longer available' },
     RELEASE: { description: 'A hold given back because the order was cancelled or expired' },
   },

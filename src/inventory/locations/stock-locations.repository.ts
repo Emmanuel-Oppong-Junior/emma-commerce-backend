@@ -54,12 +54,13 @@ export class StockLocationsRepository {
 
   /** Whether stock ever moved at the location or an order or transfer refers to it. */
   async hasHistory(db: Db, id: string): Promise<boolean> {
-    const [movements, reservations, orders] = await Promise.all([
+    const [movements, reservations, orders, transfers] = await Promise.all([
       db.stockMovement.count({ where: { locationId: id } }),
       db.stockReservation.count({ where: { locationId: id } }),
       db.order.count({ where: { stockLocationId: id } }),
+      db.stockTransfer.count({ where: { OR: [{ fromLocationId: id }, { toLocationId: id }] } }),
     ]);
-    return movements + reservations + orders > 0;
+    return movements + reservations + orders + transfers > 0;
   }
 
   /** Removes the location with its (empty) stock levels; fulfilment list entries go with it. */

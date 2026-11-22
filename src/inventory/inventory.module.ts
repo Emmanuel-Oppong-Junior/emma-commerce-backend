@@ -13,6 +13,9 @@ import {
   ShippingZoneFulfilmentResolver,
   StockLocationsResolver,
 } from './locations/stock-locations.resolver';
+import { StockTransfersRepository } from './transfers/stock-transfers.repository';
+import { StockTransfersService } from './transfers/stock-transfers.service';
+import { StockTransferLineResolver, StockTransfersResolver } from './transfers/stock-transfers.resolver';
 
 @Module({
   imports: [CommonsModule, OutboxModule],
@@ -28,6 +31,10 @@ import {
     StockLocationsResolver,
     ShippingZoneFulfilmentResolver,
     PickupLocationFulfilmentResolver,
+    StockTransfersRepository,
+    StockTransfersService,
+    StockTransfersResolver,
+    StockTransferLineResolver,
   ],
   exports: [
     InventoryService,
