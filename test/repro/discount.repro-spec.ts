@@ -128,6 +128,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       optionValues: {},
       price: new Prisma.Decimal(500),
       stockLevels: [{ onHand: 5, reserved: 0, locationId: 'loc_main' }],
+      lots: [],
       isActive: true,
       product: {
         id: 'product-1',
