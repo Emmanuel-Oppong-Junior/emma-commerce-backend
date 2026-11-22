@@ -9,6 +9,7 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'catalog.media.upload',
   'inventory.view',
   'inventory.adjust',
+  'inventory.stocktake.approve',
   'order.view',
   'order.manage',
   'order.fulfil',

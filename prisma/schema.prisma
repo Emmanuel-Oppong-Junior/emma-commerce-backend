@@ -222,6 +222,7 @@ model Variant {
   stockReservations StockReservation[]
   priceChanges      PriceChange[]
   priceListEntries  PriceListEntry[]
+  stockTakeLines    StockTakeLine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1207,6 +1208,7 @@ model StockLocation {
   updatedAt    DateTime           @updatedAt
   store        Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
   levels       StockLevel[]
+  stockTakes   StockTake[]
   reservations StockReservation[]
   movements    StockMovement[]
 
@@ -1308,6 +1310,64 @@ model StockMovement {
   @@index([locationId])
   @@index([refType, refId])
   @@index([createdAt])
+}
+
+/// OPEN (counting) -> SUBMITTED (counts closed) -> APPROVED (variances posted), or CANCELLED before approval (P4-B.1).
+enum StockTakeStatus {
+  OPEN
+  SUBMITTED
+  APPROVED
+  CANCELLED
+}
+
+/// A stock count session at one location (P4-B.1): lines for a category's variants, a list of variants, or every
+/// variant. Approval posts each non-zero variance as an ADJUSTMENT (STOCK_TAKE) referencing the session. At most one
+/// OPEN or SUBMITTED stock-take per location.
+model StockTake {
+  id            String          @id @default(cuid())
+  locationId    String
+  status        StockTakeStatus @default(OPEN)
+  /// The category whose variants were counted; null for a list of variants or a full count
+  categoryId    String?
+  note          String?
+  openedById    String
+  openedAt      DateTime        @default(now())
+  submittedById String?
+  submittedAt   DateTime?
+  approvedById  String?
+  approvedAt    DateTime?
+  cancelledById String?
+  cancelledAt   DateTime?
+  cancelReason  String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  location      StockLocation   @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  lines         StockTakeLine[]
+
+  @@unique([locationId], map: "StockTake_one_open_per_location", where: raw("status = ANY (ARRAY['OPEN'::\"StockTakeStatus\", 'SUBMITTED'::\"StockTakeStatus\"])"))
+  @@index([status, openedAt])
+}
+
+/// One variant to count. Expected quantities are the units that should be on the shelf: onHand plus units sold but not
+/// yet dispatched. expectedAtOpen is read when the session opens; expectedQuantity when the count is recorded, so
+/// stock that moved during the count is not mistaken for a variance. variance = countedQuantity - expectedQuantity.
+model StockTakeLine {
+  id               String    @id @default(cuid())
+  stockTakeId      String
+  variantId        String
+  expectedAtOpen   Int
+  expectedQuantity Int?
+  countedQuantity  Int?
+  variance         Int?
+  countedById      String?
+  countedAt        DateTime?
+  /// The STOCK_TAKE adjustment posted on approval (none for a zero variance)
+  movementId       String?
+  stockTake        StockTake @relation(fields: [stockTakeId], references: [id], onDelete: Cascade)
+  variant          Variant   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([stockTakeId, variantId])
+  @@index([variantId])
 }
 
 enum PriceChangeField {

@@ -5,6 +5,7 @@ export const PERMISSION_CATALOGUE = {
   'catalog.media.upload': 'Upload catalogue images',
   'inventory.view': 'Read stock levels and the stock ledger',
   'inventory.adjust': 'Restock and adjust product and variant stock',
+  'inventory.stocktake.approve': 'Review stock-take variances, approve them into stock or cancel a stock-take',
   'order.view': 'Read every order',
   'order.manage': 'Cancel and delete orders',
   'order.fulfil': 'Move shipments through picking, packing, dispatch and delivery, and set carrier and tracking',

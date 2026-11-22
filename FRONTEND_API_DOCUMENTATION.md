@@ -2409,6 +2409,51 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 
 ---
 
+#### Stock-takes
+
+A **stock-take** (P4-B.1) is a count session at one stock location. Counters (`inventory.adjust`) open it, enter what they find on the shelf and submit it; an approver (`inventory.stocktake.approve`, Owner and Manager) reviews the variances and approves them into stock, or cancels.
+
+- **Status** (`StockTakeStatus`): `OPEN` (counting) → `SUBMITTED` (counts closed) → `APPROVED` (variances posted); `OPEN` or `SUBMITTED` → `CANCELLED` (no stock moves). Anything else is `CONFLICT`. At most one `OPEN` or `SUBMITTED` stock-take per location.
+- **Scope**: a category's variants (`categoryId`), a list of variants (`variantIds`, up to 500) or, with neither, every variant. A category or full count covers active variants plus archived ones that still have stock at the location.
+- **Blind counts**: counters see SKUs, product names and their own counts; the expected quantities and variances (`StockTakeLine.expectedAtOpen`, `expectedQuantity`, `variance`, and `stockTakeVarianceReport`) need `inventory.stocktake.approve` (`FORBIDDEN` otherwise).
+- **Expected quantity** = units that should be on the shelf: on hand at the location **plus units already sold but not yet dispatched** (paid online orders whose shipment is still `PENDING`, `PICKING` or `PACKED`; goods at the pickup counter or out for delivery count as gone). `expectedAtOpen` is read when the session opens; `expectedQuantity` is read again **when each line is counted**, so sales, receipts and adjustments that happen between opening and counting are not variances. Counting a line again replaces the count and re-reads its expected quantity.
+- **Variance** = `countedQuantity - expectedQuantity` (negative = shortage). Approval posts each non-zero variance as **one `ADJUSTMENT` stock movement with `adjustmentReason: STOCK_TAKE`** (`refType: "StockTake"`, `refId`: the stock-take id), all in one transaction. Variances are deltas, so stock that moves after a line was counted is kept. Uncounted lines are left as they are. A second approval gets `CONFLICT` and posts nothing.
+- A shortage that would take on-hand stock below the units reserved for open orders refuses the whole approval: `CONFLICT` + `reason: STOCK_TAKE_BELOW_RESERVED` (recount, or cancel the stock-take); nothing is posted and the session stays `SUBMITTED`.
+- Every open, count batch, submit, approve (with the posted movement ids) and cancel writes an audit entry (entity `StockTake`).
+
+```typescript
+StockTake {
+  id: string; locationId: string; status: StockTakeStatus;
+  categoryId?: string; note?: string;
+  openedById: string; openedAt: DateTime;
+  submittedById?: string; submittedAt?: DateTime;
+  approvedById?: string; approvedAt?: DateTime;
+  cancelledById?: string; cancelledAt?: DateTime; cancelReason?: string;
+  lineCount: number;      // variants in the session
+  countedCount: number;   // variants counted so far
+}
+StockTakeLine {
+  id: string; stockTakeId: string; variantId: string; sku: string; productName: string;
+  countedQuantity?: number; countedById?: string; countedAt?: DateTime;
+  expectedAtOpen: number;     // inventory.stocktake.approve only
+  expectedQuantity?: number;  // inventory.stocktake.approve only; null until counted
+  variance?: number;          // inventory.stocktake.approve only; null until counted
+  movementId?: string;        // the STOCK_TAKE movement posted on approval
+}
+```
+
+- `openStockTake(input: { locationId?, categoryId?, variantIds?: [ID!], note? })` → `StockTake!` (`inventory.adjust`). `locationId` defaults to the store's default location. Errors: `BAD_REQUEST` (both `categoryId` and `variantIds`; "There are no variants to count in this scope"), `NOT_FOUND` (location, category, variants), `CONFLICT` + `reason: STOCK_TAKE_ALREADY_OPEN`.
+- `recordStockTakeCounts(input: { stockTakeId, counts: [{ variantId, countedQuantity }] })` → `[StockTakeLine!]!` (`inventory.adjust`; 1-200 counts per call, `countedQuantity` 0-1,000,000). Errors: `NOT_FOUND`, `CONFLICT` (not `OPEN`), `BAD_REQUEST` (a variant twice, or not in the stock-take).
+- `submitStockTake(id)` → `StockTake!` (`inventory.adjust`). `BAD_REQUEST` when nothing was counted; `CONFLICT` when not `OPEN`.
+- `approveStockTake(id)` → `StockTake!` (`inventory.stocktake.approve`). `CONFLICT` when not `SUBMITTED` or `STOCK_TAKE_BELOW_RESERVED`.
+- `cancelStockTake(id, reason?: String)` → `StockTake!` (`inventory.stocktake.approve`; reason up to 500 characters). `CONFLICT` once approved or cancelled.
+- `stockTakes(status?, locationId?, first = 20 (1-200), after?)` → `StockTakePage! { nodes, totalCount, hasNextPage }`, newest first (`inventory.view`).
+- `stockTake(id)` → `StockTake!` (`inventory.view`).
+- `stockTakeLines(stockTakeId, counted?: Boolean, first = 50 (1-200), after?)` → `StockTakeLinePage!`, in SKU order (`inventory.view`; `counted: false` lists what is left to count).
+- `stockTakeVarianceReport(id)` → `StockTakeVarianceReport! { stockTake, lines, totals }` (`inventory.stocktake.approve`): each counted line with `expectedAtOpen`, `changeSinceOpen` (how the expected quantity moved before the count), `expectedQuantity`, `countedQuantity`, `variance`, `unitPrice` and `varianceValue` (`Money`, at the variant's **current price**; cost is not tracked yet; null without a price); `totals`: `lineCount`, `countedCount`, `uncountedCount`, `linesWithVariance`, `shortageUnits`, `surplusUnits`, `netVarianceUnits`, `shortageValue`, `surplusValue`, `netVarianceValue`.
+
+---
+
 ### 2.16 Returns
 
 ---
@@ -3213,8 +3258,9 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
-| `inventory.view` | `stockMovements`; the `Variant.onHand` and `Variant.reserved` fields |
-| `inventory.adjust` | `restockVariant`, `adjustVariantStock` |
+| `inventory.view` | `stockMovements`, `stockTakes`, `stockTake`, `stockTakeLines` (without expected quantities); the `Variant.onHand` and `Variant.reserved` fields |
+| `inventory.adjust` | `restockVariant`, `adjustVariantStock`, `openStockTake`, `recordStockTakeCounts`, `submitStockTake` |
+| `inventory.stocktake.approve` | `approveStockTake`, `cancelStockTake`, `stockTakeVarianceReport`; the `StockTakeLine.expectedAtOpen`, `expectedQuantity` and `variance` fields (P4-B.1; held by Owner and Manager) |
 | `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
 | `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |
 | `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |
