@@ -5,7 +5,7 @@
 **Last checkpoint:** 2026-11-22 · **Current phase:** Phase 4 — Inventory (started 2026-11-22, Emmanuel; 0/7); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-Two lanes in worktrees (agents), from the commit that records this start:
+Two lanes in worktrees (agents), from `1f94ff5`:
 - **P4-A.1→A.2 — Multi-location stock + fulfilment rule, then transfers** (ADR-0008) · branch `feat/p4-a-locations` · DB `emma_wt_locations_test`, Redis DB 13 · **State:** in progress
 - **P4-B.1–B.2 — Adjustments + stock-take, low-stock staff digest** (ADR-0008, ADR-0015) · branch `feat/p4-b-stockops` · DB `emma_wt_stockops_test`, Redis DB 12 · **State:** in progress
   - Decisions (Emmanuel, 2026-11-22): one fulfilment location per order, chosen by priority per delivery zone / pickup point (default: the store's default location), the first that can fill every line; customers see availability summed over the locations that can serve them; transfers two-step with in-transit stock and partial receipt as variance; stock-take as count sessions (expected hidden while counting) with Manager approval posting ADJUSTMENT/STOCK_TAKE movements, ad-hoc adjustments with fixed reasons (+ note); low-stock alerts as an email digest per location to staff with a new `inventory.alerts` permission, deduplicated, no scan job.
