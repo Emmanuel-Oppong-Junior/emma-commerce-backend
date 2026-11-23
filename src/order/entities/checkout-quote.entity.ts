@@ -8,6 +8,7 @@ import { CurrencyEnum } from '../../products/enums/product.enum';
 import { OrderAdjustmentTypeEnum } from '../enums/order.enum';
 import { CashOnDeliveryAvailability } from '../../cod/cod-risk.entities';
 import { DeliveryServiceLevel } from '../../shipping-zones/enums/delivery.enums';
+import { AvailableDeliverySlot } from '../../shipping-zones/slots/delivery-slots.types';
 
 @ObjectType({ description: "A service level the address's zone offers, with its fee for this cart" })
 export class DeliveryOption {
@@ -40,6 +41,9 @@ export class QuoteDelivery extends DeliveryOption {
 
   @Field(() => Int, { description: 'The cart weight priced: variant weight x quantity (no weight counts 0 g)' })
   weightGrams: number;
+
+  @Field(() => AvailableDeliverySlot, { nullable: true, description: 'The delivery slot booked, when one was chosen' })
+  slot: AvailableDeliverySlot | null;
 }
 
 @ObjectType({ description: 'A tax included in a quote line' })
@@ -231,4 +235,14 @@ export class CheckoutQuote {
       "DELIVERY: every service level the address's zone offers, with its fee for this cart; empty for PICKUP",
   })
   deliveryOptions: DeliveryOption[];
+
+  @Field(() => [AvailableDeliverySlot], {
+    description:
+      "STANDARD delivery: the zone's delivery slots of the next 7 days (Africa/Accra), full ones with remaining 0; " +
+      'empty for EXPRESS, PICKUP and zones without slots',
+  })
+  deliverySlots: AvailableDeliverySlot[];
+
+  @Field({ description: 'createOrder needs a deliverySlot (STANDARD delivery to a zone with slots)' })
+  deliverySlotRequired: boolean;
 }

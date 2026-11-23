@@ -179,6 +179,22 @@ type AuthEntity {
   refreshToken: String!
 }
 
+"""A slot checkout can book"""
+type AvailableDeliverySlot {
+  """YYYY-MM-DD"""
+  date: String!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+
+  """Places left; 0 when full"""
+  remaining: Int!
+  slotId: ID!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
+}
+
 type AvailableOnlinePaymentMethod {
   method: OnlinePaymentMethod!
   provider: OnlinePaymentProvider!
@@ -196,6 +212,12 @@ type AvailablePaymentMethods {
   Online methods on offer (ONLINE orders need at least one); pass the method to POST /payment/initialize
   """
   online: [AvailableOnlinePaymentMethod!]!
+}
+
+type BookedOrder {
+  orderId: ID!
+  orderNumber: Int!
+  status: OrderStatus!
 }
 
 type Brand {
@@ -404,6 +426,16 @@ type CheckoutQuote {
   deliveryOptions: [DeliveryOption!]!
 
   """
+  createOrder needs a deliverySlot (STANDARD delivery to a zone with slots)
+  """
+  deliverySlotRequired: Boolean!
+
+  """
+  STANDARD delivery: the zone's delivery slots of the next 7 days (Africa/Accra), full ones with remaining 0; empty for EXPRESS, PICKUP and zones without slots
+  """
+  deliverySlots: [AvailableDeliverySlot!]!
+
+  """
   Item and cart promotions (merchandise only; shipping ones are in shippingTotal)
   """
   discountTotal: Money!
@@ -445,6 +477,11 @@ What checkout prices the cart for: the fulfilment, an optional coupon and how th
 input CheckoutQuoteInput {
   """Optional coupon code to apply to the order"""
   couponCode: String
+
+  """
+  STANDARD delivery to a zone with slots (deliverySlotRequired): one of deliverySlots. BAD_REQUEST with reason DELIVERY_SLOT_UNAVAILABLE when it cannot be booked, CONFLICT with reason SLOT_FULL when it has no place left
+  """
+  deliverySlot: DeliverySlotChoiceInput
 
   """
   Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
@@ -790,6 +827,21 @@ input CreateCustomerGroupInput {
   name: String!
 }
 
+"""
+A weekly delivery window; times are HH:MM in Africa/Accra (= UTC), "24:00" ends the day
+"""
+input CreateDeliverySlotInput {
+  """Orders per date"""
+  capacity: Int!
+
+  """Bookable until this many hours before start"""
+  cutoffHours: Int = 0
+  endTime: String!
+  isActive: Boolean = true
+  startTime: String!
+  weekday: Weekday!
+}
+
 input CreateOrderInput {
   """Contact email for order notifications"""
   contactEmail: String!
@@ -799,6 +851,11 @@ input CreateOrderInput {
 
   """Optional coupon code to apply to the order"""
   couponCode: String
+
+  """
+  STANDARD delivery to a zone with slots (deliverySlotRequired): one of deliverySlots. BAD_REQUEST with reason DELIVERY_SLOT_UNAVAILABLE when it cannot be booked, CONFLICT with reason SLOT_FULL when it has no place left
+  """
+  deliverySlot: DeliverySlotChoiceInput
 
   """
   Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
@@ -1333,6 +1390,39 @@ An exact decimal number as a string, e.g. "12.50" or "0.15": digits with an opti
 """
 scalar Decimal
 
+"""A slot booked on a date, with the orders holding its places"""
+type DeliveryBooking {
+  booked: Int!
+  capacity: Int!
+
+  """YYYY-MM-DD"""
+  date: String!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+  orders: [BookedOrder!]!
+  slotId: ID!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
+  zoneId: ID!
+  zoneName: String!
+}
+
+type DeliveryClosureEntity {
+  """YYYY-MM-DD"""
+  date: String!
+  id: ID!
+  reason: String
+  zoneId: ID!
+}
+
+input DeliveryClosureInput {
+  """YYYY-MM-DD"""
+  date: String!
+  reason: String
+}
+
 """A service level the address's zone offers, with its fee for this cart"""
 type DeliveryOption {
   """The fee before free-shipping promotions"""
@@ -1360,6 +1450,43 @@ enum DeliveryOptions {
 enum DeliveryServiceLevel {
   EXPRESS
   STANDARD
+}
+
+"""
+The delivery slot chosen at checkout: one of checkoutQuote.deliverySlots
+"""
+input DeliverySlotChoiceInput {
+  """YYYY-MM-DD"""
+  date: String!
+  slotId: ID!
+}
+
+type DeliverySlotEntity {
+  capacity: Int!
+  cutoffHours: Int!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+  id: ID!
+  isActive: Boolean!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
+  weekday: Weekday!
+  zoneId: ID!
+}
+
+"""A delivery window on a date"""
+type DeliveryWindow {
+  """YYYY-MM-DD"""
+  date: String!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+  slotId: ID!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
 }
 
 input DispatchStockTransferInput {
@@ -1675,6 +1802,9 @@ type Mutation {
   """Admin: add customers to a group (members already in it are kept)"""
   addCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
 
+  """Close a zone for deliveries on a date (holiday). Audited"""
+  addDeliveryClosure(input: DeliveryClosureInput!, zoneId: ID!): DeliveryClosureEntity!
+
   """Append an evidence note to a dispute. Owner, Manager, audited"""
   addDisputeNote(input: AddDisputeNoteInput!): DisputeEntity!
 
@@ -1775,6 +1905,9 @@ type Mutation {
   """Admin: create a customer group"""
   createCustomerGroup(input: CreateCustomerGroupInput!): CustomerGroup!
 
+  """Add a weekly delivery window to a zone (STANDARD delivery). Audited"""
+  createDeliverySlot(input: CreateDeliverySlotInput!, zoneId: ID!): DeliverySlotEntity!
+
   """
   Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it; FORBIDDEN with reason VELOCITY_LIMIT when too many orders came from the same account, phone number or network in a short time
   """
@@ -1858,6 +1991,11 @@ type Mutation {
   Admin: delete a customer group and its memberships (not while a promotion is limited to it)
   """
   deleteCustomerGroup(id: ID!): CustomerGroup!
+
+  """
+  Delete a delivery slot that was never booked (CONFLICT otherwise: deactivate it). Audited
+  """
+  deleteDeliverySlot(id: ID!): DeliverySlotEntity!
 
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
@@ -1988,6 +2126,9 @@ type Mutation {
 
   """Admin: remove customers from a group"""
   removeCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
+
+  """Reopen a closed date. Audited"""
+  removeDeliveryClosure(id: ID!): DeliveryClosureEntity!
 
   """Removes a specific item from the user’s cart"""
   removeFromCart(cartItemId: String!): Cart!
@@ -2146,6 +2287,11 @@ type Mutation {
   updateCustomerGroup(id: ID!, input: UpdateCustomerGroupInput!): CustomerGroup!
 
   """
+  Change a delivery slot's window, capacity, cutoff or active flag. Audited
+  """
+  updateDeliverySlot(id: ID!, input: UpdateDeliverySlotInput!): DeliverySlotEntity!
+
+  """
   Move a dispute to another status (OPEN -> AWAITING_EVIDENCE/UNDER_REVIEW -> WON/LOST/ACCEPTED); CONFLICT for a move the table does not allow. Owner, Manager, audited
   """
   updateDisputeStatus(input: UpdateDisputeStatusInput!): DisputeEntity!
@@ -2294,6 +2440,9 @@ type Order {
   contactPhone: String!
   createdAt: DateTime!
   currency: Currency!
+
+  """DELIVERY: the delivery slot booked (P5-A.2)"""
+  deliverySlot: DeliveryWindow
 
   """
   Product discounts plus the coupon (the negated sum of the adjustments); null on some older orders
@@ -3507,6 +3656,11 @@ type Query {
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
 
+  """
+  The delivery slots booked on a date (YYYY-MM-DD), with the orders holding their places
+  """
+  deliveryBookings(date: String!, zoneId: ID): [DeliveryBooking!]!
+
   """One dispute with its notes and history (staff)"""
   dispute(id: ID!): DisputeEntity!
 
@@ -3936,6 +4090,9 @@ type QuoteDelivery {
   """The rate rule charged"""
   rateRuleId: ID!
   serviceLevel: DeliveryServiceLevel!
+
+  """The delivery slot booked, when one was chosen"""
+  slot: AvailableDeliverySlot
 
   """
   The weight band charged (its lower bound in grams); null when below every band (the base fee)
@@ -4585,6 +4742,12 @@ type ShippingZoneEntity {
   """Whether cash on delivery may be chosen for deliveries to this zone"""
   codEnabled: Boolean!
   createdAt: DateTime!
+
+  """Dates from today on the zone does not deliver"""
+  deliveryClosures: [DeliveryClosureEntity!]!
+
+  """Weekly delivery windows for STANDARD delivery"""
+  deliverySlots: [DeliverySlotEntity!]!
 
   """
   Locations that fulfil deliveries here, first tried first; empty = the default (inventory.view)
@@ -5290,6 +5453,15 @@ input UpdateCouponCodeInput {
 input UpdateCustomerGroupInput {
   description: String
   name: String
+}
+
+"""Slot fields to change; omitted fields keep their value"""
+input UpdateDeliverySlotInput {
+  capacity: Int
+  cutoffHours: Int
+  endTime: String
+  isActive: Boolean
+  startTime: String
 }
 
 input UpdateDisputeStatusInput {
@@ -6021,6 +6193,16 @@ input VerifyPaymentInput {
 input VerifyPhoneInput {
   """The 6-digit code from the SMS"""
   code: String!
+}
+
+enum Weekday {
+  FRIDAY
+  MONDAY
+  SATURDAY
+  SUNDAY
+  THURSDAY
+  TUESDAY
+  WEDNESDAY
 }
 
 type WeightBandEntity {

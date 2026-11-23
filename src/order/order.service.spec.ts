@@ -13,6 +13,7 @@ import { OutboxService } from '../outbox/outbox.service';
 import { Decimal } from '@prisma/client/runtime/client';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { LoggerService } from '../commons/logger.service';
+import { DeliverySlotsService } from '../shipping-zones/slots/delivery-slots.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
 import { ReturnsService } from '../returns/returns.service';
@@ -45,6 +46,7 @@ const zoneWithFee = (fee: string | number) => ({
 });
 const mockShippingZonesService = { deliveryZoneFor: jest.fn().mockResolvedValue(zoneWithFee('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
+const mockDeliverySlots = { calendar: jest.fn(), book: jest.fn(), releaseForOrder: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
 const mockPriceListsService = { findForPricing: jest.fn() };
 
@@ -289,6 +291,7 @@ describe('OrdersService', () => {
           useValue: { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() },
         },
         { provide: LoggerService, useValue: { warn: jest.fn() } },
+        { provide: DeliverySlotsService, useValue: mockDeliverySlots },
       ],
     }).compile();
 
@@ -325,6 +328,7 @@ describe('OrdersService', () => {
     mockShippingZonesService.deliveryZoneFor.mockResolvedValue(zoneWithFee('5'));
     mockPromotionsService.findForPricing.mockResolvedValue(pricingFacts([]));
     mockPriceListsService.findForPricing.mockResolvedValue([]);
+    mockDeliverySlots.calendar.mockResolvedValue({ templates: [], closedDates: new Set(), booked: new Map() });
   });
 
   describe('createOrderFromCart', () => {

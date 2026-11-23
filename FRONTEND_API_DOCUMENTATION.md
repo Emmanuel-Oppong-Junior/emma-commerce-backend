@@ -1502,6 +1502,7 @@ All order operations require `Bearer` JWT.
   serviceLevel?: DeliveryServiceLevel;         // P5-A.1 DELIVERY: STANDARD | EXPRESS
   shippingFee?: Money;                         // P5-A.1 DELIVERY: the fee before free-shipping promotions (shippingTotal is after them)
   rateRuleId?: string;                         // P5-A.1 DELIVERY, staff with order.view (FORBIDDEN otherwise): the rate rule charged
+  deliverySlot?: DeliveryWindow;               // P5-A.2: { slotId, date, startTime, endTime } booked at placement; null without a slot
   adjustments: OrderAdjustment[];              // Product discounts (per line) and the coupon, as placed
   shippingAddressId?: string;                  // Set for DELIVERY orders
   shippingAddressSnapshot?: JSON;              // DELIVERY: { recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country } at order time; orders placed before Ghana addresses (P1-G) hold { street, city, state, zipCode, country } instead
@@ -1669,8 +1670,11 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   couponCode?: string;               // Optional. Case-insensitive.
   paymentMethod?: OrderPaymentMethod; // Default ONLINE. CASH_ON_DELIVERY to pay on delivery/pickup. (P3-A.2)
   serviceLevel?: DeliveryServiceLevel; // P5-A.1, DELIVERY only (ignored for PICKUP): default STANDARD; one of deliveryOptions
+  deliverySlot?: { slotId: ID; date: string }; // P5-A.2, STANDARD delivery to a zone with slots: one of deliverySlots (date YYYY-MM-DD)
 }
 ```
+
+**Delivery slots (P5-A.2).** A zone can have weekly delivery windows for `STANDARD` delivery (`EXPRESS` is as soon as possible, without slots; pickup has none). `checkoutQuote.deliverySlots` lists the windows of the next 7 days (today included) that are still before their cutoff and not on a closed date, each with `remaining` places (0 = full; show it disabled), and `deliverySlotRequired` says whether `createOrder` needs one. Times are `HH:MM` in Africa/Accra (= UTC, no daylight saving). Quote again with the chosen `deliverySlot` (it is part of the `quoteHash`) and send the same one to `createOrder`. Errors: `BAD_REQUEST` `DELIVERY_SLOT_REQUIRED` (createOrder without a slot where one is required), `BAD_REQUEST` `DELIVERY_SLOT_UNAVAILABLE` (unknown slot, wrong date, past its cutoff, closed date, `EXPRESS`, pickup or a zone without slots), `CONFLICT` `SLOT_FULL` (no place left; another order may have taken the last one meanwhile: quote again and pick another). Cancelling an order, or its expiry, gives its place back.
 
 **Delivery fee (P5-A.1).** The address is matched to a delivery zone (see [2.21](#221-shipping-zones--pickup-locations)); the zone's active rate rule for the chosen `serviceLevel` sets the fee from the cart's weight and its merchandise total after promotions; free-shipping promotions then apply on top of that fee. `deliveryOptions` lists every level the zone offers with its fee for this cart, so show them and quote again with the one the customer picks. An address no active zone covers, or outside Ghana, fails with `BAD_REQUEST` and `extensions.reason: "DELIVERY_UNAVAILABLE"` (offer pickup or another address); a level the zone does not offer fails with `BAD_REQUEST` and `extensions.reason: "DELIVERY_LEVEL_UNAVAILABLE"`. The level, the rate rule and the fee are part of the `quoteHash`.
 
@@ -1686,8 +1690,10 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   lines: QuoteLine[];                // In cart order. P2-B.4: a cart line whose units pay different prices (a flash sale reduced only some) has two or more lines with the same cartItemId, the reduced units first
   adjustments: QuoteOrderAdjustment[]; // The cart promotions that take something off
   shippingAdjustments: QuoteAdjustment[]; // P2-B.6: the free-shipping promotions taken off the delivery fee (already in shippingTotal)
-  delivery?: QuoteDelivery;          // P5-A.1 DELIVERY: { zoneId, zoneName, serviceLevel, rateRuleId, fee (before free-shipping promotions), weightGrams, weightBandFromGrams, freeAboveReached }; null for PICKUP
+  delivery?: QuoteDelivery;          // P5-A.1 DELIVERY: { zoneId, zoneName, serviceLevel, rateRuleId, fee (before free-shipping promotions), weightGrams, weightBandFromGrams, freeAboveReached, slot (P5-A.2, the slot chosen) }; null for PICKUP
   deliveryOptions: DeliveryOption[]; // P5-A.1 DELIVERY: { serviceLevel, fee, weightBandFromGrams, freeAboveReached } per level the zone offers; [] for PICKUP
+  deliverySlots: AvailableDeliverySlot[]; // P5-A.2 STANDARD delivery: { slotId, date, startTime, endTime, remaining } for the next 7 days; [] otherwise
+  deliverySlotRequired: boolean;     // P5-A.2: createOrder needs deliverySlot
   subtotal: Money;                   // Σ unitListPrice × quantity, before any discount, tax included
   discountTotal: Money;              // Item promotions + cart promotions (merchandise only; shipping savings are in shippingTotal)
   taxTotal: Money;                   // Tax included in the line totals
@@ -1764,6 +1770,7 @@ query {
   contactPhone: string;                   // Required. Valid phone number in international format (e.g. +233…).
   paymentMethod?: OrderPaymentMethod;     // Default ONLINE (card or mobile money, chosen at POST /payment/initialize). CASH_ON_DELIVERY to pay on delivery/pickup. BAD_REQUEST PAYMENT_METHOD_UNAVAILABLE when not offered.
   serviceLevel?: DeliveryServiceLevel;    // P5-A.1, DELIVERY only: default STANDARD; the one quoted
+  deliverySlot?: { slotId: ID; date: string }; // P5-A.2: the slot quoted; required when checkoutQuote.deliverySlotRequired
   quoteHash: string;                      // Required. checkoutQuote's quoteHash for the same fulfilment and coupon.
 }
 ```
@@ -3367,6 +3374,20 @@ UpdateRateRuleInput { baseFee?; freeAbove? (null clears it); weightBands? (repla
 ```
 
 - **Possible Errors**: `NOT_FOUND` (zone or rule), `CONFLICT` (the zone already has an active rule for the level), `BAD_REQUEST` (bands out of order, a band cheaper than the one below or the base fee), `FORBIDDEN` (`STEP_UP_REQUIRED`). Orders already placed keep the fee they were charged.
+
+---
+
+#### Delivery slots (`shipping.manage`) (P5-A.2)
+- `createDeliverySlot(zoneId: ID!, input: CreateDeliverySlotInput!): DeliverySlotEntity!` — `{ weekday: Weekday (MONDAY..SUNDAY), startTime: "HH:MM", endTime: "HH:MM" ("24:00" ends the day), capacity: Int (>= 1, orders per date), cutoffHours?: Int (default 0: bookable until this many hours before the start), isActive?: Boolean }`.
+- `updateDeliverySlot(id: ID!, input: UpdateDeliverySlotInput!)` (`startTime?`, `endTime?`, `capacity?`, `cutoffHours?`, `isActive?`); a lower capacity only stops new bookings.
+- `deleteDeliverySlot(id: ID!)` — `CONFLICT` once it has been booked: deactivate it instead.
+- `addDeliveryClosure(zoneId: ID!, input: { date: "YYYY-MM-DD", reason?: String }): DeliveryClosureEntity!`, `removeDeliveryClosure(id: ID!)` — dates the zone does not deliver (`CONFLICT` for a date already closed).
+- `ShippingZoneEntity.deliverySlots` (`{ id, zoneId, weekday, startTime, endTime, capacity, cutoffHours, isActive }`) and `ShippingZoneEntity.deliveryClosures` (from today on).
+- `BAD_REQUEST` for a window ending before it starts or a time outside 00:00-24:00. All audited.
+
+#### `deliveryBookings` (`order.view`) (P5-A.2)
+- **Args**: `date: String!` (YYYY-MM-DD), `zoneId?: ID`
+- **Response**: `[DeliveryBooking!]!`: per slot booked that day `{ slotId, date, startTime, endTime, zoneId, zoneName, capacity, booked, orders: { orderId, orderNumber, status }[] }` (cancelled and expired orders have given their place back).
 
 ---
 

@@ -105,6 +105,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
 
   // Independent reference data
   await prisma.tax.deleteMany();
+  await prisma.deliverySlotBooking.deleteMany();
   await prisma.shippingZone.deleteMany();
   await prisma.pickupLocation.deleteMany();
   // Stock locations a test added (their levels, movements and reservations went with the variants and orders above)

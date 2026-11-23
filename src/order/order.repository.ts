@@ -156,6 +156,10 @@ export class OrdersRepository {
         rateRuleId: snapshot.delivery?.rateRuleId ?? null,
         serviceLevel: snapshot.delivery?.serviceLevel ?? null,
         shippingFee: snapshot.delivery ? snapshot.shippingFee : null,
+        deliverySlotId: snapshot.delivery?.slot?.slotId ?? null,
+        deliveryDate: snapshot.delivery?.slot ? new Date(`${snapshot.delivery.slot.date}T00:00:00Z`) : null,
+        deliveryWindowStart: snapshot.delivery?.slot?.startMinute ?? null,
+        deliveryWindowEnd: snapshot.delivery?.slot?.endMinute ?? null,
         statusEvents: { create: { from: null, to: OrderStatus.PLACED, actorId: userId } },
       },
     });

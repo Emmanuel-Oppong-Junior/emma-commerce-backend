@@ -197,6 +197,11 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       } as never,
       { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() } as never,
       { warn: jest.fn() } as never,
+      {
+        calendar: jest.fn().mockResolvedValue({ templates: [], closedDates: new Set(), booked: new Map() }),
+        book: jest.fn(),
+        releaseForOrder: jest.fn(),
+      } as never,
     );
 
     const params = {

@@ -33,6 +33,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     {} as never,
     { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() } as never,
     {} as never,
+    { releaseForOrder: jest.fn() } as never,
   );
   return { service, repository };
 }

@@ -5,6 +5,7 @@ exports[`Authorization matrix matches the reviewed matrix 1`] = `
 Mutation addAttributeDefinition          permission: catalog.taxonomy.write
 Mutation addCodBlacklistEntry            permission: payment.settings.manage; step-up
 Mutation addCustomerGroupMembers         permission: customer.group.manage
+Mutation addDeliveryClosure              permission: shipping.manage
 Mutation addDisputeNote                  permission: payment.dispute.manage
 Mutation addProductsToTag                permission: catalog.taxonomy.write
 Mutation addTagToProduct                 permission: catalog.product.write
@@ -35,6 +36,7 @@ Mutation createBrand                     permission: catalog.taxonomy.write
 Mutation createCategory                  permission: catalog.taxonomy.write
 Mutation createCouponCode                permission: promotion.manage; step-up
 Mutation createCustomerGroup             permission: customer.group.manage
+Mutation createDeliverySlot              permission: shipping.manage
 Mutation createOrder                     authenticated
 Mutation createPickupLocation            permission: shipping.manage
 Mutation createPriceList                 permission: pricelist.manage; step-up
@@ -60,6 +62,7 @@ Mutation deleteAddress                   authenticated
 Mutation deleteBrand                     permission: catalog.taxonomy.write
 Mutation deleteCouponCode                permission: promotion.manage; step-up
 Mutation deleteCustomerGroup             permission: customer.group.manage
+Mutation deleteDeliverySlot              permission: shipping.manage
 Mutation deleteOrder                     permission: order.manage
 Mutation deletePickupLocation            permission: shipping.manage
 Mutation deletePriceList                 permission: pricelist.manage; step-up
@@ -92,6 +95,7 @@ Mutation removeAttributeDefinition       permission: catalog.taxonomy.write
 Mutation removeCategory                  permission: catalog.taxonomy.write
 Mutation removeCodBlacklistEntry         permission: payment.settings.manage; step-up
 Mutation removeCustomerGroupMembers      permission: customer.group.manage
+Mutation removeDeliveryClosure           permission: shipping.manage
 Mutation removeFromCart                  authenticated
 Mutation removeFromWishlist              authenticated
 Mutation removePaystackConfig            permission: payment.settings.manage; step-up
@@ -133,6 +137,7 @@ Mutation updateCategory                  permission: catalog.taxonomy.write
 Mutation updateCodRiskSettings           permission: payment.settings.manage; step-up
 Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
+Mutation updateDeliverySlot              permission: shipping.manage
 Mutation updateDisputeStatus             permission: payment.dispute.manage
 Mutation updateMyProfile                 authenticated
 Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
@@ -180,6 +185,7 @@ Query codRiskSettings                    permission: payment.settings.manage
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
+Query deliveryBookings                   permission: order.view
 Query dispute                            permission: payment.view
 Query disputes                           permission: payment.view
 Query expiringStock                      permission: inventory.view

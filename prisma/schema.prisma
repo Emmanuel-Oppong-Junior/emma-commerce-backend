@@ -497,11 +497,18 @@ model Order {
   serviceLevel            DeliveryServiceLevel?
   /// The delivery fee before free-shipping promotions (shippingTotal is after them)
   shippingFee             Decimal?           @db.Decimal(14, 2)
+  /// The delivery slot booked (P5-A.2): a snapshot of the slot id, date and window; set when it was released
+  deliverySlotId          String?
+  deliveryDate            DateTime?          @db.Date
+  deliveryWindowStart     Int?
+  deliveryWindowEnd       Int?
+  deliverySlotReleasedAt  DateTime?
 
   @@index([userId, status])
   @@index([codPhone])
   @@index([createdAt])
   @@index([status, createdAt])
+  @@index([deliveryDate])
 }
 
 model OrderItem {
@@ -989,6 +996,10 @@ model ShippingZone {
   areas               ZoneArea[]
   /// The delivery fee per service level (P5-A.1)
   rateRules           RateRule[]
+  /// Weekly delivery windows for STANDARD delivery (P5-A.2); none = no slot is chosen
+  deliverySlots       DeliverySlot[]
+  /// Dates the zone does not deliver on (P5-A.2)
+  deliveryClosures    DeliveryClosure[]
 
   @@index([isActive])
 }
@@ -1037,6 +1048,59 @@ model RateRule {
 
   @@unique([zoneId, serviceLevel], map: "RateRule_one_active_per_zone_level", where: raw("\"isActive\""))
   @@index([zoneId])
+}
+
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+/// A weekly delivery window of a zone (P5-A.2), in Africa/Accra time (= UTC, no daylight saving): minutes from
+/// midnight. Bookable until cutoffHours before it starts, up to capacity orders per date (pure rules in
+/// shipping-zones/slots/delivery-slots.ts).
+model DeliverySlot {
+  id          String                @id @default(cuid())
+  zoneId      String
+  zone        ShippingZone          @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  weekday     Weekday
+  startMinute Int
+  endMinute   Int
+  capacity    Int
+  cutoffHours Int                   @default(0)
+  isActive    Boolean               @default(true)
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  bookings    DeliverySlotBooking[]
+
+  @@index([zoneId])
+}
+
+/// The orders booked into a slot on one date: placement increments booked conditionally (booked < capacity), cancel
+/// and expiry decrement it once.
+model DeliverySlotBooking {
+  id     String       @id @default(cuid())
+  slotId String
+  slot   DeliverySlot @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  date   DateTime     @db.Date
+  booked Int          @default(0)
+
+  @@unique([slotId, date])
+}
+
+/// A date a zone does not deliver on (holiday, closure).
+model DeliveryClosure {
+  id     String       @id @default(cuid())
+  zoneId String
+  zone   ShippingZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  date   DateTime     @db.Date
+  reason String?
+
+  @@unique([zoneId, date])
 }
 
 /// From fromGrams of cart weight up, the rule charges fee instead of its base fee.
