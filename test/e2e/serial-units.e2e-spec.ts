@@ -14,6 +14,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, stockOf, verifyPhoneForCod } from '../helpers/db.helper';
 import { signInAdmin, signInUser, signUpUser } from '../helpers/auth.helper';
 import { placeOrderFromCart } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 type GqlBody = { data?: Record<string, any>; errors?: { message: string; extensions?: Record<string, unknown> }[] };
 
@@ -129,19 +130,29 @@ describe('Serial units (P4-D.1, e2e)', () => {
     await payments.settleAttempt(paymentId, verified, {}, (state) => decideVerification(state, verified));
   };
 
-  const ship = (orderId: string, status: string) =>
-    gql(`mutation { updateShipmentStatus(input: { orderId: "${orderId}", status: ${status} }) { status } }`);
-
-  const assign = (orderItemId: string, serials: string[], token = managerToken) =>
+  const ship = async (orderId: string, status: string) =>
     gql(
-      'mutation($input: OrderItemSerialsInput!) { assignOrderItemSerials(input: $input) { id items { id serials { serial status } } } }',
-      token,
-      { input: { orderItemId, serials } },
+      `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, orderId)}", status: ${status} }) { status } }`,
     );
-  const unassign = (orderItemId: string, serials: string[]) =>
-    gql('mutation($input: OrderItemSerialsInput!) { unassignOrderItemSerials(input: $input) { id } }', managerToken, {
-      input: { orderItemId, serials },
-    });
+
+  /** The order line's item in its order's shipment (serials are assigned per shipment line since P5-B.1). */
+  const shipmentItemOf = async (orderItemId: string) => {
+    const { orderId } = await prisma.orderItem.findUniqueOrThrow({ where: { id: orderItemId } });
+    const shipmentId = await shipmentOf(prisma, orderId);
+    return (await prisma.shipmentItem.findFirstOrThrow({ where: { shipmentId, orderItemId } })).id;
+  };
+  const assign = async (orderItemId: string, serials: string[], token = managerToken) =>
+    gql(
+      'mutation($input: ShipmentItemSerialsInput!) { assignShipmentItemSerials(input: $input) { id items { id serials { serial status } } } }',
+      token,
+      { input: { shipmentItemId: await shipmentItemOf(orderItemId), serials } },
+    );
+  const unassign = async (orderItemId: string, serials: string[]) =>
+    gql(
+      'mutation($input: ShipmentItemSerialsInput!) { unassignShipmentItemSerials(input: $input) { id } }',
+      managerToken,
+      { input: { shipmentItemId: await shipmentItemOf(orderItemId), serials } },
+    );
 
   const lookup = (serial: string, token = supportToken) =>
     gql(
@@ -295,7 +306,9 @@ describe('Serial units (P4-D.1, e2e)', () => {
       expect((await ship(orderId, 'PICKING')).errors).toBeUndefined();
       const first = await assign(orderItemId, [serials[0]]);
       expect(first.errors).toBeUndefined();
-      expect(first.data!.assignOrderItemSerials.items[0].serials).toEqual([{ serial: serials[0], status: 'ASSIGNED' }]);
+      expect(first.data!.assignShipmentItemSerials.items[0].serials).toEqual([
+        { serial: serials[0], status: 'ASSIGNED' },
+      ]);
 
       const notReady = await ship(orderId, 'OUT_FOR_DELIVERY');
       expect(codeOf(notReady)).toBe('BAD_REQUEST');
@@ -387,6 +400,71 @@ describe('Serial units (P4-D.1, e2e)', () => {
 
       expect((await ship(orderId, 'DELIVERED')).errors).toBeUndefined();
       expect((await unit(variantId, serials[1])).warrantyEndsAt).toBeInstanceOf(Date);
+    });
+
+    it('split shipments: serials per shipment line, each dispatched and warrantied with its own shipment', async () => {
+      const { variantId, serials } = await stockedPhone(2);
+      const { orderId, orderItemId, grandTotal } = await placeOrder(variantId, 2, PaymentMethod.ONLINE);
+      await pay(orderId, Number(grandTotal));
+      const create = async () => {
+        const body = await gql(
+          `mutation { createShipment(input: { orderId: "${orderId}", items: [{ orderItemId: "${orderItemId}", quantity: 1 }] }) { id items { id } } }`,
+        );
+        expect(body.errors).toBeUndefined();
+        return body.data!.createShipment as { id: string; items: { id: string }[] };
+      };
+      const first = await create();
+      const second = await create();
+      const step = (shipmentId: string, status: string) =>
+        gql(`mutation { updateShipmentStatus(input: { shipmentId: "${shipmentId}", status: ${status} }) { status } }`);
+      const assignTo = (shipmentItemId: string, list: string[]) =>
+        gql(
+          'mutation($input: ShipmentItemSerialsInput!) { assignShipmentItemSerials(input: $input) { id } }',
+          managerToken,
+          {
+            input: { shipmentItemId, serials: list },
+          },
+        );
+
+      await step(first.id, 'PICKING');
+      await step(second.id, 'PICKING');
+      expect(codeOf(await assignTo(first.items[0].id, serials))).toBe('BAD_REQUEST');
+      expect((await assignTo(first.items[0].id, [serials[0]])).errors).toBeUndefined();
+      expect(reasonOf(await step(second.id, 'OUT_FOR_DELIVERY'))).toBe('SERIALS_NOT_ASSIGNED');
+      expect((await step(first.id, 'OUT_FOR_DELIVERY')).errors).toBeUndefined();
+      expect(await unit(variantId, serials[0])).toMatchObject({ status: 'SOLD', shipmentItemId: first.items[0].id });
+      expect(await unit(variantId, serials[1])).toMatchObject({ status: 'IN_STOCK' });
+      expect(await reconcile()).toEqual([]);
+
+      expect((await step(first.id, 'DELIVERED')).errors).toBeUndefined();
+      expect((await unit(variantId, serials[0])).warrantyStartsAt).toBeInstanceOf(Date);
+
+      expect((await assignTo(second.items[0].id, [serials[1]])).errors).toBeUndefined();
+      expect((await step(second.id, 'OUT_FOR_DELIVERY')).errors).toBeUndefined();
+      expect((await unit(variantId, serials[1])).warrantyStartsAt).toBeNull();
+      expect(await reconcile()).toEqual([]);
+      expect((await step(second.id, 'DELIVERED')).errors).toBeUndefined();
+      expect((await unit(variantId, serials[1])).warrantyStartsAt).toBeInstanceOf(Date);
+      expect((await prisma.order.findUniqueOrThrow({ where: { id: orderId } })).status).toBe('COMPLETED');
+    });
+
+    it('puts the units picked for a cancelled shipment back on the shelf', async () => {
+      const { variantId, serials } = await stockedPhone(1);
+      const { orderId, orderItemId } = await placeOrder(variantId, 1, PaymentMethod.CASH_ON_DELIVERY);
+      await ship(orderId, 'PICKING');
+      expect((await assign(orderItemId, serials)).errors).toBeUndefined();
+
+      const shipmentId = await shipmentOf(prisma, orderId);
+      const cancelled = await gql(`mutation { cancelShipment(input: { shipmentId: "${shipmentId}" }) { id } }`);
+
+      expect(cancelled.errors).toBeUndefined();
+      expect(await unit(variantId, serials[0])).toMatchObject({
+        status: 'IN_STOCK',
+        orderItemId: null,
+        shipmentItemId: null,
+        locationId: mainId,
+      });
+      expect(await reconcile()).toEqual([]);
     });
 
     it('lets only one of two orders racing for the same unit take it', async () => {

@@ -21,6 +21,7 @@ export enum ShipmentStatusEnum {
   DELIVERED = 'DELIVERED',
   FAILED_DELIVERY = 'FAILED_DELIVERY',
   RETURNED = 'RETURNED',
+  CANCELLED = 'CANCELLED',
 }
 
 registerEnumType(ShipmentStatusEnum, { name: 'ShipmentStatus' });

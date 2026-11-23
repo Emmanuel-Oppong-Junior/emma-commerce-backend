@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, SerialFormat, SerialUnit, SerialUnitStatus } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TrackingFacts } from './serial-rules';
+import { UNDISPATCHED_RESERVED_UNITS } from '../awaiting-dispatch';
 
 type Db = Prisma.TransactionClient;
 
@@ -28,12 +29,21 @@ export interface NewSerialEvent extends SerialEventSource {
   orderItemId: string | null;
 }
 
-/** A serialised order line with how many units are assigned to (or sold on) it. */
-export interface SerialisedOrderLine {
+/** A serialised shipment line with how many units are assigned to (or sold on) it. */
+export interface SerialisedShipmentLine {
+  shipmentItemId: string;
   orderItemId: string;
   variantId: string;
   quantity: number;
   assigned: number;
+}
+
+export interface ShipmentLineFacts {
+  id: string;
+  orderItemId: string;
+  orderId: string;
+  variantId: string;
+  quantity: number;
 }
 
 export interface SerialLookup extends SerialUnit {
@@ -106,26 +116,40 @@ export class SerialUnitsRepository {
     if (events.length > 0) await db.serialUnitEvent.createMany({ data: events });
   }
 
-  /** The serialised lines of an order, with the units assigned to or sold on each. */
-  async findSerialisedLines(db: Db, orderId: string): Promise<SerialisedOrderLine[]> {
-    return db.$queryRaw<SerialisedOrderLine[]>`
-      SELECT oi."id" AS "orderItemId", oi."variantId", oi."quantity",
+  /** The serialised lines of a shipment, with the units assigned to (or sold on) each. */
+  async findSerialisedShipmentLines(db: Db, shipmentId: string): Promise<SerialisedShipmentLine[]> {
+    return db.$queryRaw<SerialisedShipmentLine[]>`
+      SELECT si."id" AS "shipmentItemId", si."orderItemId", oi."variantId", si."quantity",
              (SELECT count(*)::int FROM "SerialUnit" su
-              WHERE su."orderItemId" = oi."id" AND su."status" IN ('ASSIGNED', 'SOLD')) AS "assigned"
-      FROM "OrderItem" oi
+              WHERE su."shipmentItemId" = si."id" AND su."status" IN ('ASSIGNED', 'SOLD')) AS "assigned"
+      FROM "ShipmentItem" si
+      JOIN "OrderItem" oi ON oi."id" = si."orderItemId"
       JOIN "Product" p ON p."id" = oi."productId"
-      WHERE oi."orderId" = ${orderId} AND p."trackSerials"
-      ORDER BY oi."id"`;
+      WHERE si."shipmentId" = ${shipmentId} AND p."trackSerials"
+      ORDER BY si."id"`;
   }
 
-  async findOrderLine(
-    db: Db,
-    orderItemId: string,
-  ): Promise<{ id: string; orderId: string; variantId: string; quantity: number } | null> {
-    return db.orderItem.findUnique({
-      where: { id: orderItemId },
-      select: { id: true, orderId: true, variantId: true, quantity: true },
+  /** A shipment line with its order line's order and variant. */
+  async findShipmentLine(db: Db, shipmentItemId: string): Promise<ShipmentLineFacts | null> {
+    const item = await db.shipmentItem.findUnique({
+      where: { id: shipmentItemId },
+      select: {
+        id: true,
+        orderItemId: true,
+        quantity: true,
+        orderItem: { select: { orderId: true, variantId: true } },
+      },
     });
+    return item && { id: item.id, orderItemId: item.orderItemId, quantity: item.quantity, ...item.orderItem };
+  }
+
+  async findShipmentOrderId(db: Db, shipmentId: string): Promise<string> {
+    const shipment = await db.shipment.findUniqueOrThrow({ where: { id: shipmentId }, select: { orderId: true } });
+    return shipment.orderId;
+  }
+
+  async findShipmentUnits(db: Db, shipmentId: string, status: SerialUnitStatus): Promise<SerialUnit[]> {
+    return db.serialUnit.findMany({ where: { status, shipmentItem: { shipmentId } } });
   }
 
   async findReturnRequestOrderId(db: Db, id: string): Promise<string | null> {
@@ -137,9 +161,9 @@ export class SerialUnitsRepository {
     return db.serialUnit.findMany({ where: { status, orderItem: { orderId } } });
   }
 
-  async countAssigned(db: Db, orderItemId: string): Promise<number> {
+  async countAssigned(db: Db, shipmentItemId: string): Promise<number> {
     return db.serialUnit.count({
-      where: { orderItemId, status: { in: [SerialUnitStatus.ASSIGNED, SerialUnitStatus.SOLD] } },
+      where: { shipmentItemId, status: { in: [SerialUnitStatus.ASSIGNED, SerialUnitStatus.SOLD] } },
     });
   }
 
@@ -149,10 +173,10 @@ export class SerialUnitsRepository {
     return order?.stockLocationId ?? null;
   }
 
-  /** Warranty months of each sold unit's product on the order, for units not yet under warranty. */
-  async findSoldUnitsForWarranty(db: Db, orderId: string): Promise<{ id: string; warrantyMonths: number | null }[]> {
+  /** Warranty months of each sold unit's product in the shipment, for units not yet under warranty. */
+  async findSoldUnitsForWarranty(db: Db, shipmentId: string): Promise<{ id: string; warrantyMonths: number | null }[]> {
     const units = await db.serialUnit.findMany({
-      where: { status: SerialUnitStatus.SOLD, warrantyStartsAt: null, orderItem: { orderId } },
+      where: { status: SerialUnitStatus.SOLD, warrantyStartsAt: null, shipmentItem: { shipmentId } },
       select: { id: true, variant: { select: { product: { select: { warrantyMonths: true } } } } },
     });
     return units.map((unit) => ({ id: unit.id, warrantyMonths: unit.variant.product.warrantyMonths }));
@@ -214,7 +238,7 @@ export class SerialUnitsRepository {
 
   /**
    * Every (variant, location) of a tracked product whose units on the shelf (IN_STOCK + ASSIGNED) differ from what
-   * the ledger expects there: onHand plus units sold online whose order is not dispatched yet (the same rule as a
+   * the ledger expects there: onHand plus units sold online not yet in a dispatched shipment (the same rule as a
    * stock-take's expected quantity, StockTakeRepository.expectedStock).
    */
   async findShelfDisagreements(): Promise<SerialShelfTotals[]> {
@@ -222,14 +246,10 @@ export class SerialUnitsRepository {
       WITH tracked AS (
         SELECT v."id" FROM "Variant" v JOIN "Product" p ON p."id" = v."productId" WHERE p."trackSerials"
       ), awaiting_dispatch AS (
-        SELECT r."variantId", r."locationId", sum(r."quantity")::int AS "quantity"
+        SELECT r."variantId", r."locationId", sum(${UNDISPATCHED_RESERVED_UNITS})::int AS "quantity"
         FROM "StockReservation" r
         JOIN "Order" o ON o."id" = r."orderId"
         WHERE r."status" = 'CONSUMED' AND o."status" IN ('CONFIRMED', 'IN_FULFILMENT')
-          AND NOT EXISTS (
-            SELECT 1 FROM "Shipment" s
-            WHERE s."orderId" = o."id" AND s."status" NOT IN ('PENDING', 'PICKING', 'PACKED')
-          )
         GROUP BY r."variantId", r."locationId"
       ), on_shelf AS (
         SELECT "variantId", "locationId", count(*)::int AS "units"

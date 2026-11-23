@@ -4,11 +4,11 @@ import { ShipmentStatusEnum } from '../enums/order.enum';
 
 @InputType()
 export class UpdateShipmentStatusInput {
-  @Field(() => ID, { description: 'The order whose shipment moves (one shipment per order for now)' })
+  @Field(() => ID, { description: 'The shipment that moves' })
   @IsNotEmpty()
-  orderId: string;
+  shipmentId: string;
 
-  @Field(() => ShipmentStatusEnum, { description: 'The next fulfilment step' })
+  @Field(() => ShipmentStatusEnum, { description: 'The next fulfilment step (cancel with cancelShipment)' })
   @IsEnum(ShipmentStatusEnum)
   status: ShipmentStatusEnum;
 

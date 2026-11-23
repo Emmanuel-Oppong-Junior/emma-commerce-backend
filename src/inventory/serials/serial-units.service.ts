@@ -9,7 +9,13 @@ import {
   trackSerialsChangeProblem,
   warrantyWindow,
 } from './serial-rules';
-import { SerialEventSource, SerialLookup, SerialTracking, SerialUnitsRepository } from './serial-units.repository';
+import {
+  SerialEventSource,
+  SerialLookup,
+  SerialTracking,
+  SerialUnitsRepository,
+  ShipmentLineFacts,
+} from './serial-units.repository';
 
 type Tx = Prisma.TransactionClient;
 
@@ -212,23 +218,29 @@ export class SerialUnitsService {
   }
 
   /**
-   * Assigns units to a serialised order line at pick, at the order's location: each must be IN_STOCK there, and the
-   * line may not end up with more units than its quantity. Call with the order row locked.
+   * Assigns units to a serialised shipment line at pick (P5-B.1: per shipment, so an order line split across
+   * shipments has each part's units named), at the order's location: each must be IN_STOCK there, and the shipment
+   * line may not end up with more units than its quantity. The unit is tied to the order line and the shipment line.
+   * Call with the order row locked.
    * @throws BadRequestException for a line whose product does not track serials, too many units or a bad serial;
    * ConflictException (SERIAL_NOT_AVAILABLE) for a unit not in stock there (e.g. another order took it first).
    */
   async assign(
     tx: Tx,
-    orderItemId: string,
+    shipmentItemId: string,
     rawSerials: readonly string[],
     source: SerialEventSource,
   ): Promise<string[]> {
-    const line = await this.orderLineOrFail(tx, orderItemId);
+    const line = await this.shipmentLineOrFail(tx, shipmentItemId);
     const tracking = await this.trackingOrFail(tx, line.variantId);
     if (!tracking.trackSerials) throw this.untracked(line.variantId);
     const serials = this.normalise(tracking, rawSerials.length, rawSerials);
     const problem = assignmentProblem(
-      { orderItemId, quantity: line.quantity, assigned: await this.repository.countAssigned(tx, orderItemId) },
+      {
+        orderItemId: line.orderItemId,
+        quantity: line.quantity,
+        assigned: await this.repository.countAssigned(tx, shipmentItemId),
+      },
       serials.length,
     );
     if (problem) throw new BadRequestException(problem);
@@ -238,7 +250,7 @@ export class SerialUnitsService {
       serials,
       line.variantId,
       { status: S.IN_STOCK, locationId },
-      { status: S.ASSIGNED, orderItemId },
+      { status: S.ASSIGNED, orderItemId: line.orderItemId, shipmentItemId },
     );
     await this.repository.insertEvents(
       tx,
@@ -247,14 +259,14 @@ export class SerialUnitsService {
     return serials;
   }
 
-  /** Puts units assigned to the line back IN_STOCK (still before dispatch). Call with the order row locked. */
+  /** Puts units assigned to the shipment line back IN_STOCK (still before dispatch). Call with the order row locked. */
   async unassign(
     tx: Tx,
-    orderItemId: string,
+    shipmentItemId: string,
     rawSerials: readonly string[],
     source: SerialEventSource,
   ): Promise<string[]> {
-    const line = await this.orderLineOrFail(tx, orderItemId);
+    const line = await this.shipmentLineOrFail(tx, shipmentItemId);
     const tracking = await this.trackingOrFail(tx, line.variantId);
     if (!tracking.trackSerials) throw this.untracked(line.variantId);
     const serials = this.normalise(tracking, rawSerials.length, rawSerials);
@@ -262,9 +274,9 @@ export class SerialUnitsService {
       tx,
       serials,
       line.variantId,
-      { status: S.ASSIGNED, orderItemId },
-      { status: S.IN_STOCK, orderItemId: null },
-      'not assigned to this order line',
+      { status: S.ASSIGNED, shipmentItemId },
+      { status: S.IN_STOCK, orderItemId: null, shipmentItemId: null },
+      'not assigned to this shipment line',
     );
     await this.repository.insertEvents(
       tx,
@@ -274,32 +286,55 @@ export class SerialUnitsService {
   }
 
   /**
-   * The shipment is being dispatched: refuses (BAD_REQUEST, SERIALS_NOT_ASSIGNED) unless every serialised line has
-   * exactly its quantity of units assigned, then marks them SOLD.
+   * The shipment is being dispatched: refuses (BAD_REQUEST, SERIALS_NOT_ASSIGNED) unless every serialised line of the
+   * shipment has exactly its quantity of units assigned, then marks them SOLD.
    */
-  async dispatchOrder(tx: Tx, orderId: string, source: SerialEventSource): Promise<void> {
-    const lines = await this.repository.findSerialisedLines(tx, orderId);
+  async dispatchShipment(tx: Tx, shipmentId: string, source: SerialEventSource): Promise<void> {
+    const lines = await this.repository.findSerialisedShipmentLines(tx, shipmentId);
     const notReady = linesNotReadyToDispatch(lines);
     if (notReady.length > 0) {
       throw new BadRequestException({
         message:
           'Assign a serial to every unit before dispatch: ' +
-          notReady.map((line) => `line "${line.orderItemId}" has ${line.assigned} of ${line.quantity}`).join('; '),
+          notReady
+            .map((line) => `shipment line "${line.shipmentItemId}" has ${line.assigned} of ${line.quantity}`)
+            .join('; '),
         extensions: {
           reason: SERIALS_NOT_ASSIGNED,
-          lines: notReady.map(({ orderItemId, quantity, assigned }) => ({ orderItemId, quantity, assigned })),
+          lines: notReady.map(({ shipmentItemId, orderItemId, quantity, assigned }) => ({
+            shipmentItemId,
+            orderItemId,
+            quantity,
+            assigned,
+          })),
         },
       });
     }
     if (lines.length === 0) return;
     const sold = await this.repository.moveUnits(
       tx,
-      { status: S.ASSIGNED, orderItemId: { in: lines.map((line) => line.orderItemId) } },
+      { status: S.ASSIGNED, shipmentItemId: { in: lines.map((line) => line.shipmentItemId) } },
       { status: S.SOLD, locationId: null, soldAt: new Date() },
     );
     await this.repository.insertEvents(
       tx,
       sold.map((unit) => this.event(unit, S.ASSIGNED, source)),
+    );
+  }
+
+  /** The shipment was cancelled before dispatch: the units picked for it are IN_STOCK again at the order's location. */
+  async releaseShipment(tx: Tx, shipmentId: string, source: SerialEventSource): Promise<void> {
+    const units = await this.repository.findShipmentUnits(tx, shipmentId, S.ASSIGNED);
+    if (units.length === 0) return;
+    const orderId = await this.repository.findShipmentOrderId(tx, shipmentId);
+    const moved = await this.repository.moveUnits(
+      tx,
+      { id: { in: units.map((unit) => unit.id) }, status: S.ASSIGNED },
+      this.backOnShelf(await this.orderLocation(tx, orderId)),
+    );
+    await this.repository.insertEvents(
+      tx,
+      moved.map((unit) => this.event(unit, S.ASSIGNED, source)),
     );
   }
 
@@ -326,9 +361,9 @@ export class SerialUnitsService {
     );
   }
 
-  /** The order was delivered (or collected) at `deliveredAt`: its sold units' warranty starts. */
-  async startWarranty(tx: Tx, orderId: string, deliveredAt: Date): Promise<void> {
-    for (const unit of await this.repository.findSoldUnitsForWarranty(tx, orderId)) {
+  /** The shipment was delivered (or collected) at `deliveredAt`: its sold units' warranty starts. */
+  async startWarranty(tx: Tx, shipmentId: string, deliveredAt: Date): Promise<void> {
+    for (const unit of await this.repository.findSoldUnitsForWarranty(tx, shipmentId)) {
       const window = warrantyWindow(deliveredAt, unit.warrantyMonths);
       if (window) await this.repository.setWarranty(tx, unit.id, window.startsAt, window.endsAt);
     }
@@ -415,6 +450,7 @@ export class SerialUnitsService {
       status: S.IN_STOCK,
       locationId,
       orderItemId: null,
+      shipmentItemId: null,
       soldAt: null,
       warrantyStartsAt: null,
       warrantyEndsAt: null,
@@ -438,9 +474,9 @@ export class SerialUnitsService {
     return tracking;
   }
 
-  private async orderLineOrFail(tx: Tx, orderItemId: string) {
-    const line = await this.repository.findOrderLine(tx, orderItemId);
-    if (!line) throw new NotFoundException(`Order line "${orderItemId}" not found`);
+  private async shipmentLineOrFail(tx: Tx, shipmentItemId: string): Promise<ShipmentLineFacts> {
+    const line = await this.repository.findShipmentLine(tx, shipmentItemId);
+    if (!line) throw new NotFoundException(`Shipment line "${shipmentItemId}" not found`);
     return line;
   }
 

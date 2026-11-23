@@ -217,6 +217,12 @@ input CancelPurchaseOrderInput {
   reason: String
 }
 
+input CancelShipmentInput {
+  """Shown in the shipment history and audit log"""
+  reason: String
+  shipmentId: ID!
+}
+
 input CancelStockTransferInput {
   reason: String
 }
@@ -1064,6 +1070,14 @@ input CreateReviewInput {
   score: Int!
 }
 
+input CreateShipmentInput {
+  """
+  The order lines and units to ship; omitted: every unit not yet in a shipment. A cash-on-delivery order is never split (its one shipment carries every unit)
+  """
+  items: [ShipmentItemInput!]
+  orderId: ID!
+}
+
 input CreateShippingZoneInput {
   """Cities covered by this zone"""
   cities: [String!]!
@@ -1653,9 +1667,9 @@ type Mutation {
   archiveUser(id: String!): User!
 
   """
-  Assign picked units, by serial, to a serial-tracked order line while its shipment is PICKING or PACKED (staff). Each must be IN_STOCK at the order’s location: CONFLICT with reason SERIAL_NOT_AVAILABLE otherwise
+  Assign picked units, by serial, to a serial-tracked shipment line while its shipment is PICKING or PACKED (staff); at most the line’s quantity. Each must be IN_STOCK at the order’s location: CONFLICT with reason SERIAL_NOT_AVAILABLE otherwise
   """
-  assignOrderItemSerials(input: OrderItemSerialsInput!): Order!
+  assignShipmentItemSerials(input: ShipmentItemSerialsInput!): Order!
 
   """
   Give a user a staff role, replacing their current one (staff.manage). You may only assign a role whose permissions you all hold; only an Owner assigns or changes an Owner; the last Owner cannot be demoted. Audited.
@@ -1667,6 +1681,11 @@ type Mutation {
 
   """Cancel a DRAFT or SENT purchase order nothing was received on (staff)"""
   cancelPurchaseOrder(id: ID!, input: CancelPurchaseOrderInput): PurchaseOrder!
+
+  """
+  Cancel a shipment that has not been dispatched (staff): its units can be shipped again and the serials picked for it go back on the shelf. CONFLICT once dispatched
+  """
+  cancelShipment(input: CancelShipmentInput!): Order!
 
   """Cancel an OPEN or SUBMITTED stock-take; no stock moves"""
   cancelStockTake(id: ID!, reason: String): StockTake!
@@ -1742,6 +1761,11 @@ type Mutation {
 
   """Creates a review for a product"""
   createReview(input: CreateReviewInput!): Review!
+
+  """
+  Create a PENDING shipment of a confirmed or in-fulfilment order with the given lines and units, or every unit not yet in a shipment (staff). BAD_REQUEST for a line not on the order or named twice, and for a cash-on-delivery order not shipped whole (reason COD_ORDER_NOT_SPLIT); CONFLICT for more units than are unshipped (SHIPMENT_QUANTITY_EXCEEDED) or nothing left to ship (NOTHING_TO_SHIP)
+  """
+  createShipment(input: CreateShipmentInput!): Shipment!
 
   """Create a shipping zone (admin only)"""
   createShippingZone(input: CreateShippingZoneInput!): ShippingZoneEntity!
@@ -2042,9 +2066,9 @@ type Mutation {
   submitStockTake(id: ID!): StockTake!
 
   """
-  Put units assigned to an order line back in stock, before dispatch (staff)
+  Put units assigned to a shipment line back in stock, before dispatch (staff)
   """
-  unassignOrderItemSerials(input: OrderItemSerialsInput!): Order!
+  unassignShipmentItemSerials(input: ShipmentItemSerialsInput!): Order!
 
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
@@ -2117,12 +2141,12 @@ type Mutation {
   updateReview(input: UpdateReviewInput!): Review!
 
   """
-  Move an order's shipment to its next fulfilment step (staff); the order follows: IN_FULFILMENT on the first step, COMPLETED on delivery
+  Move a shipment to its next fulfilment step (staff); the order follows: IN_FULFILMENT on the first step of any shipment, COMPLETED once every unit is delivered (online orders). Dispatch needs a serial on every serialised unit of the shipment (BAD_REQUEST, reason SERIALS_NOT_ASSIGNED)
   """
   updateShipmentStatus(input: UpdateShipmentStatusInput!): Order!
 
   """
-  Set the carrier and tracking number on a confirmed or in-fulfilment order's shipment (staff)
+  Set the carrier and tracking number of a shipment of a confirmed or in-fulfilment order (staff)
   """
   updateShipping(input: UpdateShippingInput!): Order!
 
@@ -2386,13 +2410,6 @@ type OrderItemSerial {
   status: SerialUnitStatus!
   warrantyEndsAt: DateTime
   warrantyStartsAt: DateTime
-}
-
-input OrderItemSerialsInput {
-  orderItemId: ID!
-
-  """Serials as typed or scanned; normalised by the product’s serial format"""
-  serials: [String!]!
 }
 
 """A tax included in an order line, as computed when the order was placed"""
@@ -3476,6 +3493,11 @@ type Query {
   """Retrieves a specific order by ID for the current user"""
   order(orderId: String!): Order!
 
+  """
+  An order's shipments with their items and history, oldest first (staff)
+  """
+  orderShipments(orderId: ID!): [Shipment!]!
+
   """Retrieves all orders (admin only)"""
   orders: [Order!]!
   payment(id: String!): Payment!
@@ -4399,9 +4421,11 @@ input SetVariantCostInput {
 }
 
 """
-The goods of an order on their way to the customer (one per order for now)
+Some or all of the goods of an order on their way to the customer; an order may be split into several shipments
 """
 type Shipment {
+  """When it was cancelled (before dispatch)"""
+  cancelledAt: DateTime
   carrier: String
   createdAt: DateTime!
   deliveredAt: DateTime
@@ -4412,12 +4436,39 @@ type Shipment {
   """Status history, oldest first"""
   events: [ShipmentStatusEvent!]!
   id: ID!
+
+  """The order lines and units in this shipment"""
+  items: [ShipmentItem!]!
+  orderId: ID!
   status: ShipmentStatus!
   trackingNumber: String
   updatedAt: DateTime!
 }
 
+"""Units of one order line in a shipment"""
+type ShipmentItem {
+  id: ID!
+  orderItemId: ID!
+  quantity: Int!
+}
+
+input ShipmentItemInput {
+  orderItemId: ID!
+
+  """Units of the order line in this shipment (at most its unshipped units)"""
+  quantity: Int!
+}
+
+input ShipmentItemSerialsInput {
+  """Serials as typed or scanned; normalised by the product’s serial format"""
+  serials: [String!]!
+
+  """The shipment line (ShipmentItem) the units were picked for"""
+  shipmentItemId: ID!
+}
+
 enum ShipmentStatus {
+  CANCELLED
   DELIVERED
   FAILED_DELIVERY
   OUT_FOR_DELIVERY
@@ -5354,19 +5405,21 @@ input UpdateReviewInput {
 }
 
 input UpdateShipmentStatusInput {
-  """The order whose shipment moves (one shipment per order for now)"""
-  orderId: ID!
-
   """Shown in the history and audit log, e.g. why a delivery failed"""
   reason: String
 
-  """The next fulfilment step"""
+  """The shipment that moves"""
+  shipmentId: ID!
+
+  """The next fulfilment step (cancel with cancelShipment)"""
   status: ShipmentStatus!
 }
 
 input UpdateShippingInput {
   carrier: String
-  orderId: ID!
+
+  """The shipment whose carrier and tracking number are set"""
+  shipmentId: ID!
   trackingNumber: String
 }
 

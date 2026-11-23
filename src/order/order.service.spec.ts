@@ -106,9 +106,7 @@ const mockOrdersRepository = {
   transitionStatus: jest.fn(),
   softDelete: jest.fn(),
   lockForFulfilment: jest.fn(),
-  findOrCreateShipment: jest.fn(),
-  transitionShipment: jest.fn(),
-  updateShipmentTracking: jest.fn(),
+  cancelOpenShipments: jest.fn(),
   findForTransaction: jest.fn(),
   cancelOpenPaymentIntent: jest.fn(),
   findExpiredPendingOrders: jest.fn(),
@@ -272,7 +270,7 @@ describe('OrdersService', () => {
         { provide: StockLocationsService, useValue: mockStockLocations },
         {
           provide: SerialUnitsService,
-          useValue: { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() },
+          useValue: { releaseOrder: jest.fn() },
         },
       ],
     }).compile();
@@ -1373,185 +1371,6 @@ describe('OrdersService', () => {
     });
   });
 
-  describe('updateShipmentStatus', () => {
-    const confirmed = {
-      id: 'order1',
-      userId: mockUserId,
-      status: OrderStatus.CONFIRMED,
-      deleted: false,
-      fulfillmentType: 'DELIVERY',
-      paymentMethod: 'ONLINE',
-    };
-    const shipment = (status: string) => ({ id: 'ship1', orderId: 'order1', status, trackingNumber: 'TRK1' });
-
-    beforeEach(() => {
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue(confirmed);
-      mockOrdersRepository.findOrCreateShipment.mockResolvedValue(shipment('PENDING'));
-      mockOrdersRepository.transitionShipment.mockImplementation(async (_tx, _id, _from, to) => shipment(to));
-      mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.IN_FULFILMENT });
-      mockOrdersRepository.findForTransaction.mockResolvedValue({ ...mockOrder, status: OrderStatus.IN_FULFILMENT });
-    });
-
-    it('moves the shipment, puts the confirmed order in fulfilment and audits both on the same transaction', async () => {
-      const stubTx = { id: 'tx' };
-      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
-
-      const result = await ordersService.updateShipmentStatus('order1', 'PICKING' as never, 'admin1', 'Started');
-
-      expect(mockOrdersRepository.transitionShipment).toHaveBeenCalledWith(stubTx, 'ship1', 'PENDING', 'PICKING', {
-        actorId: 'admin1',
-        reason: 'Started',
-      });
-      expect(mockOrdersRepository.transitionStatus).toHaveBeenCalledWith(
-        stubTx,
-        'order1',
-        OrderStatus.IN_FULFILMENT,
-        [OrderStatus.CONFIRMED],
-        { actorId: 'admin1', reason: 'Started' },
-      );
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ entity: 'Shipment', entityId: 'ship1', action: 'STATUS_CHANGE', userId: 'admin1' }),
-        stubTx,
-      );
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        expect.objectContaining({ entity: 'Order', entityId: 'order1', action: 'STATUS_CHANGE', userId: 'admin1' }),
-        stubTx,
-      );
-      expect(result.status).toBe('IN_FULFILMENT');
-    });
-
-    it('records shipment.status_changed.v1 on dispatch and order.status_changed.v2 on delivery, in the transaction', async () => {
-      const stubTx = { id: 'tx' };
-      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
-      mockOrdersRepository.findOrCreateShipment.mockResolvedValue(shipment('PACKED'));
-
-      await ordersService.updateShipmentStatus('order1', 'OUT_FOR_DELIVERY' as never, 'admin1');
-
-      expect(mockOutbox.record).toHaveBeenCalledWith(stubTx, {
-        type: 'shipment.status_changed.v1',
-        aggregateId: 'order1',
-        payload: { orderId: 'order1', shipmentId: 'ship1', status: 'OUT_FOR_DELIVERY', trackingNumber: 'TRK1' },
-      });
-
-      mockOutbox.record.mockClear();
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, status: OrderStatus.IN_FULFILMENT });
-      mockOrdersRepository.findOrCreateShipment.mockResolvedValue(shipment('OUT_FOR_DELIVERY'));
-
-      await ordersService.updateShipmentStatus('order1', 'DELIVERED' as never, 'admin1');
-
-      expect(mockOrdersRepository.transitionStatus).toHaveBeenLastCalledWith(
-        stubTx,
-        'order1',
-        OrderStatus.COMPLETED,
-        [OrderStatus.IN_FULFILMENT],
-        { actorId: 'admin1', reason: undefined },
-      );
-      expect(mockOutbox.record).toHaveBeenCalledTimes(1);
-      expect(mockOutbox.record).toHaveBeenCalledWith(stubTx, {
-        type: 'order.status_changed.v2',
-        aggregateId: 'order1',
-        payload: { orderId: 'order1', from: OrderStatus.IN_FULFILMENT, to: OrderStatus.COMPLETED },
-      });
-    });
-
-    it('records no event for a step that emails nobody', async () => {
-      await ordersService.updateShipmentStatus('order1', 'PICKING' as never, 'admin1');
-
-      expect(mockOutbox.record).not.toHaveBeenCalled();
-    });
-
-    it('should throw NotFoundException if order does not exist', async () => {
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue(null);
-
-      await expect(ordersService.updateShipmentStatus('order1', 'PICKING' as never, 'admin1')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-
-    it('rejects a step the shipment table does not allow, without writing', async () => {
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, status: OrderStatus.IN_FULFILMENT });
-      mockOrdersRepository.findOrCreateShipment.mockResolvedValue(shipment('DELIVERED'));
-
-      await expect(ordersService.updateShipmentStatus('order1', 'PICKING' as never, 'admin1')).rejects.toThrow(
-        new ConflictException('Shipment of order "order1" cannot move from DELIVERED to PICKING (DELIVERY)'),
-      );
-      expect(mockOrdersRepository.transitionShipment).not.toHaveBeenCalled();
-    });
-
-    it('refuses the pickup counter for a delivery order', async () => {
-      await expect(ordersService.updateShipmentStatus('order1', 'READY_FOR_PICKUP' as never, 'admin1')).rejects.toThrow(
-        ConflictException,
-      );
-      expect(mockOrdersRepository.transitionShipment).not.toHaveBeenCalled();
-    });
-
-    it.each([OrderStatus.PLACED, OrderStatus.CANCELLED, OrderStatus.COMPLETED])(
-      'does not let staff fulfil a %s order (an unpaid online order cannot skip payment)',
-      async (status) => {
-        mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, status });
-
-        await expect(ordersService.updateShipmentStatus('order1', 'PICKING' as never, 'admin1')).rejects.toThrow(
-          ConflictException,
-        );
-        expect(mockOrdersRepository.findOrCreateShipment).not.toHaveBeenCalled();
-        expect(ordersRepository.transitionStatus).not.toHaveBeenCalled();
-      },
-    );
-
-    it('makes a cash-on-delivery order record its cash to be delivered', async () => {
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({
-        ...confirmed,
-        status: OrderStatus.IN_FULFILMENT,
-        paymentMethod: 'CASH_ON_DELIVERY',
-      });
-
-      await expect(ordersService.updateShipmentStatus('order1', 'DELIVERED' as never, 'admin1')).rejects.toThrow(
-        BadRequestException,
-      );
-      expect(mockOrdersRepository.transitionShipment).not.toHaveBeenCalled();
-    });
-
-    it('consumes a cash-on-delivery order reservations on dispatch, after the shipment claim and in its transaction', async () => {
-      const stubTx = { id: 'tx' };
-      mockOrdersRepository.runTransaction.mockImplementation(async (callback) => callback(stubTx as any));
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, paymentMethod: 'CASH_ON_DELIVERY' });
-
-      await ordersService.updateShipmentStatus('order1', 'OUT_FOR_DELIVERY' as never, 'admin1');
-
-      expect(mockStockLedger.consumeOrder).toHaveBeenCalledWith(stubTx, 'order1', 'admin1');
-      expect(mockOrdersRepository.transitionShipment.mock.invocationCallOrder[0]).toBeLessThan(
-        mockStockLedger.consumeOrder.mock.invocationCallOrder[0],
-      );
-    });
-
-    it('consumes nothing for an online order (consumed at payment) or a step before dispatch', async () => {
-      await ordersService.updateShipmentStatus('order1', 'OUT_FOR_DELIVERY' as never, 'admin1');
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, paymentMethod: 'CASH_ON_DELIVERY' });
-      await ordersService.updateShipmentStatus('order1', 'PACKED' as never, 'admin1');
-
-      expect(mockStockLedger.consumeOrder).not.toHaveBeenCalled();
-    });
-
-    it('consumes nothing when the shipment claim is lost to another request', async () => {
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, paymentMethod: 'CASH_ON_DELIVERY' });
-      mockOrdersRepository.transitionShipment.mockResolvedValue(null);
-
-      await expect(ordersService.updateShipmentStatus('order1', 'OUT_FOR_DELIVERY' as never, 'admin1')).rejects.toThrow(
-        /changed by another request/,
-      );
-      expect(mockStockLedger.consumeOrder).not.toHaveBeenCalled();
-      expect(mockAuditService.log).not.toHaveBeenCalled();
-    });
-
-    it('reports a conflict when another request moved the order first', async () => {
-      mockOrdersRepository.transitionStatus.mockResolvedValue(null);
-
-      await expect(ordersService.updateShipmentStatus('order1', 'PICKING' as never, 'admin1')).rejects.toThrow(
-        /changed by another request/,
-      );
-    });
-  });
-
   describe('adminCancelOrder', () => {
     it('cancels through the real cancel path so stock comes back, guarded on goods still in the shop', async () => {
       mockOrdersRepository.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.IN_FULFILMENT });
@@ -1568,12 +1387,18 @@ describe('OrdersService', () => {
         {
           actorId: 'admin1',
           reason: 'Customer asked by phone',
-          guard: { shipments: { every: { status: { in: ['PENDING', 'PICKING', 'PACKED', 'RETURNED'] } } } },
+          guard: {
+            shipments: { every: { status: { in: ['PENDING', 'PICKING', 'PACKED', 'RETURNED', 'CANCELLED'] } } },
+          },
         },
       );
       expect(mockStockLedger.releaseOrder).toHaveBeenCalledWith(expect.anything(), 'order1', {
         actorId: 'admin1',
         note: 'Order cancelled',
+      });
+      expect(mockOrdersRepository.cancelOpenShipments).toHaveBeenCalledWith(expect.anything(), 'order1', {
+        actorId: 'admin1',
+        reason: 'Customer asked by phone',
       });
       expect(mockOrdersRepository.cancelOpenPaymentIntent).toHaveBeenCalledWith(expect.anything(), 'order1');
     });
@@ -1769,75 +1594,6 @@ describe('OrdersService', () => {
         },
         stubTx,
       );
-    });
-
-    const confirmed = { id: 'order1', status: OrderStatus.CONFIRMED, deleted: false };
-    const prepareShipping = () => {
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue(confirmed);
-      mockOrdersRepository.findOrCreateShipment.mockResolvedValue({ id: 'ship1', status: 'PENDING' });
-      mockOrdersRepository.findForTransaction.mockResolvedValue(mockOrder);
-    };
-
-    it('writes the shipping update and its audit entry on the same transaction', async () => {
-      prepareShipping();
-
-      await ordersService.updateShipping('order1', undefined, 'DHL', 'admin1');
-
-      expect(mockOrdersRepository.updateShipmentTracking).toHaveBeenCalledWith(stubTx, 'ship1', {
-        trackingNumber: undefined,
-        carrier: 'DHL',
-      });
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        {
-          entity: 'Shipment',
-          entityId: 'ship1',
-          action: 'UPDATE',
-          userId: 'admin1',
-          details: { orderId: 'order1', trackingNumber: undefined, carrier: 'DHL' },
-        },
-        stubTx,
-      );
-    });
-
-    it.each([OrderStatus.PLACED, OrderStatus.CANCELLED])('refuses shipping details on a %s order', async (status) => {
-      prepareShipping();
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, status });
-
-      await expect(ordersService.updateShipping('order1', 'TRK1', 'DHL', 'admin1')).rejects.toThrow(ConflictException);
-      expect(mockOrdersRepository.updateShipmentTracking).not.toHaveBeenCalled();
-    });
-
-    it('fails the status change from inside the transaction when the audit write fails, so it rolls back', async () => {
-      mockOrdersRepository.lockForFulfilment.mockResolvedValue({ ...confirmed, fulfillmentType: 'DELIVERY' });
-      mockOrdersRepository.findOrCreateShipment.mockResolvedValue({ id: 'ship1', status: 'PACKED' });
-      mockOrdersRepository.transitionShipment.mockResolvedValue({ id: 'ship1', status: 'OUT_FOR_DELIVERY' });
-      mockAuditService.log.mockRejectedValue(new Error('audit insert failed'));
-
-      await expect(ordersService.updateShipmentStatus('order1', 'OUT_FOR_DELIVERY' as never, 'admin1')).rejects.toThrow(
-        'audit insert failed',
-      );
-      await expect(mockOrdersRepository.runTransaction.mock.results[0].value).rejects.toThrow('audit insert failed');
-      expect(mockOutbox.record).not.toHaveBeenCalled();
-    });
-
-    it('records shipment.tracking_updated.v1 with the tracking number in the shipping transaction', async () => {
-      prepareShipping();
-
-      await ordersService.updateShipping('order1', 'TRK1', 'DHL', 'admin1');
-
-      expect(mockOutbox.record).toHaveBeenCalledWith(stubTx, {
-        type: 'shipment.tracking_updated.v1',
-        aggregateId: 'order1',
-        payload: { orderId: 'order1', shipmentId: 'ship1', trackingNumber: 'TRK1' },
-      });
-    });
-
-    it('records no shipment event when only the carrier changes', async () => {
-      prepareShipping();
-
-      await ordersService.updateShipping('order1', undefined, 'DHL', 'admin1');
-
-      expect(mockOutbox.record).not.toHaveBeenCalled();
     });
   });
 

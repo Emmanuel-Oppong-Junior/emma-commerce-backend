@@ -3,6 +3,7 @@ import { Lot, Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StockCounts } from '../stock';
 import { ExpiredLotUnits, ExpiringLotRow, LotQuantity, LotUnits } from './lots';
+import { UNDISPATCHED_RESERVED_UNITS } from '../awaiting-dispatch';
 
 type Db = Prisma.TransactionClient;
 
@@ -180,14 +181,10 @@ export class LotStockRepository {
         (SELECT COALESCE(sum(tl."quantity"), 0)::int FROM "StockTransferLine" tl
          JOIN "StockTransfer" t ON t."id" = tl."transferId" JOIN "Variant" v ON v."id" = tl."variantId"
          WHERE v."productId" = ${productId} AND t."status" = 'DISPATCHED') AS "inTransit",
-        (SELECT COALESCE(sum(r."quantity"), 0)::int FROM "StockReservation" r
+        (SELECT COALESCE(sum(${UNDISPATCHED_RESERVED_UNITS}), 0)::int FROM "StockReservation" r
          JOIN "Order" o ON o."id" = r."orderId" JOIN "Variant" v ON v."id" = r."variantId"
          WHERE v."productId" = ${productId} AND r."status" = 'CONSUMED'
-           AND o."status" IN ('CONFIRMED', 'IN_FULFILMENT', 'PAYMENT_REVIEW')
-           AND NOT EXISTS (
-             SELECT 1 FROM "Shipment" s
-             WHERE s."orderId" = o."id" AND s."status" NOT IN ('PENDING', 'PICKING', 'PACKED')
-           )) AS "awaitingDispatch"`;
+           AND o."status" IN ('CONFIRMED', 'IN_FULFILMENT', 'PAYMENT_REVIEW')) AS "awaitingDispatch"`;
     return row;
   }
 

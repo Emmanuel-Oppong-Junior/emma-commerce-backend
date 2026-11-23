@@ -531,6 +531,7 @@ model OrderItem {
   taxLines             OrderLineTax[]
   refundLines          RefundLine[]
   serialUnits          SerialUnit[]
+  shipmentItems        ShipmentItem[]
 
   @@index([orderId])
   @@index([productId, orderId])
@@ -867,10 +868,13 @@ enum ShipmentStatus {
   DELIVERED
   FAILED_DELIVERY
   RETURNED
+  CANCELLED
 }
 
-/// Goods of an order on their way to the customer. One per order for now (created on the first fulfilment step); the
-/// schema allows several for partial fulfilment later.
+/// Some or all of an order's goods on their way to the customer (P5-B.1): an order may be split into several, each
+/// with its items (order line, quantity). Staff create them from the order's unshipped quantities; a cancelled shipment
+/// (only before dispatch) gives its items back. A trigger keeps every line's quantity over its non-cancelled shipments
+/// within the ordered quantity.
 model Shipment {
   id             String                @id @default(cuid())
   orderId        String
@@ -880,12 +884,29 @@ model Shipment {
   /// When it went out for delivery or became ready for pickup (null on shipments migrated without that date)
   dispatchedAt   DateTime?
   deliveredAt    DateTime?
+  cancelledAt    DateTime?
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
   order          Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
   events         ShipmentStatusEvent[]
+  items          ShipmentItem[]
 
   @@index([orderId])
+}
+
+/// Units of one order line in a shipment (P5-B.1). Written with the shipment and never changed.
+model ShipmentItem {
+  id          String       @id @default(cuid())
+  shipmentId  String
+  orderItemId String
+  quantity    Int
+  createdAt   DateTime     @default(now())
+  shipment    Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem    @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  serialUnits SerialUnit[]
+
+  @@unique([shipmentId, orderItemId])
+  @@index([orderItemId])
 }
 
 /// The order's status history, written in the same transaction as every transition; the customer's tracking timeline.
@@ -1871,6 +1892,8 @@ model SerialUnit {
   locationId       String?
   /// Set while ASSIGNED or SOLD
   orderItemId      String?
+  /// The shipment line the unit was picked for (P5-B.1); set while ASSIGNED or SOLD, a line of orderItemId
+  shipmentItemId   String?
   receivedAt       DateTime          @default(now())
   soldAt           DateTime?
   /// Set at delivery when the product has a warranty
@@ -1881,11 +1904,13 @@ model SerialUnit {
   variant          Variant           @relation(fields: [variantId], references: [id], onDelete: Cascade)
   location         StockLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
   orderItem        OrderItem?        @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  shipmentItem     ShipmentItem?     @relation(fields: [shipmentItemId], references: [id], onDelete: Restrict)
   events           SerialUnitEvent[]
 
   @@unique([variantId, serial])
   @@index([serial])
   @@index([orderItemId])
+  @@index([shipmentItemId])
   @@index([variantId, locationId, status])
 }
 

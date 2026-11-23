@@ -20,10 +20,14 @@ import { ExpiredLotUnits } from '../inventory/lots/lots';
 import { PrismaService } from '../prisma/prisma.service';
 import { Quote, QuoteLine } from '../pricing/price';
 import { TransitionContext, transitionOrder } from './order-transition';
-import { isDispatch } from './shipment-status';
+import { isDispatch, PRE_DISPATCH_STATUSES } from './shipment-status';
 import { intentAllowedFrom } from '../payment/payment-intent-status';
 
 type OrderWithItems = Order & { items: OrderItem[] };
+
+const SHIPMENT_ITEMS = { items: { orderBy: { id: 'asc' } } } satisfies Prisma.ShipmentInclude;
+
+export type ShipmentWithItems = Prisma.ShipmentGetPayload<{ include: typeof SHIPMENT_ITEMS }>;
 
 export interface OrderSnapshotLine extends QuoteLine {
   productName: string;
@@ -40,7 +44,10 @@ export interface OrderSnapshot extends Omit<Quote, 'lines'> {
 export const ORDER_INCLUDE = {
   items: { include: { product: true, variant: true, taxLines: { orderBy: { name: 'asc' } } } },
   adjustments: { orderBy: { createdAt: 'asc' } },
-  shipments: { include: { events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } }, orderBy: { createdAt: 'asc' } },
+  shipments: {
+    include: { events: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }, items: { orderBy: { id: 'asc' } } },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  },
   statusEvents: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
   paymentIntent: { select: { status: true } },
 } satisfies Prisma.OrderInclude;
@@ -240,18 +247,9 @@ export class OrdersRepository {
     });
   }
 
-  /** The order's shipment, created PENDING on the first fulfilment step. Call with the order row locked. */
-  async findOrCreateShipment(tx: Prisma.TransactionClient, orderId: string, actorId?: string): Promise<Shipment> {
-    const existing = await tx.shipment.findFirst({ where: { orderId }, orderBy: { createdAt: 'asc' } });
-    if (existing) return existing;
-    return tx.shipment.create({
-      data: { orderId, events: { create: { from: null, to: ShipmentStatus.PENDING, actorId } } },
-    });
-  }
-
   /**
-   * Moves a shipment from `from` to `to` with a conditional write, stamps dispatch and delivery times, and writes
-   * its history event. Returns null when another request moved it first.
+   * Moves a shipment from `from` to `to` with a conditional write, stamps dispatch, delivery and cancellation times,
+   * and writes its history event. Returns the shipment with its items, or null when another request moved it first.
    */
   async transitionShipment(
     tx: Prisma.TransactionClient,
@@ -259,7 +257,7 @@ export class OrdersRepository {
     from: ShipmentStatus,
     to: ShipmentStatus,
     context: { actorId?: string; reason?: string } = {},
-  ): Promise<Shipment | null> {
+  ): Promise<ShipmentWithItems | null> {
     const now = new Date();
     const { count } = await tx.shipment.updateMany({
       where: { id: shipmentId, status: from },
@@ -267,13 +265,32 @@ export class OrdersRepository {
         status: to,
         ...(isDispatch(to) && { dispatchedAt: now }),
         ...(to === ShipmentStatus.DELIVERED && { deliveredAt: now }),
+        ...(to === ShipmentStatus.CANCELLED && { cancelledAt: now }),
       },
     });
     if (count === 0) return null;
     await tx.shipmentStatusEvent.create({
       data: { shipmentId, from, to, actorId: context.actorId, reason: context.reason },
     });
-    return tx.shipment.findUniqueOrThrow({ where: { id: shipmentId } });
+    return tx.shipment.findUniqueOrThrow({ where: { id: shipmentId }, include: SHIPMENT_ITEMS });
+  }
+
+  /**
+   * Cancels the order's shipments that have not been dispatched (the order is being cancelled), each with its history
+   * event. Call on the order's cancel transaction.
+   */
+  async cancelOpenShipments(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    context: { actorId?: string; reason?: string },
+  ): Promise<void> {
+    const open = await tx.shipment.findMany({
+      where: { orderId, status: { in: PRE_DISPATCH_STATUSES } },
+      select: { id: true, status: true },
+    });
+    for (const shipment of open) {
+      await this.transitionShipment(tx, shipment.id, shipment.status, ShipmentStatus.CANCELLED, context);
+    }
   }
 
   async updateShipmentTracking(
@@ -295,7 +312,7 @@ export class OrdersRepository {
     return this.prisma.shipment.findMany({
       where: { orderId },
       include: ORDER_INCLUDE.shipments.include,
-      orderBy: { createdAt: 'asc' },
+      orderBy: ORDER_INCLUDE.shipments.orderBy,
     });
   }
 
@@ -316,11 +333,6 @@ export class OrdersRepository {
   async findItemOrderId(tx: Prisma.TransactionClient, orderItemId: string): Promise<string | null> {
     const item = await tx.orderItem.findUnique({ where: { id: orderItemId }, select: { orderId: true } });
     return item?.orderId ?? null;
-  }
-
-  /** The order's shipment, or null before its first fulfilment step. */
-  async findShipment(tx: Prisma.TransactionClient, orderId: string): Promise<Shipment | null> {
-    return tx.shipment.findFirst({ where: { orderId }, orderBy: { createdAt: 'asc' } });
   }
 
   async findForTransaction(tx: Prisma.TransactionClient, orderId: string): Promise<OrderWithItems> {

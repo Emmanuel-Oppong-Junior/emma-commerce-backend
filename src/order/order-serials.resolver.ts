@@ -9,7 +9,7 @@ import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { OrderSerialsService } from './order-serials.service';
-import { OrderItemSerialsInput } from './dto/order-item-serials.input';
+import { ShipmentItemSerialsInput } from './dto/shipment-item-serials.input';
 
 @Injectable({ scope: Scope.REQUEST })
 export class OrderItemSerialsLoader {
@@ -28,19 +28,20 @@ export class OrderSerialsResolver {
   @RequirePermission('order.fulfil')
   @Mutation(() => Order, {
     description:
-      'Assign picked units, by serial, to a serial-tracked order line while its shipment is PICKING or PACKED ' +
-      '(staff). Each must be IN_STOCK at the order’s location: CONFLICT with reason SERIAL_NOT_AVAILABLE otherwise',
+      'Assign picked units, by serial, to a serial-tracked shipment line while its shipment is PICKING or PACKED ' +
+      '(staff); at most the line’s quantity. Each must be IN_STOCK at the order’s location: CONFLICT with reason ' +
+      'SERIAL_NOT_AVAILABLE otherwise',
   })
-  assignOrderItemSerials(@ActiveUser('id') actorId: string, @Args('input') input: OrderItemSerialsInput) {
-    return this.orderSerials.assign(input.orderItemId, input.serials, actorId);
+  assignShipmentItemSerials(@ActiveUser('id') actorId: string, @Args('input') input: ShipmentItemSerialsInput) {
+    return this.orderSerials.assign(input.shipmentItemId, input.serials, actorId);
   }
 
   @RequirePermission('order.fulfil')
   @Mutation(() => Order, {
-    description: 'Put units assigned to an order line back in stock, before dispatch (staff)',
+    description: 'Put units assigned to a shipment line back in stock, before dispatch (staff)',
   })
-  unassignOrderItemSerials(@ActiveUser('id') actorId: string, @Args('input') input: OrderItemSerialsInput) {
-    return this.orderSerials.unassign(input.orderItemId, input.serials, actorId);
+  unassignShipmentItemSerials(@ActiveUser('id') actorId: string, @Args('input') input: ShipmentItemSerialsInput) {
+    return this.orderSerials.unassign(input.shipmentItemId, input.serials, actorId);
   }
 
   @RequirePermission('order.view')

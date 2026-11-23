@@ -196,6 +196,7 @@ describe('OrdersRepository', () => {
     const tx = {
       shipment: {
         findFirst: jest.fn(),
+        findMany: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
         updateMany: jest.fn(),
@@ -222,14 +223,26 @@ describe('OrdersRepository', () => {
       });
     });
 
-    it('returns the existing shipment or creates a PENDING one with its first history event', async () => {
-      tx.shipment.findFirst.mockResolvedValueOnce({ id: 'ship1' }).mockResolvedValueOnce(null);
-      tx.shipment.create.mockResolvedValue({ id: 'ship2' });
+    it('cancels each shipment of the order not yet dispatched, with its history event', async () => {
+      tx.shipment.findMany.mockResolvedValue([
+        { id: 'ship1', status: 'PENDING' },
+        { id: 'ship2', status: 'PACKED' },
+      ]);
+      tx.shipment.updateMany.mockResolvedValue({ count: 1 });
 
-      expect(await repository.findOrCreateShipment(tx as any, 'order1')).toEqual({ id: 'ship1' });
-      expect(await repository.findOrCreateShipment(tx as any, 'order1', 'admin1')).toEqual({ id: 'ship2' });
-      expect(tx.shipment.create).toHaveBeenCalledWith({
-        data: { orderId: 'order1', events: { create: { from: null, to: 'PENDING', actorId: 'admin1' } } },
+      await repository.cancelOpenShipments(tx as any, 'order1', { actorId: 'admin1', reason: 'Out of stock' });
+
+      expect(tx.shipment.findMany).toHaveBeenCalledWith({
+        where: { orderId: 'order1', status: { in: ['PENDING', 'PICKING', 'PACKED'] } },
+        select: { id: true, status: true },
+      });
+      expect(tx.shipment.updateMany).toHaveBeenCalledWith({
+        where: { id: 'ship2', status: 'PACKED' },
+        data: { status: 'CANCELLED', cancelledAt: expect.any(Date) },
+      });
+      expect(tx.shipmentStatusEvent.create).toHaveBeenCalledTimes(2);
+      expect(tx.shipmentStatusEvent.create).toHaveBeenCalledWith({
+        data: { shipmentId: 'ship1', from: 'PENDING', to: 'CANCELLED', actorId: 'admin1', reason: 'Out of stock' },
       });
     });
 

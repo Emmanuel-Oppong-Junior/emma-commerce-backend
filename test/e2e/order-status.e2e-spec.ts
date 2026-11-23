@@ -5,6 +5,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, stockOf as ledgerStockOf } from '../helpers/db.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 describe('Order status rules (e2e)', () => {
   let app: INestApplication;
@@ -33,10 +34,10 @@ describe('Order status rules (e2e)', () => {
     return res.body.data.createOrder.id;
   };
 
-  const moveShipment = (orderId: string, status: string) =>
+  const moveShipment = async (orderId: string, status: string) =>
     gqlRequest(
       app,
-      `mutation { updateShipmentStatus(input: { orderId: "${orderId}", status: ${status} }) { id status } }`,
+      `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, orderId)}", status: ${status} }) { id status } }`,
       undefined,
       adminToken,
     ).expect(200);

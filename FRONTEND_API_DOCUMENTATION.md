@@ -1484,7 +1484,7 @@ All order operations require `Bearer` JWT.
   status: OrderStatus;                         // PLACED | CONFIRMED | IN_FULFILMENT | COMPLETED | CANCELLED | EXPIRED | PAYMENT_REVIEW
   paymentStatus?: OrderPaymentStatus;          // PENDING | CAPTURED | PARTIALLY_REFUNDED | REFUNDED | FAILED | CANCELLED; null before any payment
   timeline: OrderStatusEvent[];                // Status history, oldest first (the customer's tracking timeline)
-  shipments: Shipment[];                       // One per order for now; empty until the first fulfilment step
+  shipments: Shipment[];                       // P5-B.1: several when split; empty until staff create one (createShipment). Each: id, orderId, status, items [{ id, orderItemId, quantity }], carrier, trackingNumber, dispatchedAt, deliveredAt, cancelledAt, events
   refunds: OrderRefund[];                      // P3-C.1: refunds of the order, oldest first (see below)
   fulfillmentType: FulfillmentType;            // DELIVERY | PICKUP
   paymentMethod: OrderPaymentMethod;           // ONLINE | CASH_ON_DELIVERY
@@ -1619,6 +1619,8 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 ```
 
 **`OrderPaymentStatus` Enum**: the order's payment machine. `PENDING` (awaiting payment), `CAPTURED` (paid; Paystack captures at once, there is no authorised step), `PARTIALLY_REFUNDED` / `REFUNDED` (processed refunds of that payment), `FAILED` (the last attempt failed; a new attempt reopens it), `CANCELLED` (the order closed before payment).
+
+**Breaking changes (P5-B.1, split shipments):** `updateShipmentStatus` and `updateShipping` take `shipmentId` instead of `orderId`, and no longer create the shipment: create it first with `createShipment` (new; without `items` it ships everything). `assignOrderItemSerials` / `unassignOrderItemSerials` (`OrderItemSerialsInput { orderItemId }`) → `assignShipmentItemSerials` / `unassignShipmentItemSerials` (`ShipmentItemSerialsInput { shipmentItemId }`). The `SERIALS_NOT_ASSIGNED` lines now carry `shipmentItemId`. New: `cancelShipment`, `orderShipments`, `Shipment.orderId`, `Shipment.items` (`ShipmentItem`), `Shipment.cancelledAt`, `ShipmentStatus.CANCELLED`.
 
 **Breaking change (P1-O.2):** `OrderStatus` values `PENDING`/`PROCESSING`/`SHIPPED`/`DELIVERED` → `PLACED`/`CONFIRMED`/`IN_FULFILMENT`/`COMPLETED`; new `EXPIRED` and `PAYMENT_REVIEW` (an expiry is now `EXPIRED`, not `CANCELLED`). `Order.trackingNumber` and `Order.carrier` → `Order.shipments[0].trackingNumber` / `.carrier`. `updateOrderStatus` and `UpdateOrderStatusInput` removed: use `updateShipmentStatus` for fulfilment and `adminCancelOrder` to cancel. New: `Order.timeline`, `Order.shipments`, `Order.paymentStatus`, `ShipmentStatus`, `OrderPaymentStatus`.
 
@@ -1810,23 +1812,46 @@ mutation {
 #### `adminCancelOrder` (permission `order.manage`)
 - **Type**: Mutation
 - **Args**: `orderId: String!`, `reason?: String` (timeline and audit log)
-- **Description**: Cancel any `PLACED`, `CONFIRMED` or `IN_FULFILMENT` order. During fulfilment only while the goods are still in the shop (shipment `PENDING`, `PICKING`, `PACKED` or `RETURNED`); once dispatched (`OUT_FOR_DELIVERY`, `READY_FOR_PICKUP`) or `DELIVERED` → `CONFLICT`. Same effects as `cancelOrder`, plus an audit entry with the actor and reason.
+- **Description**: Cancel any `PLACED`, `CONFIRMED` or `IN_FULFILMENT` order. During fulfilment only while no shipment has left the shop (every shipment `PENDING`, `PICKING`, `PACKED`, `RETURNED` or `CANCELLED`); once any shipment was dispatched (`OUT_FOR_DELIVERY`, `READY_FOR_PICKUP`) or `DELIVERED` → `CONFLICT` (P5-B.1: after a partial dispatch cancel the remaining shipments with `cancelShipment` and refund what will not ship with `refundOrder`). Shipments not yet dispatched are cancelled with the order. Same effects as `cancelOrder`, plus an audit entry with the actor and reason.
 - **Response**: `Order!`
 - **Possible Errors**: `NOT_FOUND`, `CONFLICT`.
 
 ---
 
+#### Shipments (P5-B.1)
+
+An order is fulfilled through one or more **shipments**, each carrying some units of its lines (`Shipment.items`: `{ id, orderItemId, quantity }`). Staff create them from the order's **unshipped** units (ordered units not in a non-cancelled shipment); the usual case is one shipment with everything (`createShipment` without `items`). Every shipment runs the shipment steps on its own; the order follows all of them:
+
+- the first step of **any** shipment moves a `CONFIRMED` order to `IN_FULFILMENT`;
+- an **online** order becomes `COMPLETED` once no shipment is still open and every ordered unit is in a `DELIVERED` shipment or was refunded (`refundOrder` line units). So a split order completes only when its last shipment is delivered;
+- a **cash-on-delivery** order is never split (its one shipment carries every unit, so the single cash collection, always the grand total, matches one delivery) and completes with `recordCodPayment` as before.
+
+Every change runs with the order row locked (two concurrent creates cannot over-allocate: the loser gets `CONFLICT` + `SHIPMENT_QUANTITY_EXCEEDED`; a database trigger backs the rule) and is audited (entity `Shipment`).
+
+#### `createShipment` (permission `order.fulfil`)
+- **Args**: `input: CreateShipmentInput!` — `{ orderId: ID!, items?: [{ orderItemId: ID!, quantity: Int! (>= 1) }] (1-200) }`; `items` omitted: every unshipped unit.
+- **Response**: `Shipment!` (`PENDING`, with its items and first event). The order's status does not change.
+- **Errors**: `NOT_FOUND` (order); `CONFLICT` (order not `CONFIRMED`/`IN_FULFILMENT`; `reason: SHIPMENT_QUANTITY_EXCEEDED` for more units than are unshipped; `reason: NOTHING_TO_SHIP` when everything is already in a shipment); `BAD_REQUEST` (a line not on the order, named twice; `reason: COD_ORDER_NOT_SPLIT` for a cash-on-delivery order not shipped whole). Audited (`CREATE`, with the items).
+
+#### `cancelShipment` (permission `order.fulfil`)
+- **Args**: `input: CancelShipmentInput!` — `{ shipmentId: ID!, reason?: String (max 500) }`
+- **Response**: `Order!`
+- **Description**: Cancels a shipment that has not been dispatched (`PENDING`, `PICKING`, `PACKED` → `CANCELLED`, `cancelledAt` set): its units are unshipped again (create another shipment for them) and serials picked for it go back on the shelf. An online order whose other shipments then hold every unit delivered or refunded completes. Dispatched → `CONFLICT`. Audited (`STATUS_CHANGE`).
+
+#### `orderShipments` (permission `order.view`)
+- **Args**: `orderId: ID!` → `[Shipment!]!` (oldest first, with items and events). Customers see their shipments through `order { shipments }`.
+
 #### `updateShipmentStatus` (permission `order.fulfil`)
 - **Type**: Mutation
-- **Args**: `input: UpdateShipmentStatusInput!` — `{ orderId: ID!, status: ShipmentStatus!, reason?: String (max 500) }`
+- **Args**: `input: UpdateShipmentStatusInput!` — `{ shipmentId: ID!, status: ShipmentStatus!, reason?: String (max 500) }`
 - **Response**: `Order!`
-- **Description**: Moves the order's shipment to its next fulfilment step; the shipment is created (`PENDING`) on the first step. Only `CONFIRMED` or `IN_FULFILMENT` orders (an unpaid online order cannot be fulfilled) → otherwise `CONFLICT`.
+- **Description**: Moves one shipment to its next fulfilment step. Only shipments of `CONFIRMED` or `IN_FULFILMENT` orders (an unpaid online order cannot be fulfilled) → otherwise `CONFLICT`. Unknown shipment → `NOT_FOUND`. `CANCELLED` here → `BAD_REQUEST` (use `cancelShipment`).
 
-**Shipment steps** (`src/order/shipment-status.ts`): `PENDING → PICKING → PACKED → READY_FOR_PICKUP | OUT_FOR_DELIVERY → DELIVERED | FAILED_DELIVERY`; `FAILED_DELIVERY → OUT_FOR_DELIVERY | READY_FOR_PICKUP` (retry) `| RETURNED`. Steps before dispatch may be skipped forward (e.g. `PENDING → PACKED`). A `PICKUP` order is dispatched to `READY_FOR_PICKUP`, a `DELIVERY` order to `OUT_FOR_DELIVERY`; any other step → `CONFLICT`.
+**Shipment steps** (`src/order/shipment-status.ts`): `PENDING → PICKING → PACKED → READY_FOR_PICKUP | OUT_FOR_DELIVERY → DELIVERED | FAILED_DELIVERY`; `FAILED_DELIVERY → OUT_FOR_DELIVERY | READY_FOR_PICKUP` (retry) `| RETURNED`; `PENDING | PICKING | PACKED → CANCELLED` (`cancelShipment`). Steps before dispatch may be skipped forward (e.g. `PENDING → PACKED`). A `PICKUP` order is dispatched to `READY_FOR_PICKUP`, a `DELIVERY` order to `OUT_FOR_DELIVERY`; any other step → `CONFLICT`.
 
-**Serial-tracked lines (P4-D.1)**: dispatch is refused with `BAD_REQUEST` + `reason: SERIALS_NOT_ASSIGNED` until every such line has a unit assigned per item (`assignOrderItemSerials`); dispatch marks them `SOLD` and `DELIVERED` starts their warranty. See [Serial units](#serial-units-p4-d1).
+**Serial-tracked lines (P4-D.1, per shipment since P5-B.1)**: dispatch is refused with `BAD_REQUEST` + `reason: SERIALS_NOT_ASSIGNED` until every serialised line **of this shipment** has a unit assigned per item (`assignShipmentItemSerials`); dispatch marks them `SOLD` and the shipment's `DELIVERED` starts their warranty. See [Serial units](#serial-units-p4-d1).
 
-**In the same transaction**: the first step moves a `CONFIRMED` order to `IN_FULFILMENT`; dispatch consumes a cash-on-delivery order's reserved stock (once: a retried delivery does not consume again) and emails the customer; `DELIVERED` completes the order (`COMPLETED`) and emails the customer. A cash-on-delivery order is delivered by recording its cash (`recordCodPayment`): `DELIVERED` here → `BAD_REQUEST`. Each step is written to the shipment's `events`, the order's `timeline` when the order moves, and the audit log (actor, reason). Concurrent steps: one wins, the other gets `CONFLICT`.
+**In the same transaction**: the first step of any shipment moves a `CONFIRMED` order to `IN_FULFILMENT`; dispatch consumes a cash-on-delivery order's reserved stock (once: a retried delivery does not consume again) and emails the customer; `DELIVERED` completes an online order once all its units are delivered (see Shipments above). A cash-on-delivery order is delivered by recording its cash (`recordCodPayment`): `DELIVERED` here → `BAD_REQUEST`. Each step is written to the shipment's `events`, the order's `timeline` when the order moves, and the audit log (actor, reason). Concurrent steps: one wins, the other gets `CONFLICT`.
 
 ---
 
@@ -1834,13 +1859,13 @@ mutation {
 - **Type**: Mutation
 - **Args**: `input: UpdateShippingInput!`
 - **Response**: `Order!`
-- **Description**: Sets carrier and tracking number on the order's shipment (created if needed) of a `CONFIRMED` or `IN_FULFILMENT` order (otherwise `CONFLICT`). Does not change any status. When a `trackingNumber` is sent, a "shipped" email with the tracking number goes to the customer.
+- **Description**: Sets carrier and tracking number on one shipment of a `CONFIRMED` or `IN_FULFILMENT` order (otherwise `CONFLICT`; a cancelled shipment → `CONFLICT`). Does not change any status. When a `trackingNumber` is sent, a "shipped" email with the tracking number goes to the customer.
 
 **Input: `UpdateShippingInput`**
 
 ```typescript
 {
-  orderId: string;        // Required.
+  shipmentId: string;     // Required.
   trackingNumber?: string;
   carrier?: string;
 }
@@ -2649,8 +2674,8 @@ A product with `trackSerials: true` (see [2.26](#226-product-types-and-attribute
 - **Format** (`Product.serialFormat`): `FREE_TEXT` (default: 1-64 letters, digits and `- _ . /`) or `IMEI` (15 digits with a valid Luhn check digit). Serials are stored normalised: spaces removed and upper case; an IMEI also loses its dashes. Unique per variant. Malformed serials → `BAD_REQUEST`.
 - **Every stock change of a tracked variant names its units**, one serial per unit (`BAD_REQUEST` + `reason: SERIALS_REQUIRED` otherwise): `restockVariant` (new serials; a return restock names units sold on that order), `adjustVariantStock` (removal: units in stock there; addition: new or written-off serials), `dispatchStockTransfer` / `receiveStockTransfer`. A unit in the wrong status or place (or taken by a concurrent request) → `CONFLICT` + `reason: SERIAL_NOT_AVAILABLE` + `extensions.serials`; nothing is changed.
 - **Status** (`SerialUnitStatus`): `IN_STOCK` (on the shelf at `locationId`) → `ASSIGNED` (picked for an order line, still on the shelf) → `SOLD` (dispatched); `ASSIGNED → IN_STOCK` (unassigned, or the order cancelled); `SOLD → IN_STOCK` (return restocked, or the order cancelled after its shipment came back); `IN_STOCK → IN_TRANSIT → IN_STOCK` (transfer) or `WRITTEN_OFF` (missing on arrival); `IN_STOCK → WRITTEN_OFF` (negative adjustment) `→ IN_STOCK` (found).
-- **Assignment at pick**: while the order's shipment is `PICKING` or `PACKED`, staff assign the units they picked to each serialised line with `assignOrderItemSerials` (and take them off with `unassignOrderItemSerials`). Each unit must be `IN_STOCK` at the order's stock location. **Dispatch** (`updateShipmentStatus` to `OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`) is refused with `BAD_REQUEST` + `reason: SERIALS_NOT_ASSIGNED` + `extensions.lines: [{ orderItemId, quantity, assigned }]` until every serialised line has exactly its quantity assigned; the units then become `SOLD`. Online orders still consume stock at payment; their units stay on the shelf until dispatch. Cancelling an order frees its assigned units.
-- **Warranty** starts at delivery (`DELIVERED` via `updateShipmentStatus`, or `recordCodPayment` for cash on delivery) and ends `Product.warrantyMonths` calendar months later (on the last day of a shorter month); no warranty when it is null.
+- **Assignment at pick** (per shipment line since P5-B.1): while a shipment is `PICKING` or `PACKED`, staff assign the units they picked to each of its serialised lines (`Shipment.items[].id`) with `assignShipmentItemSerials` (and take them off with `unassignShipmentItemSerials`); an order line split across two shipments gets each part's units named on its own shipment. Each unit must be `IN_STOCK` at the order's stock location. **Dispatch** of a shipment (`updateShipmentStatus` to `OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`) is refused with `BAD_REQUEST` + `reason: SERIALS_NOT_ASSIGNED` + `extensions.lines: [{ shipmentItemId, orderItemId, quantity, assigned }]` until every serialised line of that shipment has exactly its quantity assigned; the units then become `SOLD`. Online orders still consume stock at payment; their units stay on the shelf until dispatch. Cancelling an order or a shipment frees its assigned units.
+- **Warranty** starts at the delivery of the unit's shipment (`DELIVERED` via `updateShipmentStatus`, or `recordCodPayment` for cash on delivery) and ends `Product.warrantyMonths` calendar months later (on the last day of a shorter month); no warranty when it is null.
 - **Tracking flag**: `trackSerials` can be turned on only while the product has nothing on hand, in transit or on an open order (adjust it to zero first); turned off only while none of its units is `IN_STOCK`, `ASSIGNED` or `IN_TRANSIT` (`BAD_REQUEST` otherwise). A tracked product's variants take no opening stock (`createProduct`, `createVariant`: `BAD_REQUEST`).
 - **Reconciliation**: the nightly stock reconciliation also checks, per tracked variant and location, that `IN_STOCK` + `ASSIGNED` units = on hand + units sold online and not yet dispatched (metric `stock_reconciliation_mismatches{kind="SERIAL_UNITS"}`); it only reports.
 
@@ -2668,8 +2693,8 @@ SerialUnitLookup { unit: SerialUnit; sku: string; productName: string; orderId?:
 OrderItemSerial { serial: string; status: SerialUnitStatus; soldAt?: DateTime; warrantyStartsAt?: DateTime; warrantyEndsAt?: DateTime }
 ```
 
-- `assignOrderItemSerials(input: { orderItemId: ID!, serials: [String!]! (1-1000) })` → `Order!` (`order.fulfil`). Errors: `NOT_FOUND` (line or order), `CONFLICT` (order not `CONFIRMED`/`IN_FULFILMENT`, shipment not `PICKING`/`PACKED`, `SERIAL_NOT_AVAILABLE`), `BAD_REQUEST` (product not serial-tracked, more units than the line's quantity, malformed serial). Audited (entity `OrderItem`, action `UPDATE`, `details.change: SERIALS_ASSIGNED`).
-- `unassignOrderItemSerials(input: { orderItemId: ID!, serials: [String!]! })` → `Order!` (`order.fulfil`). Same rules; each serial must be assigned to that line (`CONFLICT` + `SERIAL_NOT_AVAILABLE`). Audited (`SERIALS_UNASSIGNED`).
+- `assignShipmentItemSerials(input: { shipmentItemId: ID!, serials: [String!]! (1-1000) })` → `Order!` (`order.fulfil`). Errors: `NOT_FOUND` (shipment line or order), `CONFLICT` (order not `CONFIRMED`/`IN_FULFILMENT`, shipment not `PICKING`/`PACKED`, `SERIAL_NOT_AVAILABLE`), `BAD_REQUEST` (product not serial-tracked, more units than the shipment line's quantity, malformed serial). Audited (entity `OrderItem`, action `UPDATE`, `details.change: SERIALS_ASSIGNED`).
+- `unassignShipmentItemSerials(input: { shipmentItemId: ID!, serials: [String!]! })` → `Order!` (`order.fulfil`). Same rules; each serial must be assigned to that shipment line (`CONFLICT` + `SERIAL_NOT_AVAILABLE`). Audited (`SERIALS_UNASSIGNED`).
 - `serialUnitLookup(serial: String!)` → `[SerialUnitLookup!]!` (`order.view`): units with that serial on any variant (as typed: spaces and, for an IMEI, dashes ignored), with order, customer id, sale date and warranty window. Empty when unknown.
 - `OrderItem.serials: [OrderItemSerial!]!`: the units assigned to (`ASSIGNED`) or sold on (`SOLD`) the line, with their warranty. Customers see it on their own orders (`order`, `userOrders`); staff on every order.
 
@@ -3535,7 +3560,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `purchasing.receive` | `receivePurchaseOrder` (P4-E.1; held by Owner, Manager and Inventory clerk) |
 | `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
 | `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |
-| `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |
+| `order.fulfil` | `createShipment`, `cancelShipment`, `updateShipmentStatus`, `updateShipping`, `assignShipmentItemSerials`, `unassignShipmentItemSerials` (P1-O.2, P5-B.1; held by Owner, Manager, Inventory clerk and Cashier) |
 | `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund`, `refundOrder` |
 | `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
 | `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment`, `disputes`, `dispute` (P3-E.2) |
@@ -4218,8 +4243,8 @@ Cancelling a paid online order creates a return request automatically ("Automati
 | `PLACED` | `EXPIRED` | Hourly expiry of unpaid `ONLINE` orders | System |
 | `PLACED`, `CONFIRMED` | `CANCELLED` | `cancelOrder` / `adminCancelOrder` | Customer or staff (`order.manage`) |
 | `CONFIRMED` | `IN_FULFILMENT` | First `updateShipmentStatus` step | Staff (`order.fulfil`) |
-| `IN_FULFILMENT` | `COMPLETED` | `updateShipmentStatus(DELIVERED)`, or `recordCodPayment` for COD | Staff (`order.fulfil` / `payment.record`) |
-| `IN_FULFILMENT` | `CANCELLED` | `adminCancelOrder` while the shipment is `PENDING`/`PICKING`/`PACKED`/`RETURNED` | Staff (`order.manage`) |
+| `IN_FULFILMENT` | `COMPLETED` | `updateShipmentStatus(DELIVERED)` of the last shipment (every unit delivered or refunded; also `cancelShipment` of the last open one), or `recordCodPayment` for COD | Staff (`order.fulfil` / `payment.record`) |
+| `IN_FULFILMENT` | `CANCELLED` | `adminCancelOrder` while every shipment is `PENDING`/`PICKING`/`PACKED`/`RETURNED`/`CANCELLED` | Staff (`order.manage`) |
 | `CANCELLED`, `EXPIRED` | `PAYMENT_REVIEW` | A payment captured after the order closed (refund queued) | System |
 | `PAYMENT_REVIEW` | `CANCELLED` | That payment's refund processed (`processPendingRefund`) | Staff (`order.refund`) |
 | `COMPLETED` | — | Final | — |
@@ -5462,11 +5487,13 @@ mutation {
 
 ### Step 13 — User Receives Order (Admin updates status)
 
-Staff set the tracking details (`updateShipping`, emails the customer) and move the shipment; the order follows (`IN_FULFILMENT`, then `COMPLETED`):
+Staff create the shipment (everything unshipped, or chosen lines to split the order), set its tracking details (`updateShipping`, emails the customer) and move it; the order follows (`IN_FULFILMENT`, then `COMPLETED`):
 ```graphql
+mutation { createShipment(input: { orderId: "clx_order_789" }) { id items { orderItemId quantity } } }
+
 mutation {
   updateShipmentStatus(input: {
-    orderId: "clx_order_789"
+    shipmentId: "clx_shipment_1"
     status: OUT_FOR_DELIVERY
   }) { id status shipments { status trackingNumber } }
 }
@@ -5476,7 +5503,7 @@ Then:
 ```graphql
 mutation {
   updateShipmentStatus(input: {
-    orderId: "clx_order_789"
+    shipmentId: "clx_shipment_1"
     status: DELIVERED
   }) { id status timeline { from to createdAt } }
 }

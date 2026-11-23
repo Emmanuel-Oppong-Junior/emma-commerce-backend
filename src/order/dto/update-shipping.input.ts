@@ -3,9 +3,9 @@ import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 @InputType()
 export class UpdateShippingInput {
-  @Field(() => ID)
+  @Field(() => ID, { description: 'The shipment whose carrier and tracking number are set' })
   @IsNotEmpty()
-  orderId: string;
+  shipmentId: string;
 
   @Field({ nullable: true })
   @IsOptional()

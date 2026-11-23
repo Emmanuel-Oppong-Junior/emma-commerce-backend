@@ -10,6 +10,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, setStock, stockOf, verifyPhoneForCod } from '../helpers/db.helper';
 import { signInAdmin } from '../helpers/auth.helper';
 import { placeOrderFromCart } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 const BUYERS = ['seed_user', 'ledger_buyer_2'];
 const TWO_HOURS_AGO = () => new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -169,10 +170,10 @@ describe('Stock ledger: reservations and movements (P1-N.2, e2e)', () => {
     await verifyPhoneForCod(prisma, BUYERS[0]);
     const order = await placeOrder(variantId, 2, { paymentMethod: PaymentMethod.CASH_ON_DELIVERY });
     const [held] = await prisma.stockReservation.findMany({ where: { orderId: order.id } });
-    const move = (status: string) =>
+    const move = async (status: string) =>
       gqlRequest(
         app,
-        `mutation { updateShipmentStatus(input: { orderId: "${order.id}", status: ${status} }) { status } }`,
+        `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, order.id)}", status: ${status} }) { status } }`,
         undefined,
         adminToken,
       ).expect(200);

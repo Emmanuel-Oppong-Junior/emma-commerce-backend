@@ -28,6 +28,7 @@ import {
 import { LedgerAttempt } from './payment-reconciliation';
 import { intentAllowedFrom } from './payment-intent-status';
 import { collectableShipment } from './cash-on-delivery';
+import { shipmentStatusChanged } from '../order/shipment-events';
 
 /** A payment attempt in the shape the GraphQL `Payment` type exposes. */
 export interface PaymentRecord {
@@ -201,8 +202,9 @@ export class PaymentRepository {
 
   /**
    * Records the grand total as cash collected and completes the order, in one transaction: the intent is captured, a
-   * CAPTURED cash-on-delivery attempt and its cash collection are created, the dispatched shipment is DELIVERED, the
-   * order moves IN_FULFILMENT -> COMPLETED (recording `order.status_changed.v2`), and `onRecorded` runs on the same
+   * CAPTURED cash-on-delivery attempt and its cash collection are created, the dispatched shipment (the order's only
+   * one: cash-on-delivery orders are not split) is DELIVERED (recording `shipment.status_changed.v1`, warranties start),
+   * the order moves IN_FULFILMENT -> COMPLETED (recording `order.status_changed.v2`), and `onRecorded` runs on the same
    * transaction (for the audit row). `assertCollectable` re-checks the order (and gets the rider) under its row lock
    * and throws to refuse, so a repeated call finds the order already COMPLETED and writes nothing.
    */
@@ -261,7 +263,8 @@ export class PaymentRepository {
         context,
       );
       if (!delivered) throw changed();
-      await this.serialUnits.startWarranty(tx, orderId, delivered.deliveredAt!);
+      await this.serialUnits.startWarranty(tx, shipment.id, delivered.deliveredAt!);
+      await this.outbox.record(tx, shipmentStatusChanged(orderId, delivered));
       const completed = await this.ordersRepository.transitionStatus(
         tx,
         orderId,

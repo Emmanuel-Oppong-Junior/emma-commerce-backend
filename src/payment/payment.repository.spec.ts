@@ -128,7 +128,7 @@ describe('PaymentRepository', () => {
         { provide: StockLedgerService, useValue: mockStockLedger },
         {
           provide: SerialUnitsService,
-          useValue: { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() },
+          useValue: { releaseOrder: jest.fn(), startWarranty: jest.fn() },
         },
       ],
     }).compile();
@@ -270,7 +270,14 @@ describe('PaymentRepository', () => {
       mockPrismaCashCollection.create.mockResolvedValue(collection);
       mockPrismaAttempt.findUniqueOrThrow.mockResolvedValue(completed);
       mockPrismaIntent.updateMany.mockResolvedValue({ count: 1 });
-      mockOrdersRepository.transitionShipment.mockResolvedValue({ id: 'ship1', status: 'DELIVERED' });
+      mockOrdersRepository.transitionShipment.mockResolvedValue({
+        id: 'ship1',
+        status: 'DELIVERED',
+        carrier: null,
+        trackingNumber: null,
+        deliveredAt: new Date('2026-11-23T10:00:00Z'),
+        items: [{ orderItemId: 'item1', quantity: 1 }],
+      });
       mockOrdersRepository.transitionStatus.mockResolvedValue({ ...shippedCod, status: 'COMPLETED' });
     });
 
@@ -355,6 +362,18 @@ describe('PaymentRepository', () => {
         ['IN_FULFILMENT'],
         context,
       );
+      expect(mockOutbox.record).toHaveBeenCalledWith(mockTx, {
+        type: 'shipment.status_changed.v1',
+        aggregateId: 'order1',
+        payload: {
+          orderId: 'order1',
+          shipmentId: 'ship1',
+          status: 'DELIVERED',
+          trackingNumber: null,
+          carrier: null,
+          items: [{ orderItemId: 'item1', quantity: 1 }],
+        },
+      });
       expect(mockOutbox.record).toHaveBeenCalledWith(mockTx, {
         type: 'order.status_changed.v2',
         aggregateId: 'order1',

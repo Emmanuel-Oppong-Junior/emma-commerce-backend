@@ -3,6 +3,7 @@ import { Prisma, StockTake, StockTakeLine, StockTakeStatus } from '../../generat
 import { PrismaService } from '../../prisma/prisma.service';
 import { StockTakeLineFacts } from './stock-take-variance';
 
+import { UNDISPATCHED_RESERVED_UNITS } from '../awaiting-dispatch';
 type Db = Prisma.TransactionClient;
 
 /** What a stock-take counts: a category's variants, a list of variants, or (neither) every variant. */
@@ -54,15 +55,11 @@ export class StockTakeRepository {
         }`;
     return db.$queryRaw<ExpectedStock[]>`
       WITH awaiting_dispatch AS (
-        SELECT r."variantId", sum(r."quantity")::int AS "quantity"
+        SELECT r."variantId", sum(${UNDISPATCHED_RESERVED_UNITS})::int AS "quantity"
         FROM "StockReservation" r
         JOIN "Order" o ON o."id" = r."orderId"
         WHERE r."locationId" = ${locationId} AND r."status" = 'CONSUMED'
           AND o."status" IN ('CONFIRMED', 'IN_FULFILMENT')
-          AND NOT EXISTS (
-            SELECT 1 FROM "Shipment" s
-            WHERE s."orderId" = o."id" AND s."status" NOT IN ('PENDING', 'PICKING', 'PACKED')
-          )
         GROUP BY r."variantId"
       )
       SELECT v."id" AS "variantId", (COALESCE(sl."onHand", 0) + COALESCE(ad."quantity", 0))::int AS "expected"

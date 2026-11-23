@@ -3,10 +3,10 @@ import { ArrayMaxSize, ArrayMinSize, IsArray, IsString, MaxLength } from 'class-
 import { MAX_SERIALS_PER_CHANGE } from '../../inventory/serials/dto/serials.field';
 
 @InputType()
-export class OrderItemSerialsInput {
-  @Field(() => ID)
+export class ShipmentItemSerialsInput {
+  @Field(() => ID, { description: 'The shipment line (ShipmentItem) the units were picked for' })
   @IsString()
-  orderItemId: string;
+  shipmentItemId: string;
 
   @Field(() => [String], { description: 'Serials as typed or scanned; normalised by the product’s serial format' })
   @IsArray()

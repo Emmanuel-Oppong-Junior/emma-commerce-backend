@@ -5,15 +5,13 @@ import { ActiveUser } from '../iam/authentication/decorators/active-user.decorat
 import { CreateOrderInput } from './dto/create-order.input';
 import { CheckoutQuoteInput } from './dto/checkout-quote.input';
 import { CheckoutQuote } from './entities/checkout-quote.entity';
-import { UpdateShipmentStatusInput } from './dto/update-shipment-status.input';
 import { OrderStatusEvent } from './entities/order-status-event.entity';
 import { Shipment } from './entities/shipment.entity';
 import { PaymentIntentStatusEnum } from './enums/order.enum';
-import { UpdateShippingInput } from './dto/update-shipping.input';
 import { OrdersService } from './order.service';
 import { UsersLoader } from '../users/loaders/users.loader';
 import { User } from '../users/entities/user.entity';
-import { FulfillmentType, PaymentMethod, ShipmentStatus } from '../generated/prisma/client';
+import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
 import { ownerOrAdmin } from '../iam/authorization/owner-or-admin.field-middleware';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
@@ -102,30 +100,6 @@ export class OrdersResolver {
       quoteHash: input.quoteHash,
       clientIp: req.ip,
     });
-  }
-
-  @RequirePermission('order.fulfil')
-  @Mutation(() => Order, {
-    name: 'updateShipping',
-    description: "Set the carrier and tracking number on a confirmed or in-fulfilment order's shipment (staff)",
-  })
-  async updateShipping(@ActiveUser('id') adminId: string, @Args('input') input: UpdateShippingInput) {
-    return this.ordersService.updateShipping(input.orderId, input.trackingNumber, input.carrier, adminId);
-  }
-
-  @RequirePermission('order.fulfil')
-  @Mutation(() => Order, {
-    name: 'updateShipmentStatus',
-    description:
-      "Move an order's shipment to its next fulfilment step (staff); the order follows: IN_FULFILMENT on the first step, COMPLETED on delivery",
-  })
-  async updateShipmentStatus(@ActiveUser('id') actorId: string, @Args('input') input: UpdateShipmentStatusInput) {
-    return this.ordersService.updateShipmentStatus(
-      input.orderId,
-      input.status as unknown as ShipmentStatus,
-      actorId,
-      input.reason,
-    );
   }
 
   @CustomerOnly()

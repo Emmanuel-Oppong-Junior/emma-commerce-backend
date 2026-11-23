@@ -14,6 +14,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, verifyPhoneForCod } from '../helpers/db.helper';
 import { signInAdmin, signUpUser } from '../helpers/auth.helper';
 import { placeOrderFromCart } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 const BUYERS = ['seed_user', 'loc_buyer_2'];
 const ACCRA_ZONE = 'seed_zone_accra';
@@ -303,7 +304,7 @@ describe('Fulfilment locations (P4-A.1, e2e)', () => {
     const order = await deliver(BUYERS[0], PaymentMethod.CASH_ON_DELIVERY);
 
     const shipped = await gql(
-      `mutation { updateShipmentStatus(input: { orderId: "${order.id}", status: OUT_FOR_DELIVERY }) { status } }`,
+      `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, order.id)}", status: OUT_FOR_DELIVERY }) { status } }`,
     );
     const returnRequest = await prisma.returnRequest.create({
       data: { orderId: order.id, userId: BUYERS[0], reason: 'Wrong size' },

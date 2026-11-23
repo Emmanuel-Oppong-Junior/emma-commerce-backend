@@ -17,6 +17,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, setStock, stockOf, verifyPhoneForCod } from '../helpers/db.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 import { placeOrderFromCart } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 const BUYER = 'seed_user';
 const ADMIN = 'seed_admin';
@@ -239,8 +240,10 @@ describe('Lots with expiry (P4-C.1, e2e)', () => {
     const soon = await receiveLot(variantId, 'C-SOON', inDays(5), 1);
     await verifyPhoneForCod(prisma, BUYER);
     const order = await placeOrder(variantId, 3, PaymentMethod.CASH_ON_DELIVERY);
-    const move = (status: string) =>
-      gql(`mutation { updateShipmentStatus(input: { orderId: "${order.id}", status: ${status} }) { status } }`);
+    const move = async (status: string) =>
+      gql(
+        `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, order.id)}", status: ${status} }) { status } }`,
+      );
 
     expect((await move('PACKED')).errors).toBeUndefined();
     expect(await lotMovements(variantId, 'SALE')).toEqual([]);

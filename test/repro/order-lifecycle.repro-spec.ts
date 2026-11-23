@@ -1,4 +1,5 @@
 import { OrdersService } from '../../src/order/order.service';
+import { ShipmentsService } from '../../src/order/shipments.service';
 import { codRiskStub, velocityStub } from '../helpers/velocity.helper';
 
 function buildOrdersService(order: Record<string, unknown>) {
@@ -68,9 +69,21 @@ describe('Order lifecycle (audit repro: ORD-01, ORD-03, ORD-04)', () => {
 
   it('ORD-04: an admin cannot move a CANCELLED order to SHIPPED', async () => {
     const order = { id: 'order-1', userId: 'user-1', status: 'CANCELLED', paymentMethod: 'ONLINE', items: [] };
-    const { service, repository } = buildOrdersService(order);
+    const { repository } = buildOrdersService(order);
+    const shipments = new ShipmentsService(
+      {
+        runTransaction: jest.fn((work: (tx: unknown) => unknown) => work({})),
+        findOrderId: jest.fn().mockResolvedValue('order-1'),
+        findShipment: jest.fn().mockResolvedValue({ id: 'ship-1', orderId: 'order-1', status: 'PACKED', items: [] }),
+      } as never,
+      repository as never,
+      { log: jest.fn() } as never,
+      {} as never,
+      { dispatchShipment: jest.fn() } as never,
+      { record: jest.fn() } as never,
+    );
 
-    await expect(service.updateShipmentStatus('order-1', 'OUT_FOR_DELIVERY' as never, 'admin-1')).rejects.toThrow();
+    await expect(shipments.updateShipmentStatus('ship-1', 'OUT_FOR_DELIVERY' as never, 'admin-1')).rejects.toThrow();
     expect(repository.updateStatus).not.toHaveBeenCalled();
     expect(repository.transitionShipment).not.toHaveBeenCalled();
   });

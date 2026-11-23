@@ -19,6 +19,9 @@ import { FraudModule } from '../fraud/fraud.module';
 import { CodModule } from '../cod/cod.module';
 import { OrderSerialsService } from './order-serials.service';
 import { OrderItemSerialsLoader, OrderItemSerialsResolver, OrderSerialsResolver } from './order-serials.resolver';
+import { ShipmentsService } from './shipments.service';
+import { ShipmentsRepository } from './shipments.repository';
+import { ShipmentsResolver } from './shipments.resolver';
 
 @Module({
   providers: [
@@ -29,6 +32,9 @@ import { OrderItemSerialsLoader, OrderItemSerialsResolver, OrderSerialsResolver 
     OrderSerialsResolver,
     OrderItemSerialsResolver,
     OrderItemSerialsLoader,
+    ShipmentsService,
+    ShipmentsRepository,
+    ShipmentsResolver,
   ],
   imports: [
     CartModule,

@@ -14,12 +14,17 @@ export interface DomainEventPayloads {
   'order.shipment_updated.v1': { orderId: string; trackingNumber: string };
   /** An order moved through the order machine (recorded for the statuses the customer is emailed about). */
   'order.status_changed.v2': { orderId: string; from: OrderStatus; to: OrderStatus };
-  /** A shipment was dispatched (or moved on); the customer is emailed about dispatch. */
+  /**
+   * A shipment was dispatched or delivered; the customer is emailed about dispatch. `carrier` and `items` were added
+   * in P5-B.1 (absent on events recorded before).
+   */
   'shipment.status_changed.v1': {
     orderId: string;
     shipmentId: string;
     status: ShipmentStatus;
     trackingNumber: string | null;
+    carrier?: string | null;
+    items?: { orderItemId: string; quantity: number }[];
   };
   'shipment.tracking_updated.v1': { orderId: string; shipmentId: string; trackingNumber: string };
   'payment.succeeded.v1': { orderId: string; paymentId: string; amount: string };

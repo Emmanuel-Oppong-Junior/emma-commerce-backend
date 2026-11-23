@@ -1,8 +1,17 @@
 import { FulfillmentType, ShipmentStatus } from '../generated/prisma/client';
-import { canShipmentTransition, isDispatch } from './shipment-status';
+import { canShipmentTransition, isDispatch, isShipmentOpen } from './shipment-status';
 
-const { PENDING, PICKING, PACKED, READY_FOR_PICKUP, OUT_FOR_DELIVERY, DELIVERED, FAILED_DELIVERY, RETURNED } =
-  ShipmentStatus;
+const {
+  PENDING,
+  PICKING,
+  PACKED,
+  READY_FOR_PICKUP,
+  OUT_FOR_DELIVERY,
+  DELIVERED,
+  FAILED_DELIVERY,
+  RETURNED,
+  CANCELLED,
+} = ShipmentStatus;
 
 const COMMON: [ShipmentStatus, ShipmentStatus][] = [
   [PENDING, PICKING],
@@ -13,6 +22,9 @@ const COMMON: [ShipmentStatus, ShipmentStatus][] = [
   [OUT_FOR_DELIVERY, DELIVERED],
   [OUT_FOR_DELIVERY, FAILED_DELIVERY],
   [FAILED_DELIVERY, RETURNED],
+  [PENDING, CANCELLED],
+  [PICKING, CANCELLED],
+  [PACKED, CANCELLED],
 ];
 const toDispatch = (dispatch: ShipmentStatus): [ShipmentStatus, ShipmentStatus][] =>
   [PENDING, PICKING, PACKED, FAILED_DELIVERY].map((from) => [from, dispatch]);
@@ -37,5 +49,13 @@ describe('shipment status transitions', () => {
 
   it('counts only ready-for-pickup and out-for-delivery as dispatch', () => {
     expect(Object.values(ShipmentStatus).filter(isDispatch)).toEqual([READY_FOR_PICKUP, OUT_FOR_DELIVERY]);
+  });
+
+  it('counts every status but delivered, returned and cancelled as open', () => {
+    expect(Object.values(ShipmentStatus).filter((status) => !isShipmentOpen(status))).toEqual([
+      DELIVERED,
+      RETURNED,
+      CANCELLED,
+    ]);
   });
 });

@@ -2,8 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { OrdersResolver } from './order.resolver';
 import { OrdersService } from './order.service';
 import { CreateOrderInput } from './dto/create-order.input';
-import { UpdateShipmentStatusInput } from './dto/update-shipment-status.input';
-import { FulfillmentTypeEnum, OrderStatusEnum, ShipmentStatusEnum } from './enums/order.enum';
+import { FulfillmentTypeEnum, OrderStatusEnum } from './enums/order.enum';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { UsersLoader } from '../users/loaders/users.loader';
 
@@ -17,7 +16,6 @@ describe('OrdersResolver', () => {
     getOrders: jest.fn(),
     createOrderFromCart: jest.fn(),
     checkoutQuote: jest.fn(),
-    updateShipmentStatus: jest.fn(),
     cancelOrder: jest.fn(),
     deleteOrder: jest.fn(),
   };
@@ -63,11 +61,6 @@ describe('OrdersResolver', () => {
     contactEmail: 'test@example.com',
     contactPhone: '+233244000000',
     quoteHash: 'a'.repeat(64),
-  };
-  const mockUpdateShipmentStatusInput: UpdateShipmentStatusInput = {
-    orderId: 'order1',
-    status: ShipmentStatusEnum.OUT_FOR_DELIVERY,
-    reason: 'Rider Kofi',
   };
 
   const mockActiveUser = (id: string) => ({ id });
@@ -161,23 +154,6 @@ describe('OrdersResolver', () => {
         couponCode: 'SAVE',
       });
       expect(result).toBe(quote);
-    });
-  });
-
-  describe('updateShipmentStatus', () => {
-    it('should move the shipment and return the order', async () => {
-      const updatedOrder = { ...mockOrder, status: OrderStatusEnum.IN_FULFILMENT };
-      mockOrdersService.updateShipmentStatus.mockResolvedValue(updatedOrder);
-
-      const result = await resolver.updateShipmentStatus(mockUserId, mockUpdateShipmentStatusInput);
-
-      expect(ordersService.updateShipmentStatus).toHaveBeenCalledWith(
-        'order1',
-        ShipmentStatusEnum.OUT_FOR_DELIVERY,
-        mockUserId,
-        'Rider Kofi',
-      );
-      expect(result).toEqual(updatedOrder);
     });
   });
 

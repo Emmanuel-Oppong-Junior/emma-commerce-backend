@@ -1,13 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
-import {
-  assertTransition,
-  CUSTOMER_CANCELLABLE,
-  DELETABLE_STATUSES,
-  FULFILLABLE_STATUSES,
-  STAFF_CANCELLABLE,
-} from './order-status';
-import { CANCELLABLE_SHIPMENT_STATUSES, canShipmentTransition, isDispatch } from './shipment-status';
+import { assertTransition, CUSTOMER_CANCELLABLE, DELETABLE_STATUSES, STAFF_CANCELLABLE } from './order-status';
+import { CANCELLABLE_SHIPMENT_STATUSES } from './shipment-status';
 import { CartService } from '../cart/cart.service';
 import {
   Cart,
@@ -19,7 +13,6 @@ import {
   OrderStatus,
   PaymentMethod,
   Prisma,
-  ShipmentStatus,
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { abandonedOrderWhere, OrderSnapshot, OrderSnapshotLine, OrdersRepository } from './order.repository';
@@ -366,83 +359,6 @@ export class OrdersService {
   }
 
   /**
-   * Moves the order's shipment one step through the fulfilment machine (staff, order.fulfil), creating the shipment on
-   * the first step. In the same transaction: the first step moves a CONFIRMED order to IN_FULFILMENT; dispatch
-   * (READY_FOR_PICKUP / OUT_FOR_DELIVERY) consumes a cash-on-delivery order's reserved stock (once: only ACTIVE
-   * reservations are consumed) and records `shipment.status_changed.v1`; DELIVERED completes the order and records
-   * `order.status_changed.v2`. A cash-on-delivery shipment is delivered by recording its cash (recordCodPayment).
-   * Dispatch is refused (BAD_REQUEST, SERIALS_NOT_ASSIGNED) until every serial-tracked line has a unit assigned per
-   * item; the units are then SOLD, and their warranty starts at delivery (P4-D.1).
-   */
-  async updateShipmentStatus(
-    orderId: string,
-    to: ShipmentStatus,
-    actorId: string,
-    reason?: string,
-  ): Promise<Order & { items: OrderItem[] }> {
-    return this.ordersRepository.runTransaction(async (tx) => {
-      const order = await this.ordersRepository.lockForFulfilment(tx, orderId);
-      if (!order || order.deleted) throw new NotFoundException(`Order "${orderId}" not found`);
-      if (!FULFILLABLE_STATUSES.includes(order.status)) {
-        throw new ConflictException(
-          `Order "${orderId}" is ${order.status}; only ${FULFILLABLE_STATUSES.join(' or ')} orders can be fulfilled`,
-        );
-      }
-      if (to === ShipmentStatus.DELIVERED && order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
-        throw new BadRequestException(
-          `Order "${orderId}" is paid on delivery; record the cash collected (recordCodPayment) to deliver it`,
-        );
-      }
-      const shipment = await this.ordersRepository.findOrCreateShipment(tx, orderId, actorId);
-      if (!canShipmentTransition(shipment.status, to, order.fulfillmentType)) {
-        throw new ConflictException(
-          `Shipment of order "${orderId}" cannot move from ${shipment.status} to ${to} (${order.fulfillmentType})`,
-        );
-      }
-      const moved = await this.ordersRepository.transitionShipment(tx, shipment.id, shipment.status, to, {
-        actorId,
-        reason,
-      });
-      if (!moved) throw this.changedMeanwhile(orderId);
-      await this.auditService.log(
-        {
-          entity: 'Shipment',
-          entityId: shipment.id,
-          action: 'STATUS_CHANGE',
-          userId: actorId,
-          details: { orderId, from: shipment.status, to, ...(reason && { reason }) },
-        },
-        tx,
-      );
-
-      if (order.status === OrderStatus.CONFIRMED) {
-        await this.moveOrder(tx, orderId, OrderStatus.CONFIRMED, OrderStatus.IN_FULFILMENT, actorId, reason);
-      }
-      if (isDispatch(to)) {
-        await this.serialUnits.dispatchOrder(tx, orderId, { actorId, refType: 'Order', refId: orderId });
-        if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
-          await this.stockLedger.consumeOrder(tx, orderId, actorId);
-        }
-        await this.outbox.record(tx, {
-          type: 'shipment.status_changed.v1',
-          aggregateId: orderId,
-          payload: { orderId, shipmentId: shipment.id, status: to, trackingNumber: moved.trackingNumber ?? null },
-        });
-      }
-      if (to === ShipmentStatus.DELIVERED) {
-        await this.serialUnits.startWarranty(tx, orderId, moved.deliveredAt!);
-        await this.moveOrder(tx, orderId, OrderStatus.IN_FULFILMENT, OrderStatus.COMPLETED, actorId, reason);
-        await this.outbox.record(tx, {
-          type: 'order.status_changed.v2',
-          aggregateId: orderId,
-          payload: { orderId, from: OrderStatus.IN_FULFILMENT, to: OrderStatus.COMPLETED },
-        });
-      }
-      return this.ordersRepository.findForTransaction(tx, orderId);
-    });
-  }
-
-  /**
    * Cancels an order owned by the requesting user before fulfilment starts, and restores the reserved stock.
    */
   async cancelOrder(userId: string, orderId: string, reason?: string): Promise<Order & { items: OrderItem[] }> {
@@ -460,7 +376,9 @@ export class OrdersService {
 
   /**
    * Cancels any order without an ownership check (staff), and restores the reserved stock. During fulfilment only
-   * while the goods are still in the shop (shipment pending, picking, packed or returned).
+   * while no shipment has left the shop (every shipment pending, picking, packed, returned or cancelled): after a
+   * partial dispatch staff cancel the remaining shipments and refund what will not ship instead. Shipments not yet
+   * dispatched are cancelled with the order.
    */
   async adminCancelOrder(
     orderId: string,
@@ -516,48 +434,6 @@ export class OrdersService {
       if (!deleted) throw this.changedMeanwhile(orderId);
       await this.auditService.log({ entity: 'Order', entityId: orderId, action: 'DELETE', userId: adminUserId }, tx);
       return deleted;
-    });
-  }
-
-  /**
-   * Sets the carrier and tracking number on the order's shipment (created if this is its first fulfilment step) of a
-   * confirmed or in-fulfilment order. A tracking number also records `shipment.tracking_updated.v1` in the same
-   * transaction, which the worker turns into the customer email.
-   */
-  async updateShipping(
-    orderId: string,
-    trackingNumber?: string,
-    carrier?: string,
-    adminUserId?: string,
-  ): Promise<Order & { items: OrderItem[] }> {
-    return this.ordersRepository.runTransaction(async (tx) => {
-      const order = await this.ordersRepository.lockForFulfilment(tx, orderId);
-      if (!order || order.deleted) throw new NotFoundException(`Order "${orderId}" not found`);
-      if (!FULFILLABLE_STATUSES.includes(order.status)) {
-        throw new ConflictException(
-          `Order "${orderId}" is ${order.status}; only ${FULFILLABLE_STATUSES.join(' or ')} orders can be shipped`,
-        );
-      }
-      const shipment = await this.ordersRepository.findOrCreateShipment(tx, orderId, adminUserId);
-      await this.ordersRepository.updateShipmentTracking(tx, shipment.id, { trackingNumber, carrier });
-      await this.auditService.log(
-        {
-          entity: 'Shipment',
-          entityId: shipment.id,
-          action: 'UPDATE',
-          userId: adminUserId,
-          details: { orderId, trackingNumber, carrier },
-        },
-        tx,
-      );
-      if (trackingNumber) {
-        await this.outbox.record(tx, {
-          type: 'shipment.tracking_updated.v1',
-          aggregateId: orderId,
-          payload: { orderId, shipmentId: shipment.id, trackingNumber },
-        });
-      }
-      return this.ordersRepository.findForTransaction(tx, orderId);
     });
   }
 
@@ -868,6 +744,7 @@ export class OrdersService {
         actorId: close.actorId,
         note: close.to === OrderStatus.EXPIRED ? 'Unpaid order expired' : 'Order cancelled',
       });
+      await this.ordersRepository.cancelOpenShipments(tx, order.id, { actorId: close.actorId, reason: close.reason });
       await this.serialUnits.releaseOrder(tx, order.id, { actorId: close.actorId, refType: 'Order', refId: order.id });
       await this.ordersRepository.cancelOpenPaymentIntent(tx, order.id);
       return closed;

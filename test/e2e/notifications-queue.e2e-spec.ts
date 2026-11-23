@@ -2,7 +2,7 @@ import { INestApplicationContext } from '@nestjs/common';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { OrderStatus, ShipmentStatus } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
-import { OrdersService } from '../../src/order/order.service';
+import { ShipmentsService } from '../../src/order/shipments.service';
 import { EmailService } from '../../src/notifications/email/email.service';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { JobQueue } from '../../src/jobs/job-queues';
@@ -42,6 +42,9 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
     return order.id;
   };
 
+  // The orders here have no lines, so their shipment is written directly rather than through createShipment.
+  const createShipment = async (orderId: string) => (await prisma.shipment.create({ data: { orderId } })).id;
+
   const shipmentEvent = (orderId: string) =>
     prisma.outboxEvent.findFirstOrThrow({ where: { type: 'shipment.tracking_updated.v1', aggregateId: orderId } });
 
@@ -68,7 +71,7 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
     const sends = jest.spyOn(email, 'sendOrderStatusEmail').mockResolvedValue();
     const orderId = await createOrder();
 
-    await worker.get(OrdersService).updateShipping(orderId, 'TRK-1', 'DHL', 'seed_admin');
+    await worker.get(ShipmentsService).updateShipping(await createShipment(orderId), 'TRK-1', 'DHL', 'seed_admin');
 
     const event = await shipmentEvent(orderId);
     await waitUntil(async () => sends.mock.calls.length > 0);
@@ -81,7 +84,7 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
   it('does not email twice when the event is published again or its job runs again', async () => {
     const sends = jest.spyOn(email, 'sendOrderStatusEmail').mockResolvedValue();
     const orderId = await createOrder();
-    await worker.get(OrdersService).updateShipping(orderId, 'TRK-2', 'DHL', 'seed_admin');
+    await worker.get(ShipmentsService).updateShipping(await createShipment(orderId), 'TRK-2', 'DHL', 'seed_admin');
     const event = await shipmentEvent(orderId);
     const queue = getQueue(worker, JobQueue.NOTIFICATIONS);
     await waitUntil(async () => (await (await queue.getJob(event.id))?.getState()) === 'completed');
@@ -99,9 +102,10 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
   it('writes no event and sends nothing when the state change fails', async () => {
     const sends = jest.spyOn(email, 'sendOrderStatusEmail').mockResolvedValue();
     const orderId = await createOrder(OrderStatus.CANCELLED);
+    const shipmentId = await createShipment(orderId);
 
     await expect(
-      worker.get(OrdersService).updateShipmentStatus(orderId, ShipmentStatus.OUT_FOR_DELIVERY, 'seed_admin'),
+      worker.get(ShipmentsService).updateShipmentStatus(shipmentId, ShipmentStatus.OUT_FOR_DELIVERY, 'seed_admin'),
     ).rejects.toThrow('only CONFIRMED or IN_FULFILMENT orders can be fulfilled');
     await sleep(1_500);
 

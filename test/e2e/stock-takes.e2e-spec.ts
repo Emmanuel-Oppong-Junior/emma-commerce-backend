@@ -14,6 +14,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, setStock, stockOf } from '../helpers/db.helper';
 import { signInAdmin, signUpUser } from '../helpers/auth.helper';
 import { placeOrderFromCart } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 type GqlBody = { data?: Record<string, any>; errors?: { message: string; extensions?: Record<string, unknown> }[] };
 
@@ -109,7 +110,7 @@ describe('Stock-takes (P4-B.1, e2e)', () => {
 
   const dispatch = async (orderId: string) => {
     const body = await gql(
-      `mutation { updateShipmentStatus(input: { orderId: "${orderId}", status: OUT_FOR_DELIVERY }) { status } }`,
+      `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, orderId)}", status: OUT_FOR_DELIVERY }) { status } }`,
     );
     expect(body.errors).toBeUndefined();
   };

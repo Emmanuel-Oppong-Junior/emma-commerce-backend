@@ -17,10 +17,11 @@ Mutation approveReturn                   permission: return.manage + order.refun
 Mutation approveStockTake                permission: inventory.stocktake.approve
 Mutation archiveProduct                  permission: catalog.product.write
 Mutation archiveUser                     permission: user.manage
-Mutation assignOrderItemSerials          permission: order.fulfil
+Mutation assignShipmentItemSerials       permission: order.fulfil
 Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
 Mutation cancelPurchaseOrder             permission: purchasing.manage
+Mutation cancelShipment                  permission: order.fulfil
 Mutation cancelStockTake                 permission: inventory.stocktake.approve
 Mutation cancelStockTransfer             permission: inventory.transfer
 Mutation changeUserPassword              authenticated
@@ -44,6 +45,7 @@ Mutation createPromotion                 permission: promotion.manage; step-up
 Mutation createPurchaseOrder             permission: purchasing.manage
 Mutation createReturnRequest             authenticated
 Mutation createReview                    customer only
+Mutation createShipment                  permission: order.fulfil
 Mutation createShippingZone              permission: shipping.manage
 Mutation createStaffRole                 permission: staff.manage; step-up
 Mutation createStockLocation             permission: inventory.location.manage
@@ -122,7 +124,7 @@ Mutation softDeletePayment               permission: payment.manage
 Mutation startMfaEnrollment              authenticated
 Mutation stepUp                          authenticated
 Mutation submitStockTake                 permission: inventory.adjust
-Mutation unassignOrderItemSerials        permission: order.fulfil
+Mutation unassignShipmentItemSerials     permission: order.fulfil
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
@@ -189,6 +191,7 @@ Query myPhoneVerification                authenticated
 Query myReturnRequests                   authenticated
 Query order                              authenticated
 Query orders                             permission: order.view
+Query orderShipments                     permission: order.view
 Query payment                            authenticated
 Query payments                           permission: payment.view
 Query paymentSettings                    permission: payment.settings.manage

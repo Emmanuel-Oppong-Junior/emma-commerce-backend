@@ -8,6 +8,7 @@ import { signInAdmin, signInUser, signUpUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, setStock, stockOf, verifyPhoneForCod } from '../helpers/db.helper';
 import { migrationSql, migrationSqlFrom, ScratchSchema } from '../helpers/migration.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 interface GqlResult {
   data?: Record<string, any>;
@@ -83,9 +84,9 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     return attempt;
   };
 
-  const moveShipment = (orderId: string, status: string, token = adminToken) =>
+  const moveShipment = async (orderId: string, status: string, token = adminToken) =>
     gql(
-      `mutation { updateShipmentStatus(input: { orderId: "${orderId}", status: ${status} }) { ${ORDER_FIELDS} } }`,
+      `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, orderId)}", status: ${status} }) { ${ORDER_FIELDS} } }`,
       token,
     );
   const viewOrder = async (orderId: string) =>
@@ -187,9 +188,15 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     expect(await prisma.outboxEvent.count({ where: { aggregateId: orderId, type: 'order.status_changed.v2' } })).toBe(
       1,
     );
-    expect(
-      await prisma.outboxEvent.count({ where: { aggregateId: orderId, type: 'shipment.status_changed.v1' } }),
-    ).toBe(1);
+    // Dispatch and, since P5-B.2's SMS milestones, delivery.
+    const shipmentEvents = await prisma.outboxEvent.findMany({
+      where: { aggregateId: orderId, type: 'shipment.status_changed.v1' },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(shipmentEvents.map((event) => (event.payload as { status: string }).status)).toEqual([
+      'OUT_FOR_DELIVERY',
+      'DELIVERED',
+    ]);
   });
 
   it('confirms a cash-on-delivery pickup order at once and consumes its stock exactly once, at the pickup counter', async () => {
@@ -228,7 +235,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     expect(codeOf(await moveShipment(orderId, 'READY_FOR_PICKUP'))).toBe('CONFLICT');
     const unknown = await gqlRequest(
       app,
-      `mutation { updateShipmentStatus(input: { orderId: "${orderId}", status: SHIPPED }) { id } }`,
+      `mutation { updateShipmentStatus(input: { shipmentId: "${await shipmentOf(prisma, orderId)}", status: SHIPPED }) { id } }`,
       undefined,
       adminToken,
     );
@@ -238,6 +245,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
 
   it('claims a concurrent fulfilment step once', async () => {
     const orderId = await placeOrder({ cod: true });
+    await shipmentOf(prisma, orderId);
 
     const results = await Promise.all([moveShipment(orderId, 'PICKING'), moveShipment(orderId, 'PICKING')]);
 
@@ -336,7 +344,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
     expect(
       codeOf(
         await gql(
-          `mutation { updateShipping(input: { orderId: "${orderId}", trackingNumber: "T1" }) { id } }`,
+          `mutation { updateShipping(input: { shipmentId: "${await shipmentOf(prisma, orderId)}", trackingNumber: "T1" }) { id } }`,
           support,
         ),
       ),
