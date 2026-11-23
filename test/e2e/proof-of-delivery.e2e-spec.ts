@@ -137,8 +137,14 @@ describe('Proof of delivery (P5-C.2, e2e)', () => {
     await gql(`mutation { updateShipmentStatus(input: { shipmentId: "${shipmentId}", status: PACKED }) { id } }`);
     const out = await gql(`mutation { startMyDelivery(shipmentId: "${shipmentId}") { status } }`, who.token);
     expect(out.errors).toBeUndefined();
-    await waitUntil(() => sms.mock.calls.length > sendsBefore);
-    const [to, text] = sms.mock.calls[sms.mock.calls.length - 1] as [string, string];
+    const { order } = await prisma.shipment.findUniqueOrThrow({ where: { id: shipmentId }, select: { order: true } });
+    // Another shipment's milestone SMS can land late under load, so pick this order's code text, not the last send.
+    const codeSms = () =>
+      (sms.mock.calls.slice(sendsBefore) as [string, string][]).find(
+        ([, text]) => CODE_IN_TEXT.test(text) && text.includes(`#${order.orderNumber} `),
+      );
+    await waitUntil(() => codeSms() !== undefined);
+    const [to, text] = codeSms()!;
     expect(to).toBe(ADDRESS_PHONE);
     const code = CODE_IN_TEXT.exec(text)?.[1];
     expect(code).toBeDefined();

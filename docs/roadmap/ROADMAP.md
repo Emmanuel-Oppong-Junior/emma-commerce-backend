@@ -27,12 +27,12 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
 | 4 — Inventory | 7 / 7 | ✅ complete |
-| 5 — Delivery & fulfilment | 5 / 8 | 🔄 in progress |
+| 5 — Delivery & fulfilment | 7 / 8 | 🔄 in progress (P5-D deferred) |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **106 / 154** | |
+| **All** | **108 / 154** | |
 
 ---
 
@@ -397,10 +397,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P5-B.1** [b044c5d] `Shipment` + items (split/partial fulfilment) + status timeline
 - [x] **P5-B.2** [b635e32] Customer-visible tracking timeline (polling + SMS milestones)
 
-### P5-C — Riders & POD  🔄 in progress
+### P5-C — Riders & POD ✅ complete
 > Run: → · M · 🟧
-- [ ] 🔄 **P5-C.1** Rider role + assignment + mobile-friendly endpoints
-- [ ] **P5-C.2** Proof of delivery (photo/OTP/signature)
+- [x] **P5-C.1** [cc6a3e2] Rider role + assignment + mobile-friendly endpoints
+- [x] **P5-C.2** [ad3830c] Proof of delivery (photo/OTP/signature)
 
 ### P5-D — Couriers
 > ⬜
