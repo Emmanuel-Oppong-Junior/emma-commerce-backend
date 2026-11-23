@@ -16,6 +16,7 @@ import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
 import { decideVerification, isSettled, ProviderVerification } from './payment-verification';
 import { assertCodCollectable, collectableShipment } from './cash-on-delivery';
 import { assertCollectedAmount, assertCollectedAt, assertCollector } from './cash/cash-collection';
+import { proofRequired } from '../delivery/proof/proof-of-delivery';
 import { AuditService } from '../commons/audit.service';
 import { StoreService } from '../store/store.service';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
@@ -150,20 +151,42 @@ export class PaymentService {
    * Records the grand total as cash collected for a dispatched cash-on-delivery order (staff, payment.record): the
    * payment is captured, the shipment DELIVERED and the order COMPLETED, with the collection (rider, time) and an audit
    * row, in one transaction. The rider must be an active staff member and the amount must equal the grand total
-   * (BAD_REQUEST otherwise); any other order is refused. Nothing is written when anything is refused.
+   * (BAD_REQUEST otherwise); any other order is refused. A shipment with a rider is delivered with its proof instead
+   * (BAD_REQUEST PROOF_OF_DELIVERY_REQUIRED; completeDelivery records the cash). Nothing is written when anything is
+   * refused.
    */
   async recordCodPayment(input: RecordCodPaymentParams, adminId: string): Promise<PaymentRecord> {
+    const { attempt } = await this.collectCash(input, adminId);
+    return attempt;
+  }
+
+  /**
+   * The cash of a rider's cash-on-delivery delivery (P5-C.2), on the caller's transaction (the order locked, the proof
+   * of delivery just written): recordCodPayment's rules and writes, for the shipment's rider. Returns the collection id.
+   */
+  async recordDeliveredCash(
+    tx: Prisma.TransactionClient,
+    input: Required<RecordCodPaymentParams>,
+    actorId: string,
+  ): Promise<string> {
+    const { collection } = await this.collectCash(input, actorId, tx);
+    return collection.id;
+  }
+
+  private async collectCash(input: RecordCodPaymentParams, adminId: string, proofTx?: Prisma.TransactionClient) {
     const { orderId, riderId, amount } = input;
     const now = new Date();
     const collectedAt = input.collectedAt ?? now;
-    const { attempt, collection } = await this.paymentRepository.recordCashCollection(
+    const recorded = await this.paymentRepository.recordCashCollection(
       orderId,
       { recordedById: adminId, riderId, collectedAt },
       (order, rider) => {
         assertCodCollectable(order, orderId);
+        const shipment = collectableShipment(order);
+        if (shipment.riderId && !proofTx) throw proofRequired(shipment.id);
         assertCollector(rider, riderId, order.fulfillmentType);
         assertCollectedAmount(order.grandTotal, amount);
-        assertCollectedAt(collectedAt, now, collectableShipment(order).dispatchedAt);
+        assertCollectedAt(collectedAt, now, shipment.dispatchedAt);
       },
       (tx, recorded) =>
         this.auditService.log(
@@ -185,12 +208,13 @@ export class PaymentService {
           },
           tx,
         ),
+      ...(proofTx ? [proofTx] : []),
     );
     this.logger.log(
-      `COD payment recorded | orderId: ${orderId} | paymentId: ${attempt.id} | cashCollectionId: ${collection.id} | riderId: ${riderId} | adminId: ${adminId}`,
+      `COD payment recorded | orderId: ${orderId} | paymentId: ${recorded.attempt.id} | cashCollectionId: ${recorded.collection.id} | riderId: ${riderId} | adminId: ${adminId}`,
       'PaymentService',
     );
-    return attempt;
+    return recorded;
   }
 
   /**

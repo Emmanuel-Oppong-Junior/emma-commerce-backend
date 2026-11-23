@@ -627,6 +627,34 @@ type CodUncollectedDelivery {
   orderNumber: Int!
 }
 
+input CompleteDeliveryInput {
+  """
+  Cash on delivery: the cash collected, which must be the order total. Required for COD, refused otherwise
+  """
+  cashCollected: Decimal
+
+  """The customer’s delivery code; or send overrideReason instead"""
+  code: String
+
+  """Where it was delivered: latitude (kept to 6 decimals)"""
+  latitude: Float
+
+  """Longitude (send with latitude)"""
+  longitude: Float
+
+  """
+  Confirm without the code (needs delivery.override): why, e.g. the customer has no phone
+  """
+  overrideReason: String
+
+  """Public id returned by the delivery photo upload for this shipment"""
+  photoPublicId: String
+
+  """Who took the goods, when not the customer"""
+  recipientName: String
+  shipmentId: ID!
+}
+
 input CompleteMfaSignInInput {
   """
   extensions.mfaChallenge from the MFA_REQUIRED signIn error (valid 5 minutes)
@@ -635,6 +663,31 @@ input CompleteMfaSignInInput {
 
   """A 6-digit authenticator code or an unused recovery code"""
   code: String!
+}
+
+input CompleteMyDeliveryInput {
+  """
+  Cash on delivery: the cash collected, which must be the order total. Required for COD, refused otherwise
+  """
+  cashCollected: Decimal
+
+  """
+  The six-digit code the customer received by SMS when the shipment went out
+  """
+  code: String!
+
+  """Where it was delivered: latitude (kept to 6 decimals)"""
+  latitude: Float
+
+  """Longitude (send with latitude)"""
+  longitude: Float
+
+  """Public id returned by the delivery photo upload for this shipment"""
+  photoPublicId: String
+
+  """Who took the goods, when not the customer"""
+  recipientName: String
+  shipmentId: ID!
 }
 
 """
@@ -1320,6 +1373,12 @@ An exact decimal number as a string, e.g. "12.50" or "0.15": digits with an opti
 """
 scalar Decimal
 
+"""That a delivery was confirmed, and how (what the customer sees)"""
+type DeliveryConfirmation {
+  confirmedAt: DateTime!
+  method: ProofOfDeliveryMethod!
+}
+
 enum DeliveryOptions {
   INTERNATIONAL_DELIVERY
   LOCAL_DELIVERY
@@ -1742,9 +1801,19 @@ type Mutation {
   closePurchaseOrder(id: ID!, input: ClosePurchaseOrderInput!): PurchaseOrder!
 
   """
+  Deliver a rider’s shipment out for delivery (staff): with the customer’s code, or overrideReason instead (needs delivery.override: FORBIDDEN reason OVERRIDE_NOT_ALLOWED). Cash on delivery is recorded as taken by the shipment’s rider. BAD_REQUEST RIDER_NOT_ASSIGNED for a shipment without a rider. NOT_FOUND for a shipment that is not yours; BAD_REQUEST: PROOF_OF_DELIVERY_REQUIRED, DELIVERY_CODE_INVALID (extensions.attemptsLeft), DELIVERY_CODE_LOCKED (after 5 wrong codes), DELIVERY_CODE_NOT_ISSUED, CASH_COLLECTION_REQUIRED, NO_CASH_TO_COLLECT, COLLECTION_AMOUNT_MISMATCH, INVALID_DELIVERY_PHOTO; CONFLICT when the shipment is not out for delivery
+  """
+  completeDelivery(input: CompleteDeliveryInput!): Shipment!
+
+  """
   Finish a sign-in that failed with extensions.reason MFA_REQUIRED, using its extensions.mfaChallenge and an authenticator or recovery code
   """
   completeMfaSignIn(input: CompleteMfaSignInInput!): AuthEntity!
+
+  """
+  Deliver one of your shipments out for delivery with the code the customer received by SMS, an optional photo (uploaded first), recipient name and position; for cash on delivery also the cash collected (the order total), recorded as yours. NOT_FOUND for a shipment that is not yours; BAD_REQUEST: PROOF_OF_DELIVERY_REQUIRED, DELIVERY_CODE_INVALID (extensions.attemptsLeft), DELIVERY_CODE_LOCKED (after 5 wrong codes), DELIVERY_CODE_NOT_ISSUED, CASH_COLLECTION_REQUIRED, NO_CASH_TO_COLLECT, COLLECTION_AMOUNT_MISMATCH, INVALID_DELIVERY_PHOTO; CONFLICT when the shipment is not out for delivery
+  """
+  completeMyDelivery(input: CompleteMyDeliveryInput!): RiderDelivery!
 
   """
   Finish enrolment with the first code from the authenticator app. Turns two-factor authentication on and returns 10 single-use recovery codes, shown only this once. Counts as a step-up for this session. Audited.
@@ -3248,6 +3317,31 @@ enum PromotionType {
   TIERED
 }
 
+"""How a rider’s delivery was confirmed (staff)"""
+type ProofOfDeliveryEntity {
+  deliveredAt: DateTime!
+
+  """The rider, or the staff member who overrode"""
+  deliveredById: ID!
+  id: ID!
+  latitude: Float
+  longitude: Float
+  method: ProofOfDeliveryMethod!
+
+  """Why staff confirmed it without the code"""
+  overrideReason: String
+  photoUrl: String
+  recipientName: String
+}
+
+"""
+CODE: the customer gave the rider the code texted at dispatch; OVERRIDE: staff confirmed it without one
+"""
+enum ProofOfDeliveryMethod {
+  CODE
+  OVERRIDE
+}
+
 """What other customers may see about a user, e.g. on reviews"""
 type PublicProfile {
   """
@@ -4565,6 +4659,11 @@ type Shipment {
   items: [ShipmentItem!]!
   orderId: ID!
 
+  """
+  How a rider’s delivery was confirmed: code or override, photo, recipient, position (staff)
+  """
+  proofOfDelivery: ProofOfDeliveryEntity
+
   """The rider delivering it (staff)"""
   rider: DeliveryRider
   status: ShipmentStatus!
@@ -5217,6 +5316,11 @@ One step of the tracking timeline: an order status (orderStatus set) or a shipme
 type TrackingStep {
   at: DateTime!
   carrier: String
+
+  """
+  On a DELIVERED step of a rider’s shipment: how the delivery was confirmed (code or override) and when
+  """
+  deliveryConfirmation: DeliveryConfirmation
   orderStatus: OrderStatus
   shipmentId: ID
   shipmentStatus: ShipmentStatus

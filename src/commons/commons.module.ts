@@ -10,6 +10,6 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [ConfigModule, PrismaModule],
   controllers: [UploadController],
   providers: [LoggerService, CloudinaryService, AuditService],
-  exports: [LoggerService, AuditService],
+  exports: [LoggerService, AuditService, CloudinaryService],
 })
 export class CommonsModule {}

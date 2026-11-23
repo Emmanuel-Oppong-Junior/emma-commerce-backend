@@ -745,6 +745,32 @@ describe('PaymentService', () => {
       expect(mockAuditService.log).not.toHaveBeenCalled();
     });
 
+    it('refuses a shipment with a rider (PROOF_OF_DELIVERY_REQUIRED), which completeDelivery records with its proof', async () => {
+      const withRider = { ...shippedCod, shipments: [{ ...shippedCod.shipments[0], riderId: 'rider1' }] };
+      runRecording(withRider, { isActive: true, isStaff: true, isRider: true });
+
+      expect(await reasonOf(service.recordCodPayment(input, 'admin1'))).toBe('PROOF_OF_DELIVERY_REQUIRED');
+
+      mockPaymentRepository.recordCashCollection.mockImplementation(
+        async (_orderId, _request, assertCollectable, onRecorded, outerTx) => {
+          assertCollectable(withRider, { isActive: true, isStaff: true, isRider: true });
+          await onRecorded(outerTx, recorded);
+          return recorded;
+        },
+      );
+      const proofTx = { proof: true };
+      await expect(
+        service.recordDeliveredCash(proofTx as never, { ...input, riderId: 'rider1' }, 'rider1'),
+      ).resolves.toBe('cc1');
+      expect(paymentRepository.recordCashCollection).toHaveBeenLastCalledWith(
+        'order1',
+        { recordedById: 'rider1', riderId: 'rider1', collectedAt },
+        expect.any(Function),
+        expect.any(Function),
+        proofTx,
+      );
+    });
+
     it('needs a rider (a role with delivery.ride) for a delivery, and any staff member at the pickup counter', async () => {
       const delivery = { ...shippedCod, fulfillmentType: 'DELIVERY' };
       runRecording(delivery, { isActive: true, isStaff: true, isRider: false });

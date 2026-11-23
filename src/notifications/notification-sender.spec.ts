@@ -52,10 +52,12 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
     digestSections: jest.fn().mockResolvedValue([SECTION]),
   };
   const notifications = { queueShipmentSms: jest.fn().mockResolvedValue(undefined) };
+  const deliveryCodes = { issue: jest.fn().mockResolvedValue('123456') };
   return {
     sms,
     lowStockAlerts,
     notifications,
+    deliveryCodes,
     sender: new NotificationSender(
       prisma as never,
       email as never,
@@ -63,6 +65,7 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
       logger as never,
       lowStockAlerts as never,
       notifications as never,
+      deliveryCodes as never,
     ),
     prisma,
     email,
@@ -214,6 +217,60 @@ describe('NotificationSender', () => {
       'Your order #1042 is out for delivery with DHL. Tracking number: TRK1.',
       'shipment_out_for_delivery',
     );
+  });
+
+  it('adds the delivery code to the out-for-delivery SMS of a rider’s shipment still out (one text)', async () => {
+    const { sender, sms, prisma, deliveryCodes } = buildSender();
+    const dispatchedAt = new Date('2026-11-23T09:00:00Z');
+    prisma.shipment.findUnique.mockResolvedValue({
+      ...SHIPMENT,
+      status: 'OUT_FOR_DELIVERY',
+      riderId: 'rider1',
+      dispatchedAt,
+    });
+
+    await sender.send(
+      'sms.shipment_milestone.v1',
+      { orderId: 'order1', shipmentId: 'ship1', status: 'OUT_FOR_DELIVERY' },
+      'evt1-sms',
+    );
+
+    expect(deliveryCodes.issue).toHaveBeenCalledWith('ship1', dispatchedAt);
+    expect(sms.send).toHaveBeenCalledTimes(1);
+    expect(sms.send).toHaveBeenCalledWith(
+      '+233242222222',
+      'Your order #1042 is out for delivery with DHL. Tracking number: TRK1. Give the rider this code when you receive it: 123456.',
+      'shipment_out_for_delivery',
+    );
+  });
+
+  it('issues no code for a shipment without a rider or no longer out for delivery', async () => {
+    const { sender, prisma, deliveryCodes } = buildSender();
+    const dispatchedAt = new Date();
+    prisma.shipment.findUnique.mockResolvedValueOnce({
+      ...SHIPMENT,
+      status: 'OUT_FOR_DELIVERY',
+      riderId: null,
+      dispatchedAt,
+    });
+    await sender.send(
+      'sms.shipment_milestone.v1',
+      { orderId: 'order1', shipmentId: 'ship1', status: 'OUT_FOR_DELIVERY' },
+      'a',
+    );
+    prisma.shipment.findUnique.mockResolvedValueOnce({
+      ...SHIPMENT,
+      status: 'DELIVERED',
+      riderId: 'rider1',
+      dispatchedAt,
+    });
+    await sender.send(
+      'sms.shipment_milestone.v1',
+      { orderId: 'order1', shipmentId: 'ship1', status: 'OUT_FOR_DELIVERY' },
+      'b',
+    );
+
+    expect(deliveryCodes.issue).not.toHaveBeenCalled();
   });
 
   it('texts the verified account phone first', async () => {

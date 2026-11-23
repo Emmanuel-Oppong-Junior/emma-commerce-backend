@@ -76,7 +76,7 @@ export type OrderForPayment = Prisma.OrderGetPayload<{ include: typeof PAYABLE_O
 
 const COLLECTABLE_ORDER = {
   paymentIntent: { select: { status: true, attempts: { select: { status: true } } } },
-  shipments: { select: { id: true, status: true, dispatchedAt: true } },
+  shipments: { select: { id: true, status: true, dispatchedAt: true, riderId: true } },
 } as const;
 
 export type OrderForCollection = Prisma.OrderGetPayload<{ include: typeof COLLECTABLE_ORDER }>;
@@ -208,7 +208,8 @@ export class PaymentRepository {
    * one: cash-on-delivery orders are not split) is DELIVERED (recording `shipment.status_changed.v1`, warranties start),
    * the order moves IN_FULFILMENT -> COMPLETED (recording `order.status_changed.v2`), and `onRecorded` runs on the same
    * transaction (for the audit row). `assertCollectable` re-checks the order (and gets the rider) under its row lock
-   * and throws to refuse, so a repeated call finds the order already COMPLETED and writes nothing.
+   * and throws to refuse, so a repeated call finds the order already COMPLETED and writes nothing. With `outerTx` it
+   * runs on the caller's transaction (a rider's delivery, P5-C.2) instead of its own.
    */
   async recordCashCollection(
     orderId: string,
@@ -218,9 +219,12 @@ export class PaymentRepository {
       rider: RiderOfCollection | null,
     ) => asserts order is OrderForCollection,
     onRecorded: (tx: Prisma.TransactionClient, recorded: RecordedCollection) => Promise<void>,
+    outerTx?: Prisma.TransactionClient,
   ): Promise<RecordedCollection> {
     const { recordedById, riderId, collectedAt } = request;
-    return this.prisma.$transaction(async (tx) => {
+    const run = <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) =>
+      outerTx ? work(outerTx) : this.prisma.$transaction(work);
+    return run(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
       const order = await tx.order.findUnique({ where: { id: orderId }, include: COLLECTABLE_ORDER });
       const rider = await tx.user.findUnique({

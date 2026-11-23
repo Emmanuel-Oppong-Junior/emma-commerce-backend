@@ -44,6 +44,11 @@ export class CloudinaryService {
     });
   }
 
+  /** The HTTPS delivery URL of an uploaded image, built from its public id (no API call). */
+  urlFor(publicId: string): string {
+    return cloudinary.url(publicId, { secure: true, resource_type: 'image' });
+  }
+
   private resizeImageBuffer(buffer: Buffer): Promise<Buffer> {
     return sharp(buffer, { limitInputPixels: MAX_IMAGE_PIXELS })
       .resize(500, 500, {

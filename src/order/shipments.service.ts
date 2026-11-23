@@ -11,6 +11,7 @@ import { isShipmentMilestone, shipmentStatusChanged } from './shipment-events';
 import { canShipmentTransition, isDispatch, isShipmentOpen } from './shipment-status';
 import { ShipmentsRepository } from './shipments.repository';
 import { riderMayMove } from '../delivery/rider-assignment';
+import { proofRequired } from '../delivery/proof/proof-of-delivery';
 
 type Tx = Prisma.TransactionClient;
 type OrderWithItems = Order & { items: OrderItem[] };
@@ -125,9 +126,18 @@ export class ShipmentsService {
     }
     return this.shipmentsRepository.runTransaction(async (tx) => {
       const { order, shipment } = await this.lockShipment(tx, shipmentId);
+      if (to === ShipmentStatus.DELIVERED && shipment.riderId) throw proofRequired(shipmentId);
       await this.moveLocked(tx, order, shipment, to, actorId, reason);
       return this.ordersRepository.findForTransaction(tx, order.id);
     });
+  }
+
+  /**
+   * DELIVERED for a rider's shipment of an online order, on the caller's transaction with the order locked
+   * (lockShipment), once its proof of delivery is recorded (P5-C.2).
+   */
+  async deliverWithProof(tx: Tx, order: OrderForFulfilment, shipment: ShipmentWithItems, actorId: string) {
+    await this.moveLocked(tx, order, shipment, ShipmentStatus.DELIVERED, actorId);
   }
 
   /**

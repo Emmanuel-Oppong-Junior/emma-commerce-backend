@@ -12,6 +12,8 @@ import { LowStockAlertsService } from '../inventory/low-stock/low-stock-alerts.s
 import { verifiedPhoneOf } from '../phone-verification/phone-otp';
 import { NotificationsService } from './notifications.service';
 import { SHIPMENT_SMS_STATUSES, shipmentSmsRecipient, shipmentSmsText } from './sms/shipment-sms';
+import { DeliveryCodes } from '../delivery/code/delivery-codes.service';
+import { deliveryCodeDispatch, withDeliveryCode } from '../delivery/code/delivery-code';
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -31,6 +33,7 @@ export class NotificationSender {
     private readonly logger: LoggerService,
     private readonly lowStockAlerts: LowStockAlertsService,
     private readonly notifications: NotificationsService,
+    private readonly deliveryCodes: DeliveryCodes,
   ) {}
 
   async send(jobName: string, data: unknown, idempotencyKey: string): Promise<void> {
@@ -213,6 +216,9 @@ export class NotificationSender {
           select: {
             carrier: true,
             trackingNumber: true,
+            status: true,
+            riderId: true,
+            dispatchedAt: true,
             order: {
               select: {
                 orderNumber: true,
@@ -247,7 +253,10 @@ export class NotificationSender {
           carrier: shipment.carrier,
           trackingNumber: shipment.trackingNumber,
         });
-        return this.sms.send(to, text, `shipment_${status.toLowerCase()}`);
+        // P5-C.2: a rider's shipment still out for delivery carries its delivery code in the same text.
+        const codeFor = status === ShipmentStatus.OUT_FOR_DELIVERY && deliveryCodeDispatch(shipment);
+        const fullText = codeFor ? withDeliveryCode(text, await this.deliveryCodes.issue(shipmentId, codeFor)) : text;
+        return this.sms.send(to, fullText, `shipment_${status.toLowerCase()}`);
       }
       default:
         throw new Error(`Unknown notification job "${jobName}"`);

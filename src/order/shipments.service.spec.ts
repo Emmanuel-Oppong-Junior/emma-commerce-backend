@@ -291,6 +291,45 @@ describe('ShipmentsService', () => {
     });
   });
 
+  describe('proof of delivery (P5-C.2)', () => {
+    it('refuses DELIVERED by a staff step for a rider’s shipment (PROOF_OF_DELIVERY_REQUIRED)', async () => {
+      shipmentsRepository.findShipment.mockResolvedValue({ ...shipment('OUT_FOR_DELIVERY'), riderId: 'rider1' });
+
+      const error = await service.updateShipmentStatus('ship1', 'DELIVERED' as never, 'admin1').catch((e) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.getResponse().extensions.reason).toBe('PROOF_OF_DELIVERY_REQUIRED');
+      expect(ordersRepository.transitionShipment).not.toHaveBeenCalled();
+    });
+
+    it('delivers with the proof on the caller’s transaction', async () => {
+      const out = { ...shipment('OUT_FOR_DELIVERY'), riderId: 'rider1' };
+      shipmentsRepository.findAllocation.mockResolvedValue({
+        lines: [{ id: 'item1', quantity: 2 }],
+        shipments: [{ id: 'ship1', status: 'DELIVERED', items }],
+      });
+
+      await service.deliverWithProof(
+        stubTx as never,
+        { ...confirmed, status: 'IN_FULFILMENT' } as never,
+        out as never,
+        'rider1',
+      );
+
+      expect(ordersRepository.transitionShipment).toHaveBeenCalledWith(
+        stubTx,
+        'ship1',
+        'OUT_FOR_DELIVERY',
+        'DELIVERED',
+        {
+          actorId: 'rider1',
+          reason: undefined,
+        },
+      );
+      expect(serialUnits.startWarranty).toHaveBeenCalled();
+    });
+  });
+
   describe('moveAsRider', () => {
     const riderShipment = (status: string, riderId: string | null = 'rider1') => ({ ...shipment(status), riderId });
 

@@ -17,6 +17,7 @@ export type AuditAction =
   | 'ROLE_REMOVE'
   | 'RIDER_ASSIGN'
   | 'RIDER_UNASSIGN'
+  | 'PROOF_OF_DELIVERY'
   | 'MFA_ENABLE'
   | 'MFA_RECOVERY_CODE_USED'
   | 'STEP_UP'

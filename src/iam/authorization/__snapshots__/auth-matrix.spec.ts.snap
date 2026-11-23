@@ -30,7 +30,9 @@ Mutation clearCart                       authenticated
 Mutation clearOrderReviewFlags           permission: order.manage
 Mutation clearWishlist                   authenticated
 Mutation closePurchaseOrder              permission: purchasing.manage
+Mutation completeDelivery                permission: order.fulfil
 Mutation completeMfaSignIn               public
+Mutation completeMyDelivery              permission: delivery.ride
 Mutation confirmMfaEnrollment            authenticated
 Mutation createAddress                   authenticated
 Mutation createBrand                     permission: catalog.taxonomy.write
@@ -268,6 +270,8 @@ REST GET /                               authenticated
 REST GET /health                         public
 REST GET /health/live                    public
 REST GET /health/ready                   public
+REST POST /delivery/my-shipments/:shipmentId/photo permission: delivery.ride
+REST POST /delivery/shipments/:shipmentId/photo permission: order.fulfil
 REST POST /payment/initialize            authenticated
 REST POST /payment/webhook               public
 REST POST /upload/multiple-images        permission: catalog.media.upload

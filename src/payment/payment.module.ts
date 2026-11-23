@@ -37,6 +37,6 @@ import { CashModule } from './cash/cash.module';
     PaymentReconciliationService,
   ],
   controllers: [PaymentController],
-  exports: [PaymentReconciliationService, PaymentWebhookService],
+  exports: [PaymentReconciliationService, PaymentWebhookService, PaymentService],
 })
 export class PaymentModule {}

@@ -33,6 +33,10 @@ export class ShipmentsRepository {
     return shipment?.riderId ?? null;
   }
 
+  async exists(shipmentId: string): Promise<boolean> {
+    return (await this.prisma.shipment.count({ where: { id: shipmentId } })) > 0;
+  }
+
   /** The shipment line, with its shipment's order and status, or null for an unknown line. */
   async findItem(tx: Tx, shipmentItemId: string) {
     return tx.shipmentItem.findUnique({
