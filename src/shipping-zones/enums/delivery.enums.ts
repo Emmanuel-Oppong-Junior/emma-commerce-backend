@@ -1,7 +1,9 @@
 import { registerEnumType } from '@nestjs/graphql';
-import { DeliveryServiceLevel, ZoneAreaLevel } from '../../generated/prisma/client';
+import { DeliveryServiceLevel, Weekday, ZoneAreaLevel } from '../../generated/prisma/client';
 
-export { DeliveryServiceLevel, ZoneAreaLevel };
+export { DeliveryServiceLevel, Weekday, ZoneAreaLevel };
+
+registerEnumType(Weekday, { name: 'Weekday' });
 
 registerEnumType(DeliveryServiceLevel, {
   name: 'DeliveryServiceLevel',

@@ -33,6 +33,7 @@ import { OutboxService } from '../outbox/outbox.service';
 import { DeliveryZone, ShippingZonesService } from '../shipping-zones/shipping-zones.service';
 import { DELIVERY_LEVEL_UNAVAILABLE, deliveryFee, DeliveryFee, offeredLevels } from '../shipping-zones/delivery-fee';
 import { LoggerService } from '../commons/logger.service';
+import { formatOpeningHours } from '../pickup-locations/opening-hours';
 import { DeliverySlotsService } from '../shipping-zones/slots/delivery-slots.service';
 import {
   AvailableSlot,
@@ -338,8 +339,11 @@ export class OrdersService {
         name: location.name,
         address: location.address,
         city: location.city,
-        state: location.state,
+        region: location.region,
         country: location.country,
+        contactPhone: location.contactPhone,
+        instructions: location.instructions,
+        openingHours: formatOpeningHours(location.openingHours),
       },
     };
   }

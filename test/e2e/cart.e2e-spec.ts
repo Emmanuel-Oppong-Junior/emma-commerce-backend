@@ -225,7 +225,14 @@ describe('Cart (e2e)', () => {
         targetIds: ['seed_prod1'],
       });
       await prisma.pickupLocation.create({
-        data: { id: 'cart_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+        data: {
+          id: 'cart_pickup',
+          name: 'Osu',
+          address: '1 Oxford St',
+          city: 'Accra',
+          region: 'GREATER_ACCRA',
+          country: 'Ghana',
+        },
       });
 
       // seed_prod1 is already in the cart from the tests above

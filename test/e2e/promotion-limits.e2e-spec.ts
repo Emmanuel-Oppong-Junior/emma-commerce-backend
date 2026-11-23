@@ -52,7 +52,14 @@ describe('Promotion limits, first order and customer groups (P2-B.3, e2e)', () =
     await resetDb(prisma);
     await seedMinimal(prisma);
     await prisma.pickupLocation.create({
-      data: { id: 'limits_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      data: {
+        id: 'limits_pickup',
+        name: 'Osu',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'Ghana',
+      },
     });
   });
 

@@ -1,9 +1,8 @@
-import { Field, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
+import { Field, ID, InputType, Int, ObjectType } from '@nestjs/graphql';
 import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Matches, MaxLength, Min, ValidateIf } from 'class-validator';
-import { OrderStatus, Weekday } from '../../generated/prisma/client';
+import { OrderStatus } from '../../generated/prisma/client';
+import { Weekday } from '../enums/delivery.enums';
 import { OrderStatusEnum } from '../../order/enums/order.enum';
-
-registerEnumType(Weekday, { name: 'Weekday' });
 
 const TIME = /^\d{2}:\d{2}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;

@@ -119,7 +119,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
         name: 'Osu Store',
         address: '1 Oxford St',
         city: 'Accra',
-        state: 'GA',
+        region: 'GREATER_ACCRA',
         country: 'GH',
       },
     });

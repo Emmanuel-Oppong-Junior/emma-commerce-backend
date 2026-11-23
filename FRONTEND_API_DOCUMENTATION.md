@@ -1507,7 +1507,7 @@ All order operations require `Bearer` JWT.
   shippingAddressId?: string;                  // Set for DELIVERY orders
   shippingAddressSnapshot?: JSON;              // DELIVERY: { recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country } at order time; orders placed before Ghana addresses (P1-G) hold { street, city, state, zipCode, country } instead
   pickupLocationId?: string;                   // Set for PICKUP orders
-  pickupLocationSnapshot?: JSON;               // PICKUP: { name, address, city, state, country } at order time
+  pickupLocationSnapshot?: JSON;               // PICKUP: { name, address, city, region, country, contactPhone, instructions, openingHours (text) } at order time (orders before P5-E.1: { name, address, city, state, country })
   stockLocationId?: string;                    // P4-A.1, staff with order.view (FORBIDDEN otherwise): where the order is reserved and fulfilled from
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -3391,6 +3391,10 @@ UpdateRateRuleInput { baseFee?; freeAbove? (null clears it); weightBands? (repla
 
 ---
 
+**Breaking change (P5-E.1):** `PickupLocationEntity.state` and the `state` inputs are gone, replaced by `region: GhanaRegion` (required on create; `null` only on points migrated from a state that matched no region). New: `contactPhone`, `instructions`, `ghanaPostGps`, `latitude`/`longitude`, `openingHours` and `openingHoursText`. `country` is optional and must be `GH`. The order's `pickupLocationSnapshot` now holds `{ name, address, city, region, country, contactPhone, instructions, openingHours }` (`openingHours` as the one-line text) instead of `state`.
+
+**Ready for pickup (P5-E.1).** When staff move a pickup order's shipment to `READY_FOR_PICKUP`, the customer gets an email (account address) and an SMS (the order's `contactPhone`, Ghana numbers only) with the order number, the pickup point, its address and opening hours, once per event. This replaces the generic "order update" email for that step.
+
 #### `activePickupLocations`
 - **Type**: Query
 - **Auth Required**: No
@@ -3404,8 +3408,14 @@ UpdateRateRuleInput { baseFee?; freeAbove? (null clears it); weightBands? (repla
   name: string;
   address: string;   // Street address
   city: string;
-  state: string;
+  region?: GhanaRegion;      // P5-E.1 (replaces state)
   country: string;
+  contactPhone?: string;     // P5-E.1, E.164: show it so customers can call
+  instructions?: string;     // P5-E.1: how to find the counter, what to bring
+  ghanaPostGps?: string;     // P5-E.1, XX-NNN(N)-NNNN
+  latitude?: Float; longitude?: Float; // P5-E.1
+  openingHours: { weekday: Weekday; opens: string; closes: string }[]; // P5-E.1, HH:MM Africa/Accra (= UTC), Monday first; a weekday not listed is closed
+  openingHoursText: string;  // P5-E.1, e.g. "Mon-Fri 08:00-17:00, Sat 09:00-13:00, Sun closed" ("Opening hours not set" when empty)
   isActive: boolean; // Only active locations accept orders
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -3429,11 +3439,16 @@ UpdateRateRuleInput { baseFee?; freeAbove? (null clears it); weightBands? (repla
 
 ```typescript
 {
-  name: string;       // Required, non-empty.
-  address: string;    // Required, non-empty.
-  city: string;       // Required, non-empty.
-  state: string;      // Required, non-empty.
-  country: string;    // Required, non-empty.
+  name: string;       // Required, non-empty, at most 100 characters.
+  address: string;    // Required, non-empty, at most 200.
+  city: string;       // Required, non-empty, at most 100.
+  region: GhanaRegion; // Required (P5-E.1, replaces state).
+  country?: string;   // Default GH; must be GH.
+  contactPhone?: string;  // Ghana number in any common format; stored +233XXXXXXXXX
+  instructions?: string;  // At most 500 characters
+  ghanaPostGps?: string;  // GhanaPostGPS digital address
+  latitude?: Float; longitude?: Float; // Together
+  openingHours?: { weekday: Weekday; opens: "HH:MM"; closes: "HH:MM" }[]; // At most one per weekday, closing after opening
   isActive?: boolean; // Default true.
 }
 ```
@@ -3442,9 +3457,9 @@ UpdateRateRuleInput { baseFee?; freeAbove? (null clears it); weightBands? (repla
 
 #### `updatePickupLocation` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
-- **Args**: `id: ID!`, `input: UpdatePickupLocationInput!` (all fields optional)
-- **Response**: `PickupLocationEntity!`
-- **Possible Errors**: `NOT_FOUND`. Orders already placed keep their `pickupLocationSnapshot`.
+- **Args**: `id: ID!`, `input: UpdatePickupLocationInput!` (all fields optional; `openingHours` replaces the week; `null` clears `contactPhone`, `instructions`, `ghanaPostGps`, coordinates)
+- **Response**: `PickupLocationEntity!` (audited)
+- **Possible Errors**: `NOT_FOUND`, `BAD_REQUEST` (invalid opening hours). Orders already placed keep their `pickupLocationSnapshot`.
 
 ---
 

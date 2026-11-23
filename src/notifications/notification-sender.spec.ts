@@ -39,15 +39,18 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
     recordPending: jest.fn().mockResolvedValue(true),
     digestSections: jest.fn().mockResolvedValue([SECTION]),
   };
+  const readyForPickup = { notify: jest.fn().mockResolvedValue(undefined) };
   return {
     sms,
     lowStockAlerts,
+    readyForPickup,
     sender: new NotificationSender(
       prisma as never,
       email as never,
       sms as never,
       logger as never,
       lowStockAlerts as never,
+      readyForPickup as never,
     ),
     prisma,
     email,
@@ -126,7 +129,8 @@ describe('NotificationSender', () => {
     expect(prisma.order.findUnique).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['OUT_FOR_DELIVERY', 'READY_FOR_PICKUP'])(
+  // P5-E.1: READY_FOR_PICKUP no longer gets this generic email; it has its own email and SMS (below).
+  it.each(['OUT_FOR_DELIVERY'])(
     'emails the dispatch for shipment.status_changed.v1 (%s) with its tracking number',
     async (status) => {
       const { sender, email } = buildSender();
@@ -140,6 +144,39 @@ describe('NotificationSender', () => {
       expect(email.sendOrderStatusEmail).toHaveBeenCalledWith('kwame@gmail.com', 'order1', status, 'TRK1', 'evt1');
     },
   );
+
+  it('hands READY_FOR_PICKUP to the pickup notice (email and SMS) instead of the dispatch email', async () => {
+    const { sender, email, readyForPickup } = buildSender();
+
+    await sender.send(
+      'shipment.status_changed.v1',
+      event({ orderId: 'order1', shipmentId: 'ship1', status: 'READY_FOR_PICKUP', trackingNumber: null }),
+      'evt1',
+    );
+
+    expect(readyForPickup.notify).toHaveBeenCalledWith('order1', 'evt1');
+    expect(email.sendOrderStatusEmail).not.toHaveBeenCalled();
+  });
+
+  it('texts the ready-for-pickup SMS with the order number, place and hours', async () => {
+    const { sender, sms } = buildSender();
+    const notice = {
+      orderNumber: 10023,
+      pickupName: 'Osu Store',
+      address: '12 Oxford St, Accra',
+      hours: 'Mon-Fri 08:00-17:00, Sat-Sun closed',
+      contactPhone: null,
+      instructions: null,
+    };
+
+    await sender.send('sms.ready_for_pickup.v1', { to: '+233244123456', notice }, 'evt1-sms');
+
+    expect(sms.send).toHaveBeenCalledWith(
+      '+233244123456',
+      'Order #10023 is ready for pickup at Osu Store, 12 Oxford St, Accra. Open: Mon-Fri 08:00-17:00, Sat-Sun closed.',
+      'ready_for_pickup',
+    );
+  });
 
   it('emails nobody for a shipment step that is not a dispatch', async () => {
     const { sender, email } = buildSender();

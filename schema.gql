@@ -892,12 +892,36 @@ input CreatePickupLocationInput {
   """Street address"""
   address: String!
   city: String!
-  country: String!
+
+  """
+  Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX
+  """
+  contactPhone: String
+
+  """GH: pickup points are in Ghana"""
+  country: String = "GH"
+
+  """
+  GhanaPostGPS digital address: two letters, 3-4 digits, then 4 digits, hyphens optional (GA1234567, ga-123-4567, AK-484-9321); stored as XX-NNN(N)-NNNN
+  """
+  ghanaPostGps: String
+
+  """How to find the counter and what to bring"""
+  instructions: String
   isActive: Boolean = true
+
+  """Latitude, -90 to 90; give it together with longitude"""
+  latitude: Float
+
+  """Longitude, -180 to 180; give it together with latitude"""
+  longitude: Float
 
   """Display name of the pickup location"""
   name: String!
-  state: String!
+
+  """At most one entry per weekday"""
+  openingHours: [OpeningHoursInput!] = []
+  region: GhanaRegion!
 }
 
 """
@@ -2429,6 +2453,22 @@ input OpenStockTakeInput {
   variantIds: [ID!]
 }
 
+"""When the point is open on a weekday (HH:MM, Africa/Accra)"""
+type OpeningHoursEntity {
+  closes: String!
+  opens: String!
+  weekday: Weekday!
+}
+
+"""
+When the point is open on a weekday; HH:MM, Africa/Accra (= UTC). A weekday left out is closed
+"""
+input OpeningHoursInput {
+  closes: String!
+  opens: String!
+  weekday: Weekday!
+}
+
 type Order {
   """Product discounts (per line) and the coupon, as placed"""
   adjustments: [OrderAdjustment!]!
@@ -2878,6 +2918,9 @@ type PickupLocationEntity {
   """Street address of the pickup location"""
   address: String!
   city: String!
+
+  """E.164 number customers can call about their collection"""
+  contactPhone: String
   country: String!
   createdAt: DateTime!
 
@@ -2885,14 +2928,30 @@ type PickupLocationEntity {
   Locations that fulfil orders collected here, first tried first; empty = the default (inventory.view)
   """
   fulfilmentLocations: [StockLocation!]!
+  ghanaPostGps: String
   id: ID!
+
+  """How to find the counter and what to bring"""
+  instructions: String
 
   """Whether this pickup location accepts orders"""
   isActive: Boolean!
+  latitude: Float
+  longitude: Float
 
   """Display name of the pickup location"""
   name: String!
-  state: String!
+
+  """Monday first; a weekday not listed is closed"""
+  openingHours: [OpeningHoursEntity!]!
+
+  """
+  The week in one line, e.g. "Mon-Fri 08:00-17:00, Sat 09:00-13:00, Sun closed"
+  """
+  openingHoursText: String!
+
+  """Null only on points migrated without a matching region"""
+  region: GhanaRegion
   updatedAt: DateTime!
 }
 
@@ -5481,13 +5540,31 @@ input UpdatePaymentMethodsInput {
   mobileMoneyPaymentsEnabled: Boolean
 }
 
+"""
+Pickup point fields to change; omitted fields keep their value, null clears an optional one
+"""
 input UpdatePickupLocationInput {
   address: String
   city: String
-  country: String
+
+  """
+  Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX
+  """
+  contactPhone: String
+
+  """
+  GhanaPostGPS digital address: two letters, 3-4 digits, then 4 digits, hyphens optional (GA1234567, ga-123-4567, AK-484-9321); stored as XX-NNN(N)-NNNN
+  """
+  ghanaPostGps: String
+  instructions: String
   isActive: Boolean
+  latitude: Float
+  longitude: Float
   name: String
-  state: String
+
+  """Replaces the whole week"""
+  openingHours: [OpeningHoursInput!]
+  region: GhanaRegion
 }
 
 """

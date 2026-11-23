@@ -42,7 +42,7 @@ describe('Promotion stacking through checkoutQuote and createOrder (P2-B.2, e2e)
         name: 'Osu',
         address: '1 Oxford St',
         city: 'Accra',
-        state: 'GA',
+        region: 'GREATER_ACCRA',
         country: 'Ghana',
       },
     });

@@ -80,7 +80,7 @@ describe('Checkout pricing (e2e)', () => {
         name: 'Osu Store',
         address: '12 Oxford St',
         city: 'Accra',
-        state: 'Greater Accra',
+        region: 'GREATER_ACCRA',
         country: 'Ghana',
       },
     });

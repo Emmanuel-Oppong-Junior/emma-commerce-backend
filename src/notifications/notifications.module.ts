@@ -7,6 +7,7 @@ import { CommonsModule } from '../commons/commons.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { SMS_PROVIDER } from './sms/sms-provider.port';
 import { SmsSender, smsProviderFrom } from './sms/sms-sender';
+import { ReadyForPickupNotifier } from './ready-for-pickup.notifier';
 
 @Module({
   imports: [CommonsModule, InventoryModule],
@@ -15,6 +16,7 @@ import { SmsSender, smsProviderFrom } from './sms/sms-sender';
     NotificationSender,
     EmailService,
     SmsSender,
+    ReadyForPickupNotifier,
     { provide: SMS_PROVIDER, inject: [ConfigService], useFactory: smsProviderFrom },
   ],
   exports: [NotificationsService, NotificationSender, SmsSender],

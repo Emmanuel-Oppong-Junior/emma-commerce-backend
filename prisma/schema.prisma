@@ -968,16 +968,37 @@ model PickupLocation {
   name                String
   address             String
   city                String
-  state               String
+  /// Null only for points migrated from a free-text state that matched no region (P5-E.1)
+  region              GhanaRegion?
   country             String
+  /// E.164; customers call it about their collection
+  contactPhone        String?
+  /// How to find the counter and what to bring
+  instructions        String?
+  ghanaPostGps        String?
+  latitude            Decimal?                      @db.Decimal(9, 6)
+  longitude           Decimal?                      @db.Decimal(9, 6)
   isActive            Boolean                       @default(true)
   createdAt           DateTime                      @default(now())
   updatedAt           DateTime                      @updatedAt
   orders              Order[]
   /// Stock locations that fulfil orders collected here, by priority; none = the default location
   fulfilmentLocations PickupLocationStockLocation[]
+  /// Opening hours per weekday (P5-E.1); a weekday without a row is closed
+  openingHours        PickupOpeningHours[]
 
   @@index([isActive])
+}
+
+/// When a pickup point is open on a weekday, minutes from midnight in Africa/Accra (= UTC).
+model PickupOpeningHours {
+  pickupLocationId String
+  pickupLocation   PickupLocation @relation(fields: [pickupLocationId], references: [id], onDelete: Cascade)
+  weekday          Weekday
+  opensMinute      Int
+  closesMinute     Int
+
+  @@id([pickupLocationId, weekday])
 }
 
 model ShippingZone {

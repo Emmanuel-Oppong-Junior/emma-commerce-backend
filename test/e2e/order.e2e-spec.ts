@@ -208,9 +208,10 @@ describe('Orders (e2e)', () => {
         undefined,
         userToken,
       ).expect(200);
+      // getShippingFee was removed in P5-A.1: checkoutQuote is where the fee is quoted now.
       const fee = await gqlRequest(
         app,
-        `query { getShippingFee(addressId: "${legacy.id}") { amount currency } }`,
+        `query { checkoutQuote(input: { fulfillmentType: DELIVERY, shippingAddressId: "${legacy.id}" }) { shippingTotal { amount } } }`,
         undefined,
         userToken,
       ).expect(200);
@@ -244,7 +245,7 @@ describe('Orders (e2e)', () => {
               name: 'Osu Store',
               address: '12 Oxford St',
               city: 'Accra',
-              state: 'Greater Accra',
+              region: 'GREATER_ACCRA',
               country: 'Ghana',
             },
             {
@@ -252,7 +253,7 @@ describe('Orders (e2e)', () => {
               name: 'Closed Branch',
               address: '1 Old Rd',
               city: 'Tema',
-              state: 'Greater Accra',
+              region: 'GREATER_ACCRA',
               country: 'Ghana',
               isActive: false,
             },
@@ -291,8 +292,11 @@ describe('Orders (e2e)', () => {
           name: 'Osu Store',
           address: '12 Oxford St',
           city: 'Accra',
-          state: 'Greater Accra',
+          region: 'GREATER_ACCRA',
           country: 'Ghana',
+          contactPhone: null,
+          instructions: null,
+          openingHours: 'Opening hours not set',
         });
 
         await prisma.pickupLocation.update({ where: { id: 'e2e_pickup_osu' }, data: { name: 'Renamed Store' } });

@@ -318,7 +318,14 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
   it('quotes pickup without shipping', async () => {
     await prisma.pickupLocation.upsert({
       where: { id: 'quote_pickup' },
-      create: { id: 'quote_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      create: {
+        id: 'quote_pickup',
+        name: 'Osu',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'Ghana',
+      },
       update: {},
     });
 
