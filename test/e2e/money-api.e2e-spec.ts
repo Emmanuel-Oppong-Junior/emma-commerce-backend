@@ -5,9 +5,10 @@ import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
 import { signInAdmin } from '../helpers/auth.helper';
 
-const CREATE_ZONE = `mutation CreateZone($fee: Decimal!) {
-  createShippingZone(input: { name: "Volta", cities: ["ho"], fee: $fee }) { fee { amount currency } }
+const CREATE_RATE = `mutation CreateRate($fee: Decimal!) {
+  createRateRule(zoneId: "seed_zone_ashanti", input: { serviceLevel: EXPRESS, baseFee: $fee }) { baseFee { amount currency } }
 }`;
+const EXPRESS_RATES = { zoneId: 'seed_zone_ashanti', serviceLevel: 'EXPRESS' } as const;
 
 describe('Money and Decimal on the GraphQL API (e2e)', () => {
   let app: INestApplication;
@@ -25,7 +26,7 @@ describe('Money and Decimal on the GraphQL API (e2e)', () => {
   });
 
   afterEach(async () => {
-    await prisma.shippingZone.deleteMany({ where: { name: 'Volta' } });
+    await prisma.rateRule.deleteMany({ where: EXPRESS_RATES });
     await prisma.store.update({ where: { singleton: true }, data: { currency: 'GHS' } });
   });
 
@@ -34,12 +35,12 @@ describe('Money and Decimal on the GraphQL API (e2e)', () => {
   });
 
   it('takes a money input as a decimal string and returns it as Money with 2 decimal places', async () => {
-    const res = await gqlRequest(app, CREATE_ZONE, { fee: '12.5' }, adminToken).expect(200);
+    const res = await gqlRequest(app, CREATE_RATE, { fee: '12.5' }, adminToken).expect(200);
 
     expect(res.body.errors).toBeUndefined();
-    expect(res.body.data.createShippingZone.fee).toEqual(ghs('12.50'));
-    const zone = await prisma.shippingZone.findUniqueOrThrow({ where: { name: 'Volta' } });
-    expect(zone.fee.toFixed(2)).toBe('12.50');
+    expect(res.body.data.createRateRule.baseFee).toEqual(ghs('12.50'));
+    const rule = await prisma.rateRule.findFirstOrThrow({ where: EXPRESS_RATES });
+    expect(rule.baseFee.toFixed(2)).toBe('12.50');
   });
 
   it.each([
@@ -51,22 +52,22 @@ describe('Money and Decimal on the GraphQL API (e2e)', () => {
     ['a negative amount', '-1.00'],
     ['a JSON number', 12.5],
   ])('rejects %s in a variable with BAD_USER_INPUT and writes nothing', async (_name, fee) => {
-    const res = await gqlRequest(app, CREATE_ZONE, { fee }, adminToken).expect(200);
+    const res = await gqlRequest(app, CREATE_RATE, { fee }, adminToken).expect(200);
 
     expect(codeOf(res)).toBe('BAD_USER_INPUT');
-    expect(await prisma.shippingZone.count({ where: { name: 'Volta' } })).toBe(0);
+    expect(await prisma.rateRule.count({ where: EXPRESS_RATES })).toBe(0);
   });
 
   it('rejects an invalid inline literal with BAD_USER_INPUT too', async () => {
     const res = await gqlRequest(
       app,
-      `mutation { createShippingZone(input: { name: "Volta", cities: ["ho"], fee: 12.5 }) { id } }`,
+      `mutation { createRateRule(zoneId: "seed_zone_ashanti", input: { serviceLevel: EXPRESS, baseFee: 12.5 }) { id } }`,
       undefined,
       adminToken,
     ).expect(200);
 
     expect(codeOf(res)).toBe('BAD_USER_INPUT');
-    expect(await prisma.shippingZone.count({ where: { name: 'Volta' } })).toBe(0);
+    expect(await prisma.rateRule.count({ where: EXPRESS_RATES })).toBe(0);
   });
 
   it('labels amounts with the store currency', async () => {

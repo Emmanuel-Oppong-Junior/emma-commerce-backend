@@ -1,28 +1,41 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
-import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
-import { Decimal } from '@prisma/client/runtime/client';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
+  IsBoolean,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  ValidateIf,
+  ValidateNested,
+} from 'class-validator';
+import { ZoneAreaInput } from './zone-area.input';
 
-@InputType()
+// Omitted means unchanged; null is validated (and rejected): none of these can be cleared.
+const unlessOmitted = ValidateIf((_: object, value: unknown) => value !== undefined);
+
+@InputType({ description: 'Zone fields to change; omitted fields keep their value' })
 export class UpdateShippingZoneInput {
   @Field({ nullable: true })
-  @IsOptional()
+  @unlessOmitted
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
   name?: string;
 
-  @Field(() => [String], { nullable: true, description: 'Replaces the entire cities list' })
-  @IsOptional()
+  @Field(() => [ZoneAreaInput], { nullable: true, description: 'Replaces every area of the zone' })
+  @unlessOmitted
   @IsArray()
-  @IsString({ each: true })
-  cities?: string[];
-
-  @DecimalInputField({ nullable: true })
-  @IsOptional()
-  @IsMoneyAmount()
-  fee?: Decimal;
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ZoneAreaInput)
+  areas?: ZoneAreaInput[];
 
   @Field({ nullable: true })
-  @IsOptional()
+  @unlessOmitted
   @IsBoolean()
   isActive?: boolean;
 }

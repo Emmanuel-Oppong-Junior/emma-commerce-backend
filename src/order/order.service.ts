@@ -17,6 +17,7 @@ import {
   Order,
   OrderItem,
   OrderStatus,
+  DeliveryServiceLevel,
   PaymentMethod,
   Prisma,
   ShipmentStatus,
@@ -29,7 +30,9 @@ import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { chooseFulfilmentLocation, sellableQuantity } from '../inventory/fulfilment-location';
 import { StockLocationsService } from '../inventory/locations/stock-locations.service';
 import { OutboxService } from '../outbox/outbox.service';
-import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
+import { DeliveryZone, ShippingZonesService } from '../shipping-zones/shipping-zones.service';
+import { DELIVERY_LEVEL_UNAVAILABLE, deliveryFee, DeliveryFee, offeredLevels } from '../shipping-zones/delivery-fee';
+import { LoggerService } from '../commons/logger.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
 import { PromotionsService } from '../promotions/promotions.service';
@@ -62,6 +65,8 @@ export interface CheckoutParams {
   couponCode?: string;
   /** Defaults to ONLINE; refused when the store does not offer it. */
   paymentMethod?: PaymentMethod;
+  /** DELIVERY only; defaults to STANDARD. Refused when the address's zone does not offer it. */
+  serviceLevel?: DeliveryServiceLevel;
 }
 
 export interface CreateOrderParams extends CheckoutParams {
@@ -74,15 +79,27 @@ export interface CreateOrderParams extends CheckoutParams {
 }
 
 /** The cart priced for checkout, with each line's cart item and each order adjustment's share per cart item. */
-export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments'> {
+export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments' | 'delivery'> {
   lines: (OrderSnapshotLine & { cartItemId: string; fromPriceList: boolean })[];
   adjustments: (QuoteAdjustment & { allocations: { cartItemId: string; amount: Decimal }[] })[];
   /** Whether this checkout could be paid on delivery (P3-B), whatever payment method was asked for. */
   cashOnDelivery: CodAvailability;
+  /** DELIVERY: the zone, rule and fee priced; null for pickup. */
+  delivery: DeliveryQuote | null;
+  /** DELIVERY: every service level the zone offers with its fee for this cart; empty for pickup. */
+  deliveryOptions: DeliveryFee[];
+}
+
+export interface DeliveryQuote extends DeliveryFee {
+  zoneId: string;
+  zoneName: string;
+  /** Sum of variant weight x quantity; a variant without a weight counts 0 g. */
+  weightGrams: number;
 }
 
 interface Fulfilment {
-  shippingFee: Prisma.Decimal;
+  /** The delivery zone and its rate rules; null for pickup. */
+  zone: DeliveryZone | null;
   /** The delivery zone; null for pickup. */
   shippingZoneId: string | null;
   /** The delivery address the cash-on-delivery blacklist is matched against; null for pickup. */
@@ -98,6 +115,7 @@ interface Fulfilment {
 interface PricedCheckout {
   cart: Cart & { items: CartItem[] };
   snapshot: OrderSnapshot;
+  delivery: { quote: DeliveryQuote; options: DeliveryFee[] } | null;
   /** The coupon code entered, when its promotion applied. */
   couponCode?: { id: string; promotionId: string };
   fulfilment: Fulfilment;
@@ -168,6 +186,7 @@ export class OrdersService {
     private readonly codRisk: CodRiskService,
     private readonly stockLocations: StockLocationsService,
     private readonly serialUnits: SerialUnitsService,
+    private readonly logger: LoggerService,
   ) {}
 
   /**
@@ -177,7 +196,7 @@ export class OrdersService {
    */
   async checkoutQuote(userId: string, params: CheckoutParams): Promise<CheckoutQuote> {
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
-    const { cart, snapshot, fulfilment } = await this.priceCheckout(userId, params);
+    const { cart, snapshot, fulfilment, delivery } = await this.priceCheckout(userId, params);
     const cashOnDelivery = await this.codRisk.availability(userId, {
       grandTotal: snapshot.grandTotal,
       shippingZoneId: fulfilment.shippingZoneId,
@@ -196,6 +215,8 @@ export class OrdersService {
         allocations: sharesByCartItem(allocations, cartItemIds),
       })),
       cashOnDelivery,
+      delivery: delivery?.quote ?? null,
+      deliveryOptions: delivery?.options ?? [],
     };
   }
 
@@ -204,7 +225,8 @@ export class OrdersService {
    * shipping are read and priced inside it (the cart row and its variants locked), and the order is placed only if
    * that quote's hash is the `quoteHash` the customer confirmed; otherwise CONFLICT with reason QUOTE_CHANGED and
    * nothing is reserved, charged or recorded. The order stores the quote as its snapshot, so it charges the quote's
-   * grand total. DELIVERY needs shippingAddressId (shipping fee by city); PICKUP needs pickupLocationId (no fee). A
+   * grand total. DELIVERY needs shippingAddressId (fee from the address's zone and the service level); PICKUP needs
+   * pickupLocationId (no fee). A
    * payment method the store does not offer is refused first (BAD_REQUEST, reason PAYMENT_METHOD_UNAVAILABLE). Cash on
    * delivery also has to pass the risk gates (CodRiskService.assertCodAllowed: PHONE_NOT_VERIFIED, COD_NOT_AVAILABLE).
    */
@@ -250,14 +272,8 @@ export class OrdersService {
         ? await this.deliveryTo(userId, params.shippingAddressId, tx)
         : await this.pickupAt(params.pickupLocationId, tx);
     if (tx) await this.ordersRepository.lockVariants(tx, [...new Set(cart.items.map((item) => item.variantId))]);
-    const { snapshot, couponCode } = await this.buildOrderDetails(
-      cart.items,
-      userId,
-      fulfilment,
-      params.couponCode,
-      tx,
-    );
-    return { cart, snapshot, couponCode, fulfilment };
+    const { snapshot, couponCode, delivery } = await this.buildOrderDetails(cart.items, userId, fulfilment, params, tx);
+    return { cart, snapshot, couponCode, fulfilment, delivery };
   }
 
   private async deliveryTo(
@@ -268,9 +284,9 @@ export class OrdersService {
     if (!shippingAddressId) throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
     const address = await this.ensureValidShippingAddress(userId, shippingAddressId, tx);
     assertDeliverableAddress(address);
-    const zone = await this.shippingZonesService.getZoneForCity(address.city, tx);
+    const zone = await this.shippingZonesService.deliveryZoneFor(address, tx);
     return {
-      shippingFee: zone.fee,
+      zone,
       shippingZoneId: zone.id,
       fulfilmentLocationIds: await this.stockLocations.candidatesFor({ shippingZoneId: zone.id }, tx),
       deliveryAddress: address,
@@ -283,7 +299,7 @@ export class OrdersService {
     if (!pickupLocationId) throw new BadRequestException('pickupLocationId is required for PICKUP orders');
     const location = await this.pickupLocationsService.findActiveById(pickupLocationId, tx);
     return {
-      shippingFee: new Prisma.Decimal(0),
+      zone: null,
       shippingZoneId: null,
       deliveryAddress: null,
       fulfilmentLocationIds: await this.stockLocations.candidatesFor({ pickupLocationId }, tx),
@@ -587,15 +603,23 @@ export class OrdersService {
 
   /**
    * Prices the cart with the pricing engine: the customer's price lists, item and cart promotions (the coupon code
-   * unlocking one), the tax the prices include and shipping. The quote is the order snapshot, so the total charged is the quote's grand total.
+   * unlocking one), the tax the prices include and shipping. The quote is the order snapshot, so the total charged is
+   * the quote's grand total. Delivery is priced in two passes: the merchandise total after promotions (which the fee
+   * cannot change) sets the zone's fee for the service level, then the cart is priced with that fee, so free-shipping
+   * promotions still apply on top of it.
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
-    shipping: Pick<Fulfilment, 'shippingFee' | 'shippingZoneId' | 'fulfilmentLocationIds'>,
-    couponCode: string | undefined,
+    shipping: Pick<Fulfilment, 'zone' | 'shippingZoneId' | 'fulfilmentLocationIds'>,
+    params: Pick<CheckoutParams, 'couponCode' | 'serviceLevel'>,
     tx: Prisma.TransactionClient | undefined,
-  ): Promise<{ snapshot: OrderSnapshot; couponCode?: { id: string; promotionId: string } }> {
+  ): Promise<{
+    snapshot: OrderSnapshot;
+    couponCode?: { id: string; promotionId: string };
+    delivery: PricedCheckout['delivery'];
+  }> {
+    const { couponCode } = params;
     const now = new Date();
     const currency = await this.storeService.getCurrency(tx);
     const variants: VariantForSale[] = [];
@@ -627,32 +651,43 @@ export class OrdersService {
     );
     const taxes = await this.taxService.findActive(tx);
 
-    const quote = this.priceOrThrow(() =>
-      price(
-        {
-          lines: variants.map((variant, index) => ({
-            variantId: variant.id,
-            productId: variant.productId,
-            categoryId: variant.product.categoryId,
-            brandId: variant.product.brandId,
-            quantity: cartItems[index].quantity,
-            unitListPrice: variant.price!,
-            taxable: variant.product.isTaxable && variant.basePrice !== null,
-          })),
-          couponCode: promotions.couponCode,
-          shippingFee: shipping.shippingFee,
-          shippingZoneId: shipping.shippingZoneId,
-        },
-        {
-          currency,
-          now,
-          promotions: promotions.promotions,
-          taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
-          customer: promotions.customer,
-          priceLists,
-        },
-      ),
-    );
+    const priceWith = (shippingFee: Decimal, delivery: Quote['delivery']) =>
+      this.priceOrThrow(() =>
+        price(
+          {
+            lines: variants.map((variant, index) => ({
+              variantId: variant.id,
+              productId: variant.productId,
+              categoryId: variant.product.categoryId,
+              brandId: variant.product.brandId,
+              quantity: cartItems[index].quantity,
+              unitListPrice: variant.price!,
+              taxable: variant.product.isTaxable && variant.basePrice !== null,
+            })),
+            couponCode: promotions.couponCode,
+            shippingFee,
+            shippingZoneId: shipping.shippingZoneId,
+            delivery,
+          },
+          {
+            currency,
+            now,
+            promotions: promotions.promotions,
+            taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
+            customer: promotions.customer,
+            priceLists,
+          },
+        ),
+      );
+    const merchandise = priceWith(new Decimal(0), null);
+    const delivery = shipping.zone && this.priceDelivery(shipping.zone, variants, cartItems, merchandise, params);
+    const quote = delivery
+      ? priceWith(delivery.quote.fee, {
+          rateRuleId: delivery.quote.rateRuleId,
+          serviceLevel: delivery.quote.serviceLevel,
+          slot: null,
+        })
+      : merchandise;
     const snapshot: OrderSnapshot = {
       ...quote,
       lines: quote.lines.map((line) => ({
@@ -664,7 +699,45 @@ export class OrdersService {
     };
     const applied = appliedPromotionIds(quote);
     const code = promotions.couponCode;
-    return { snapshot, couponCode: code && applied.includes(code.promotionId) ? code : undefined };
+    return { snapshot, couponCode: code && applied.includes(code.promotionId) ? code : undefined, delivery };
+  }
+
+  /**
+   * The zone's fee for each service level it offers, for the cart's weight and its merchandise total after item and
+   * cart promotions, and the one asked for (default STANDARD; one the zone does not offer: BAD_REQUEST with reason
+   * DELIVERY_LEVEL_UNAVAILABLE). A variant without a weight counts 0 g (logged when the fee depends on weight).
+   */
+  private priceDelivery(
+    zone: DeliveryZone,
+    variants: VariantForSale[],
+    cartItems: CartItem[],
+    merchandise: Quote,
+    params: Pick<CheckoutParams, 'serviceLevel'>,
+  ): NonNullable<PricedCheckout['delivery']> {
+    const weightGrams = variants.reduce(
+      (sum, variant, index) => sum + (variant.weightGrams ?? 0) * cartItems[index].quantity,
+      0,
+    );
+    const merchandiseTotal = merchandise.subtotal.sub(merchandise.discountTotal);
+    const options = offeredLevels(zone.rules).map((level) =>
+      deliveryFee(zone.rules, level, weightGrams, merchandiseTotal)!,
+    );
+    const level = params.serviceLevel ?? DeliveryServiceLevel.STANDARD;
+    const chosen = options.find((option) => option.serviceLevel === level);
+    if (!chosen) {
+      throw new BadRequestException({
+        message: `${level} delivery is not offered in zone "${zone.name}" (offered: ${options.map((option) => option.serviceLevel).join(', ')})`,
+        extensions: { reason: DELIVERY_LEVEL_UNAVAILABLE },
+      });
+    }
+    const unweighed = variants.filter((variant) => variant.weightGrams === null).map((variant) => variant.id);
+    if (unweighed.length > 0 && zone.rules.some((rule) => rule.weightBands.length > 0)) {
+      this.logger.warn(
+        `Delivery weight counts 0 g for variants without a weight | zoneId: ${zone.id} | variantIds: ${unweighed.join(',')}`,
+        'OrdersService',
+      );
+    }
+    return { quote: { ...chosen, zoneId: zone.id, zoneName: zone.name, weightGrams }, options };
   }
 
   private priceOrThrow<T>(pricing: () => T): T {
@@ -748,6 +821,7 @@ export class OrdersService {
       shippingAddressSnapshot: fulfilment.shippingAddressSnapshot,
       pickupLocationId: fulfilment.pickupLocationId,
       pickupLocationSnapshot: fulfilment.pickupLocationSnapshot,
+      shippingZoneName: fulfilment.zone?.name,
     };
     const cartId = checkout.cart.id;
     const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;

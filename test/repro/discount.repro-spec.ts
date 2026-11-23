@@ -87,6 +87,7 @@ async function priceOneUnit(unitPrice: number, discounts: ReturnType<typeof onPr
       lines: [{ ...line, unitListPrice: new Prisma.Decimal(unitPrice) }],
       shippingFee: new Prisma.Decimal(0),
       shippingZoneId: null,
+      delivery: null,
     },
     { currency: 'GHS', now, promotions, taxRates: [], customer, priceLists: [] },
   );
@@ -165,7 +166,22 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
       {} as never,
       { reserve: jest.fn().mockResolvedValue(true) } as never,
       { record: jest.fn() } as never,
-      { getZoneForCity: jest.fn().mockResolvedValue({ id: 'zone-1', fee: new Prisma.Decimal(30) }) } as never,
+      {
+        deliveryZoneFor: jest.fn().mockResolvedValue({
+          id: 'zone-1',
+          name: 'Zone 1',
+          rules: [
+            {
+              id: 'rule-1',
+              serviceLevel: 'STANDARD',
+              baseFee: new Prisma.Decimal(30),
+              freeAbove: null,
+              isActive: true,
+              weightBands: [],
+            },
+          ],
+        }),
+      } as never,
       {} as never,
       {} as never,
       promotions,
@@ -180,6 +196,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
         lockFulfilmentLocation: jest.fn().mockResolvedValue({ locationId: 'loc_main' }),
       } as never,
       { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() } as never,
+      { warn: jest.fn() } as never,
     );
 
     const params = {

@@ -1491,12 +1491,17 @@ All order operations require `Bearer` JWT.
   contactEmail: string;
   contactPhone: string;
   currency: Currency;                          // GHS
-  pricingVersion: Int;                         // The pricing rules it was priced with: 4 since P2-W.1 (B2B price lists), 3 since P2-B.4 (flash sales), 2 since P2-B.2 (promotion stacking), 1 before it; all have the full price and tax snapshot. 0: placed before P1-O.1 (parts may be null)
+  pricingVersion: Int;                         // The pricing rules it was priced with: 5 since P5-A.1 (delivery rate rules), 4 since P2-W.1 (B2B price lists), 3 since P2-B.4 (flash sales), 2 since P2-B.2 (promotion stacking), 1 before it; all have the full price and tax snapshot. 0: placed before P1-O.1 (parts may be null)
   subtotal?: Money;                            // Σ unitListPrice × quantity, before any discount, tax included
   discountTotal?: Money;                       // Product discounts + coupon (= minus the sum of `adjustments`)
   taxTotal?: Money;                            // Tax included in the line totals; null on pricingVersion 0
   shippingTotal?: Money;                       // Shipping charged; 0 for PICKUP
   grandTotal: Money;                           // Amount charged: subtotal - discountTotal + shippingTotal
+  shippingZoneId?: string;                     // P5-A.1 DELIVERY: the zone delivered to (a snapshot id; the zone may change or go)
+  shippingZoneName?: string;                   // P5-A.1 DELIVERY: the zone's name when placed
+  serviceLevel?: DeliveryServiceLevel;         // P5-A.1 DELIVERY: STANDARD | EXPRESS
+  shippingFee?: Money;                         // P5-A.1 DELIVERY: the fee before free-shipping promotions (shippingTotal is after them)
+  rateRuleId?: string;                         // P5-A.1 DELIVERY, staff with order.view (FORBIDDEN otherwise): the rate rule charged
   adjustments: OrderAdjustment[];              // Product discounts (per line) and the coupon, as placed
   shippingAddressId?: string;                  // Set for DELIVERY orders
   shippingAddressSnapshot?: JSON;              // DELIVERY: { recipientName, phone, region, street, city, area, landmark, ghanaPostGps, latitude, longitude, zipCode, country } at order time; orders placed before Ghana addresses (P1-G) hold { street, city, state, zipCode, country } instead
@@ -1663,8 +1668,11 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   pickupLocationId?: string;         // Required for PICKUP: an active pickup location
   couponCode?: string;               // Optional. Case-insensitive.
   paymentMethod?: OrderPaymentMethod; // Default ONLINE. CASH_ON_DELIVERY to pay on delivery/pickup. (P3-A.2)
+  serviceLevel?: DeliveryServiceLevel; // P5-A.1, DELIVERY only (ignored for PICKUP): default STANDARD; one of deliveryOptions
 }
 ```
+
+**Delivery fee (P5-A.1).** The address is matched to a delivery zone (see [2.21](#221-shipping-zones--pickup-locations)); the zone's active rate rule for the chosen `serviceLevel` sets the fee from the cart's weight and its merchandise total after promotions; free-shipping promotions then apply on top of that fee. `deliveryOptions` lists every level the zone offers with its fee for this cart, so show them and quote again with the one the customer picks. An address no active zone covers, or outside Ghana, fails with `BAD_REQUEST` and `extensions.reason: "DELIVERY_UNAVAILABLE"` (offer pickup or another address); a level the zone does not offer fails with `BAD_REQUEST` and `extensions.reason: "DELIVERY_LEVEL_UNAVAILABLE"`. The level, the rate rule and the fee are part of the `quoteHash`.
 
 **Payment method not offered (P3-A.2):** `checkoutQuote` and `createOrder` fail with `BAD_REQUEST` and `extensions.reason: "PAYMENT_METHOD_UNAVAILABLE"` before anything else when the store does not offer the payment method: `CASH_ON_DELIVERY` while cash on delivery is switched off, or `ONLINE` while no online method is on offer (card and mobile money both off, or Paystack not configured). Read `availablePaymentMethods` to show only what is offered. The payment method does not change the price or the `quoteHash`.
 
@@ -1674,10 +1682,12 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 {
   quoteHash: string;                 // 64 hex chars. Send to createOrder.
   currency: Currency;                // GHS
-  pricingVersion: number;            // The pricing rules used (4 since P2-W.1: B2B price lists); the order stores it
+  pricingVersion: number;            // The pricing rules used (5 since P5-A.1: delivery rate rules); the order stores it
   lines: QuoteLine[];                // In cart order. P2-B.4: a cart line whose units pay different prices (a flash sale reduced only some) has two or more lines with the same cartItemId, the reduced units first
   adjustments: QuoteOrderAdjustment[]; // The cart promotions that take something off
   shippingAdjustments: QuoteAdjustment[]; // P2-B.6: the free-shipping promotions taken off the delivery fee (already in shippingTotal)
+  delivery?: QuoteDelivery;          // P5-A.1 DELIVERY: { zoneId, zoneName, serviceLevel, rateRuleId, fee (before free-shipping promotions), weightGrams, weightBandFromGrams, freeAboveReached }; null for PICKUP
+  deliveryOptions: DeliveryOption[]; // P5-A.1 DELIVERY: { serviceLevel, fee, weightBandFromGrams, freeAboveReached } per level the zone offers; [] for PICKUP
   subtotal: Money;                   // Σ unitListPrice × quantity, before any discount, tax included
   discountTotal: Money;              // Item promotions + cart promotions (merchandise only; shipping savings are in shippingTotal)
   taxTotal: Money;                   // Tax included in the line totals
@@ -1753,17 +1763,18 @@ query {
   contactEmail: string;                   // Required. Valid email.
   contactPhone: string;                   // Required. Valid phone number in international format (e.g. +233…).
   paymentMethod?: OrderPaymentMethod;     // Default ONLINE (card or mobile money, chosen at POST /payment/initialize). CASH_ON_DELIVERY to pay on delivery/pickup. BAD_REQUEST PAYMENT_METHOD_UNAVAILABLE when not offered.
+  serviceLevel?: DeliveryServiceLevel;    // P5-A.1, DELIVERY only: default STANDARD; the one quoted
   quoteHash: string;                      // Required. checkoutQuote's quoteHash for the same fulfilment and coupon.
 }
 ```
 
 **What happens** (all in one database transaction):
 1. The cart row is locked (a second `createOrder` for the same cart waits, then finds the cart empty: `NOT_FOUND`). The cart must hold 1–50 items; the account must be active.
-2. `DELIVERY`: the address must belong to the caller and have a region, recipient name and phone (addresses saved before those fields existed may lack them). The shipping fee comes from the active shipping zone whose cities include the address city (case-insensitive, extra spaces ignored). No zone → rejected; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
+2. `DELIVERY`: the address must belong to the caller and have a region, recipient name and phone (addresses saved before those fields existed may lack them). The address must be in Ghana and is matched to the active zone with the most specific entry for it (an area of the address's town, else its town, else its region; spelling, case, accents and punctuation ignored); that zone's active rate rule for `serviceLevel` sets the fee (P5-A.1). No zone, or no rule → `BAD_REQUEST` `DELIVERY_UNAVAILABLE`; a level the zone does not offer → `BAD_REQUEST` `DELIVERY_LEVEL_UNAVAILABLE`; delivery is never free by default. `PICKUP`: the location must exist and be active; shipping fee 0.
 3. The cart's variants are share-locked, then the prices, promotions, coupon code, the caller's redemptions, tax rates and store currency are read and the cart is priced by the pricing engine (see [10](#10-promotions-system)), exactly as `checkoutQuote` does: each line from its **variant**'s current `price` (tax-inclusive) minus its item promotions. Every variant must still be sellable (active, priced, product active and `PUBLISHED`), its product priced in the store currency (GHS), and have enough stock.
 4. A coupon code, if given, must be usable (code and promotion active, started, not expired, uses left overall and for the caller, its minimums reached); it unlocks its promotion. Cart promotions come off the lines after item promotions, before shipping, never more than them.
 5. The resulting quote's hash must equal `quoteHash`; otherwise `CONFLICT` / `QUOTE_CHANGED` and nothing is written.
-6. `grandTotal = Σ lineTotal - cart promotions + shippingTotal` (the fee after free-shipping promotions, P2-B.6), the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (4).
+6. `grandTotal = Σ lineTotal - cart promotions + shippingTotal` (the fee after free-shipping promotions, P2-B.6), the quote's `grandTotal`. This is the amount Paystack is asked for. The order stores the quote as its snapshot: `subtotal`, `discountTotal`, `taxTotal`, `shippingTotal`, one `OrderAdjustment` per item promotion on a line and one per cart promotion, and per line the tax its price includes (`unitNet`, `unitTax`, `taxLines`), with the engine's `pricingVersion` (5), and for `DELIVERY` the zone, rate rule, service level and fee before promotions (`shippingZoneId`, `shippingZoneName`, `rateRuleId`, `serviceLevel`, `shippingFee`).
 7. The order is saved with each line's snapshot (`productName`, `sku`, `optionValues`, prices, tax lines); each line re-checks its variant and reserves its quantity with a conditional update (a `RESERVE` stock movement; if any line fails, the whole order fails and nothing is written); each applied promotion (and the coupon code) has one use taken with a conditional update and a `RESERVED` redemption recorded (none left: `CONFLICT`, see below); the cart is emptied.
 8. Status: `PLACED` for `ONLINE` (until paid); `CASH_ON_DELIVERY` orders move straight on to `CONFIRMED` (both steps are in the timeline).
 9. A confirmation email goes to the account's email (not `contactEmail`) after the response.
@@ -1775,7 +1786,7 @@ No tax is added at checkout; tax is already inside each variant's `price`, and t
 - `CONFLICT` with `extensions.reason: "PROMOTION_LIMIT_REACHED"` (a promotion or the coupon code has no use left) or `"PROMOTION_CUSTOMER_LIMIT_REACHED"` (the caller used up their uses) — another order took the last use meanwhile; nothing was recorded. Call `checkoutQuote` again.
 - `CONFLICT` with `extensions.reason: "PROMOTION_UNITS_SOLD_OUT"` (P2-B.4) — a flash sale has fewer units left at its price than the quote reduced (another order took them meanwhile); nothing was recorded. Call `checkoutQuote` again: it shows the units still left at the promotional price.
 - `NOT_FOUND` — No cart, empty cart (also the second of two simultaneous submits), shipping address not found for the caller, variant no longer exists (`Variant "<id>" not found`), unknown coupon code.
-- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); every line is in stock but not all at one location serving the delivery or pickup point (`The items in your cart are not all in stock at one location that serves this delivery — please review your cart`, P4-A.1: the customer can split the order); delivery city not covered by any active shipping zone (offer pickup or another address); pickup location missing or inactive; coupon code inactive, not started, expired, at its usage limit, already used by the caller, below its minimums, or for items not in the cart.
+- `BAD_REQUEST` — Missing `shippingAddressId`/`pickupLocationId` for the chosen type; "Complete the delivery address (region, recipient name and phone) before checkout" (send the customer to `updateAddress` for that address); more than 50 items; account inactive; a variant that cannot be sold (the `addToCart` messages followed by `; remove it from the cart`, e.g. `"Tee" (TEE-M-RED) is no longer sold; remove it from the cart`); a product priced in another currency (`"<product>" is priced in USD; only GHS products can be checked out`); insufficient stock (`Insufficient stock for "<product>" (<sku>): M available, N requested`); the variant sold out or was taken off sale while the order was being placed (`Variant "<sku>" is out of stock or no longer on sale — please review your cart`); every line is in stock but not all at one location serving the delivery or pickup point (`The items in your cart are not all in stock at one location that serves this delivery — please review your cart`, P4-A.1: the customer can split the order); `extensions.reason: "DELIVERY_UNAVAILABLE"`: the address is outside Ghana or no active zone (with an active rate rule) covers it (offer pickup or another address); `extensions.reason: "DELIVERY_LEVEL_UNAVAILABLE"`: the zone does not offer the service level; pickup location missing or inactive; coupon code inactive, not started, expired, at its usage limit, already used by the caller, below its minimums, or for items not in the cart.
 - `BAD_USER_INPUT` — Missing or malformed `quoteHash`; invalid `contactEmail`/`contactPhone` or enum value.
 
 **Example**:
@@ -3152,7 +3163,7 @@ A variant is low on stock when its available stock (on hand minus reserved) is a
 
 ### 2.20 Addresses
 
-**Breaking change (P1-G):** addresses are Ghana addresses. `state` is gone, replaced by the required `region` enum (`GhanaRegion`); `zipCode` is optional; `recipientName`, `phone`, `area`, `landmark`, `ghanaPostGps`, `latitude` and `longitude` are new; `country` must be `GH`. New addresses need `recipientName`, `phone` and `region`. Addresses saved before this change can have `region`, `recipientName` and `phone` set to `null`: checkout and `getShippingFee` refuse them with `BAD_REQUEST` "Complete the delivery address (region, recipient name and phone) before checkout" until the customer fills them in with `updateAddress`.
+**Breaking change (P1-G):** addresses are Ghana addresses. `state` is gone, replaced by the required `region` enum (`GhanaRegion`); `zipCode` is optional; `recipientName`, `phone`, `area`, `landmark`, `ghanaPostGps`, `latitude` and `longitude` are new; `country` must be `GH`. New addresses need `recipientName`, `phone` and `region`. Addresses saved before this change can have `region`, `recipientName` and `phone` set to `null`: checkout refuses them with `BAD_REQUEST` "Complete the delivery address (region, recipient name and phone) before checkout" until the customer fills them in with `updateAddress`.
 
 **Formats**:
 - `phone`: a Ghana number written as `0XXXXXXXXX`, `233XXXXXXXXX`, `+233XXXXXXXXX` or `00233XXXXXXXXX`, where the nine-digit national number does not start with 0. Spaces, dashes, dots and parentheses are ignored (`024 412 3456`, `(024) 412-3456`). It is stored and returned in E.164 form, `+233XXXXXXXXX`. Anything else (another country, too short or long, letters) is `BAD_USER_INPUT`.
@@ -3160,7 +3171,7 @@ A variant is low on stock when its available stock (on hand minus reserved) is a
 - `region`: one of the 16 regions: `AHAFO`, `ASHANTI`, `BONO`, `BONO_EAST`, `CENTRAL`, `EASTERN`, `GREATER_ACCRA`, `NORTH_EAST`, `NORTHERN`, `OTI`, `SAVANNAH`, `UPPER_EAST`, `UPPER_WEST`, `VOLTA`, `WESTERN`, `WESTERN_NORTH`.
 - `country`: optional, defaults to `GH`; if sent it must be `GH` (any case, surrounding spaces ignored), otherwise `BAD_USER_INPUT`. The store delivers in Ghana only.
 - `latitude` / `longitude`: optional `Float`s, sent together (or both `null` to clear them); latitude −90..90, longitude −180..180. Stored with 6 decimal places.
-- `city` is the city or town; it is what shipping zones match (case-insensitive, extra spaces ignored).
+- `city` is the city or town and `area` the area within it; shipping zones match them (P5-A.1: an area of the town, else the town, else the `region`; case, accents and punctuation ignored).
 
 ---
 
@@ -3260,14 +3271,18 @@ A variant is low on stock when its available stock (on hand minus reserved) is a
 
 ### 2.21 Shipping Zones & Pickup Locations
 
-A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` order pays the fee of the active zone that lists the address city (case-insensitive, extra spaces ignored); if no active zone lists it, delivery is refused. Each city belongs to at most one zone. A **pickup location** is where a `PICKUP` order is collected (no shipping fee).
+**Breaking change (P5-A.1):** a shipping zone no longer has `cities` and `fee`. It lists **areas** (a Ghana region, a town, or an area within a town) and prices delivery with **rate rules**, one active rule per service level (`STANDARD`, `EXPRESS`). `CreateShippingZoneInput`/`UpdateShippingZoneInput` take `areas` instead of `cities` and `fee`; add fees with `createRateRule`. The query `getShippingFee` is removed: `checkoutQuote` returns `delivery` and `deliveryOptions` (the fee depends on the cart: its weight and its total after promotions). Existing zones were migrated: each city became a town entry and each fee the zone's active `STANDARD` rule.
+
+**Matching.** At checkout a `DELIVERY` address (which must be in Ghana) is matched to the active zone holding its most specific entry: an area of the address's town (`town` + `area` = the address's `city` + `area`) beats the town, which beats the region. Towns and areas are compared ignoring case, accents, apostrophes, punctuation and repeated spaces (`"East-Legon"` = `"east legon"`) and are stored that way. Each region, town or town area belongs to at most one zone (active or not): creating or updating a zone with an entry another zone lists fails with `CONFLICT` naming the entry and its zone. No match → `BAD_REQUEST` `DELIVERY_UNAVAILABLE`, never a free delivery. A **pickup location** is where a `PICKUP` order is collected (no shipping fee).
+
+**Rates.** A rate rule has a `baseFee`, optional `weightBands` (`fromGrams`, `fee`: from that cart weight up the band's fee applies; ascending, never cheaper than the band below or the base fee) and an optional `freeAbove`: delivery is free once the merchandise total after item and cart promotions (tax included) reaches it. The cart weight is Σ variant `weightGrams` × quantity; a variant without a weight counts as 0 g. Free-shipping promotions apply after the rule's fee. Rate rule changes are price changes: they need `shipping.manage` and a recent step-up (`FORBIDDEN` + `reason: STEP_UP_REQUIRED`) and are audited with the fees before and after.
 
 ---
 
 #### `activeShippingZones`
 - **Type**: Query
 - **Auth Required**: No
-- **Response**: `[ShippingZoneEntity!]!`, active zones sorted by name
+- **Response**: `[ShippingZoneEntity!]!`, active zones sorted by name, with their active rate rules only (the public rate card)
 
 **`ShippingZoneEntity` Object Type**:
 
@@ -3275,10 +3290,11 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
 {
   id: string;
   name: string;      // Unique
-  cities: string[];  // Stored normalised (lower-case, single spaces)
-  fee: Money;        // GHS
+  areas: ZoneArea[]; // { id, level: REGION | TOWN | AREA, region?: GhanaRegion, town?: string, area?: string } (town/area normalised)
+  rateRules: RateRule[]; // { id, zoneId, serviceLevel, baseFee: Money, freeAbove?: Money, weightBands: { fromGrams, fee: Money }[], isActive, createdAt, updatedAt }
   isActive: boolean;
   codEnabled: boolean; // P3-B.2: cash on delivery may be chosen for deliveries here (setShippingZoneCashOnDelivery, Owner)
+  fulfilmentLocations: StockLocation[]; // inventory.view, see 2.15
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -3286,61 +3302,71 @@ A **shipping zone** has a fee and a list of cities. At checkout a `DELIVERY` ord
 
 ---
 
-#### `getShippingFee`
+#### `shippingZones` (`shipping.manage`)
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Args**: `addressId: ID!`
-- **Response**: `Money!`, the fee `createOrder` would charge for delivery to that address
-- **Possible Errors**: `NOT_FOUND` (not the caller's address); `BAD_REQUEST` "Complete the delivery address (region, recipient name and phone) before checkout" for an address saved before those fields existed; `BAD_REQUEST` ("Delivery is not available to city …") when no active zone covers the city.
+- **Response**: `[ShippingZoneEntity!]!`, all zones sorted by name, with every rule
 
 ---
 
-#### `shippingZones` (ADMIN, SUPER_ADMIN)
-- **Type**: Query
-- **Response**: `[ShippingZoneEntity!]!`, all zones sorted by name
-
----
-
-#### `shippingZone` (ADMIN, SUPER_ADMIN)
+#### `shippingZone` (`shipping.manage`)
 - **Type**: Query
 - **Args**: `id: ID!`
 - **Response**: `ShippingZoneEntity!` (`NOT_FOUND` if unknown)
 
 ---
 
-#### `createShippingZone` (ADMIN, SUPER_ADMIN)
+#### `createShippingZone` (`shipping.manage`)
 - **Type**: Mutation
 - **Args**: `input: CreateShippingZoneInput!`
-- **Response**: `ShippingZoneEntity!`
+- **Response**: `ShippingZoneEntity!` (audited)
 
 **Input: `CreateShippingZoneInput`**
 
 ```typescript
 {
-  name: string;       // Required. Unique.
-  cities: string[];   // Required. No blank entries; duplicates are merged.
-  fee: Decimal;         // Required. Min 0.
-  isActive?: boolean; // Default true.
+  name: string;           // Required. Unique. At most 100 characters.
+  areas: ZoneAreaInput[]; // Required, 1-500: each { region } alone, { town } alone, or { town, area } (at most 100 characters each); repeats merged
+  isActive?: boolean;     // Default true.
 }
 ```
 
-**Possible Errors**: `CONFLICT` ("Cities already covered by another shipping zone: …", active or not; or the name is taken), `BAD_REQUEST` (blank city).
+**Possible Errors**: `CONFLICT` ("Areas already covered by another shipping zone: TOWN:tema (zone "Greater Accra")", or the name is taken), `BAD_REQUEST` (an entry that is not exactly a region, a town, or a town with an area; a name without letters or digits).
 
 ---
 
-#### `updateShippingZone` (ADMIN, SUPER_ADMIN)
+#### `updateShippingZone` (`shipping.manage`)
 - **Type**: Mutation
-- **Args**: `id: ID!`, `input: UpdateShippingZoneInput!` (`name?`, `cities?` replaces the whole list, `fee?`, `isActive?`)
-- **Response**: `ShippingZoneEntity!`
-- **Possible Errors**: `NOT_FOUND`, `CONFLICT` (city overlap or name taken), `BAD_REQUEST` (blank city).
+- **Args**: `id: ID!`, `input: UpdateShippingZoneInput!` (`name?`, `areas?` replaces every area, `isActive?`; omitted = unchanged, `null` refused)
+- **Response**: `ShippingZoneEntity!` (audited)
+- **Possible Errors**: `NOT_FOUND`, `CONFLICT` (area overlap or name taken), `BAD_REQUEST`.
 
 ---
 
-#### `deleteShippingZone` (ADMIN, SUPER_ADMIN)
+#### `deleteShippingZone` (`shipping.manage`)
 - **Type**: Mutation
 - **Args**: `id: ID!`
-- **Response**: `ShippingZoneEntity!`
-- **Description**: Existing orders keep the fee they were charged.
+- **Response**: `ShippingZoneEntity!` (audited)
+- **Description**: Deletes the zone with its areas and rate rules. Existing orders keep their zone, rule and fee snapshot. `CONFLICT` while a free-shipping promotion is limited to the zone.
+
+---
+
+#### `createRateRule` / `updateRateRule` / `deleteRateRule` (`shipping.manage`, step-up) (P5-A.1)
+- **Type**: Mutation
+- **Args**: `createRateRule(zoneId: ID!, input: CreateRateRuleInput!)`, `updateRateRule(id: ID!, input: UpdateRateRuleInput!)`, `deleteRateRule(id: ID!)`
+- **Response**: `RateRule!` (audited, fees before/after)
+
+```typescript
+CreateRateRuleInput {
+  serviceLevel: DeliveryServiceLevel; // STANDARD | EXPRESS
+  baseFee: Decimal;                   // >= 0, 2 decimal places
+  freeAbove?: Decimal;                // Free once the merchandise total after promotions reaches it
+  weightBands?: { fromGrams: Int; fee: Decimal }[]; // At most 50; fromGrams >= 1, ascending; fees never decrease (and >= baseFee)
+  isActive?: boolean;                 // Default true. At most one active rule per zone and level
+}
+UpdateRateRuleInput { baseFee?; freeAbove? (null clears it); weightBands? (replaces them); isActive? }
+```
+
+- **Possible Errors**: `NOT_FOUND` (zone or rule), `CONFLICT` (the zone already has an active rule for the level), `BAD_REQUEST` (bands out of order, a band cheaper than the one below or the base fee), `FORBIDDEN` (`STEP_UP_REQUIRED`). Orders already placed keep the fee they were charged.
 
 ---
 
@@ -3547,7 +3573,7 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `customer.group.manage` | `customerGroups`, `customerGroup` (with `members`), `createCustomerGroup`, `updateCustomerGroup`, `deleteCustomerGroup`, `addCustomerGroupMembers`, `removeCustomerGroupMembers` (P2-B.3; held by Owner and Manager) |
 | `pricelist.manage` | `priceLists`, `priceList` (with `entries`), and with step-up `createPriceList`, `updatePriceList`, `deletePriceList`, `setPriceListEntries`, `removePriceListEntries` (P2-W.1; held by Owner and Manager) |
 | `tax.manage` | `taxes`, `tax`, `createTax`, `updateTax`, `deleteTax` |
-| `shipping.manage` | admin shipping zone and pickup location queries and mutations |
+| `shipping.manage` | admin shipping zone, rate rule (with step-up) and pickup location queries and mutations |
 | `review.moderate` | `adminDeleteReview` |
 | `user.view` | `users`, `userById`, `userByEmail`, `userByProviderId`, `addresses(userId)`, other users' protected `User` fields |
 | `user.manage` | `updateUser`, `removeUser`, `archiveUser`, `deArchiveUser` (customer accounts; staff accounts also need `staff.manage`) |
@@ -3640,7 +3666,7 @@ Time-based one-time passwords (RFC 6238: SHA1, 6 digits, 30-second steps, any au
 |---|---|
 | Role and permission changes | `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, `createUser` with `role: ADMIN` |
 | Refunds | `approveReturn`, `processRefund`, `processPendingRefund`, `refundOrder` |
-| Price changes | `updateProduct` when `isTaxable` is sent (it reprices every variant), `updateVariant` when `basePrice` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax` |
+| Price changes | `updateProduct` when `isTaxable` is sent (it reprices every variant), `updateVariant` when `basePrice` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax`, `createRateRule` / `updateRateRule` / `deleteRateRule` (P5-A.1) |
 | Data exports | `addresses` without `userId` |
 
 A refreshed access token keeps its session, so a verification survives `refreshToken`; a new sign-in starts a new session. Tokens issued before this release have no session id: sign in again before stepping up.
@@ -3929,7 +3955,7 @@ type Money {
 | `Variant.price` (`Product.price`, `basePrice`, `currentPrice`, `discountedPrice` were also converted, then removed in P1-V.3) |
 | `Payment.amount`; `RefundEntity.amount`; `ReturnRequestEntity.refundAmount` |
 | `Coupon.minimumOrderAmount`; `CouponValidation.discountAmount`; `Discount.minimumPurchase` |
-| `ShippingZoneEntity.fee`; query `getShippingFee` (`Float!` → `Money!`) |
+| `ShippingZoneEntity.fee`; query `getShippingFee` (`Float!` → `Money!`; both removed in P5-A.1, see `RateRule.baseFee`) |
 | `SalesReport.grossRevenue`, `refunds`, `netRevenue`, `totalRevenue`, `itemSales`, `averageOrderValue` |
 | `DashboardSummary.revenueToday`, `grossRevenueToday`, `refundsToday`; `TopProduct.totalRevenue`; `RevenueByCategoryEntity.totalRevenue` |
 
@@ -3944,7 +3970,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `CreateVariantInput.basePrice` / `UpdateVariantInput.basePrice` / `VariantFieldsInput.basePrice` (the product's `basePrice` input moved to its variants in P1-V.3; the variant `price` input became `basePrice` in P1-V.4) |
 | `CreateCouponInput.value`, `minimumOrderAmount`; `UpdateCouponInput.value`, `minimumOrderAmount`; `ValidateCouponInput.orderTotal` |
 | `CreateDiscountInput.value`, `minimumPurchase`; `UpdateDiscountInput.value`, `minimumPurchase` (both must be greater than 0) |
-| `CreateShippingZoneInput.fee`, `UpdateShippingZoneInput.fee` |
+| `CreateShippingZoneInput.fee`, `UpdateShippingZoneInput.fee` (removed in P5-A.1: `CreateRateRuleInput.baseFee`, `freeAbove`, `weightBands.fee`) |
 | `CreateTaxInput.rate`, `UpdateTaxInput.rate` (0 to 1, at most 6 decimal places) |
 | `ApproveReturnInput.refundAmount` |
 | `ProductFilterArgs.priceMin`, `priceMax` |
@@ -4126,7 +4152,7 @@ Authorization: Bearer <accessToken>
 ### Checkout Flow
 
 1. Choose fulfilment:
-   - `DELIVERY`: the user needs a saved address (`query userAddresses` or `mutation createAddress`). Show the fee with `query getShippingFee(addressId)`; a `BAD_REQUEST` means either the address is incomplete (an address saved before P1-G without region, recipient or phone: ask the customer to complete it with `updateAddress`) or the city is not served (offer pickup or another address).
+   - `DELIVERY`: the user needs a saved address (`query userAddresses` or `mutation createAddress`). The fee comes with `checkoutQuote` (`delivery`, and `deliveryOptions` per service level); a `BAD_REQUEST` means either the address is incomplete (an address saved before P1-G without region, recipient or phone: ask the customer to complete it with `updateAddress`) or it is not served (`extensions.reason: "DELIVERY_UNAVAILABLE"`: offer pickup or another address).
    - `PICKUP`: list locations with `query activePickupLocations` (public).
 2. Price the checkout: `query checkoutQuote(input: { fulfillmentType, shippingAddressId | pickupLocationId, couponCode? })`. Show its lines, coupon, tax, shipping and `grandTotal`; keep its `quoteHash`. Quote again after any change to the cart, fulfilment or coupon.
 3. Create the order: `mutation createOrder(input: { fulfillmentType, shippingAddressId | pickupLocationId, couponCode?, contactEmail, contactPhone, paymentMethod?, quoteHash })`. On `CONFLICT` with `extensions.reason: "QUOTE_CHANGED"`, re-run step 2 and ask the customer to confirm the new total.
@@ -5263,11 +5289,14 @@ mutation {
 
 ```graphql
 query {
-  getShippingFee(addressId: "clx_address_xyz") { amount currency }
+  checkoutQuote(input: { fulfillmentType: DELIVERY, shippingAddressId: "clx_address_xyz" }) {
+    shippingTotal { amount currency }
+    deliveryOptions { serviceLevel fee { amount currency } }
+  }
 }
 ```
 
-A `BAD_REQUEST` here means the address is incomplete (complete it with `updateAddress`) or no shipping zone covers the city: offer pickup (`activePickupLocations`) instead.
+A `BAD_REQUEST` here means the address is incomplete (complete it with `updateAddress`) or no shipping zone covers it (`DELIVERY_UNAVAILABLE`): offer pickup (`activePickupLocations`) instead.
 
 ---
 

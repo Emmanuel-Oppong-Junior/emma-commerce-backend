@@ -138,7 +138,7 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
   });
 
   beforeEach(async () => {
-    await prisma.shippingZone.update({ where: { id: 'seed_zone_accra' }, data: { fee: 15 } });
+    await prisma.rateRule.update({ where: { id: 'seed_rate_accra' }, data: { baseFee: 15 } });
     await prisma.variant.update({ where: { id: 'quote_kente_var' }, data: { price: '117.50' } });
     await prisma.tax.deleteMany();
     await prisma.tax.createMany({
@@ -177,7 +177,7 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
     // 117.50 - 11.75 = 105.75 a unit (15.75 tax in it); the phone has no tax. 211.50 + 499.99 - 20 + 15.
     expect(quoted).toMatchObject({
       currency: 'GHS',
-      pricingVersion: 4,
+      pricingVersion: 5,
       subtotal: ghs('734.99'),
       discountTotal: ghs('43.50'),
       taxTotal: ghs('31.50'),
@@ -233,7 +233,7 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
     ['a price', () => prisma.variant.update({ where: { id: 'quote_kente_var' }, data: { price: '118.00' } })],
     ['a discount', () => prisma.promotion.update({ where: { id: 'quote_disc10' }, data: { value: 15 } })],
     ['a tax rate', () => prisma.tax.update({ where: { id: 'quote_vat' }, data: { rate: '0.16' } })],
-    ['the shipping fee', () => prisma.shippingZone.update({ where: { id: 'seed_zone_accra' }, data: { fee: 20 } })],
+    ['the shipping fee', () => prisma.rateRule.update({ where: { id: 'seed_rate_accra' }, data: { baseFee: 20 } })],
     [
       'the coupon (stale)',
       () =>

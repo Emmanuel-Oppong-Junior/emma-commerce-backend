@@ -1,7 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { CodBlacklistKind } from '../generated/prisma/client';
 import { normalisePhoneSubject } from '../fraud/velocity-rules';
-import { normaliseCity } from '../shipping-zones/shipping-zones.service';
+
+// Stored blacklist keys use this form (trim, single spaces, lower case); changing it would orphan existing entries.
+function normaliseCity(city: string): string {
+  return city.trim().replace(/\s+/g, ' ').toLowerCase();
+}
 
 export interface CodBlacklistKey {
   kind: CodBlacklistKind;

@@ -123,6 +123,7 @@ export class OrdersRepository {
       contactPhone: string;
       codPhone?: string;
       stockLocationId?: string;
+      shippingZoneName?: string;
     },
   ): Promise<OrderWithItems> {
     const { snapshot } = orderDetails;
@@ -150,6 +151,11 @@ export class OrdersRepository {
         contactPhone: orderDetails.contactPhone,
         codPhone: orderDetails.codPhone,
         stockLocationId: orderDetails.stockLocationId,
+        shippingZoneId: snapshot.shippingZoneId,
+        shippingZoneName: orderDetails.shippingZoneName ?? null,
+        rateRuleId: snapshot.delivery?.rateRuleId ?? null,
+        serviceLevel: snapshot.delivery?.serviceLevel ?? null,
+        shippingFee: snapshot.delivery ? snapshot.shippingFee : null,
         statusEvents: { create: { from: null, to: OrderStatus.PLACED, actorId: userId } },
       },
     });

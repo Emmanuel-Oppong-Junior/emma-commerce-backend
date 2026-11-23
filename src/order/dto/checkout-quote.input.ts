@@ -1,6 +1,7 @@
 import { Field, ID, InputType } from '@nestjs/graphql';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { FulfillmentTypeEnum, OrderPaymentMethodEnum } from '../enums/order.enum';
+import { DeliveryServiceLevel } from '../../shipping-zones/enums/delivery.enums';
 
 @InputType({
   description: 'What checkout prices the cart for: the fulfilment, an optional coupon and how the order will be paid',
@@ -43,4 +44,15 @@ export class CheckoutQuoteInput {
   @IsOptional()
   @IsEnum(OrderPaymentMethodEnum)
   paymentMethod?: OrderPaymentMethodEnum;
+
+  @Field(() => DeliveryServiceLevel, {
+    nullable: true,
+    defaultValue: DeliveryServiceLevel.STANDARD,
+    description:
+      'DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason ' +
+      'DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it',
+  })
+  @IsOptional()
+  @IsEnum(DeliveryServiceLevel)
+  serviceLevel?: DeliveryServiceLevel;
 }

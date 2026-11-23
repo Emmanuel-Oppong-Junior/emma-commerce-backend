@@ -75,6 +75,7 @@ export class OrdersResolver {
       pickupLocationId: input.pickupLocationId,
       couponCode: input.couponCode,
       paymentMethod: input.paymentMethod as PaymentMethod,
+      serviceLevel: input.serviceLevel,
     });
   }
 
@@ -99,6 +100,7 @@ export class OrdersResolver {
       contactPhone: input.contactPhone,
       couponCode: input.couponCode,
       paymentMethod: input.paymentMethod as PaymentMethod,
+      serviceLevel: input.serviceLevel,
       quoteHash: input.quoteHash,
       clientIp: req.ip,
     });

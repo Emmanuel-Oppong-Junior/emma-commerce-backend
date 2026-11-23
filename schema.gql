@@ -394,6 +394,16 @@ type CheckoutQuote {
   currency: Currency!
 
   """
+  DELIVERY: the zone, service level and fee priced (shippingTotal is after free-shipping promotions)
+  """
+  delivery: QuoteDelivery
+
+  """
+  DELIVERY: every service level the address's zone offers, with its fee for this cart; empty for PICKUP
+  """
+  deliveryOptions: [DeliveryOption!]!
+
+  """
   Item and cart promotions (merchandise only; shipping ones are in shippingTotal)
   """
   discountTotal: Money!
@@ -450,6 +460,11 @@ input CheckoutQuoteInput {
   Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
   """
   pickupLocationId: ID
+
+  """
+  DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
+  """
+  serviceLevel: DeliveryServiceLevel = STANDARD
 
   """
   Required when fulfillmentType is DELIVERY — the ID of the shipping address
@@ -806,6 +821,11 @@ input CreateOrderInput {
   quoteHash: String!
 
   """
+  DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
+  """
+  serviceLevel: DeliveryServiceLevel = STANDARD
+
+  """
   Required when fulfillmentType is DELIVERY — the ID of the shipping address
   """
   shippingAddressId: ID
@@ -1051,6 +1071,23 @@ input CreatePurchaseOrderInput {
   supplierId: ID!
 }
 
+input CreateRateRuleInput {
+  """Fee below every weight band"""
+  baseFee: Decimal!
+
+  """
+  Delivery is free once the merchandise total after promotions (tax included) reaches this
+  """
+  freeAbove: Decimal
+
+  """At most one active rule per zone and service level"""
+  isActive: Boolean = true
+  serviceLevel: DeliveryServiceLevel!
+
+  """Ascending in weight, never cheaper than the band below or the base fee"""
+  weightBands: [WeightBandInput!] = []
+}
+
 input CreateReturnRequestInput {
   orderId: ID!
   reason: String!
@@ -1065,11 +1102,10 @@ input CreateReviewInput {
 }
 
 input CreateShippingZoneInput {
-  """Cities covered by this zone"""
-  cities: [String!]!
-
-  """Shipping fee for this zone"""
-  fee: Decimal!
+  """
+  Regions, towns and areas covered. Each may belong to one zone only (CONFLICT naming the clash)
+  """
+  areas: [ZoneAreaInput!]!
   isActive: Boolean = true
 
   """Unique name for this shipping zone"""
@@ -1297,10 +1333,33 @@ An exact decimal number as a string, e.g. "12.50" or "0.15": digits with an opti
 """
 scalar Decimal
 
+"""A service level the address's zone offers, with its fee for this cart"""
+type DeliveryOption {
+  """The fee before free-shipping promotions"""
+  fee: Money!
+
+  """
+  The merchandise total after promotions reached the rule's free-above threshold
+  """
+  freeAboveReached: Boolean!
+  serviceLevel: DeliveryServiceLevel!
+
+  """
+  The weight band charged (its lower bound in grams); null when below every band (the base fee)
+  """
+  weightBandFromGrams: Int
+}
+
 enum DeliveryOptions {
   INTERNATIONAL_DELIVERY
   LOCAL_DELIVERY
   SELECTED_REGIONS
+}
+
+"""How fast an order is delivered; each zone prices the levels it offers"""
+enum DeliveryServiceLevel {
+  EXPRESS
+  STANDARD
 }
 
 input DispatchStockTransferInput {
@@ -1737,13 +1796,20 @@ type Mutation {
   """Create a DRAFT purchase order (staff)"""
   createPurchaseOrder(input: CreatePurchaseOrderInput!): PurchaseOrder!
 
+  """
+  Add a delivery fee for a service level to a zone. A price change: recent step-up; audited
+  """
+  createRateRule(input: CreateRateRuleInput!, zoneId: ID!): RateRuleEntity!
+
   """Create a return request for a delivered order"""
   createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
 
   """Creates a review for a product"""
   createReview(input: CreateReviewInput!): Review!
 
-  """Create a shipping zone (admin only)"""
+  """
+  Create a shipping zone from regions, towns and areas; add its fees with createRateRule. Audited
+  """
   createShippingZone(input: CreateShippingZoneInput!): ShippingZoneEntity!
 
   """
@@ -1810,10 +1876,13 @@ type Mutation {
   """
   deletePromotion(id: ID!): Promotion!
 
+  """Delete a rate rule. A price change: recent step-up; audited"""
+  deleteRateRule(id: ID!): RateRuleEntity!
+
   """Deletes the authenticated user's own review"""
   deleteReview(reviewId: String!): Review!
 
-  """Delete a shipping zone (admin only)"""
+  """Delete a shipping zone with its areas and rate rules. Audited"""
   deleteShippingZone(id: ID!): ShippingZoneEntity!
 
   """
@@ -2113,6 +2182,11 @@ type Mutation {
   """
   updatePurchaseOrder(id: ID!, input: UpdatePurchaseOrderInput!): PurchaseOrder!
 
+  """
+  Change a rate rule's fees, weight bands or active flag. A price change: recent step-up; audited
+  """
+  updateRateRule(id: ID!, input: UpdateRateRuleInput!): RateRuleEntity!
+
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
 
@@ -2126,7 +2200,7 @@ type Mutation {
   """
   updateShipping(input: UpdateShippingInput!): Order!
 
-  """Update a shipping zone (admin only)"""
+  """Update a shipping zone (areas are replaced). Audited"""
   updateShippingZone(id: ID!, input: UpdateShippingZoneInput!): ShippingZoneEntity!
 
   """
@@ -2252,8 +2326,14 @@ type Order {
   """
   pricingVersion: Int!
 
+  """DELIVERY: the rate rule charged, a snapshot id (staff with order.view)"""
+  rateRuleId: ID
+
   """Refunds of this order, oldest first"""
   refunds: [OrderRefund!]!
+
+  """DELIVERY: the service level chosen"""
+  serviceLevel: DeliveryServiceLevel
   shipments: [Shipment!]!
 
   """Set when fulfillmentType is DELIVERY"""
@@ -2264,8 +2344,19 @@ type Order {
   """
   shippingAddressSnapshot: JSON
 
+  """
+  DELIVERY: the fee before free-shipping promotions (shippingTotal is after them)
+  """
+  shippingFee: Money
+
   """Shipping charged (0 for pickup); null on some older orders"""
   shippingTotal: Money
+
+  """DELIVERY: the zone delivered to, when placed (P5-A)"""
+  shippingZoneId: ID
+
+  """DELIVERY: the zone name when placed"""
+  shippingZoneName: String
   status: OrderStatus!
 
   """
@@ -3337,7 +3428,9 @@ type Query {
   """Get all active pickup locations (public)"""
   activePickupLocations: [PickupLocationEntity!]!
 
-  """Get all active shipping zones (public)"""
+  """
+  Active shipping zones with their areas and active rate rules (public rate card)
+  """
   activeShippingZones: [ShippingZoneEntity!]!
 
   """Retrieves a specific address by ID for the current user"""
@@ -3460,9 +3553,6 @@ type Query {
     first: Int! = 20
   ): [FlaggedOrder!]!
   getMyPayments: [Payment!]!
-
-  """Get the shipping fee for a saved address"""
-  getShippingFee(addressId: ID!): Money!
   getUserPayment(userId: String!): [Payment!]!
 
   """
@@ -3833,6 +3923,33 @@ type QuoteAllocation {
   cartItemId: ID!
 }
 
+"""How the delivery fee of the quote was set"""
+type QuoteDelivery {
+  """The fee before free-shipping promotions"""
+  fee: Money!
+
+  """
+  The merchandise total after promotions reached the rule's free-above threshold
+  """
+  freeAboveReached: Boolean!
+
+  """The rate rule charged"""
+  rateRuleId: ID!
+  serviceLevel: DeliveryServiceLevel!
+
+  """
+  The weight band charged (its lower bound in grams); null when below every band (the base fee)
+  """
+  weightBandFromGrams: Int
+
+  """
+  The cart weight priced: variant weight x quantity (no weight counts 0 g)
+  """
+  weightGrams: Int!
+  zoneId: ID!
+  zoneName: String!
+}
+
 """
 Units of one cart line that pay the same price. A cart line is one quote line, unless a promotion reduces only some of its units (a flash sale's last units): then it has two or more, the reduced units first
 """
@@ -3905,6 +4022,26 @@ type QuoteTaxLine {
 
   """The tax rate it comes from"""
   taxId: ID!
+}
+
+"""A zone's delivery fee for one service level"""
+type RateRuleEntity {
+  """Fee below every weight band"""
+  baseFee: Money!
+  createdAt: DateTime!
+
+  """
+  Delivery is free once the merchandise total after promotions (tax included) reaches this
+  """
+  freeAbove: Money
+  id: ID!
+  isActive: Boolean!
+  serviceLevel: DeliveryServiceLevel!
+  updatedAt: DateTime!
+
+  """Ascending; the heaviest band the cart reaches sets the fee"""
+  weightBands: [WeightBandEntity!]!
+  zoneId: ID!
 }
 
 input ReceivePurchaseOrderInput {
@@ -4442,15 +4579,12 @@ type ShipmentStatusEvent {
 }
 
 type ShippingZoneEntity {
-  """List of cities covered by this zone (case-insensitive)"""
-  cities: [String!]!
+  """The regions, towns and areas the zone delivers to"""
+  areas: [ZoneAreaEntity!]!
 
   """Whether cash on delivery may be chosen for deliveries to this zone"""
   codEnabled: Boolean!
   createdAt: DateTime!
-
-  """Shipping fee applied for orders delivered to cities in this zone"""
-  fee: Money!
 
   """
   Locations that fulfil deliveries here, first tried first; empty = the default (inventory.view)
@@ -4463,6 +4597,11 @@ type ShippingZoneEntity {
 
   """Unique name for this shipping zone"""
   name: String!
+
+  """
+  Delivery fees per service level (activeShippingZones lists the active ones only)
+  """
+  rateRules: [RateRuleEntity!]!
   updatedAt: DateTime!
 }
 
@@ -5344,6 +5483,18 @@ input UpdatePurchaseOrderInput {
   supplierId: ID
 }
 
+"""
+Rate rule fields to change; omitted fields keep their value, null clears freeAbove
+"""
+input UpdateRateRuleInput {
+  baseFee: Decimal
+  freeAbove: Decimal
+  isActive: Boolean
+
+  """Replaces every weight band"""
+  weightBands: [WeightBandInput!]
+}
+
 input UpdateReviewInput {
   comment: String
   id: String!
@@ -5370,10 +5521,10 @@ input UpdateShippingInput {
   trackingNumber: String
 }
 
+"""Zone fields to change; omitted fields keep their value"""
 input UpdateShippingZoneInput {
-  """Replaces the entire cities list"""
-  cities: [String!]
-  fee: Decimal
+  """Replaces every area of the zone"""
+  areas: [ZoneAreaInput!]
   isActive: Boolean
   name: String
 }
@@ -5872,6 +6023,19 @@ input VerifyPhoneInput {
   code: String!
 }
 
+type WeightBandEntity {
+  fee: Money!
+  fromGrams: Int!
+}
+
+"""
+From fromGrams of cart weight up, the rule charges fee instead of its base fee
+"""
+input WeightBandInput {
+  fee: Decimal!
+  fromGrams: Int!
+}
+
 type Wishlist {
   createdAt: DateTime!
   id: ID!
@@ -5879,4 +6043,37 @@ type Wishlist {
   updatedAt: DateTime!
   user: User!
   userId: ID!
+}
+
+"""A region, a town, or an area within a town that a zone delivers to"""
+type ZoneAreaEntity {
+  """Normalised, within town"""
+  area: String
+  id: ID!
+  level: ZoneAreaLevel!
+  region: GhanaRegion
+
+  """Normalised: lower case, without accents or punctuation"""
+  town: String
+}
+
+"""
+A place a zone delivers to: a region alone, a town alone, or an area within a town. Towns and areas are matched without regard to case, accents, punctuation or repeated spaces
+"""
+input ZoneAreaInput {
+  """Matched against the address's area; needs town"""
+  area: String
+  region: GhanaRegion
+
+  """Matched against the address's city"""
+  town: String
+}
+
+"""
+How specific a zone area is: an address matches its most specific entry (AREA > TOWN > REGION)
+"""
+enum ZoneAreaLevel {
+  AREA
+  REGION
+  TOWN
 }

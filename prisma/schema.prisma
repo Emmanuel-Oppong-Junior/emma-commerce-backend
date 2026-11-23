@@ -489,6 +489,14 @@ model Order {
   /// reservations
   stockLocationId         String?
   stockLocation           StockLocation?     @relation(fields: [stockLocationId], references: [id], onDelete: Restrict)
+  /// Delivery snapshot (P5-A.1), null for pickup and older orders. Ids without foreign keys: the zone or rule may
+  /// change or be deleted later
+  shippingZoneId          String?
+  shippingZoneName        String?
+  rateRuleId              String?
+  serviceLevel            DeliveryServiceLevel?
+  /// The delivery fee before free-shipping promotions (shippingTotal is after them)
+  shippingFee             Decimal?           @db.Decimal(14, 2)
 
   @@index([userId, status])
   @@index([codPhone])
@@ -968,8 +976,6 @@ model PickupLocation {
 model ShippingZone {
   id                  String                      @id @default(cuid())
   name                String                      @unique
-  cities              String[]
-  fee                 Decimal                     @db.Decimal(14, 2)
   isActive            Boolean                     @default(true)
   /// Cash on delivery may be chosen for deliveries to this zone (P3-B.2)
   codEnabled          Boolean                     @default(true)
@@ -979,8 +985,69 @@ model ShippingZone {
   promotions          Promotion[]
   /// Stock locations that fulfil deliveries here, by priority; none = the default location
   fulfilmentLocations ShippingZoneStockLocation[]
+  /// The regions, towns and areas the zone delivers to (P5-A.1)
+  areas               ZoneArea[]
+  /// The delivery fee per service level (P5-A.1)
+  rateRules           RateRule[]
 
   @@index([isActive])
+}
+
+/// How specific a zone area is: an address matches its most specific entry (AREA > TOWN > REGION).
+enum ZoneAreaLevel {
+  REGION
+  TOWN
+  AREA
+}
+
+/// A region, a town, or an area within a town that a delivery zone covers (P5-A.1). Towns and areas are stored
+/// normalised (shipping-zones/zone-matching.ts); matchKey is unique, so a place belongs to one zone at each level.
+model ZoneArea {
+  id       String        @id @default(cuid())
+  zoneId   String
+  zone     ShippingZone  @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  level    ZoneAreaLevel
+  region   GhanaRegion?
+  town     String?
+  area     String?
+  /// "<level>:<value>": REGION:GREATER_ACCRA, TOWN:accra, AREA:accra|osu
+  matchKey String        @unique
+
+  @@index([zoneId])
+}
+
+enum DeliveryServiceLevel {
+  STANDARD
+  EXPRESS
+}
+
+/// The delivery fee of a zone for one service level (P5-A.1): the base fee, raised by the weight band the cart
+/// reaches, waived when the merchandise total after promotions reaches freeAbove (pure rule in delivery-fee.ts).
+model RateRule {
+  id           String               @id @default(cuid())
+  zoneId       String
+  zone         ShippingZone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  serviceLevel DeliveryServiceLevel
+  baseFee      Decimal              @db.Decimal(14, 2)
+  freeAbove    Decimal?             @db.Decimal(14, 2)
+  isActive     Boolean              @default(true)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  weightBands  RateWeightBand[]
+
+  @@unique([zoneId, serviceLevel], map: "RateRule_one_active_per_zone_level", where: raw("\"isActive\""))
+  @@index([zoneId])
+}
+
+/// From fromGrams of cart weight up, the rule charges fee instead of its base fee.
+model RateWeightBand {
+  id         String   @id @default(cuid())
+  rateRuleId String
+  rateRule   RateRule @relation(fields: [rateRuleId], references: [id], onDelete: Cascade)
+  fromGrams  Int
+  fee        Decimal  @db.Decimal(14, 2)
+
+  @@unique([rateRuleId, fromGrams])
 }
 
 model Store {

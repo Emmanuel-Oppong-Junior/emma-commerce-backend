@@ -178,6 +178,7 @@ const cart = (lines: PricingLine[], overrides: Partial<TestCart> = {}): TestCart
   lines,
   shippingFee: d(0),
   shippingZoneId: null,
+  delivery: null,
   ...overrides,
 });
 
