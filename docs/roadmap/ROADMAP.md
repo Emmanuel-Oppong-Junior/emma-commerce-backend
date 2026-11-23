@@ -26,13 +26,13 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
-| 4 — Inventory | 6 / 7 | 🔄 in progress |
+| 4 — Inventory | 7 / 7 | ✅ complete |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **100 / 154** | |
+| **All** | **101 / 154** | |
 
 ---
 
@@ -361,7 +361,7 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P3-E.1** [49be665] Velocity checks (orders/payments per phone/IP/card)
 - [x] **P3-E.2** [ba4b120] Chargeback/dispute records
 
-## Phase 4 — Inventory (ADR-0008)
+## Phase 4 — Inventory (ADR-0008) ✅ complete
 
 ### P4-A — Locations ✅ complete
 > Run: → · M · 🟥 A.1 / 🟧 A.2
@@ -381,9 +381,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > Run: ∥ · M · 🟧
 - [x] **P4-D.1** [32c457d, 1ca4ca3] `SerialUnit` (IMEI) assignment at pick; warranty start
 
-### P4-E — Purchasing  🔄 in progress
+### P4-E — Purchasing ✅ complete
 > Run: ∥ · L · ⬜
-- [ ] 🔄 **P4-E.1** Suppliers, purchase orders, receiving into lots
+- [x] **P4-E.1** [d41df4b, 58d2f78] Suppliers, purchase orders, receiving into lots
 
 ## Phase 5 — Delivery & fulfilment
 
