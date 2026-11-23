@@ -6,6 +6,8 @@ import {
   welcomeEmailHtml,
   orderConfirmationEmailHtml,
   orderStatusEmailHtml,
+  ReadyForPickupEmail,
+  readyForPickupEmailHtml,
   paymentConfirmationEmailHtml,
   passwordResetEmailHtml,
   emailVerificationEmailHtml,
@@ -65,6 +67,20 @@ export class EmailService {
       to,
       `Your order #${orderId} is ${status}`,
       orderStatusEmailHtml(orderId, status, trackingNumber),
+      idempotencyKey,
+    );
+  }
+
+  async sendReadyForPickupEmail(
+    to: string,
+    orderId: string,
+    notice: ReadyForPickupEmail,
+    idempotencyKey?: string,
+  ): Promise<void> {
+    await this.send(
+      to,
+      `Your order #${notice.orderNumber} is ready for pickup`,
+      readyForPickupEmailHtml(notice),
       idempotencyKey,
     );
   }

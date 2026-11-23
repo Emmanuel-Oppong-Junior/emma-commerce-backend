@@ -130,6 +130,7 @@ export class OrdersRepository {
       contactPhone: string;
       codPhone?: string;
       stockLocationId?: string;
+      shippingZoneName?: string;
     },
   ): Promise<OrderWithItems> {
     const { snapshot } = orderDetails;
@@ -157,6 +158,15 @@ export class OrdersRepository {
         contactPhone: orderDetails.contactPhone,
         codPhone: orderDetails.codPhone,
         stockLocationId: orderDetails.stockLocationId,
+        shippingZoneId: snapshot.shippingZoneId,
+        shippingZoneName: orderDetails.shippingZoneName ?? null,
+        rateRuleId: snapshot.delivery?.rateRuleId ?? null,
+        serviceLevel: snapshot.delivery?.serviceLevel ?? null,
+        shippingFee: snapshot.delivery ? snapshot.shippingFee : null,
+        deliverySlotId: snapshot.delivery?.slot?.slotId ?? null,
+        deliveryDate: snapshot.delivery?.slot ? new Date(`${snapshot.delivery.slot.date}T00:00:00Z`) : null,
+        deliveryWindowStart: snapshot.delivery?.slot?.startMinute ?? null,
+        deliveryWindowEnd: snapshot.delivery?.slot?.endMinute ?? null,
         statusEvents: { create: { from: null, to: OrderStatus.PLACED, actorId: userId } },
       },
     });

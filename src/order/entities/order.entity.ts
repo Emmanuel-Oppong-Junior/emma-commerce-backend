@@ -16,6 +16,7 @@ import GraphQLJSON from 'graphql-type-json';
 import { User } from '../../users/entities/user.entity';
 import { MoneyObject } from '../../commons/money/money.object';
 import { staffWith } from '../../iam/authorization/staff-permission.field-middleware';
+import { DeliveryServiceLevel } from '../../shipping-zones/enums/delivery.enums';
 
 @ObjectType()
 export class Order {
@@ -63,6 +64,28 @@ export class Order {
 
   @Field(() => MoneyObject, { description: 'Amount charged: subtotal - discountTotal + shippingTotal' })
   grandTotal: Decimal;
+
+  @Field(() => ID, { nullable: true, description: 'DELIVERY: the zone delivered to, when placed (P5-A)' })
+  shippingZoneId?: string | null;
+
+  @Field(() => String, { nullable: true, description: 'DELIVERY: the zone name when placed' })
+  shippingZoneName?: string | null;
+
+  @Field(() => DeliveryServiceLevel, { nullable: true, description: 'DELIVERY: the service level chosen' })
+  serviceLevel?: DeliveryServiceLevel | null;
+
+  @Field(() => MoneyObject, {
+    nullable: true,
+    description: 'DELIVERY: the fee before free-shipping promotions (shippingTotal is after them)',
+  })
+  shippingFee?: Decimal | null;
+
+  @Field(() => ID, {
+    nullable: true,
+    description: 'DELIVERY: the rate rule charged, a snapshot id (staff with order.view)',
+    middleware: [staffWith('order.view')],
+  })
+  rateRuleId?: string | null;
 
   @Field(() => [OrderAdjustment], { description: 'Product discounts (per line) and the coupon, as placed' })
   adjustments: OrderAdjustment[];

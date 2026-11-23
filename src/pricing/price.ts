@@ -1,10 +1,16 @@
 import { Decimal } from '@prisma/client/runtime/client';
-import { Currency, OrderAdjustmentType, PromotionScope, PromotionType } from '../generated/prisma/client';
+import {
+  Currency,
+  DeliveryServiceLevel,
+  OrderAdjustmentType,
+  PromotionScope,
+  PromotionType,
+} from '../generated/prisma/client';
 import { Money, roundHalfUp } from '../commons/money/money';
 import { quoteHash } from './quote-hash';
 
 /** The pricing rules `price` implements; stored on every order it priced (legacy orders have 0). */
-export const PRICING_VERSION = 4;
+export const PRICING_VERSION = 5;
 
 export interface PricingLine {
   variantId: string;
@@ -146,6 +152,15 @@ export interface PricingCart {
   shippingFee: Decimal;
   /** The delivery zone; null for pickup. */
   shippingZoneId: string | null;
+  /** How the fee was chosen (P5-A); null for pickup. Carried into the quote and its hash, never priced. */
+  delivery: PricingDelivery | null;
+}
+
+/** The rate rule and service level the delivery fee comes from, and the booked delivery slot. */
+export interface PricingDelivery {
+  rateRuleId: string;
+  serviceLevel: DeliveryServiceLevel;
+  slot: { slotId: string; date: string; startMinute: number; endMinute: number } | null;
 }
 
 /** Everything else the price depends on, read at one moment. */
@@ -235,6 +250,10 @@ export interface Quote {
   shippingTotal: Decimal;
   /** The delivery zone priced (null for pickup): zone-limited free shipping depends on it. */
   shippingZoneId: string | null;
+  /** The delivery fee before free-shipping promotions (0 for pickup). */
+  shippingFee: Decimal;
+  /** The rate rule, service level and slot of the delivery; null for pickup. */
+  delivery: PricingDelivery | null;
   /** The amount to charge. */
   grandTotal: Decimal;
   /** SHA-256 of every value that determines the charge (see quote-hash.ts). */
@@ -427,6 +446,8 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
     taxTotal: taxTotal.amount,
     shippingTotal: shipping.amount,
     shippingZoneId: cart.shippingZoneId,
+    shippingFee: money(cart.shippingFee).amount,
+    delivery: cart.delivery,
     grandTotal: grossSubtotal.subtract(discountTotal).add(shipping).amount,
   };
 }

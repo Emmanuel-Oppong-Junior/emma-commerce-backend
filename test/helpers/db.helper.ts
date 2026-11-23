@@ -105,6 +105,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
 
   // Independent reference data
   await prisma.tax.deleteMany();
+  await prisma.deliverySlotBooking.deleteMany();
   await prisma.shippingZone.deleteMany();
   await prisma.pickupLocation.deleteMany();
   // Stock locations a test added (their levels, movements and reservations went with the variants and orders above)
@@ -351,11 +352,24 @@ export async function seedMinimal(prisma: PrismaService): Promise<SeedResult> {
   await setStock(prisma, 'seed_var_draft', 10);
   await setStock(prisma, 'seed_var_inactive', 5);
 
-  // Shipping zones covering the cities the e2e suites deliver to
+  // Shipping zones covering the towns the e2e suites deliver to, each with a STANDARD rate
   await prisma.shippingZone.createMany({
     data: [
-      { id: 'seed_zone_accra', name: 'Greater Accra', cities: ['accra', 'tema'], fee: 15 },
-      { id: 'seed_zone_ashanti', name: 'Ashanti', cities: ['kumasi'], fee: 30 },
+      { id: 'seed_zone_accra', name: 'Greater Accra' },
+      { id: 'seed_zone_ashanti', name: 'Ashanti' },
+    ],
+  });
+  await prisma.zoneArea.createMany({
+    data: [
+      { zoneId: 'seed_zone_accra', level: 'TOWN', town: 'accra', matchKey: 'TOWN:accra' },
+      { zoneId: 'seed_zone_accra', level: 'TOWN', town: 'tema', matchKey: 'TOWN:tema' },
+      { zoneId: 'seed_zone_ashanti', level: 'TOWN', town: 'kumasi', matchKey: 'TOWN:kumasi' },
+    ],
+  });
+  await prisma.rateRule.createMany({
+    data: [
+      { id: 'seed_rate_accra', zoneId: 'seed_zone_accra', serviceLevel: 'STANDARD', baseFee: 15 },
+      { id: 'seed_rate_ashanti', zoneId: 'seed_zone_ashanti', serviceLevel: 'STANDARD', baseFee: 30 },
     ],
   });
 

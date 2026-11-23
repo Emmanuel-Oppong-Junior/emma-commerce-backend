@@ -129,7 +129,14 @@ describe('SMS phone verification and cash-on-delivery risk gates (P3-B.1, P3-B.2
     await seedMinimal(prisma);
     await setStock(prisma, 'seed_var2', 1000);
     await prisma.pickupLocation.create({
-      data: { id: 'cod_pickup', name: 'Osu Store', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'GH' },
+      data: {
+        id: 'cod_pickup',
+        name: 'Osu Store',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'GH',
+      },
     });
     const address = await prisma.address.create({
       data: {

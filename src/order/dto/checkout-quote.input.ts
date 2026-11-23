@@ -1,6 +1,10 @@
 import { Field, ID, InputType } from '@nestjs/graphql';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { FulfillmentTypeEnum, OrderPaymentMethodEnum } from '../enums/order.enum';
+import { DeliveryServiceLevel } from '../../shipping-zones/enums/delivery.enums';
+import { DeliverySlotChoiceInput } from '../../shipping-zones/slots/delivery-slots.types';
+import { Type } from 'class-transformer';
+import { ValidateNested } from 'class-validator';
 
 @InputType({
   description: 'What checkout prices the cart for: the fulfilment, an optional coupon and how the order will be paid',
@@ -43,4 +47,26 @@ export class CheckoutQuoteInput {
   @IsOptional()
   @IsEnum(OrderPaymentMethodEnum)
   paymentMethod?: OrderPaymentMethodEnum;
+
+  @Field(() => DeliveryServiceLevel, {
+    nullable: true,
+    defaultValue: DeliveryServiceLevel.STANDARD,
+    description:
+      'DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason ' +
+      'DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it',
+  })
+  @IsOptional()
+  @IsEnum(DeliveryServiceLevel)
+  serviceLevel?: DeliveryServiceLevel;
+
+  @Field(() => DeliverySlotChoiceInput, {
+    nullable: true,
+    description:
+      'STANDARD delivery to a zone with slots (deliverySlotRequired): one of deliverySlots. BAD_REQUEST with reason ' +
+      'DELIVERY_SLOT_UNAVAILABLE when it cannot be booked, CONFLICT with reason SLOT_FULL when it has no place left',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DeliverySlotChoiceInput)
+  deliverySlot?: DeliverySlotChoiceInput;
 }

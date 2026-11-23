@@ -1,11 +1,13 @@
 import { JobsOptions } from 'bullmq';
 import { ShipmentStatus } from '../../generated/prisma/client';
+import type { ReadyForPickupEmail as ReadyForPickup } from '../email/templates/email.templates';
 
 /** SMS jobs on the notifications queue. */
 export interface SmsJobData {
   'sms.phone_otp.v1': { to: string; code: string; expiresInMinutes: number };
   /** A shipment milestone (P5-B.2); ids only, the recipient and text are read when sending. */
   'sms.shipment_milestone.v1': { orderId: string; shipmentId: string; status: ShipmentStatus };
+  'sms.ready_for_pickup.v1': { to: string; notice: ReadyForPickup };
 }
 
 export type SmsJobName = keyof SmsJobData;
@@ -17,6 +19,14 @@ export const PHONE_OTP_JOB_OPTIONS: JobsOptions = {
   removeOnComplete: true,
   removeOnFail: { age: 60 * 60 },
 };
+
+// A pickup notice is still useful days later, so it keeps the queue's default retries; it leaves Redis once sent.
+export const READY_FOR_PICKUP_SMS_JOB_OPTIONS: JobsOptions = { removeOnComplete: true };
+
+/** The ready-for-pickup SMS: order number, where, and when the point is open. */
+export function readyForPickupText(notice: ReadyForPickup): string {
+  return `Order #${notice.orderNumber} is ready for pickup at ${notice.pickupName}, ${notice.address}. Open: ${notice.hours}.`;
+}
 
 /** The OTP SMS, within one 160-character GSM-7 segment. */
 export function phoneOtpText(code: string, expiresInMinutes: number): string {

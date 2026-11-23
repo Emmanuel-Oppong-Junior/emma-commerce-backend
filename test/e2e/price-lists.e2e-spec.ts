@@ -87,7 +87,14 @@ describe('B2B price lists (P2-W.1, e2e)', () => {
     await resetDb(prisma);
     await seedMinimal(prisma);
     await prisma.pickupLocation.create({
-      data: { id: 'pl_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      data: {
+        id: 'pl_pickup',
+        name: 'Osu',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'Ghana',
+      },
     });
     await prisma.customerGroup.createMany({
       data: [
@@ -125,7 +132,7 @@ describe('B2B price lists (P2-W.1, e2e)', () => {
     expect(linesOf(quote)).toEqual([['seed_var2', 2, '450.00', '0.00', true]]);
     expect(quote.grandTotal.toFixed(2)).toBe('900.00');
     expect(order.grandTotal.toFixed(2)).toBe(quote.grandTotal.toFixed(2));
-    expect(order.pricingVersion).toBe(4);
+    expect(order.pricingVersion).toBe(5);
     const [item] = await prisma.orderItem.findMany({ where: { orderId: order.id } });
     expect([item.unitListPrice.toFixed(2), item.priceListId]).toEqual(['450.00', 'pl_trade']);
     expect(linesOf(outsiderQuote)).toEqual([['seed_var2', 2, '499.99', '0.00', false]]);

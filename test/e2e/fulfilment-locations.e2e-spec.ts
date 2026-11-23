@@ -141,7 +141,14 @@ describe('Fulfilment locations (P4-A.1, e2e)', () => {
       addressOf[buyer] = address.id;
     }
     await prisma.pickupLocation.create({
-      data: { id: PICKUP, name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      data: {
+        id: PICKUP,
+        name: 'Osu',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'Ghana',
+      },
     });
     adminToken = await signInAdmin(app);
     const clerkEmail = 'clerk-locations@test.local';

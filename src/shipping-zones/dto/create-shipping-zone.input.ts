@@ -1,23 +1,35 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
-import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
-import { Decimal } from '@prisma/client/runtime/client';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { ZoneAreaInput } from './zone-area.input';
 
 @InputType()
 export class CreateShippingZoneInput {
   @Field({ description: 'Unique name for this shipping zone' })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100)
   name: string;
 
-  @Field(() => [String], { description: 'Cities covered by this zone' })
+  @Field(() => [ZoneAreaInput], {
+    description: 'Regions, towns and areas covered. Each may belong to one zone only (CONFLICT naming the clash)',
+  })
   @IsArray()
-  @IsString({ each: true })
-  cities: string[];
-
-  @DecimalInputField({ description: 'Shipping fee for this zone' })
-  @IsMoneyAmount()
-  fee: Decimal;
+  @ArrayNotEmpty()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ZoneAreaInput)
+  areas: ZoneAreaInput[];
 
   @Field({ nullable: true, defaultValue: true })
   @IsOptional()

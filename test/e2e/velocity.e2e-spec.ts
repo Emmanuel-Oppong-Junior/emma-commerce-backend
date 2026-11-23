@@ -106,7 +106,7 @@ describe('Velocity checks (P3-E.1, e2e)', () => {
         name: 'Osu Store',
         address: '1 Oxford St',
         city: 'Accra',
-        state: 'GA',
+        region: 'GREATER_ACCRA',
         country: 'GH',
       },
     });

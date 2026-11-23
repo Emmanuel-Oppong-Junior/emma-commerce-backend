@@ -42,7 +42,14 @@ describe('Flash sales: unit caps (P2-B.4, e2e)', () => {
     await resetDb(prisma);
     await seedMinimal(prisma);
     await prisma.pickupLocation.create({
-      data: { id: 'flash_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      data: {
+        id: 'flash_pickup',
+        name: 'Osu',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'Ghana',
+      },
     });
   });
 

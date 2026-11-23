@@ -52,7 +52,14 @@ describe('Free-shipping promotions (P2-B.6, e2e)', () => {
     await resetDb(prisma);
     await seedMinimal(prisma);
     await prisma.pickupLocation.create({
-      data: { id: 'ship_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      data: {
+        id: 'ship_pickup',
+        name: 'Osu',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'Ghana',
+      },
     });
   });
 

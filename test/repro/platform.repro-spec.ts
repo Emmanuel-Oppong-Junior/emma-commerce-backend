@@ -67,11 +67,12 @@ describe('Sign-in validation (audit repro: IAM-05 / DOC-08)', () => {
 describe('Shipping fee (audit repro: SHZ-01 / MONEY-02)', () => {
   it('does not silently charge GHS 0 delivery for a city no shipping zone covers', async () => {
     const service = new ShippingZonesService(
-      { findByCity: jest.fn().mockResolvedValue(null) } as never,
-      {} as never,
+      { findMatchableAreas: jest.fn().mockResolvedValue([]) } as never,
       {} as never,
     );
 
-    await expect(service.getFeeForCity('Tamale')).rejects.toThrow();
+    await expect(
+      service.deliveryZoneFor({ country: 'GH', region: 'NORTHERN', city: 'Tamale', area: null }),
+    ).rejects.toThrow();
   });
 });

@@ -47,6 +47,8 @@ const snapshotOf = (totals: { subtotal: number; shippingTotal: number; grandTota
   adjustments: [],
   shippingAdjustments: [],
   shippingZoneId: null,
+  shippingFee: new Prisma.Decimal(0),
+  delivery: null,
   subtotal: new Prisma.Decimal(totals.subtotal),
   discountTotal: new Prisma.Decimal(0),
   taxTotal: new Prisma.Decimal(0),

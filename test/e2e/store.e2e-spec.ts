@@ -130,7 +130,7 @@ describe('Store settings and order numbering (e2e)', () => {
   it(`gives ${SHOPPERS} concurrent orders distinct numbers from the store counter, at or above 10001`, async () => {
     const orders = app.get(OrdersService);
     const location = await prisma.pickupLocation.create({
-      data: { name: 'Shop', address: '1 High St', city: 'Accra', state: 'Greater Accra', country: 'Ghana' },
+      data: { name: 'Shop', address: '1 High St', city: 'Accra', region: 'GREATER_ACCRA', country: 'Ghana' },
     });
     const shopperIds = Array.from({ length: SHOPPERS }, (_, n) => `numbering_shopper_${n}`);
     await prisma.user.createMany({ data: shopperIds.map((id) => ({ id, email: `${id}@example.com` })) });

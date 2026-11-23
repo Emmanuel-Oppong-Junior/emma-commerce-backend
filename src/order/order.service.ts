@@ -11,6 +11,7 @@ import {
   Order,
   OrderItem,
   OrderStatus,
+  DeliveryServiceLevel,
   PaymentMethod,
   Prisma,
 } from '../generated/prisma/client';
@@ -22,7 +23,19 @@ import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { chooseFulfilmentLocation, sellableQuantity } from '../inventory/fulfilment-location';
 import { StockLocationsService } from '../inventory/locations/stock-locations.service';
 import { OutboxService } from '../outbox/outbox.service';
-import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
+import { DeliveryZone, ShippingZonesService } from '../shipping-zones/shipping-zones.service';
+import { DELIVERY_LEVEL_UNAVAILABLE, deliveryFee, DeliveryFee, offeredLevels } from '../shipping-zones/delivery-fee';
+import { LoggerService } from '../commons/logger.service';
+import { formatOpeningHours } from '../pickup-locations/opening-hours';
+import { DeliverySlotsService } from '../shipping-zones/slots/delivery-slots.service';
+import {
+  AvailableSlot,
+  bookableSlot,
+  DELIVERY_SLOT_REQUIRED,
+  DELIVERY_SLOT_UNAVAILABLE,
+  SLOT_FULL,
+  upcomingSlots,
+} from '../shipping-zones/slots/delivery-slots';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { ReturnsService } from '../returns/returns.service';
 import { PromotionsService } from '../promotions/promotions.service';
@@ -55,6 +68,10 @@ export interface CheckoutParams {
   couponCode?: string;
   /** Defaults to ONLINE; refused when the store does not offer it. */
   paymentMethod?: PaymentMethod;
+  /** DELIVERY only; defaults to STANDARD. Refused when the address's zone does not offer it. */
+  serviceLevel?: DeliveryServiceLevel;
+  /** STANDARD delivery to a zone with slots: the slot booked (one of checkoutQuote.deliverySlots). */
+  deliverySlot?: { slotId: string; date: string };
 }
 
 export interface CreateOrderParams extends CheckoutParams {
@@ -67,15 +84,33 @@ export interface CreateOrderParams extends CheckoutParams {
 }
 
 /** The cart priced for checkout, with each line's cart item and each order adjustment's share per cart item. */
-export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments'> {
+export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments' | 'delivery'> {
   lines: (OrderSnapshotLine & { cartItemId: string; fromPriceList: boolean })[];
   adjustments: (QuoteAdjustment & { allocations: { cartItemId: string; amount: Decimal }[] })[];
   /** Whether this checkout could be paid on delivery (P3-B), whatever payment method was asked for. */
   cashOnDelivery: CodAvailability;
+  /** DELIVERY: the zone, rule and fee priced; null for pickup. */
+  delivery: DeliveryQuote | null;
+  /** DELIVERY: every service level the zone offers with its fee for this cart; empty for pickup. */
+  deliveryOptions: DeliveryFee[];
+  /** STANDARD delivery: the zone's slots of the next days (full ones with 0 remaining); empty otherwise. */
+  deliverySlots: AvailableSlot[];
+  /** createOrder needs a deliverySlot: STANDARD delivery to a zone with active slots. */
+  deliverySlotRequired: boolean;
+}
+
+export interface DeliveryQuote extends DeliveryFee {
+  /** The slot booked; null when none was chosen (or the zone or level has none). */
+  slot: AvailableSlot | null;
+  zoneId: string;
+  zoneName: string;
+  /** Sum of variant weight x quantity; a variant without a weight counts 0 g. */
+  weightGrams: number;
 }
 
 interface Fulfilment {
-  shippingFee: Prisma.Decimal;
+  /** The delivery zone and its rate rules; null for pickup. */
+  zone: DeliveryZone | null;
   /** The delivery zone; null for pickup. */
   shippingZoneId: string | null;
   /** The delivery address the cash-on-delivery blacklist is matched against; null for pickup. */
@@ -91,6 +126,7 @@ interface Fulfilment {
 interface PricedCheckout {
   cart: Cart & { items: CartItem[] };
   snapshot: OrderSnapshot;
+  delivery: { quote: DeliveryQuote; options: DeliveryFee[]; slots: AvailableSlot[]; slotRequired: boolean } | null;
   /** The coupon code entered, when its promotion applied. */
   couponCode?: { id: string; promotionId: string };
   fulfilment: Fulfilment;
@@ -131,6 +167,10 @@ function discountedUnits(quote: Pick<Quote, 'lines'>): Record<string, number> {
   return units;
 }
 
+function slotUnavailable(message: string): BadRequestException {
+  return new BadRequestException({ message, extensions: { reason: DELIVERY_SLOT_UNAVAILABLE } });
+}
+
 function outOfStock(sku: string | null): BadRequestException {
   return new BadRequestException(`Variant "${sku}" is out of stock or no longer on sale — please review your cart`);
 }
@@ -161,6 +201,8 @@ export class OrdersService {
     private readonly codRisk: CodRiskService,
     private readonly stockLocations: StockLocationsService,
     private readonly serialUnits: SerialUnitsService,
+    private readonly logger: LoggerService,
+    private readonly deliverySlots: DeliverySlotsService,
   ) {}
 
   /**
@@ -170,7 +212,7 @@ export class OrdersService {
    */
   async checkoutQuote(userId: string, params: CheckoutParams): Promise<CheckoutQuote> {
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
-    const { cart, snapshot, fulfilment } = await this.priceCheckout(userId, params);
+    const { cart, snapshot, fulfilment, delivery } = await this.priceCheckout(userId, params);
     const cashOnDelivery = await this.codRisk.availability(userId, {
       grandTotal: snapshot.grandTotal,
       shippingZoneId: fulfilment.shippingZoneId,
@@ -189,6 +231,10 @@ export class OrdersService {
         allocations: sharesByCartItem(allocations, cartItemIds),
       })),
       cashOnDelivery,
+      delivery: delivery?.quote ?? null,
+      deliveryOptions: delivery?.options ?? [],
+      deliverySlots: delivery?.slots ?? [],
+      deliverySlotRequired: delivery?.slotRequired ?? false,
     };
   }
 
@@ -197,7 +243,8 @@ export class OrdersService {
    * shipping are read and priced inside it (the cart row and its variants locked), and the order is placed only if
    * that quote's hash is the `quoteHash` the customer confirmed; otherwise CONFLICT with reason QUOTE_CHANGED and
    * nothing is reserved, charged or recorded. The order stores the quote as its snapshot, so it charges the quote's
-   * grand total. DELIVERY needs shippingAddressId (shipping fee by city); PICKUP needs pickupLocationId (no fee). A
+   * grand total. DELIVERY needs shippingAddressId (fee from the address's zone and the service level); PICKUP needs
+   * pickupLocationId (no fee). A
    * payment method the store does not offer is refused first (BAD_REQUEST, reason PAYMENT_METHOD_UNAVAILABLE). Cash on
    * delivery also has to pass the risk gates (CodRiskService.assertCodAllowed: PHONE_NOT_VERIFIED, COD_NOT_AVAILABLE).
    */
@@ -207,6 +254,12 @@ export class OrdersService {
     const softHits = await this.velocity.screenOrRefuse(VelocityCheckpoint.ORDER_PLACEMENT, subjects);
     const order = await this.ordersRepository.runTransaction(async (tx) => {
       const checkout = await this.priceCheckout(userId, params, tx);
+      if (checkout.delivery?.slotRequired && !checkout.delivery.quote.slot) {
+        throw new BadRequestException({
+          message: 'Choose a delivery slot (checkoutQuote.deliverySlots) for STANDARD delivery to this address',
+          extensions: { reason: DELIVERY_SLOT_REQUIRED },
+        });
+      }
       if (checkout.snapshot.quoteHash !== params.quoteHash) throw quoteChanged();
       const codPhone =
         params.paymentMethod === PaymentMethod.CASH_ON_DELIVERY
@@ -243,14 +296,8 @@ export class OrdersService {
         ? await this.deliveryTo(userId, params.shippingAddressId, tx)
         : await this.pickupAt(params.pickupLocationId, tx);
     if (tx) await this.ordersRepository.lockVariants(tx, [...new Set(cart.items.map((item) => item.variantId))]);
-    const { snapshot, couponCode } = await this.buildOrderDetails(
-      cart.items,
-      userId,
-      fulfilment,
-      params.couponCode,
-      tx,
-    );
-    return { cart, snapshot, couponCode, fulfilment };
+    const { snapshot, couponCode, delivery } = await this.buildOrderDetails(cart.items, userId, fulfilment, params, tx);
+    return { cart, snapshot, couponCode, fulfilment, delivery };
   }
 
   private async deliveryTo(
@@ -261,9 +308,9 @@ export class OrdersService {
     if (!shippingAddressId) throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
     const address = await this.ensureValidShippingAddress(userId, shippingAddressId, tx);
     assertDeliverableAddress(address);
-    const zone = await this.shippingZonesService.getZoneForCity(address.city, tx);
+    const zone = await this.shippingZonesService.deliveryZoneFor(address, tx);
     return {
-      shippingFee: zone.fee,
+      zone,
       shippingZoneId: zone.id,
       fulfilmentLocationIds: await this.stockLocations.candidatesFor({ shippingZoneId: zone.id }, tx),
       deliveryAddress: address,
@@ -276,7 +323,7 @@ export class OrdersService {
     if (!pickupLocationId) throw new BadRequestException('pickupLocationId is required for PICKUP orders');
     const location = await this.pickupLocationsService.findActiveById(pickupLocationId, tx);
     return {
-      shippingFee: new Prisma.Decimal(0),
+      zone: null,
       shippingZoneId: null,
       deliveryAddress: null,
       fulfilmentLocationIds: await this.stockLocations.candidatesFor({ pickupLocationId }, tx),
@@ -285,8 +332,11 @@ export class OrdersService {
         name: location.name,
         address: location.address,
         city: location.city,
-        state: location.state,
+        region: location.region,
         country: location.country,
+        contactPhone: location.contactPhone,
+        instructions: location.instructions,
+        openingHours: formatOpeningHours(location.openingHours),
       },
     };
   }
@@ -463,15 +513,23 @@ export class OrdersService {
 
   /**
    * Prices the cart with the pricing engine: the customer's price lists, item and cart promotions (the coupon code
-   * unlocking one), the tax the prices include and shipping. The quote is the order snapshot, so the total charged is the quote's grand total.
+   * unlocking one), the tax the prices include and shipping. The quote is the order snapshot, so the total charged is
+   * the quote's grand total. Delivery is priced in two passes: the merchandise total after promotions (which the fee
+   * cannot change) sets the zone's fee for the service level, then the cart is priced with that fee, so free-shipping
+   * promotions still apply on top of it.
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
     userId: string,
-    shipping: Pick<Fulfilment, 'shippingFee' | 'shippingZoneId' | 'fulfilmentLocationIds'>,
-    couponCode: string | undefined,
+    shipping: Pick<Fulfilment, 'zone' | 'shippingZoneId' | 'fulfilmentLocationIds'>,
+    params: Pick<CheckoutParams, 'couponCode' | 'serviceLevel' | 'deliverySlot'>,
     tx: Prisma.TransactionClient | undefined,
-  ): Promise<{ snapshot: OrderSnapshot; couponCode?: { id: string; promotionId: string } }> {
+  ): Promise<{
+    snapshot: OrderSnapshot;
+    couponCode?: { id: string; promotionId: string };
+    delivery: PricedCheckout['delivery'];
+  }> {
+    const { couponCode } = params;
     const now = new Date();
     const currency = await this.storeService.getCurrency(tx);
     const variants: VariantForSale[] = [];
@@ -503,32 +561,48 @@ export class OrdersService {
     );
     const taxes = await this.taxService.findActive(tx);
 
-    const quote = this.priceOrThrow(() =>
-      price(
-        {
-          lines: variants.map((variant, index) => ({
-            variantId: variant.id,
-            productId: variant.productId,
-            categoryId: variant.product.categoryId,
-            brandId: variant.product.brandId,
-            quantity: cartItems[index].quantity,
-            unitListPrice: variant.price!,
-            taxable: variant.product.isTaxable && variant.basePrice !== null,
-          })),
-          couponCode: promotions.couponCode,
-          shippingFee: shipping.shippingFee,
-          shippingZoneId: shipping.shippingZoneId,
-        },
-        {
-          currency,
-          now,
-          promotions: promotions.promotions,
-          taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
-          customer: promotions.customer,
-          priceLists,
-        },
-      ),
-    );
+    const priceWith = (shippingFee: Decimal, delivery: Quote['delivery']) =>
+      this.priceOrThrow(() =>
+        price(
+          {
+            lines: variants.map((variant, index) => ({
+              variantId: variant.id,
+              productId: variant.productId,
+              categoryId: variant.product.categoryId,
+              brandId: variant.product.brandId,
+              quantity: cartItems[index].quantity,
+              unitListPrice: variant.price!,
+              taxable: variant.product.isTaxable && variant.basePrice !== null,
+            })),
+            couponCode: promotions.couponCode,
+            shippingFee,
+            shippingZoneId: shipping.shippingZoneId,
+            delivery,
+          },
+          {
+            currency,
+            now,
+            promotions: promotions.promotions,
+            taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
+            customer: promotions.customer,
+            priceLists,
+          },
+        ),
+      );
+    const merchandise = priceWith(new Decimal(0), null);
+    if (!shipping.zone && params.deliverySlot) throw slotUnavailable('Pickup orders have no delivery slot');
+    const fee = shipping.zone && this.priceDelivery(shipping.zone, variants, cartItems, merchandise, params);
+    const delivery = fee && { ...fee, ...(await this.chooseSlot(fee.quote, params.deliverySlot, now, tx)) };
+    const slot = delivery?.quote.slot;
+    const quote = delivery
+      ? priceWith(delivery.quote.fee, {
+          rateRuleId: delivery.quote.rateRuleId,
+          serviceLevel: delivery.quote.serviceLevel,
+          slot: slot
+            ? { slotId: slot.slotId, date: slot.date, startMinute: slot.startMinute, endMinute: slot.endMinute }
+            : null,
+        })
+      : merchandise;
     const snapshot: OrderSnapshot = {
       ...quote,
       lines: quote.lines.map((line) => ({
@@ -540,7 +614,75 @@ export class OrdersService {
     };
     const applied = appliedPromotionIds(quote);
     const code = promotions.couponCode;
-    return { snapshot, couponCode: code && applied.includes(code.promotionId) ? code : undefined };
+    return { snapshot, couponCode: code && applied.includes(code.promotionId) ? code : undefined, delivery };
+  }
+
+  /**
+   * The zone's fee for each service level it offers, for the cart's weight and its merchandise total after item and
+   * cart promotions, and the one asked for (default STANDARD; one the zone does not offer: BAD_REQUEST with reason
+   * DELIVERY_LEVEL_UNAVAILABLE). A variant without a weight counts 0 g (logged when the fee depends on weight).
+   */
+  private priceDelivery(
+    zone: DeliveryZone,
+    variants: VariantForSale[],
+    cartItems: CartItem[],
+    merchandise: Quote,
+    params: Pick<CheckoutParams, 'serviceLevel'>,
+  ): { quote: Omit<DeliveryQuote, 'slot'>; options: DeliveryFee[] } {
+    const weightGrams = variants.reduce(
+      (sum, variant, index) => sum + (variant.weightGrams ?? 0) * cartItems[index].quantity,
+      0,
+    );
+    const merchandiseTotal = merchandise.subtotal.sub(merchandise.discountTotal);
+    const options = offeredLevels(zone.rules).map((level) =>
+      deliveryFee(zone.rules, level, weightGrams, merchandiseTotal)!,
+    );
+    const level = params.serviceLevel ?? DeliveryServiceLevel.STANDARD;
+    const chosen = options.find((option) => option.serviceLevel === level);
+    if (!chosen) {
+      throw new BadRequestException({
+        message: `${level} delivery is not offered in zone "${zone.name}" (offered: ${options.map((option) => option.serviceLevel).join(', ')})`,
+        extensions: { reason: DELIVERY_LEVEL_UNAVAILABLE },
+      });
+    }
+    const unweighed = variants.filter((variant) => variant.weightGrams === null).map((variant) => variant.id);
+    if (unweighed.length > 0 && zone.rules.some((rule) => rule.weightBands.length > 0)) {
+      this.logger.warn(
+        `Delivery weight counts 0 g for variants without a weight | zoneId: ${zone.id} | variantIds: ${unweighed.join(',')}`,
+        'OrdersService',
+      );
+    }
+    return { quote: { ...chosen, zoneId: zone.id, zoneName: zone.name, weightGrams }, options };
+  }
+
+  /**
+   * The zone's slots for STANDARD delivery (EXPRESS is as soon as possible, without slots) and the one asked for:
+   * BAD_REQUEST with reason DELIVERY_SLOT_UNAVAILABLE when it is not one the zone offers now (unknown, closed date, past
+   * its cutoff, EXPRESS or a zone without slots), CONFLICT with reason SLOT_FULL when it has no place left. Placement
+   * books it with a conditional increment, so the place shown here can still go to another order meanwhile.
+   */
+  private async chooseSlot(
+    fee: Omit<DeliveryQuote, 'slot'>,
+    wanted: CheckoutParams['deliverySlot'],
+    now: Date,
+    tx: Prisma.TransactionClient | undefined,
+  ): Promise<{ quote: DeliveryQuote; slots: AvailableSlot[]; slotRequired: boolean }> {
+    if (fee.serviceLevel !== DeliveryServiceLevel.STANDARD) {
+      if (wanted) throw slotUnavailable(`${fee.serviceLevel} delivery has no delivery slots`);
+      return { quote: { ...fee, slot: null }, slots: [], slotRequired: false };
+    }
+    const calendar = await this.deliverySlots.calendar(fee.zoneId, now, tx);
+    const slotRequired = calendar.templates.some((template) => template.isActive);
+    if (!wanted) return { quote: { ...fee, slot: null }, slots: upcomingSlots(calendar, now), slotRequired };
+    const slot = bookableSlot(calendar, now, wanted);
+    if (!slot) throw slotUnavailable(`Delivery slot "${wanted.slotId}" on ${wanted.date} cannot be booked`);
+    if (slot.remaining === 0) {
+      throw new ConflictException({
+        message: 'That delivery slot is fully booked: choose another one',
+        extensions: { reason: SLOT_FULL },
+      });
+    }
+    return { quote: { ...fee, slot }, slots: upcomingSlots(calendar, now), slotRequired };
   }
 
   private priceOrThrow<T>(pricing: () => T): T {
@@ -624,6 +766,7 @@ export class OrdersService {
       shippingAddressSnapshot: fulfilment.shippingAddressSnapshot,
       pickupLocationId: fulfilment.pickupLocationId,
       pickupLocationSnapshot: fulfilment.pickupLocationSnapshot,
+      shippingZoneName: fulfilment.zone?.name,
     };
     const cartId = checkout.cart.id;
     const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
@@ -639,6 +782,8 @@ export class OrdersService {
     }
     const stockLocationId: string = chosen.locationId;
     const newOrder = await this.ordersRepository.create(tx, userId, { ...orderDetails, stockLocationId });
+    const slot = checkout.delivery?.quote.slot;
+    if (slot) await this.deliverySlots.book(tx, slot);
 
     // Cash on delivery holds its stock until dispatch; an online order's hold expires with the unpaid order.
     const expiresAt = isCod ? null : new Date(Date.now() + UNPAID_ORDER_EXPIRY_HOURS * 60 * 60 * 1000);
@@ -746,6 +891,7 @@ export class OrdersService {
       });
       await this.ordersRepository.cancelOpenShipments(tx, order.id, { actorId: close.actorId, reason: close.reason });
       await this.serialUnits.releaseOrder(tx, order.id, { actorId: close.actorId, refType: 'Order', refId: order.id });
+      await this.deliverySlots.releaseForOrder(tx, order.id);
       await this.ordersRepository.cancelOpenPaymentIntent(tx, order.id);
       return closed;
     });

@@ -5,7 +5,7 @@ import { LoggerService } from '../commons/logger.service';
 import { JobQueue } from '../jobs/job-queues';
 import { withJobMeta } from '../jobs/job-context';
 import { EmailJobData, EmailJobName, TOKEN_EMAIL_JOB_OPTIONS } from './email-jobs';
-import { PHONE_OTP_JOB_OPTIONS, SmsJobData } from './sms/sms-jobs';
+import { PHONE_OTP_JOB_OPTIONS, READY_FOR_PICKUP_SMS_JOB_OPTIONS, SmsJobData } from './sms/sms-jobs';
 
 /**
  * Queues the emails that are not tied to a business transaction, and the phone verification SMS; the worker sends them
@@ -47,6 +47,11 @@ export class NotificationsService {
    */
   async queueShipmentSms(data: SmsJobData['sms.shipment_milestone.v1'], jobId: string): Promise<void> {
     await this.queue.add('sms.shipment_milestone.v1', withJobMeta(data), { jobId });
+  }
+
+  /** Queues the ready-for-pickup SMS under `jobId`, so the same notice is queued (and sent) once. */
+  async queueReadyForPickupSms(jobId: string, data: SmsJobData['sms.ready_for_pickup.v1']): Promise<void> {
+    await this.queue.add('sms.ready_for_pickup.v1', withJobMeta(data), { ...READY_FOR_PICKUP_SMS_JOB_OPTIONS, jobId });
   }
 
   private enqueue<N extends EmailJobName>(name: N, data: EmailJobData[N], opts?: JobsOptions): void {

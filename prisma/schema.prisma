@@ -489,11 +489,26 @@ model Order {
   /// reservations
   stockLocationId         String?
   stockLocation           StockLocation?     @relation(fields: [stockLocationId], references: [id], onDelete: Restrict)
+  /// Delivery snapshot (P5-A.1), null for pickup and older orders. Ids without foreign keys: the zone or rule may
+  /// change or be deleted later
+  shippingZoneId          String?
+  shippingZoneName        String?
+  rateRuleId              String?
+  serviceLevel            DeliveryServiceLevel?
+  /// The delivery fee before free-shipping promotions (shippingTotal is after them)
+  shippingFee             Decimal?           @db.Decimal(14, 2)
+  /// The delivery slot booked (P5-A.2): a snapshot of the slot id, date and window; set when it was released
+  deliverySlotId          String?
+  deliveryDate            DateTime?          @db.Date
+  deliveryWindowStart     Int?
+  deliveryWindowEnd       Int?
+  deliverySlotReleasedAt  DateTime?
 
   @@index([userId, status])
   @@index([codPhone])
   @@index([createdAt])
   @@index([status, createdAt])
+  @@index([deliveryDate])
 }
 
 model OrderItem {
@@ -974,23 +989,42 @@ model PickupLocation {
   name                String
   address             String
   city                String
-  state               String
+  /// Null only for points migrated from a free-text state that matched no region (P5-E.1)
+  region              GhanaRegion?
   country             String
+  /// E.164; customers call it about their collection
+  contactPhone        String?
+  /// How to find the counter and what to bring
+  instructions        String?
+  ghanaPostGps        String?
+  latitude            Decimal?                      @db.Decimal(9, 6)
+  longitude           Decimal?                      @db.Decimal(9, 6)
   isActive            Boolean                       @default(true)
   createdAt           DateTime                      @default(now())
   updatedAt           DateTime                      @updatedAt
   orders              Order[]
   /// Stock locations that fulfil orders collected here, by priority; none = the default location
   fulfilmentLocations PickupLocationStockLocation[]
+  /// Opening hours per weekday (P5-E.1); a weekday without a row is closed
+  openingHours        PickupOpeningHours[]
 
   @@index([isActive])
+}
+
+/// When a pickup point is open on a weekday, minutes from midnight in Africa/Accra (= UTC).
+model PickupOpeningHours {
+  pickupLocationId String
+  pickupLocation   PickupLocation @relation(fields: [pickupLocationId], references: [id], onDelete: Cascade)
+  weekday          Weekday
+  opensMinute      Int
+  closesMinute     Int
+
+  @@id([pickupLocationId, weekday])
 }
 
 model ShippingZone {
   id                  String                      @id @default(cuid())
   name                String                      @unique
-  cities              String[]
-  fee                 Decimal                     @db.Decimal(14, 2)
   isActive            Boolean                     @default(true)
   /// Cash on delivery may be chosen for deliveries to this zone (P3-B.2)
   codEnabled          Boolean                     @default(true)
@@ -1000,8 +1034,126 @@ model ShippingZone {
   promotions          Promotion[]
   /// Stock locations that fulfil deliveries here, by priority; none = the default location
   fulfilmentLocations ShippingZoneStockLocation[]
+  /// The regions, towns and areas the zone delivers to (P5-A.1)
+  areas               ZoneArea[]
+  /// The delivery fee per service level (P5-A.1)
+  rateRules           RateRule[]
+  /// Weekly delivery windows for STANDARD delivery (P5-A.2); none = no slot is chosen
+  deliverySlots       DeliverySlot[]
+  /// Dates the zone does not deliver on (P5-A.2)
+  deliveryClosures    DeliveryClosure[]
 
   @@index([isActive])
+}
+
+/// How specific a zone area is: an address matches its most specific entry (AREA > TOWN > REGION).
+enum ZoneAreaLevel {
+  REGION
+  TOWN
+  AREA
+}
+
+/// A region, a town, or an area within a town that a delivery zone covers (P5-A.1). Towns and areas are stored
+/// normalised (shipping-zones/zone-matching.ts); matchKey is unique, so a place belongs to one zone at each level.
+model ZoneArea {
+  id       String        @id @default(cuid())
+  zoneId   String
+  zone     ShippingZone  @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  level    ZoneAreaLevel
+  region   GhanaRegion?
+  town     String?
+  area     String?
+  /// "<level>:<value>": REGION:GREATER_ACCRA, TOWN:accra, AREA:accra|osu
+  matchKey String        @unique
+
+  @@index([zoneId])
+}
+
+enum DeliveryServiceLevel {
+  STANDARD
+  EXPRESS
+}
+
+/// The delivery fee of a zone for one service level (P5-A.1): the base fee, raised by the weight band the cart
+/// reaches, waived when the merchandise total after promotions reaches freeAbove (pure rule in delivery-fee.ts).
+model RateRule {
+  id           String               @id @default(cuid())
+  zoneId       String
+  zone         ShippingZone         @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  serviceLevel DeliveryServiceLevel
+  baseFee      Decimal              @db.Decimal(14, 2)
+  freeAbove    Decimal?             @db.Decimal(14, 2)
+  isActive     Boolean              @default(true)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  weightBands  RateWeightBand[]
+
+  @@unique([zoneId, serviceLevel], map: "RateRule_one_active_per_zone_level", where: raw("\"isActive\""))
+  @@index([zoneId])
+}
+
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+/// A weekly delivery window of a zone (P5-A.2), in Africa/Accra time (= UTC, no daylight saving): minutes from
+/// midnight. Bookable until cutoffHours before it starts, up to capacity orders per date (pure rules in
+/// shipping-zones/slots/delivery-slots.ts).
+model DeliverySlot {
+  id          String                @id @default(cuid())
+  zoneId      String
+  zone        ShippingZone          @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  weekday     Weekday
+  startMinute Int
+  endMinute   Int
+  capacity    Int
+  cutoffHours Int                   @default(0)
+  isActive    Boolean               @default(true)
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  bookings    DeliverySlotBooking[]
+
+  @@index([zoneId])
+}
+
+/// The orders booked into a slot on one date: placement increments booked conditionally (booked < capacity), cancel
+/// and expiry decrement it once.
+model DeliverySlotBooking {
+  id     String       @id @default(cuid())
+  slotId String
+  slot   DeliverySlot @relation(fields: [slotId], references: [id], onDelete: Restrict)
+  date   DateTime     @db.Date
+  booked Int          @default(0)
+
+  @@unique([slotId, date])
+}
+
+/// A date a zone does not deliver on (holiday, closure).
+model DeliveryClosure {
+  id     String       @id @default(cuid())
+  zoneId String
+  zone   ShippingZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  date   DateTime     @db.Date
+  reason String?
+
+  @@unique([zoneId, date])
+}
+
+/// From fromGrams of cart weight up, the rule charges fee instead of its base fee.
+model RateWeightBand {
+  id         String   @id @default(cuid())
+  rateRuleId String
+  rateRule   RateRule @relation(fields: [rateRuleId], references: [id], onDelete: Cascade)
+  fromGrams  Int
+  fee        Decimal  @db.Decimal(14, 2)
+
+  @@unique([rateRuleId, fromGrams])
 }
 
 model Store {

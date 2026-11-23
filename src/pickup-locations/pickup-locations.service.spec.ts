@@ -9,11 +9,17 @@ const osuStore = {
   name: 'Osu Store',
   address: '12 Oxford St',
   city: 'Accra',
-  state: 'Greater Accra',
-  country: 'Ghana',
+  region: 'GREATER_ACCRA' as const,
+  country: 'GH',
+  contactPhone: '+233244123456',
+  instructions: null,
+  ghanaPostGps: null,
+  latitude: null,
+  longitude: null,
   isActive: true,
   createdAt: fixedDate,
   updatedAt: fixedDate,
+  openingHours: [{ pickupLocationId: 'pickup1', weekday: 'MONDAY' as const, opensMinute: 480, closesMinute: 1020 }],
 };
 
 describe('PickupLocationsService', () => {
@@ -54,14 +60,56 @@ describe('PickupLocationsService', () => {
     });
   });
 
+  describe('opening hours', () => {
+    const input = { name: 'Osu Store', address: '12 Oxford St', city: 'Accra', region: 'GREATER_ACCRA' as const };
+
+    it('stores the hours as minutes and shows them as HH:MM with the week in one line', async () => {
+      const created = await service.create(
+        { ...input, openingHours: [{ weekday: 'MONDAY', opens: '08:00', closes: '17:00' }] },
+        'admin1',
+      );
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ country: 'GH', isActive: true }),
+        [{ weekday: 'MONDAY', opensMinute: 480, closesMinute: 1020 }],
+        AUDIT_TX,
+      );
+      expect(created).toMatchObject({
+        openingHours: [{ weekday: 'MONDAY', opens: '08:00', closes: '17:00' }],
+        openingHoursText: 'Mon 08:00-17:00, Tue-Sun closed',
+      });
+    });
+
+    it.each([
+      ['a day closing before it opens', [{ weekday: 'MONDAY' as const, opens: '17:00', closes: '08:00' }]],
+      [
+        'a weekday twice',
+        [
+          { weekday: 'MONDAY' as const, opens: '08:00', closes: '12:00' },
+          { weekday: 'MONDAY' as const, opens: '13:00', closes: '17:00' },
+        ],
+      ],
+      ['a time outside the day', [{ weekday: 'MONDAY' as const, opens: '08:00', closes: '25:00' }]],
+    ])('refuses %s', async (_name, openingHours) => {
+      await expect(service.create({ ...input, openingHours }, 'admin1')).rejects.toThrow(BadRequestException);
+      expect(repository.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('audit trail', () => {
     const osuValues = {
       name: 'Osu Store',
       address: '12 Oxford St',
       city: 'Accra',
-      state: 'Greater Accra',
-      country: 'Ghana',
+      region: 'GREATER_ACCRA',
+      country: 'GH',
+      contactPhone: '+233244123456',
+      instructions: null,
+      ghanaPostGps: null,
+      latitude: null,
+      longitude: null,
       isActive: true,
+      openingHours: 'Mon 08:00-17:00, Tue-Sun closed',
     };
 
     beforeEach(() => repository.findById.mockResolvedValue(osuStore));
@@ -71,7 +119,14 @@ describe('PickupLocationsService', () => {
         'create',
         () =>
           service.create(
-            { name: 'Osu Store', address: '12 Oxford St', city: 'Accra', state: 'Greater Accra', country: 'Ghana' },
+            {
+              name: 'Osu Store',
+              address: '12 Oxford St',
+              city: 'Accra',
+              region: 'GREATER_ACCRA',
+              contactPhone: '+233244123456',
+              openingHours: [{ weekday: 'MONDAY', opens: '08:00', closes: '17:00' }],
+            },
             'admin1',
           ),
         { action: 'CREATE', details: { after: osuValues } },

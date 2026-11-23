@@ -179,6 +179,22 @@ type AuthEntity {
   refreshToken: String!
 }
 
+"""A slot checkout can book"""
+type AvailableDeliverySlot {
+  """YYYY-MM-DD"""
+  date: String!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+
+  """Places left; 0 when full"""
+  remaining: Int!
+  slotId: ID!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
+}
+
 type AvailableOnlinePaymentMethod {
   method: OnlinePaymentMethod!
   provider: OnlinePaymentProvider!
@@ -196,6 +212,12 @@ type AvailablePaymentMethods {
   Online methods on offer (ONLINE orders need at least one); pass the method to POST /payment/initialize
   """
   online: [AvailableOnlinePaymentMethod!]!
+}
+
+type BookedOrder {
+  orderId: ID!
+  orderNumber: Int!
+  status: OrderStatus!
 }
 
 type Brand {
@@ -400,6 +422,26 @@ type CheckoutQuote {
   currency: Currency!
 
   """
+  DELIVERY: the zone, service level and fee priced (shippingTotal is after free-shipping promotions)
+  """
+  delivery: QuoteDelivery
+
+  """
+  DELIVERY: every service level the address's zone offers, with its fee for this cart; empty for PICKUP
+  """
+  deliveryOptions: [DeliveryOption!]!
+
+  """
+  createOrder needs a deliverySlot (STANDARD delivery to a zone with slots)
+  """
+  deliverySlotRequired: Boolean!
+
+  """
+  STANDARD delivery: the zone's delivery slots of the next 7 days (Africa/Accra), full ones with remaining 0; empty for EXPRESS, PICKUP and zones without slots
+  """
+  deliverySlots: [AvailableDeliverySlot!]!
+
+  """
   Item and cart promotions (merchandise only; shipping ones are in shippingTotal)
   """
   discountTotal: Money!
@@ -443,6 +485,11 @@ input CheckoutQuoteInput {
   couponCode: String
 
   """
+  STANDARD delivery to a zone with slots (deliverySlotRequired): one of deliverySlots. BAD_REQUEST with reason DELIVERY_SLOT_UNAVAILABLE when it cannot be booked, CONFLICT with reason SLOT_FULL when it has no place left
+  """
+  deliverySlot: DeliverySlotChoiceInput
+
+  """
   Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
   """
   fulfillmentType: FulfillmentType!
@@ -456,6 +503,11 @@ input CheckoutQuoteInput {
   Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
   """
   pickupLocationId: ID
+
+  """
+  DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
+  """
+  serviceLevel: DeliveryServiceLevel = STANDARD
 
   """
   Required when fulfillmentType is DELIVERY — the ID of the shipping address
@@ -781,6 +833,21 @@ input CreateCustomerGroupInput {
   name: String!
 }
 
+"""
+A weekly delivery window; times are HH:MM in Africa/Accra (= UTC), "24:00" ends the day
+"""
+input CreateDeliverySlotInput {
+  """Orders per date"""
+  capacity: Int!
+
+  """Bookable until this many hours before start"""
+  cutoffHours: Int = 0
+  endTime: String!
+  isActive: Boolean = true
+  startTime: String!
+  weekday: Weekday!
+}
+
 input CreateOrderInput {
   """Contact email for order notifications"""
   contactEmail: String!
@@ -790,6 +857,11 @@ input CreateOrderInput {
 
   """Optional coupon code to apply to the order"""
   couponCode: String
+
+  """
+  STANDARD delivery to a zone with slots (deliverySlotRequired): one of deliverySlots. BAD_REQUEST with reason DELIVERY_SLOT_UNAVAILABLE when it cannot be booked, CONFLICT with reason SLOT_FULL when it has no place left
+  """
+  deliverySlot: DeliverySlotChoiceInput
 
   """
   Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
@@ -812,6 +884,11 @@ input CreateOrderInput {
   quoteHash: String!
 
   """
+  DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
+  """
+  serviceLevel: DeliveryServiceLevel = STANDARD
+
+  """
   Required when fulfillmentType is DELIVERY — the ID of the shipping address
   """
   shippingAddressId: ID
@@ -821,12 +898,36 @@ input CreatePickupLocationInput {
   """Street address"""
   address: String!
   city: String!
-  country: String!
+
+  """
+  Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX
+  """
+  contactPhone: String
+
+  """GH: pickup points are in Ghana"""
+  country: String = "GH"
+
+  """
+  GhanaPostGPS digital address: two letters, 3-4 digits, then 4 digits, hyphens optional (GA1234567, ga-123-4567, AK-484-9321); stored as XX-NNN(N)-NNNN
+  """
+  ghanaPostGps: String
+
+  """How to find the counter and what to bring"""
+  instructions: String
   isActive: Boolean = true
+
+  """Latitude, -90 to 90; give it together with longitude"""
+  latitude: Float
+
+  """Longitude, -180 to 180; give it together with latitude"""
+  longitude: Float
 
   """Display name of the pickup location"""
   name: String!
-  state: String!
+
+  """At most one entry per weekday"""
+  openingHours: [OpeningHoursInput!] = []
+  region: GhanaRegion!
 }
 
 """
@@ -1057,6 +1158,23 @@ input CreatePurchaseOrderInput {
   supplierId: ID!
 }
 
+input CreateRateRuleInput {
+  """Fee below every weight band"""
+  baseFee: Decimal!
+
+  """
+  Delivery is free once the merchandise total after promotions (tax included) reaches this
+  """
+  freeAbove: Decimal
+
+  """At most one active rule per zone and service level"""
+  isActive: Boolean = true
+  serviceLevel: DeliveryServiceLevel!
+
+  """Ascending in weight, never cheaper than the band below or the base fee"""
+  weightBands: [WeightBandInput!] = []
+}
+
 input CreateReturnRequestInput {
   orderId: ID!
   reason: String!
@@ -1079,11 +1197,10 @@ input CreateShipmentInput {
 }
 
 input CreateShippingZoneInput {
-  """Cities covered by this zone"""
-  cities: [String!]!
-
-  """Shipping fee for this zone"""
-  fee: Decimal!
+  """
+  Regions, towns and areas covered. Each may belong to one zone only (CONFLICT naming the clash)
+  """
+  areas: [ZoneAreaInput!]!
   isActive: Boolean = true
 
   """Unique name for this shipping zone"""
@@ -1311,10 +1428,103 @@ An exact decimal number as a string, e.g. "12.50" or "0.15": digits with an opti
 """
 scalar Decimal
 
+"""A slot booked on a date, with the orders holding its places"""
+type DeliveryBooking {
+  booked: Int!
+  capacity: Int!
+
+  """YYYY-MM-DD"""
+  date: String!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+  orders: [BookedOrder!]!
+  slotId: ID!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
+  zoneId: ID!
+  zoneName: String!
+}
+
+type DeliveryClosureEntity {
+  """YYYY-MM-DD"""
+  date: String!
+  id: ID!
+  reason: String
+  zoneId: ID!
+}
+
+input DeliveryClosureInput {
+  """YYYY-MM-DD"""
+  date: String!
+  reason: String
+}
+
+"""A service level the address's zone offers, with its fee for this cart"""
+type DeliveryOption {
+  """The fee before free-shipping promotions"""
+  fee: Money!
+
+  """
+  The merchandise total after promotions reached the rule's free-above threshold
+  """
+  freeAboveReached: Boolean!
+  serviceLevel: DeliveryServiceLevel!
+
+  """
+  The weight band charged (its lower bound in grams); null when below every band (the base fee)
+  """
+  weightBandFromGrams: Int
+}
+
 enum DeliveryOptions {
   INTERNATIONAL_DELIVERY
   LOCAL_DELIVERY
   SELECTED_REGIONS
+}
+
+"""How fast an order is delivered; each zone prices the levels it offers"""
+enum DeliveryServiceLevel {
+  EXPRESS
+  STANDARD
+}
+
+"""
+The delivery slot chosen at checkout: one of checkoutQuote.deliverySlots
+"""
+input DeliverySlotChoiceInput {
+  """YYYY-MM-DD"""
+  date: String!
+  slotId: ID!
+}
+
+type DeliverySlotEntity {
+  capacity: Int!
+  cutoffHours: Int!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+  id: ID!
+  isActive: Boolean!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
+  weekday: Weekday!
+  zoneId: ID!
+}
+
+"""A delivery window on a date"""
+type DeliveryWindow {
+  """YYYY-MM-DD"""
+  date: String!
+
+  """HH:MM, Africa/Accra"""
+  endTime: String!
+  slotId: ID!
+
+  """HH:MM, Africa/Accra"""
+  startTime: String!
 }
 
 input DispatchStockTransferInput {
@@ -1630,6 +1840,9 @@ type Mutation {
   """Admin: add customers to a group (members already in it are kept)"""
   addCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
 
+  """Close a zone for deliveries on a date (holiday). Audited"""
+  addDeliveryClosure(input: DeliveryClosureInput!, zoneId: ID!): DeliveryClosureEntity!
+
   """Append an evidence note to a dispute. Owner, Manager, audited"""
   addDisputeNote(input: AddDisputeNoteInput!): DisputeEntity!
 
@@ -1735,6 +1948,9 @@ type Mutation {
   """Admin: create a customer group"""
   createCustomerGroup(input: CreateCustomerGroupInput!): CustomerGroup!
 
+  """Add a weekly delivery window to a zone (STANDARD delivery). Audited"""
+  createDeliverySlot(input: CreateDeliverySlotInput!, zoneId: ID!): DeliverySlotEntity!
+
   """
   Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it; FORBIDDEN with reason VELOCITY_LIMIT when too many orders came from the same account, phone number or network in a short time
   """
@@ -1756,6 +1972,11 @@ type Mutation {
   """Create a DRAFT purchase order (staff)"""
   createPurchaseOrder(input: CreatePurchaseOrderInput!): PurchaseOrder!
 
+  """
+  Add a delivery fee for a service level to a zone. A price change: recent step-up; audited
+  """
+  createRateRule(input: CreateRateRuleInput!, zoneId: ID!): RateRuleEntity!
+
   """Create a return request for a delivered order"""
   createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
 
@@ -1767,7 +1988,9 @@ type Mutation {
   """
   createShipment(input: CreateShipmentInput!): Shipment!
 
-  """Create a shipping zone (admin only)"""
+  """
+  Create a shipping zone from regions, towns and areas; add its fees with createRateRule. Audited
+  """
   createShippingZone(input: CreateShippingZoneInput!): ShippingZoneEntity!
 
   """
@@ -1817,6 +2040,11 @@ type Mutation {
   """
   deleteCustomerGroup(id: ID!): CustomerGroup!
 
+  """
+  Delete a delivery slot that was never booked (CONFLICT otherwise: deactivate it). Audited
+  """
+  deleteDeliverySlot(id: ID!): DeliverySlotEntity!
+
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
 
@@ -1834,10 +2062,13 @@ type Mutation {
   """
   deletePromotion(id: ID!): Promotion!
 
+  """Delete a rate rule. A price change: recent step-up; audited"""
+  deleteRateRule(id: ID!): RateRuleEntity!
+
   """Deletes the authenticated user's own review"""
   deleteReview(reviewId: String!): Review!
 
-  """Delete a shipping zone (admin only)"""
+  """Delete a shipping zone with its areas and rate rules. Audited"""
   deleteShippingZone(id: ID!): ShippingZoneEntity!
 
   """
@@ -1943,6 +2174,9 @@ type Mutation {
 
   """Admin: remove customers from a group"""
   removeCustomerGroupMembers(input: CustomerGroupMembersInput!): CustomerGroup!
+
+  """Reopen a closed date. Audited"""
+  removeDeliveryClosure(id: ID!): DeliveryClosureEntity!
 
   """Removes a specific item from the user’s cart"""
   removeFromCart(cartItemId: String!): Cart!
@@ -2101,6 +2335,11 @@ type Mutation {
   updateCustomerGroup(id: ID!, input: UpdateCustomerGroupInput!): CustomerGroup!
 
   """
+  Change a delivery slot's window, capacity, cutoff or active flag. Audited
+  """
+  updateDeliverySlot(id: ID!, input: UpdateDeliverySlotInput!): DeliverySlotEntity!
+
+  """
   Move a dispute to another status (OPEN -> AWAITING_EVIDENCE/UNDER_REVIEW -> WON/LOST/ACCEPTED); CONFLICT for a move the table does not allow. Owner, Manager, audited
   """
   updateDisputeStatus(input: UpdateDisputeStatusInput!): DisputeEntity!
@@ -2137,6 +2376,11 @@ type Mutation {
   """
   updatePurchaseOrder(id: ID!, input: UpdatePurchaseOrderInput!): PurchaseOrder!
 
+  """
+  Change a rate rule's fees, weight bands or active flag. A price change: recent step-up; audited
+  """
+  updateRateRule(id: ID!, input: UpdateRateRuleInput!): RateRuleEntity!
+
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
 
@@ -2150,7 +2394,7 @@ type Mutation {
   """
   updateShipping(input: UpdateShippingInput!): Order!
 
-  """Update a shipping zone (admin only)"""
+  """Update a shipping zone (areas are replaced). Audited"""
   updateShippingZone(id: ID!, input: UpdateShippingZoneInput!): ShippingZoneEntity!
 
   """
@@ -2233,6 +2477,22 @@ input OpenStockTakeInput {
   variantIds: [ID!]
 }
 
+"""When the point is open on a weekday (HH:MM, Africa/Accra)"""
+type OpeningHoursEntity {
+  closes: String!
+  opens: String!
+  weekday: Weekday!
+}
+
+"""
+When the point is open on a weekday; HH:MM, Africa/Accra (= UTC). A weekday left out is closed
+"""
+input OpeningHoursInput {
+  closes: String!
+  opens: String!
+  weekday: Weekday!
+}
+
 type Order {
   """Product discounts (per line) and the coupon, as placed"""
   adjustments: [OrderAdjustment!]!
@@ -2244,6 +2504,9 @@ type Order {
   contactPhone: String!
   createdAt: DateTime!
   currency: Currency!
+
+  """DELIVERY: the delivery slot booked (P5-A.2)"""
+  deliverySlot: DeliveryWindow
 
   """
   Product discounts plus the coupon (the negated sum of the adjustments); null on some older orders
@@ -2276,8 +2539,14 @@ type Order {
   """
   pricingVersion: Int!
 
+  """DELIVERY: the rate rule charged, a snapshot id (staff with order.view)"""
+  rateRuleId: ID
+
   """Refunds of this order, oldest first"""
   refunds: [OrderRefund!]!
+
+  """DELIVERY: the service level chosen"""
+  serviceLevel: DeliveryServiceLevel
   shipments: [Shipment!]!
 
   """Set when fulfillmentType is DELIVERY"""
@@ -2288,8 +2557,19 @@ type Order {
   """
   shippingAddressSnapshot: JSON
 
+  """
+  DELIVERY: the fee before free-shipping promotions (shippingTotal is after them)
+  """
+  shippingFee: Money
+
   """Shipping charged (0 for pickup); null on some older orders"""
   shippingTotal: Money
+
+  """DELIVERY: the zone delivered to, when placed (P5-A)"""
+  shippingZoneId: ID
+
+  """DELIVERY: the zone name when placed"""
+  shippingZoneName: String
   status: OrderStatus!
 
   """
@@ -2660,6 +2940,9 @@ type PickupLocationEntity {
   """Street address of the pickup location"""
   address: String!
   city: String!
+
+  """E.164 number customers can call about their collection"""
+  contactPhone: String
   country: String!
   createdAt: DateTime!
 
@@ -2667,14 +2950,30 @@ type PickupLocationEntity {
   Locations that fulfil orders collected here, first tried first; empty = the default (inventory.view)
   """
   fulfilmentLocations: [StockLocation!]!
+  ghanaPostGps: String
   id: ID!
+
+  """How to find the counter and what to bring"""
+  instructions: String
 
   """Whether this pickup location accepts orders"""
   isActive: Boolean!
+  latitude: Float
+  longitude: Float
 
   """Display name of the pickup location"""
   name: String!
-  state: String!
+
+  """Monday first; a weekday not listed is closed"""
+  openingHours: [OpeningHoursEntity!]!
+
+  """
+  The week in one line, e.g. "Mon-Fri 08:00-17:00, Sat 09:00-13:00, Sun closed"
+  """
+  openingHoursText: String!
+
+  """Null only on points migrated without a matching region"""
+  region: GhanaRegion
   updatedAt: DateTime!
 }
 
@@ -3359,7 +3658,9 @@ type Query {
   """Get all active pickup locations (public)"""
   activePickupLocations: [PickupLocationEntity!]!
 
-  """Get all active shipping zones (public)"""
+  """
+  Active shipping zones with their areas and active rate rules (public rate card)
+  """
   activeShippingZones: [ShippingZoneEntity!]!
 
   """Retrieves a specific address by ID for the current user"""
@@ -3436,6 +3737,11 @@ type Query {
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
 
+  """
+  The delivery slots booked on a date (YYYY-MM-DD), with the orders holding their places
+  """
+  deliveryBookings(date: String!, zoneId: ID): [DeliveryBooking!]!
+
   """One dispute with its notes and history (staff)"""
   dispute(id: ID!): DisputeEntity!
 
@@ -3482,9 +3788,6 @@ type Query {
     first: Int! = 20
   ): [FlaggedOrder!]!
   getMyPayments: [Payment!]!
-
-  """Get the shipping fee for a saved address"""
-  getShippingFee(addressId: ID!): Money!
   getUserPayment(userId: String!): [Payment!]!
 
   """
@@ -3860,6 +4163,36 @@ type QuoteAllocation {
   cartItemId: ID!
 }
 
+"""How the delivery fee of the quote was set"""
+type QuoteDelivery {
+  """The fee before free-shipping promotions"""
+  fee: Money!
+
+  """
+  The merchandise total after promotions reached the rule's free-above threshold
+  """
+  freeAboveReached: Boolean!
+
+  """The rate rule charged"""
+  rateRuleId: ID!
+  serviceLevel: DeliveryServiceLevel!
+
+  """The delivery slot booked, when one was chosen"""
+  slot: AvailableDeliverySlot
+
+  """
+  The weight band charged (its lower bound in grams); null when below every band (the base fee)
+  """
+  weightBandFromGrams: Int
+
+  """
+  The cart weight priced: variant weight x quantity (no weight counts 0 g)
+  """
+  weightGrams: Int!
+  zoneId: ID!
+  zoneName: String!
+}
+
 """
 Units of one cart line that pay the same price. A cart line is one quote line, unless a promotion reduces only some of its units (a flash sale's last units): then it has two or more, the reduced units first
 """
@@ -3932,6 +4265,26 @@ type QuoteTaxLine {
 
   """The tax rate it comes from"""
   taxId: ID!
+}
+
+"""A zone's delivery fee for one service level"""
+type RateRuleEntity {
+  """Fee below every weight band"""
+  baseFee: Money!
+  createdAt: DateTime!
+
+  """
+  Delivery is free once the merchandise total after promotions (tax included) reaches this
+  """
+  freeAbove: Money
+  id: ID!
+  isActive: Boolean!
+  serviceLevel: DeliveryServiceLevel!
+  updatedAt: DateTime!
+
+  """Ascending; the heaviest band the cart reaches sets the fee"""
+  weightBands: [WeightBandEntity!]!
+  zoneId: ID!
 }
 
 input ReceivePurchaseOrderInput {
@@ -4498,15 +4851,18 @@ type ShipmentStatusEvent {
 }
 
 type ShippingZoneEntity {
-  """List of cities covered by this zone (case-insensitive)"""
-  cities: [String!]!
+  """The regions, towns and areas the zone delivers to"""
+  areas: [ZoneAreaEntity!]!
 
   """Whether cash on delivery may be chosen for deliveries to this zone"""
   codEnabled: Boolean!
   createdAt: DateTime!
 
-  """Shipping fee applied for orders delivered to cities in this zone"""
-  fee: Money!
+  """Dates from today on the zone does not deliver"""
+  deliveryClosures: [DeliveryClosureEntity!]!
+
+  """Weekly delivery windows for STANDARD delivery"""
+  deliverySlots: [DeliverySlotEntity!]!
 
   """
   Locations that fulfil deliveries here, first tried first; empty = the default (inventory.view)
@@ -4519,6 +4875,11 @@ type ShippingZoneEntity {
 
   """Unique name for this shipping zone"""
   name: String!
+
+  """
+  Delivery fees per service level (activeShippingZones lists the active ones only)
+  """
+  rateRules: [RateRuleEntity!]!
   updatedAt: DateTime!
 }
 
@@ -5221,6 +5582,15 @@ input UpdateCustomerGroupInput {
   name: String
 }
 
+"""Slot fields to change; omitted fields keep their value"""
+input UpdateDeliverySlotInput {
+  capacity: Int
+  cutoffHours: Int
+  endTime: String
+  isActive: Boolean
+  startTime: String
+}
+
 input UpdateDisputeStatusInput {
   disputeId: ID!
 
@@ -5238,13 +5608,31 @@ input UpdatePaymentMethodsInput {
   mobileMoneyPaymentsEnabled: Boolean
 }
 
+"""
+Pickup point fields to change; omitted fields keep their value, null clears an optional one
+"""
 input UpdatePickupLocationInput {
   address: String
   city: String
-  country: String
+
+  """
+  Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX
+  """
+  contactPhone: String
+
+  """
+  GhanaPostGPS digital address: two letters, 3-4 digits, then 4 digits, hyphens optional (GA1234567, ga-123-4567, AK-484-9321); stored as XX-NNN(N)-NNNN
+  """
+  ghanaPostGps: String
+  instructions: String
   isActive: Boolean
+  latitude: Float
+  longitude: Float
   name: String
-  state: String
+
+  """Replaces the whole week"""
+  openingHours: [OpeningHoursInput!]
+  region: GhanaRegion
 }
 
 """
@@ -5412,6 +5800,18 @@ input UpdatePurchaseOrderInput {
   supplierId: ID
 }
 
+"""
+Rate rule fields to change; omitted fields keep their value, null clears freeAbove
+"""
+input UpdateRateRuleInput {
+  baseFee: Decimal
+  freeAbove: Decimal
+  isActive: Boolean
+
+  """Replaces every weight band"""
+  weightBands: [WeightBandInput!]
+}
+
 input UpdateReviewInput {
   comment: String
   id: String!
@@ -5440,10 +5840,10 @@ input UpdateShippingInput {
   trackingNumber: String
 }
 
+"""Zone fields to change; omitted fields keep their value"""
 input UpdateShippingZoneInput {
-  """Replaces the entire cities list"""
-  cities: [String!]
-  fee: Decimal
+  """Replaces every area of the zone"""
+  areas: [ZoneAreaInput!]
   isActive: Boolean
   name: String
 }
@@ -5942,6 +6342,29 @@ input VerifyPhoneInput {
   code: String!
 }
 
+enum Weekday {
+  FRIDAY
+  MONDAY
+  SATURDAY
+  SUNDAY
+  THURSDAY
+  TUESDAY
+  WEDNESDAY
+}
+
+type WeightBandEntity {
+  fee: Money!
+  fromGrams: Int!
+}
+
+"""
+From fromGrams of cart weight up, the rule charges fee instead of its base fee
+"""
+input WeightBandInput {
+  fee: Decimal!
+  fromGrams: Int!
+}
+
 type Wishlist {
   createdAt: DateTime!
   id: ID!
@@ -5949,4 +6372,37 @@ type Wishlist {
   updatedAt: DateTime!
   user: User!
   userId: ID!
+}
+
+"""A region, a town, or an area within a town that a zone delivers to"""
+type ZoneAreaEntity {
+  """Normalised, within town"""
+  area: String
+  id: ID!
+  level: ZoneAreaLevel!
+  region: GhanaRegion
+
+  """Normalised: lower case, without accents or punctuation"""
+  town: String
+}
+
+"""
+A place a zone delivers to: a region alone, a town alone, or an area within a town. Towns and areas are matched without regard to case, accents, punctuation or repeated spaces
+"""
+input ZoneAreaInput {
+  """Matched against the address's area; needs town"""
+  area: String
+  region: GhanaRegion
+
+  """Matched against the address's city"""
+  town: String
+}
+
+"""
+How specific a zone area is: an address matches its most specific entry (AREA > TOWN > REGION)
+"""
+enum ZoneAreaLevel {
+  AREA
+  REGION
+  TOWN
 }

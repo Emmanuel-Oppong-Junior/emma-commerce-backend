@@ -7,7 +7,8 @@ import { DomainEventJobData } from '../outbox/domain-events';
 import { OrderStatus, ShipmentStatus } from '../generated/prisma/client';
 import { REFUND_REASON_LABELS } from '../returns/refund-reason';
 import { SmsSender } from './sms/sms-sender';
-import { phoneOtpText, SmsJobData } from './sms/sms-jobs';
+import { phoneOtpText, readyForPickupText, SmsJobData } from './sms/sms-jobs';
+import { ReadyForPickupNotifier } from './ready-for-pickup.notifier';
 import { LowStockAlertsService } from '../inventory/low-stock/low-stock-alerts.service';
 import { verifiedPhoneOf } from '../phone-verification/phone-otp';
 import { NotificationsService } from './notifications.service';
@@ -16,7 +17,8 @@ import { SHIPMENT_SMS_STATUSES, shipmentSmsRecipient, shipmentSmsText } from './
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
 const EMAILED_ORDER_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED];
-const EMAILED_SHIPMENT_STATUSES: ShipmentStatus[] = [ShipmentStatus.READY_FOR_PICKUP, ShipmentStatus.OUT_FOR_DELIVERY];
+// READY_FOR_PICKUP has its own email and SMS (ReadyForPickupNotifier, P5-E.1).
+const EMAILED_SHIPMENT_STATUSES: ShipmentStatus[] = [ShipmentStatus.OUT_FOR_DELIVERY];
 
 /**
  * Turns one notifications-queue job into the email (or SMS) it stands for. Outbox events carry ids only, so the recipient is
@@ -31,6 +33,7 @@ export class NotificationSender {
     private readonly logger: LoggerService,
     private readonly lowStockAlerts: LowStockAlertsService,
     private readonly notifications: NotificationsService,
+    private readonly readyForPickup: ReadyForPickupNotifier,
   ) {}
 
   async send(jobName: string, data: unknown, idempotencyKey: string): Promise<void> {
@@ -87,6 +90,9 @@ export class NotificationSender {
       }
       case 'shipment.status_changed.v1': {
         const { payload } = data as DomainEventJobData<'shipment.status_changed.v1'>;
+        if (payload.status === ShipmentStatus.READY_FOR_PICKUP) {
+          return this.readyForPickup.notify(payload.orderId, idempotencyKey);
+        }
         if (SHIPMENT_SMS_STATUSES.includes(payload.status)) {
           const { orderId, shipmentId, status } = payload;
           await this.notifications.queueShipmentSms({ orderId, shipmentId, status }, `${idempotencyKey}-sms`);
@@ -248,6 +254,10 @@ export class NotificationSender {
           trackingNumber: shipment.trackingNumber,
         });
         return this.sms.send(to, text, `shipment_${status.toLowerCase()}`);
+      }
+      case 'sms.ready_for_pickup.v1': {
+        const { to, notice } = data as SmsJobData['sms.ready_for_pickup.v1'];
+        return this.sms.send(to, readyForPickupText(notice), 'ready_for_pickup');
       }
       default:
         throw new Error(`Unknown notification job "${jobName}"`);

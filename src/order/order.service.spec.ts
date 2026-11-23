@@ -12,6 +12,8 @@ import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { Decimal } from '@prisma/client/runtime/client';
 import { ShippingZonesService } from '../shipping-zones/shipping-zones.service';
+import { LoggerService } from '../commons/logger.service';
+import { DeliverySlotsService } from '../shipping-zones/slots/delivery-slots.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
 import { ReturnsService } from '../returns/returns.service';
@@ -28,9 +30,23 @@ const mockAuditService = { log: jest.fn() };
 const mockTaxService = { findActive: jest.fn() };
 const mockStockLedger = { reserve: jest.fn(), consumeOrder: jest.fn(), releaseOrder: jest.fn() };
 const mockOutbox = { record: jest.fn() };
-const zoneWithFee = (fee: string | number) => ({ id: 'zone1', fee: new Decimal(fee) });
-const mockShippingZonesService = { getZoneForCity: jest.fn().mockResolvedValue(zoneWithFee('5')) };
+const zoneWithFee = (fee: string | number) => ({
+  id: 'zone1',
+  name: 'Zone 1',
+  rules: [
+    {
+      id: 'rule1',
+      serviceLevel: 'STANDARD',
+      baseFee: new Decimal(fee),
+      freeAbove: null,
+      isActive: true,
+      weightBands: [],
+    },
+  ],
+});
+const mockShippingZonesService = { deliveryZoneFor: jest.fn().mockResolvedValue(zoneWithFee('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
+const mockDeliverySlots = { calendar: jest.fn(), book: jest.fn(), releaseForOrder: jest.fn() };
 const mockReturnsService = { createSystemReturnRequest: jest.fn() };
 const mockPriceListsService = { findForPricing: jest.fn() };
 
@@ -221,8 +237,11 @@ const mockPickupLocation = {
   name: 'Osu Store',
   address: '12 Oxford St',
   city: 'Accra',
-  state: 'Greater Accra',
+  region: 'GREATER_ACCRA',
   country: 'Ghana',
+  contactPhone: '+233302000000',
+  instructions: 'Ask at the front desk',
+  openingHours: [{ weekday: 'MONDAY', opensMinute: 480, closesMinute: 1020 }],
   isActive: true,
   createdAt: fixedDate,
   updatedAt: fixedDate,
@@ -272,6 +291,8 @@ describe('OrdersService', () => {
           provide: SerialUnitsService,
           useValue: { releaseOrder: jest.fn() },
         },
+        { provide: LoggerService, useValue: { warn: jest.fn() } },
+        { provide: DeliverySlotsService, useValue: mockDeliverySlots },
       ],
     }).compile();
 
@@ -305,9 +326,10 @@ describe('OrdersService', () => {
     mockOrdersRepository.create.mockResolvedValue(mockOrder);
     mockOrdersRepository.transitionStatus.mockResolvedValue({ ...mockOrder, status: OrderStatus.CONFIRMED });
     mockOrdersRepository.clearCartItems.mockResolvedValue(undefined);
-    mockShippingZonesService.getZoneForCity.mockResolvedValue(zoneWithFee('5'));
+    mockShippingZonesService.deliveryZoneFor.mockResolvedValue(zoneWithFee('5'));
     mockPromotionsService.findForPricing.mockResolvedValue(pricingFacts([]));
     mockPriceListsService.findForPricing.mockResolvedValue([]);
+    mockDeliverySlots.calendar.mockResolvedValue({ templates: [], closedDates: new Set(), booked: new Map() });
   });
 
   describe('createOrderFromCart', () => {
@@ -505,7 +527,10 @@ describe('OrdersService', () => {
 
       await placeOrder(deliveryParams);
 
-      expect(mockShippingZonesService.getZoneForCity).toHaveBeenLastCalledWith('Accra', {});
+      expect(mockShippingZonesService.deliveryZoneFor).toHaveBeenLastCalledWith(
+        expect.objectContaining({ city: 'Accra' }),
+        {},
+      );
       expect(mockOrdersRepository.create).toHaveBeenCalledWith(
         expect.anything(),
         mockUserId,
@@ -921,7 +946,7 @@ describe('OrdersService', () => {
       mockOrdersRepository.findAddressForUser.mockResolvedValue({ ...mockAddress, city: 'Tamale' });
       mockOrdersRepository.findUserById.mockResolvedValue(mockUser);
       mockOrdersRepository.findVariant.mockResolvedValue(mockVariant);
-      mockShippingZonesService.getZoneForCity.mockRejectedValue(
+      mockShippingZonesService.deliveryZoneFor.mockRejectedValue(
         new BadRequestException('Delivery is not available to city "Tamale": no active shipping zone covers it'),
       );
 
@@ -943,7 +968,7 @@ describe('OrdersService', () => {
       await expect(placeOrder(deliveryParams)).rejects.toThrow(
         new BadRequestException('Complete the delivery address (region, recipient name and phone) before checkout'),
       );
-      expect(mockShippingZonesService.getZoneForCity).not.toHaveBeenCalled();
+      expect(mockShippingZonesService.deliveryZoneFor).not.toHaveBeenCalled();
       expect(mockStockLedger.reserve).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).not.toHaveBeenCalled();
     });
@@ -995,7 +1020,7 @@ describe('OrdersService', () => {
 
       await placeOrder(pickupParams);
 
-      expect(mockShippingZonesService.getZoneForCity).not.toHaveBeenCalled();
+      expect(mockShippingZonesService.deliveryZoneFor).not.toHaveBeenCalled();
       expect(mockOrdersRepository.create).toHaveBeenCalledWith(
         expect.anything(),
         mockUserId,
@@ -1028,8 +1053,11 @@ describe('OrdersService', () => {
             name: 'Osu Store',
             address: '12 Oxford St',
             city: 'Accra',
-            state: 'Greater Accra',
+            region: 'GREATER_ACCRA',
             country: 'Ghana',
+            contactPhone: '+233302000000',
+            instructions: 'Ask at the front desk',
+            openingHours: 'Mon 08:00-17:00, Tue-Sun closed',
           },
         }),
       );
@@ -1276,7 +1304,7 @@ describe('OrdersService', () => {
             price: new Decimal('11'),
           })),
       ],
-      ['the shipping fee', () => mockShippingZonesService.getZoneForCity.mockResolvedValue(zoneWithFee(6))],
+      ['the shipping fee', () => mockShippingZonesService.deliveryZoneFor.mockResolvedValue(zoneWithFee(6))],
       [
         'a tax rate',
         () => mockTaxService.findActive.mockResolvedValue([{ id: 'vat', name: 'VAT', rate: new Decimal('0.1') }]),

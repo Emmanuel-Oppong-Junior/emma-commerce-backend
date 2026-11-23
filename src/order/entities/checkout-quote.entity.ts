@@ -7,6 +7,44 @@ import { GraphQLDecimal } from '../../commons/money/decimal.scalar';
 import { CurrencyEnum } from '../../products/enums/product.enum';
 import { OrderAdjustmentTypeEnum } from '../enums/order.enum';
 import { CashOnDeliveryAvailability } from '../../cod/cod-risk.entities';
+import { DeliveryServiceLevel } from '../../shipping-zones/enums/delivery.enums';
+import { AvailableDeliverySlot } from '../../shipping-zones/slots/delivery-slots.types';
+
+@ObjectType({ description: "A service level the address's zone offers, with its fee for this cart" })
+export class DeliveryOption {
+  @Field(() => DeliveryServiceLevel)
+  serviceLevel: DeliveryServiceLevel;
+
+  @Field(() => MoneyObject, { description: 'The fee before free-shipping promotions' })
+  fee: Decimal;
+
+  @Field(() => Int, {
+    nullable: true,
+    description: 'The weight band charged (its lower bound in grams); null when below every band (the base fee)',
+  })
+  weightBandFromGrams: number | null;
+
+  @Field({ description: "The merchandise total after promotions reached the rule's free-above threshold" })
+  freeAboveReached: boolean;
+}
+
+@ObjectType({ description: 'How the delivery fee of the quote was set' })
+export class QuoteDelivery extends DeliveryOption {
+  @Field(() => ID)
+  zoneId: string;
+
+  @Field()
+  zoneName: string;
+
+  @Field(() => ID, { description: 'The rate rule charged' })
+  rateRuleId: string;
+
+  @Field(() => Int, { description: 'The cart weight priced: variant weight x quantity (no weight counts 0 g)' })
+  weightGrams: number;
+
+  @Field(() => AvailableDeliverySlot, { nullable: true, description: 'The delivery slot booked, when one was chosen' })
+  slot: AvailableDeliverySlot | null;
+}
 
 @ObjectType({ description: 'A tax included in a quote line' })
 export class QuoteTaxLine {
@@ -185,4 +223,26 @@ export class CheckoutQuote {
       'gate refusing it (createOrder refuses it with that gate, online payment stays open)',
   })
   cashOnDelivery: CashOnDeliveryAvailability;
+
+  @Field(() => QuoteDelivery, {
+    nullable: true,
+    description: 'DELIVERY: the zone, service level and fee priced (shippingTotal is after free-shipping promotions)',
+  })
+  delivery: QuoteDelivery | null;
+
+  @Field(() => [DeliveryOption], {
+    description:
+      "DELIVERY: every service level the address's zone offers, with its fee for this cart; empty for PICKUP",
+  })
+  deliveryOptions: DeliveryOption[];
+
+  @Field(() => [AvailableDeliverySlot], {
+    description:
+      "STANDARD delivery: the zone's delivery slots of the next 7 days (Africa/Accra), full ones with remaining 0; " +
+      'empty for EXPRESS, PICKUP and zones without slots',
+  })
+  deliverySlots: AvailableDeliverySlot[];
+
+  @Field({ description: 'createOrder needs a deliverySlot (STANDARD delivery to a zone with slots)' })
+  deliverySlotRequired: boolean;
 }

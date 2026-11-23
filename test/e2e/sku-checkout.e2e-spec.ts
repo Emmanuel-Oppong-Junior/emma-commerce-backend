@@ -49,7 +49,14 @@ describe('Buying variants (SKUs) end to end (e2e)', () => {
     await resetDb(prisma);
     await seedMinimal(prisma);
     await prisma.pickupLocation.create({
-      data: { id: 'sku_pickup', name: 'Osu', address: '1 Oxford St', city: 'Accra', state: 'GA', country: 'Ghana' },
+      data: {
+        id: 'sku_pickup',
+        name: 'Osu',
+        address: '1 Oxford St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'Ghana',
+      },
     });
     await prisma.tax.create({ data: { name: 'VAT sku test', rate: '0.20' } });
     adminToken = await signInAdmin(app);
