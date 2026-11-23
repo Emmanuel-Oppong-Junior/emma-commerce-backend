@@ -2,6 +2,7 @@ import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { ShipmentStatus } from '../../generated/prisma/client';
 import { ShipmentStatusEnum } from '../enums/order.enum';
 import { ShipmentStatusEvent } from './order-status-event.entity';
+import { staffWith } from '../../iam/authorization/staff-permission.field-middleware';
 
 @ObjectType({ description: 'Units of one order line in a shipment' })
 export class ShipmentItem {
@@ -46,6 +47,13 @@ export class Shipment {
 
   @Field(() => Date, { nullable: true, description: 'When it was cancelled (before dispatch)' })
   cancelledAt?: Date | null;
+
+  @Field(() => Date, {
+    nullable: true,
+    description: 'When the current rider was assigned (staff)',
+    middleware: [staffWith('order.view')],
+  })
+  assignedAt?: Date | null;
 
   @Field(() => [ShipmentStatusEvent], { description: 'Status history, oldest first' })
   events: ShipmentStatusEvent[];

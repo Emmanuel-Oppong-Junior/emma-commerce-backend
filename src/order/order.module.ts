@@ -55,6 +55,6 @@ import { OrderTrackingResolver } from './order-tracking.resolver';
     FraudModule,
     CodModule,
   ],
-  exports: [OrdersService, OrdersRepository],
+  exports: [OrdersService, OrdersRepository, ShipmentsService, ShipmentsRepository],
 })
 export class OrderModule {}

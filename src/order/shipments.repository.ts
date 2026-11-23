@@ -27,6 +27,12 @@ export class ShipmentsRepository {
     return shipment?.orderId ?? null;
   }
 
+  /** The shipment's rider, read without a lock (callers re-check it under the order lock); null when none or unknown. */
+  async findRiderId(shipmentId: string): Promise<string | null> {
+    const shipment = await this.prisma.shipment.findUnique({ where: { id: shipmentId }, select: { riderId: true } });
+    return shipment?.riderId ?? null;
+  }
+
   /** The shipment line, with its shipment's order and status, or null for an unknown line. */
   async findItem(tx: Tx, shipmentItemId: string) {
     return tx.shipmentItem.findUnique({

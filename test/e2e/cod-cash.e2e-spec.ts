@@ -88,8 +88,8 @@ describe('Cash-on-delivery cash: collection, remittance and report (e2e)', () =>
     await resetDb(prisma);
     await seedMinimal(prisma);
     adminToken = await signInAdmin(app);
-    riderA = (await staffMember('rider-ama@test.local', 'CASHIER')).id;
-    riderB = (await staffMember('rider-kofi@test.local', 'CASHIER')).id;
+    riderA = (await staffMember('rider-ama@test.local', 'RIDER')).id;
+    riderB = (await staffMember('rider-kofi@test.local', 'RIDER')).id;
     supportToken = (await staffMember('support-cash@test.local', 'SUPPORT')).token;
   });
 

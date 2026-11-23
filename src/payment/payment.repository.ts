@@ -13,6 +13,7 @@ import {
   ShipmentStatus,
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { isRiderRole } from '../delivery/rider-assignment';
 import { OrdersRepository } from '../order/order.repository';
 import { StoreRepository } from '../store/store.repository';
 import { OutboxService } from '../outbox/outbox.service';
@@ -90,6 +91,7 @@ export interface CashCollectionRequest {
 export interface RiderOfCollection {
   isActive: boolean;
   isStaff: boolean;
+  isRider: boolean;
 }
 
 export interface RecordedCollection {
@@ -223,9 +225,16 @@ export class PaymentRepository {
       const order = await tx.order.findUnique({ where: { id: orderId }, include: COLLECTABLE_ORDER });
       const rider = await tx.user.findUnique({
         where: { id: riderId },
-        select: { isActive: true, storeMemberships: { select: { id: true }, take: 1 } },
+        select: {
+          isActive: true,
+          storeMemberships: { select: { role: { select: { key: true, permissions: true } } }, take: 1 },
+        },
       });
-      assertCollectable(order, rider && { isActive: rider.isActive, isStaff: rider.storeMemberships.length > 0 });
+      const membership = rider?.storeMemberships[0];
+      assertCollectable(
+        order,
+        rider && { isActive: rider.isActive, isStaff: !!membership, isRider: isRiderRole(membership?.role ?? null) },
+      );
       const changed = () => new ConflictException(`Order "${orderId}" changed while its cash collection was recorded`);
 
       const amount = order.grandTotal;

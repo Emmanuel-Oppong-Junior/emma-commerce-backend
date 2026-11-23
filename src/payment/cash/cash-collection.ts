@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma/client';
+import { FulfillmentType, Prisma } from '../../generated/prisma/client';
+import { RiderAssignmentReason } from '../../delivery/rider-assignment';
 
 export const RIDER_NOT_STAFF = 'RIDER_NOT_STAFF';
 export const COLLECTION_AMOUNT_MISMATCH = 'COLLECTION_AMOUNT_MISMATCH';
@@ -11,14 +12,34 @@ export const COLLECTED_AT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 export interface RiderCandidate {
   isActive: boolean;
   isStaff: boolean;
+  /** The staff role lists delivery.ride (P5-C.1). */
+  isRider?: boolean;
 }
 
-/** Riders are staff accounts for now (P5-C adds a Rider role): an active user with a store membership. */
+/** Whoever took the cash is an active user with a store membership. */
 export function assertStaffRider(rider: RiderCandidate | null, riderId: string): asserts rider is RiderCandidate {
   if (!rider || !rider.isStaff || !rider.isActive) {
     throw new BadRequestException({
       message: `Rider "${riderId}" must be an active staff member of the store`,
       extensions: { reason: RIDER_NOT_STAFF },
+    });
+  }
+}
+
+/**
+ * Cash for a delivery is taken by a rider (P5-C.1: a staff member whose role holds delivery.ride); at the pickup
+ * counter any active staff member takes it. Collections recorded earlier by other staff stay valid.
+ */
+export function assertCollector(
+  rider: RiderCandidate | null,
+  riderId: string,
+  fulfillmentType: FulfillmentType,
+): asserts rider is RiderCandidate {
+  assertStaffRider(rider, riderId);
+  if (fulfillmentType === FulfillmentType.DELIVERY && !rider.isRider) {
+    throw new BadRequestException({
+      message: `Rider "${riderId}" is not a rider (a staff member whose role holds delivery.ride)`,
+      extensions: { reason: RiderAssignmentReason.NOT_A_RIDER },
     });
   }
 }

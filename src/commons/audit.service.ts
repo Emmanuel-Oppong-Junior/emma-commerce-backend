@@ -15,6 +15,8 @@ export type AuditAction =
   | 'RETRY'
   | 'ROLE_ASSIGN'
   | 'ROLE_REMOVE'
+  | 'RIDER_ASSIGN'
+  | 'RIDER_UNASSIGN'
   | 'MFA_ENABLE'
   | 'MFA_RECOVERY_CODE_USED'
   | 'STEP_UP'

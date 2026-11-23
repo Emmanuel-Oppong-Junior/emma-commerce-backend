@@ -18,6 +18,7 @@ Mutation approveStockTake                permission: inventory.stocktake.approve
 Mutation archiveProduct                  permission: catalog.product.write
 Mutation archiveUser                     permission: user.manage
 Mutation assignShipmentItemSerials       permission: order.fulfil
+Mutation assignShipmentRider             permission: order.fulfil
 Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
 Mutation cancelPurchaseOrder             permission: purchasing.manage
@@ -74,6 +75,7 @@ Mutation deleteTag                       permission: catalog.taxonomy.write
 Mutation deleteTax                       permission: tax.manage; step-up
 Mutation deleteVariant                   permission: catalog.product.write
 Mutation dispatchStockTransfer           permission: inventory.transfer
+Mutation failMyDelivery                  permission: delivery.ride
 Mutation forgotPassword                  public
 Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
@@ -122,9 +124,11 @@ Mutation signOut                         authenticated
 Mutation signUp                          public
 Mutation softDeletePayment               permission: payment.manage
 Mutation startMfaEnrollment              authenticated
+Mutation startMyDelivery                 permission: delivery.ride
 Mutation stepUp                          authenticated
 Mutation submitStockTake                 permission: inventory.adjust
 Mutation unassignShipmentItemSerials     permission: order.fulfil
+Mutation unassignShipmentRider           permission: order.fulfil
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
@@ -187,6 +191,8 @@ Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only
 Query getShippingFee                     authenticated
 Query getUserPayment                     permission: payment.view
+Query myDeliveries                       permission: delivery.ride
+Query myDelivery                         permission: delivery.ride
 Query myPhoneVerification                authenticated
 Query myReturnRequests                   authenticated
 Query order                              authenticated
@@ -213,6 +219,7 @@ Query refunds                            permission: payment.view
 Query returnRequests                     permission: return.manage
 Query revenueByCategory                  permission: report.view
 Query review                             authenticated
+Query riders                             permission: order.fulfil
 Query salesReport                        permission: report.view
 Query serialUnitLookup                   permission: order.view
 Query shippingZone                       permission: shipping.manage

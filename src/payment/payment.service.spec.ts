@@ -745,6 +745,26 @@ describe('PaymentService', () => {
       expect(mockAuditService.log).not.toHaveBeenCalled();
     });
 
+    it('needs a rider (a role with delivery.ride) for a delivery, and any staff member at the pickup counter', async () => {
+      const delivery = { ...shippedCod, fulfillmentType: 'DELIVERY' };
+      runRecording(delivery, { isActive: true, isStaff: true, isRider: false });
+      expect(await reasonOf(service.recordCodPayment(input, 'admin1'))).toBe('NOT_A_RIDER');
+      expect(mockAuditService.log).not.toHaveBeenCalled();
+
+      runRecording(delivery, { isActive: true, isStaff: true, isRider: true });
+      await expect(service.recordCodPayment(input, 'admin1')).resolves.toEqual(attempt);
+
+      runRecording(
+        {
+          ...shippedCod,
+          fulfillmentType: 'PICKUP',
+          shipments: [{ ...shippedCod.shipments[0], status: 'READY_FOR_PICKUP' }],
+        },
+        { isActive: true, isStaff: true, isRider: false },
+      );
+      await expect(service.recordCodPayment(input, 'admin1')).resolves.toEqual(attempt);
+    });
+
     it.each(['249.99', '250.01', '0'])(
       'refuses %s collected for a 250.00 order (COLLECTION_AMOUNT_MISMATCH)',
       async (amount) => {

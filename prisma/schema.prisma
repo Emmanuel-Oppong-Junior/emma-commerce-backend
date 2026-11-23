@@ -48,6 +48,7 @@ model User {
   returnRequests            ReturnRequest[]
   storeMemberships          StoreMembership[]
   cashCollected             CashCollection[]        @relation("CashCollectionRider")
+  shipmentsRidden           Shipment[]              @relation("ShipmentRider")
   cashRemitted              CashRemittance[]        @relation("CashRemittanceRider")
   cashRemittancesReceived   CashRemittance[]        @relation("CashRemittanceReceiver")
   paymentProviderConfigs    PaymentProviderConfig[]
@@ -885,6 +886,11 @@ model Shipment {
   dispatchedAt   DateTime?
   deliveredAt    DateTime?
   cancelledAt    DateTime?
+  /// The rider delivering it (P5-C.1): an active staff member whose role holds delivery.ride; delivery orders only
+  riderId        String?
+  rider          User?                 @relation("ShipmentRider", fields: [riderId], references: [id], onDelete: Restrict)
+  /// When the current rider was assigned
+  assignedAt     DateTime?
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
   order          Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -892,6 +898,7 @@ model Shipment {
   items          ShipmentItem[]
 
   @@index([orderId])
+  @@index([riderId, status])
 }
 
 /// Units of one order line in a shipment (P5-B.1). Written with the shipment and never changed.

@@ -101,6 +101,15 @@ input ApproveReturnInput {
   returnRequestId: ID!
 }
 
+input AssignShipmentRiderInput {
+  """Required to replace the rider once the shipment has been dispatched"""
+  reason: String
+
+  """An active staff member whose role holds delivery.ride"""
+  riderId: ID!
+  shipmentId: ID!
+}
+
 """
 Type of an attribute value: TEXT, NUMBER (in the attribute unit) or BOOLEAN
 """
@@ -1317,6 +1326,13 @@ enum DeliveryOptions {
   SELECTED_REGIONS
 }
 
+"""A staff member who delivers shipments (their role holds delivery.ride)"""
+type DeliveryRider {
+  id: ID!
+  name: String
+  phoneNumber: String
+}
+
 input DispatchStockTransferInput {
   """
   The units sent on each line of a serial-tracked variant (required for those, refused for others)
@@ -1444,6 +1460,14 @@ type ExpiringStockLine {
   """onHand at the current selling price; null when unpriced"""
   value: Money
   variantId: ID!
+}
+
+input FailMyDeliveryInput {
+  """
+  What happened (customer not reachable, wrong address, refused...); shown to staff
+  """
+  reason: String!
+  shipmentId: ID!
 }
 
 """
@@ -1672,6 +1696,11 @@ type Mutation {
   assignShipmentItemSerials(input: ShipmentItemSerialsInput!): Order!
 
   """
+  Assign a delivery shipment to a rider (staff), until it is delivered, returned or cancelled. BAD_REQUEST for a pickup shipment (reason PICKUP_HAS_NO_RIDER) or someone who is not an active rider (NOT_A_RIDER); replacing the rider after dispatch needs a reason (ASSIGNMENT_REASON_REQUIRED); CONFLICT for a closed shipment (SHIPMENT_CLOSED) or a first rider on a shipment already out for delivery (ASSIGN_BEFORE_DISPATCH). Audited
+  """
+  assignShipmentRider(input: AssignShipmentRiderInput!): Shipment!
+
+  """
   Give a user a staff role, replacing their current one (staff.manage). You may only assign a role whose permissions you all hold; only an Owner assigns or changes an Owner; the last Owner cannot be demoted. Audited.
   """
   assignStaffRole(roleKey: String!, userId: ID!): StaffMember!
@@ -1871,6 +1900,11 @@ type Mutation {
   """
   dispatchStockTransfer(id: ID!, input: DispatchStockTransferInput): StockTransfer!
 
+  """
+  Record that a delivery you took out failed, with what happened. NOT_FOUND when it is not yours
+  """
+  failMyDelivery(input: FailMyDeliveryInput!): RiderDelivery!
+
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
 
@@ -1904,7 +1938,7 @@ type Mutation {
   recordCashRemittance(input: RecordCashRemittanceInput!): CashRemittanceEntity!
 
   """
-  Record the order total as cash collected by a rider (a staff member) for a dispatched cash-on-delivery order (out for delivery or ready for pickup). Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a rider who is not active staff (reason RIDER_NOT_STAFF), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.
+  Record the order total as cash collected for a dispatched cash-on-delivery order (out for delivery or ready for pickup). The collector (riderId) is a rider (role with delivery.ride) for a delivery, any active staff member at the pickup counter. Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a collector who is not active staff (reason RIDER_NOT_STAFF) or, for a delivery, not a rider (NOT_A_RIDER), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.
   """
   recordCodPayment(input: RecordCodPaymentInput!): Payment!
 
@@ -2058,6 +2092,11 @@ type Mutation {
   startMfaEnrollment: MfaEnrollment!
 
   """
+  Take one of your shipments out for delivery (from PACKED, or again after a failed attempt). NOT_FOUND when it is not assigned to you; CONFLICT from any other status
+  """
+  startMyDelivery(shipmentId: ID!): RiderDelivery!
+
+  """
   Verify this session with an authenticator or recovery code. Sensitive actions (role changes, refunds, price changes, exports) are then allowed for 10 minutes. Audited.
   """
   stepUp(code: String!): StepUpResult!
@@ -2069,6 +2108,11 @@ type Mutation {
   Put units assigned to a shipment line back in stock, before dispatch (staff)
   """
   unassignShipmentItemSerials(input: ShipmentItemSerialsInput!): Order!
+
+  """
+  Remove the rider of a delivery shipment (staff): before dispatch, or after a failed attempt with a reason. CONFLICT while it is out for delivery (reason RIDER_ON_THE_ROAD: reassign instead). Audited
+  """
+  unassignShipmentRider(input: UnassignShipmentRiderInput!): Shipment!
 
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
@@ -3488,6 +3532,27 @@ type Query {
   getUserPayment(userId: String!): [Payment!]!
 
   """
+  Shipments assigned to the signed-in rider: open ones by default, oldest assignment first
+  """
+  myDeliveries(
+    """
+    A day (YYYY-MM-DD, UTC = Ghana time): only shipments assigned, dispatched or delivered that day
+    """
+    date: String
+
+    """At most this many (1-100), oldest assignment first"""
+    first: Int! = 50
+
+    """
+    Only these statuses; omitted: the open ones (not delivered, returned or cancelled)
+    """
+    status: [ShipmentStatus!]
+  ): [RiderDelivery!]!
+
+  """One shipment assigned to the signed-in rider; NOT_FOUND otherwise"""
+  myDelivery(shipmentId: ID!): RiderDelivery!
+
+  """
   Whether the current user's phone number is verified (cash on delivery needs it)
   """
   myPhoneVerification: PhoneVerificationStatusEntity!
@@ -3618,6 +3683,9 @@ type Query {
 
   """Retrieves a specific review by ID"""
   review(reviewId: String!): Review!
+
+  """Active riders a delivery shipment can be assigned to (staff)"""
+  riders: [DeliveryRider!]!
 
   """
   Gross revenue, refunds and net revenue recognised in a date range (admin only)
@@ -4297,6 +4365,54 @@ type Review {
   userId: ID!
 }
 
+"""
+A shipment assigned to the signed-in rider, with only what the delivery needs: the recipient, the address, the items and the cash to collect
+"""
+type RiderDelivery {
+  address: RiderDeliveryAddress
+
+  """
+  Cash to collect on delivery (the order total); null when the order is paid online or already paid
+  """
+  amountToCollect: Money
+
+  """When the shipment was assigned to you"""
+  assignedAt: DateTime!
+  deliveredAt: DateTime
+  dispatchedAt: DateTime
+  items: [RiderDeliveryItem!]!
+  orderNumber: Int!
+  recipientName: String
+
+  """
+  The phone to call: the delivery address phone, else the order contact phone
+  """
+  recipientPhone: String!
+  shipmentId: ID!
+  status: ShipmentStatus!
+}
+
+"""Where a delivery goes, as the customer gave it when ordering"""
+type RiderDeliveryAddress {
+  area: String
+  city: String
+
+  """GhanaPostGPS digital address"""
+  ghanaPostGps: String
+  landmark: String
+  latitude: Float
+  longitude: Float
+  region: String
+  street: String
+}
+
+"""Units of one product in a delivery"""
+type RiderDeliveryItem {
+  productName: String!
+  quantity: Int!
+  sku: String
+}
+
 enum Role {
   ADMIN
   SUPER_ADMIN
@@ -4429,6 +4545,9 @@ input SetVariantCostInput {
 Some or all of the goods of an order on their way to the customer; an order may be split into several shipments
 """
 type Shipment {
+  """When the current rider was assigned (staff)"""
+  assignedAt: DateTime
+
   """When it was cancelled (before dispatch)"""
   cancelledAt: DateTime
   carrier: String
@@ -4445,6 +4564,9 @@ type Shipment {
   """The order lines and units in this shipment"""
   items: [ShipmentItem!]!
   orderId: ID!
+
+  """The rider delivering it (staff)"""
+  rider: DeliveryRider
   status: ShipmentStatus!
   trackingNumber: String
   updatedAt: DateTime!
@@ -5105,6 +5227,12 @@ input TransferLineSerialsInput {
   """One serial per unit sent, each in stock at the source"""
   serials: [String!]!
   variantId: ID!
+}
+
+input UnassignShipmentRiderInput {
+  """Required after a failed delivery attempt"""
+  reason: String
+  shipmentId: ID!
 }
 
 """Unit the product is sold in"""

@@ -15,7 +15,7 @@ import { PaymentRecord, PaymentRepository } from './payment.repository';
 import { assertOrderPayable, checkoutUrlForReplay } from './payment-initiation';
 import { decideVerification, isSettled, ProviderVerification } from './payment-verification';
 import { assertCodCollectable, collectableShipment } from './cash-on-delivery';
-import { assertCollectedAmount, assertCollectedAt, assertStaffRider } from './cash/cash-collection';
+import { assertCollectedAmount, assertCollectedAt, assertCollector } from './cash/cash-collection';
 import { AuditService } from '../commons/audit.service';
 import { StoreService } from '../store/store.service';
 import { PaymentProviderRegistry } from './providers/payment-provider.registry';
@@ -161,7 +161,7 @@ export class PaymentService {
       { recordedById: adminId, riderId, collectedAt },
       (order, rider) => {
         assertCodCollectable(order, orderId);
-        assertStaffRider(rider, riderId);
+        assertCollector(rider, riderId, order.fulfillmentType);
         assertCollectedAmount(order.grandTotal, amount);
         assertCollectedAt(collectedAt, now, collectableShipment(order).dispatchedAt);
       },
