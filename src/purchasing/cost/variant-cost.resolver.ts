@@ -47,7 +47,7 @@ export class CostHistoryResolver {
 
   @RequirePermission('purchasing.manage', 'inventory.cost.view')
   @Mutation(() => CostChange, {
-    description: 'Set the unit cost of a variant never bought through a purchase order, with a reason (staff)',
+    description: 'Set or correct the unit cost of a variant by hand, with a reason (staff)',
   })
   setVariantCost(@ActiveUser('id') actorId: string, @Args('input') input: SetVariantCostInput) {
     return this.costs.setManually(input.variantId, input.cost, input.reason, actorId);

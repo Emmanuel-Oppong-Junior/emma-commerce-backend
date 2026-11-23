@@ -9,9 +9,6 @@ type Tx = Prisma.TransactionClient;
 
 const MAX_PAGE_SIZE = 100;
 
-/** `extensions.reason` when a manual cost is refused because purchase orders already set the variant's cost. */
-export const COST_FROM_PURCHASES = 'COST_FROM_PURCHASES';
-
 export interface CostChangePage {
   nodes: CostChange[];
   totalCount: number;
@@ -76,23 +73,13 @@ export class VariantCostService {
   }
 
   /**
-   * Sets the cost of a variant never bought through a purchase order (opening stock, goods bought before purchasing
-   * existed). Audited, with its reason.
-   * @throws NotFoundException; BadRequestException when purchase orders already set its cost (COST_FROM_PURCHASES) or
-   *   the cost is already that value.
+   * Sets a variant's cost by hand, with a reason: opening stock, goods bought before purchasing existed, or a
+   * correction of a cost purchase orders got wrong; later receipts average from it. Audited.
+   * @throws NotFoundException; BadRequestException when the cost is already that value.
    */
   async setManually(variantId: string, cost: Decimal, reason: string, actorId: string): Promise<CostChange> {
     return this.prisma.$transaction(async (tx) => {
       const old = (await this.lockVariants(tx, [variantId])).get(variantId) ?? null;
-      const fromPurchases = await tx.costChange.count({
-        where: { variantId, source: CostChangeSource.PURCHASE_ORDER },
-      });
-      if (fromPurchases > 0) {
-        throw new BadRequestException({
-          message: `Variant "${variantId}" is costed from its purchase orders; its cost cannot be set by hand`,
-          extensions: { reason: COST_FROM_PURCHASES },
-        });
-      }
       if (old?.eq(cost)) throw new BadRequestException(`Variant "${variantId}" already costs ${old.toFixed(4)}`);
       const change = await this.record(tx, {
         variantId,

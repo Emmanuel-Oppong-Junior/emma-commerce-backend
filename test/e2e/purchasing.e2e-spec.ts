@@ -508,7 +508,7 @@ describe('Purchasing (P4-E.1, e2e)', () => {
       expect(await costOf(a)).toBe('6.5000');
     });
 
-    it('sets a cost by hand only for a variant never bought through a purchase order', async () => {
+    it('sets a cost by hand, also correcting one purchase orders set, and later receipts average from it', async () => {
       const fresh = await newVariant();
       const bought = await newVariant();
       await receive(await sentPo([[bought, 1, '3.00']]), [{ variantId: bought, quantity: 1 }]);
@@ -519,7 +519,7 @@ describe('Purchasing (P4-E.1, e2e)', () => {
         );
 
       const manual = await set(fresh, '4.2');
-      const refused = await set(bought, '9.99');
+      const corrected = await set(bought, '2.50');
       const tooPrecise = await set(fresh, '1.00001');
       const byClerk = await set(fresh, '5', clerkToken);
 
@@ -530,8 +530,10 @@ describe('Purchasing (P4-E.1, e2e)', () => {
         reason: 'Old invoice',
       });
       expect(await costOf(fresh)).toBe('4.2000');
-      expect(codeOf(refused)).toBe('BAD_REQUEST');
-      expect(refused.errors![0].extensions?.reason).toBe('COST_FROM_PURCHASES');
+      expect(corrected.data!.setVariantCost).toMatchObject({ oldValue: '3', newValue: '2.5', source: 'MANUAL' });
+      await receive(await sentPo([[bought, 1, '4.50']]), [{ variantId: bought, quantity: 1 }]);
+      // (1 on hand × 2.50 + 1 × 4.50) / 2 = 3.5
+      expect(await costOf(bought)).toBe('3.5000');
       expect(codeOf(tooPrecise)).toBe('BAD_USER_INPUT');
       expect(codeOf(byClerk)).toBe('FORBIDDEN');
       const audit = await prisma.auditLog.findFirstOrThrow({ where: { entity: 'Variant', entityId: fresh } });

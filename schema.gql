@@ -655,7 +655,7 @@ type CostChangePage {
 
 """What changed a variant's weighted-average cost (P4-E.1)"""
 enum CostChangeSource {
-  """Set by staff for a variant never bought through a purchase order"""
+  """Set or corrected by hand by staff"""
   MANUAL
 
   """A delivery received against a purchase order"""
@@ -2008,7 +2008,7 @@ type Mutation {
   setShippingZoneFulfilmentLocations(input: FulfilmentLocationsInput!, shippingZoneId: ID!): [StockLocation!]!
 
   """
-  Set the unit cost of a variant never bought through a purchase order, with a reason (staff)
+  Set or correct the unit cost of a variant by hand, with a reason (staff)
   """
   setVariantCost(input: SetVariantCostInput!): CostChange!
 

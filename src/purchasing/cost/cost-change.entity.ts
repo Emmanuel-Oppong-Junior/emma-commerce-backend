@@ -10,7 +10,7 @@ registerEnumType(CostChangeSource, {
   description: "What changed a variant's weighted-average cost (P4-E.1)",
   valuesMap: {
     PURCHASE_ORDER: { description: 'A delivery received against a purchase order' },
-    MANUAL: { description: 'Set by staff for a variant never bought through a purchase order' },
+    MANUAL: { description: 'Set or corrected by hand by staff' },
   },
 });
 
