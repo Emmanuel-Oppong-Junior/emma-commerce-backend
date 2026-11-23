@@ -9,6 +9,7 @@ import { MovementFilter, StockLedgerRepository } from './stock-ledger.repository
 import { manualAdjustmentError } from './stock-adjustment';
 import { LotsService } from './lots/lots.service';
 import { LotQuantity } from './lots/lots';
+import { SerialUnitsService } from './serials/serial-units.service';
 
 export interface StockMovementPage {
   nodes: StockMovement[];
@@ -27,6 +28,7 @@ export class InventoryService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly lots: LotsService,
+    private readonly serialUnits: SerialUnitsService,
   ) {}
 
   /**
@@ -34,7 +36,8 @@ export class InventoryService {
    * audit entry in the same transaction. Returned goods go back to the location their order was fulfilled from unless
    * a location is given. A lot-tracked variant's receipt goes into the lot given (lot number and expiry required);
    * returned units go into the lot named or, by default, the lots the order's sale drew them from (P4-C.1). Returns
-   * the first movement when the units spread over several lots.
+   * the first movement when the units spread over several lots. A variant whose product tracks serials needs one
+   * serial per unit: new ones for a receipt, units sold on the return's order for a return (SerialUnitsService).
    * @throws NotFoundException if the variant, the return request or the location does not exist; BadRequestException
    *   for a missing, invalid or unexpected lot.
    */
@@ -67,8 +70,23 @@ export class InventoryService {
             lots,
           )
         : [await this.ledger.receive(tx, input.variantId, input.quantity, reason, source, locationId || undefined)];
-      await this.auditStockChange(tx, movements);
-      return movements[0];
+      const [movement] = movements;
+      const change = {
+        variantId: input.variantId,
+        quantity: input.quantity,
+        serials: input.serials,
+        source: {
+          movementId: movement.id,
+          actorId,
+          refType: movement.refType ?? undefined,
+          refId: movement.refId ?? undefined,
+        },
+      };
+      const serials = input.returnRequestId
+        ? await this.serialUnits.restockReturned(tx, change, input.returnRequestId, movement.locationId)
+        : await this.serialUnits.receive(tx, change, movement.locationId);
+      await this.auditStockChange(tx, movements, serials);
+      return movement;
     });
   }
 
@@ -104,7 +122,8 @@ export class InventoryService {
    * Moves a variant's on-hand stock at a location (default: the store's default location) by a signed delta, as one
    * ADJUSTMENT with its reason. Units reserved for open orders cannot be adjusted away. A lot-tracked variant adds to
    * the lot given (an existing one, or a new one with its expiry) and removes from the lot given or, without one,
-   * first expiry first out, one movement per lot (the first is returned).
+   * first expiry first out, one movement per lot (the first is returned). A serial-tracked variant names its units:
+   * those removed (IN_STOCK there, then WRITTEN_OFF), or those added (new, or WRITTEN_OFF ones found).
    * @throws BadRequestException for a reason/direction mismatch, OTHER without a note, too few units available, or a
    * missing, invalid or unexpected lot; NotFoundException if the variant or an active location does not exist.
    */
@@ -129,8 +148,19 @@ export class InventoryService {
           `Cannot remove ${-input.delta} units from variant "${input.variantId}": only ${available} available`,
         );
       }
-      await this.auditStockChange(tx, movements);
-      return movements[0];
+      const [movement] = movements;
+      const change = {
+        variantId: input.variantId,
+        quantity: Math.abs(input.delta),
+        serials: input.serials,
+        source: { movementId: movement.id, actorId, note: movement.note ?? undefined },
+      };
+      const serials =
+        input.delta < 0
+          ? await this.serialUnits.writeOff(tx, change, locationId)
+          : await this.serialUnits.receive(tx, change, locationId, { readmitWrittenOff: true });
+      await this.auditStockChange(tx, movements, serials);
+      return movement;
     });
   }
 
@@ -193,7 +223,11 @@ export class InventoryService {
     return location.id;
   }
 
-  private async auditStockChange(tx: Prisma.TransactionClient, movements: StockMovement[]): Promise<void> {
+  private async auditStockChange(
+    tx: Prisma.TransactionClient,
+    movements: StockMovement[],
+    serials: string[],
+  ): Promise<void> {
     const [movement] = movements;
     const lotMovements = movements.filter((m) => m.lotId);
     await this.auditService.log(
@@ -213,6 +247,7 @@ export class InventoryService {
           ...(lotMovements.length > 0 && {
             lots: lotMovements.map((m) => ({ lotId: m.lotId, onHandDelta: m.onHandDelta, stockMovementId: m.id })),
           }),
+          ...(serials.length > 0 && { serials }),
         },
       },
       tx,

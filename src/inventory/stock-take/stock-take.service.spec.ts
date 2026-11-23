@@ -72,6 +72,7 @@ describe('StockTakeService', () => {
       prisma as never,
       audit as never,
       lots as never,
+      { trackedVariantIds: jest.fn().mockResolvedValue([]) } as never,
     );
   });
 

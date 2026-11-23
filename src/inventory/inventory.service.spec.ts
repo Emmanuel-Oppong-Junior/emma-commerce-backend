@@ -35,6 +35,7 @@ describe('InventoryService', () => {
   };
   let audit: ReturnType<typeof createAuditServiceMock>;
   let lots: Record<string, jest.Mock>;
+  let serialUnits: { receive: jest.Mock; writeOff: jest.Mock; restockReturned: jest.Mock };
   let service: InventoryService;
 
   beforeEach(() => {
@@ -50,12 +51,18 @@ describe('InventoryService', () => {
     audit = createAuditServiceMock();
     const prisma = { $transaction: jest.fn((work: (t: unknown) => unknown) => work(tx)) };
     lots = { isTracked: jest.fn().mockResolvedValue(false) };
+    serialUnits = {
+      receive: jest.fn().mockResolvedValue([]),
+      writeOff: jest.fn().mockResolvedValue([]),
+      restockReturned: jest.fn().mockResolvedValue([]),
+    };
     service = new InventoryService(
       ledger as never,
       repository as never,
       prisma as never,
       audit as never,
       lots as never,
+      serialUnits as never,
     );
   });
 

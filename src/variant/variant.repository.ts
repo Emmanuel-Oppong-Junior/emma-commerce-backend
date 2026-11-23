@@ -9,6 +9,7 @@ export type ProductForVariants = {
   id: string;
   name: string;
   isTaxable: boolean;
+  trackSerials: boolean;
   productType: { key: string; attributes: AttributeDefinition[] };
 };
 
@@ -49,6 +50,7 @@ export class VariantRepository {
         id: true,
         name: true,
         isTaxable: true,
+        trackSerials: true,
         productType: { select: { key: true, attributes: true } },
       },
     });

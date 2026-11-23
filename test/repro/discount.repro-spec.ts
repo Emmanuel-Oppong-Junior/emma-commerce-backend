@@ -179,6 +179,7 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
         candidatesFor: jest.fn().mockResolvedValue(['loc_main']),
         lockFulfilmentLocation: jest.fn().mockResolvedValue({ locationId: 'loc_main' }),
       } as never,
+      { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() } as never,
     );
 
     const params = {

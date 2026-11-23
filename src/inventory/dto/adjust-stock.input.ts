@@ -2,6 +2,7 @@ import { Field, ID, InputType, Int } from '@nestjs/graphql';
 import { Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, IsString, MaxLength, NotEquals, ValidateNested } from 'class-validator';
 import { LotInput } from '../lots/dto/lot.input';
+import { SerialsField } from '../serials/dto/serials.field';
 import { StockAdjustmentReason } from '../../generated/prisma/client';
 
 @InputType()
@@ -28,6 +29,12 @@ export class AdjustVariantStockInput {
   })
   @IsEnum(StockAdjustmentReason)
   reason: StockAdjustmentReason;
+
+  @SerialsField(
+    'One serial per unit, required when the product tracks serials (and refused otherwise): ' +
+      'units in stock at the location for a removal, new or written-off serials for an addition',
+  )
+  serials?: string[];
 
   @Field({ nullable: true, description: 'Free text; required when the reason is OTHER' })
   @IsOptional()

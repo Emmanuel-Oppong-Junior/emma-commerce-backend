@@ -5,6 +5,7 @@ import { OrdersService } from '../../src/order/order.service';
 import { PaymentRepository } from '../../src/payment/payment.repository';
 import { decideVerification } from '../../src/payment/payment-verification';
 import { StockReconciliationTask } from '../../src/inventory/tasks/stock-reconciliation.task';
+import { SerialUnitsRepository } from '../../src/inventory/serials/serial-units.repository';
 import { StockLedgerRepository } from '../../src/inventory/stock-ledger.repository';
 import { LoggerService } from '../../src/commons/logger.service';
 import { AppMetrics } from '../../src/observability/metrics';
@@ -404,6 +405,7 @@ describe('Stock-takes (P4-B.1, e2e)', () => {
       app.get(StockLedgerRepository),
       app.get(LoggerService),
       app.get(AppMetrics),
+      app.get(SerialUnitsRepository),
     );
 
     await expect(task.reconcile()).resolves.toEqual([]);

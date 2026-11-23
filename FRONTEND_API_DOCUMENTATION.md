@@ -734,6 +734,8 @@ query {
   attributes: JSONObject;       // Non-axis attribute values, keyed by attribute key (see 2.26)
   requiresPrescription: boolean; isPerishable: boolean; shelfLifeDays?: number;
   trackLots: boolean; trackSerials: boolean;
+  serialFormat: SerialFormat;   // P4-D.1: FREE_TEXT | IMEI, how serials of a trackSerials product are checked
+  warrantyMonths?: number;      // P4-D.1: warranty of each serialised unit from delivery; null = none
   fulfilmentKind: FulfilmentKind; unitOfMeasure: UnitOfMeasure;   // Capability fields, see 2.26
   status?: ProductStatus;       // DRAFT | PUBLISHED | ARCHIVED
   isActive: boolean;
@@ -831,7 +833,9 @@ query {
   subcategoryId?: string;        // Must belong to categoryId.
   brandId?: string;
   // plus the optional capability fields of 2.26 (requiresPrescription, isPerishable, shelfLifeDays, trackLots,
-  // trackSerials, fulfilmentKind, unitOfMeasure)
+  // trackSerials, fulfilmentKind, unitOfMeasure) and, for serial tracking (P4-D.1), serialFormat?: SerialFormat
+  // (default FREE_TEXT) and warrantyMonths?: number (1-120). A product created with trackSerials: true takes no
+  // opening stock on its variants (BAD_REQUEST): receive its units with restockVariant and their serials.
 }
 
 // VariantFieldsInput: the CreateVariantInput fields (see 2.8) without productId
@@ -1820,6 +1824,8 @@ mutation {
 
 **Shipment steps** (`src/order/shipment-status.ts`): `PENDING → PICKING → PACKED → READY_FOR_PICKUP | OUT_FOR_DELIVERY → DELIVERED | FAILED_DELIVERY`; `FAILED_DELIVERY → OUT_FOR_DELIVERY | READY_FOR_PICKUP` (retry) `| RETURNED`. Steps before dispatch may be skipped forward (e.g. `PENDING → PACKED`). A `PICKUP` order is dispatched to `READY_FOR_PICKUP`, a `DELIVERY` order to `OUT_FOR_DELIVERY`; any other step → `CONFLICT`.
 
+**Serial-tracked lines (P4-D.1)**: dispatch is refused with `BAD_REQUEST` + `reason: SERIALS_NOT_ASSIGNED` until every such line has a unit assigned per item (`assignOrderItemSerials`); dispatch marks them `SOLD` and `DELIVERED` starts their warranty. See [Serial units](#serial-units-p4-d1).
+
 **In the same transaction**: the first step moves a `CONFIRMED` order to `IN_FULFILMENT`; dispatch consumes a cash-on-delivery order's reserved stock (once: a retried delivery does not consume again) and emails the customer; `DELIVERED` completes the order (`COMPLETED`) and emails the customer. A cash-on-delivery order is delivered by recording its cash (`recordCodPayment`): `DELIVERED` here → `BAD_REQUEST`. Each step is written to the shipment's `events`, the order's `timeline` when the order moves, and the audit log (actor, reason). Concurrent steps: one wins, the other gets `CONFLICT`.
 
 ---
@@ -2396,12 +2402,14 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
   returnRequestId?: string; // The return request the goods came back under; recorded as RETURN_RESTOCK referencing it.
   locationId?: string;      // P4-A.1. Where the stock is received (default: the return's order location, else the default location).
   lot?: LotInput;           // P4-C.1. Lot-tracked variants only: see "Lots and expiry" below.
+  serials?: string[];       // P4-D.1. Serial-tracked products only (required there, refused otherwise): one per unit. A receipt names
+                            // new serials; a return restock names units sold on the return request's order.
 }
 ```
 
 For a lot-tracked variant (P4-C.1) a receipt needs `lot` with `lotNumber` and `expiresAt` (in the future); an existing lot number adds to that lot (its `expiresAt` must match). A return restock may name an existing, unexpired lot; without one the units go back into the lots the order's sales drew from (earliest expiry first). When the units spread over several lots, the first movement is returned (all of them are in `stockMovements`).
 
-**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Return request "<id>" not found`, `Stock location "<id>" not found`); `BAD_REQUEST` (P4-C.1: `Variant "<id>" tracks lots: give the lot number and expiry of the units received`, `Lot "<n>" needs its expiry date (expiresAt)`, `Lot "<n>" expires at <date>, not <date>`, `Lot "<n>" expired at <date>; expired goods cannot be received`, `Variant "<id>" has no lot "<n>"`, `... name the lot the returned units belong to`, `Variant "<id>" does not track lots; leave the lot out`).
+**Possible Errors**: `NOT_FOUND` (`Variant "<id>" not found`, `Return request "<id>" not found`, `Stock location "<id>" not found`); `BAD_REQUEST` (P4-C.1: `Variant "<id>" tracks lots: give the lot number and expiry of the units received`, `Lot "<n>" needs its expiry date (expiresAt)`, `Lot "<n>" expires at <date>, not <date>`, `Lot "<n>" expired at <date>; expired goods cannot be received`, `Variant "<id>" has no lot "<n>"`, `... name the lot the returned units belong to`, `Variant "<id>" does not track lots; leave the lot out`). Serial-tracked products (P4-D.1): `BAD_REQUEST` + `reason: SERIALS_REQUIRED` (missing or miscounted serials), `BAD_REQUEST` (malformed serial, a serial given twice, serials on an untracked product), `CONFLICT` + `reason: SERIAL_ALREADY_KNOWN` + `extensions.serials` (serials the variant already has), `CONFLICT` + `reason: SERIAL_NOT_AVAILABLE` (return restock of a serial not sold on that order).
 
 ---
 
@@ -2421,6 +2429,9 @@ For a lot-tracked variant (P4-C.1) a receipt needs `lot` with `lotNumber` and `e
   reason: StockAdjustmentReason;   // Required. See below.
   note?: string;                   // Max 500 chars. Required (not blank) when reason is OTHER. Stored as the movement's note.
   lot?: LotInput;                  // P4-C.1. Lot-tracked variants: required when adding (existing lot, or a new one with expiresAt); optional when removing.
+  serials?: string[];              // P4-D.1. Serial-tracked products only (required there): one per unit. A removal names units
+                                   // IN_STOCK at the location (they become WRITTEN_OFF); an addition names new serials or
+                                   // WRITTEN_OFF ones that turned up (back IN_STOCK).
 }
 ```
 
@@ -2513,13 +2524,13 @@ Stock moves between two locations in **two steps**. `createStockTransfer` makes 
 
 #### `dispatchStockTransfer`
 - **Type**: Mutation (`inventory.transfer`)
-- **Args**: `id: ID!`
+- **Args**: `id: ID!`, `input?: DispatchStockTransferInput { lines?: [{ variantId: ID!, serials: [String!]! }] }` (P4-D.1): the units sent on each line of a serial-tracked variant, one serial per unit, each `IN_STOCK` at the source (they go `IN_TRANSIT`). Required for those lines, refused for others.
 - **Response**: `StockTransfer!` (`DISPATCHED`)
-- **Possible Errors**: `NOT_FOUND`; `CONFLICT` (not a draft: already dispatched, received or cancelled); `BAD_REQUEST` (`Cannot dispatch N of variant "<id>": only M available at the source`; nothing is dispatched).
+- **Possible Errors**: `NOT_FOUND`; `CONFLICT` (not a draft: already dispatched, received or cancelled; `reason: SERIAL_NOT_AVAILABLE` for a unit not in stock at the source); `BAD_REQUEST` (`Cannot dispatch N of variant "<id>": only M available at the source`; `reason: SERIALS_REQUIRED`; serials for a variant not on the transfer; nothing is dispatched).
 
 #### `receiveStockTransfer`
 - **Type**: Mutation (`inventory.transfer`)
-- **Args**: `id: ID!`, `input?: ReceiveStockTransferInput { lines?: [{ variantId: ID!, receivedQuantity: Int! (0..quantity), note?: String }] }`. List only the lines that arrived short; every other line is received in full. A short line needs a `note`.
+- **Args**: `id: ID!`, `input?: ReceiveStockTransferInput { lines?: [{ variantId: ID!, receivedQuantity: Int! (0..quantity), note?: String, serials?: [String!] }] }`. List only the lines that arrived short; every other line is received in full. A short line needs a `note`. A short line of a serial-tracked variant also names the units that arrived (`serials`, one per unit received); its other units in transit become `WRITTEN_OFF` (P4-D.1). A line received in full may omit them.
 - **Response**: `StockTransfer!` (`RECEIVED` or `PARTIALLY_RECEIVED`)
 - **Possible Errors**: `NOT_FOUND`; `CONFLICT` (not in transit: still a draft, already received or cancelled); `BAD_REQUEST` (more received than dispatched, a variant not on the transfer, a shortfall without a note).
 
@@ -2552,6 +2563,7 @@ A **stock-take** (P4-B.1) is a count session at one stock location. Counters (`i
 - **Expected quantity** = units that should be on the shelf: on hand at the location **plus units already sold but not yet dispatched** (paid online orders whose shipment is still `PENDING`, `PICKING` or `PACKED`; goods at the pickup counter or out for delivery count as gone). `expectedAtOpen` is read when the session opens; `expectedQuantity` is read again **when each line is counted**, so sales, receipts and adjustments that happen between opening and counting are not variances. Counting a line again replaces the count and re-reads its expected quantity.
 - **Variance** = `countedQuantity - expectedQuantity` (negative = shortage). Approval posts each non-zero variance as **one `ADJUSTMENT` stock movement with `adjustmentReason: STOCK_TAKE`** (`refType: "StockTake"`, `refId`: the stock-take id), all in one transaction. Variances are deltas, so stock that moves after a line was counted is kept. Uncounted lines are left as they are. A second approval gets `CONFLICT` and posts nothing.
 - A shortage that would take on-hand stock below the units reserved for open orders refuses the whole approval: `CONFLICT` + `reason: STOCK_TAKE_BELOW_RESERVED` (recount, or cancel the stock-take); nothing is posted and the session stays `SUBMITTED`.
+- **Serial-tracked variants (P4-D.1)** are counted like any other, but a stock-take cannot say which units are missing or new: any variance on one refuses the whole approval with `CONFLICT` + `reason: STOCK_TAKE_SERIAL_VARIANCE` + `extensions.variantIds`. Cancel the stock-take, adjust those variants naming the serials (`adjustVariantStock`), and count again. An exact count approves normally.
 - Every open, count batch, submit, approve (with the posted movement ids) and cancel writes an audit entry (entity `StockTake`).
 
 ```typescript
@@ -2578,7 +2590,7 @@ StockTakeLine {
 - `openStockTake(input: { locationId?, categoryId?, variantIds?: [ID!], note? })` → `StockTake!` (`inventory.adjust`). `locationId` defaults to the store's default location. Errors: `BAD_REQUEST` (both `categoryId` and `variantIds`; "There are no variants to count in this scope"), `NOT_FOUND` (location, category, variants), `CONFLICT` + `reason: STOCK_TAKE_ALREADY_OPEN`.
 - `recordStockTakeCounts(input: { stockTakeId, counts: [{ variantId, countedQuantity }] })` → `[StockTakeLine!]!` (`inventory.adjust`; 1-200 counts per call, `countedQuantity` 0-1,000,000). Errors: `NOT_FOUND`, `CONFLICT` (not `OPEN`), `BAD_REQUEST` (a variant twice, or not in the stock-take).
 - `submitStockTake(id)` → `StockTake!` (`inventory.adjust`). `BAD_REQUEST` when nothing was counted; `CONFLICT` when not `OPEN`.
-- `approveStockTake(id)` → `StockTake!` (`inventory.stocktake.approve`). `CONFLICT` when not `SUBMITTED` or `STOCK_TAKE_BELOW_RESERVED`.
+- `approveStockTake(id)` → `StockTake!` (`inventory.stocktake.approve`). `CONFLICT` when not `SUBMITTED`, `STOCK_TAKE_BELOW_RESERVED` or `STOCK_TAKE_SERIAL_VARIANCE`.
 - `cancelStockTake(id, reason?: String)` → `StockTake!` (`inventory.stocktake.approve`; reason up to 500 characters). `CONFLICT` once approved or cancelled.
 - `stockTakes(status?, locationId?, first = 20 (1-200), after?)` → `StockTakePage! { nodes, totalCount, hasNextPage }`, newest first (`inventory.view`).
 - `stockTake(id)` → `StockTake!` (`inventory.view`).
@@ -2625,6 +2637,39 @@ ExpiringStockLine {
 - `variantLots(variantId: ID!)` → `[Lot!]!` (`inventory.view`): every lot of the variant, soonest expiry first.
 
 API changes (P4-C.1, additive): `LotInput`, `Lot`, `LotLocationStock`, `ExpiringStockLine`, `RestockVariantInput.lot`, `AdjustVariantStockInput.lot`, `StockMovement.lotId` / `lot`, queries `expiringStock` and `variantLots`. `Product.trackLots` existed and is now enforced.
+
+---
+
+#### Serial units (P4-D.1)
+
+A product with `trackSerials: true` (see [2.26](#226-product-types-and-attributes)) has **one `SerialUnit` per physical unit** of each variant, identified by its serial (e.g. an IMEI). Products without it behave exactly as before and refuse `serials` everywhere (`BAD_REQUEST`).
+
+- **Format** (`Product.serialFormat`): `FREE_TEXT` (default: 1-64 letters, digits and `- _ . /`) or `IMEI` (15 digits with a valid Luhn check digit). Serials are stored normalised: spaces removed and upper case; an IMEI also loses its dashes. Unique per variant. Malformed serials → `BAD_REQUEST`.
+- **Every stock change of a tracked variant names its units**, one serial per unit (`BAD_REQUEST` + `reason: SERIALS_REQUIRED` otherwise): `restockVariant` (new serials; a return restock names units sold on that order), `adjustVariantStock` (removal: units in stock there; addition: new or written-off serials), `dispatchStockTransfer` / `receiveStockTransfer`. A unit in the wrong status or place (or taken by a concurrent request) → `CONFLICT` + `reason: SERIAL_NOT_AVAILABLE` + `extensions.serials`; nothing is changed.
+- **Status** (`SerialUnitStatus`): `IN_STOCK` (on the shelf at `locationId`) → `ASSIGNED` (picked for an order line, still on the shelf) → `SOLD` (dispatched); `ASSIGNED → IN_STOCK` (unassigned, or the order cancelled); `SOLD → IN_STOCK` (return restocked, or the order cancelled after its shipment came back); `IN_STOCK → IN_TRANSIT → IN_STOCK` (transfer) or `WRITTEN_OFF` (missing on arrival); `IN_STOCK → WRITTEN_OFF` (negative adjustment) `→ IN_STOCK` (found).
+- **Assignment at pick**: while the order's shipment is `PICKING` or `PACKED`, staff assign the units they picked to each serialised line with `assignOrderItemSerials` (and take them off with `unassignOrderItemSerials`). Each unit must be `IN_STOCK` at the order's stock location. **Dispatch** (`updateShipmentStatus` to `OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`) is refused with `BAD_REQUEST` + `reason: SERIALS_NOT_ASSIGNED` + `extensions.lines: [{ orderItemId, quantity, assigned }]` until every serialised line has exactly its quantity assigned; the units then become `SOLD`. Online orders still consume stock at payment; their units stay on the shelf until dispatch. Cancelling an order frees its assigned units.
+- **Warranty** starts at delivery (`DELIVERED` via `updateShipmentStatus`, or `recordCodPayment` for cash on delivery) and ends `Product.warrantyMonths` calendar months later (on the last day of a shorter month); no warranty when it is null.
+- **Tracking flag**: `trackSerials` can be turned on only while the product has nothing on hand, in transit or on an open order (adjust it to zero first); turned off only while none of its units is `IN_STOCK`, `ASSIGNED` or `IN_TRANSIT` (`BAD_REQUEST` otherwise). A tracked product's variants take no opening stock (`createProduct`, `createVariant`: `BAD_REQUEST`).
+- **Reconciliation**: the nightly stock reconciliation also checks, per tracked variant and location, that `IN_STOCK` + `ASSIGNED` units = on hand + units sold online and not yet dispatched (metric `stock_reconciliation_mismatches{kind="SERIAL_UNITS"}`); it only reports.
+
+```typescript
+SerialUnit {
+  id: string; variantId: string;
+  serial: string;                 // stored form
+  status: SerialUnitStatus;
+  locationId?: string;            // while IN_STOCK or ASSIGNED
+  orderItemId?: string;           // while ASSIGNED or SOLD
+  receivedAt: DateTime; soldAt?: DateTime;
+  warrantyStartsAt?: DateTime; warrantyEndsAt?: DateTime;
+}
+SerialUnitLookup { unit: SerialUnit; sku: string; productName: string; orderId?: string; orderNumber?: number; customerId?: string }
+OrderItemSerial { serial: string; status: SerialUnitStatus; soldAt?: DateTime; warrantyStartsAt?: DateTime; warrantyEndsAt?: DateTime }
+```
+
+- `assignOrderItemSerials(input: { orderItemId: ID!, serials: [String!]! (1-1000) })` → `Order!` (`order.fulfil`). Errors: `NOT_FOUND` (line or order), `CONFLICT` (order not `CONFIRMED`/`IN_FULFILMENT`, shipment not `PICKING`/`PACKED`, `SERIAL_NOT_AVAILABLE`), `BAD_REQUEST` (product not serial-tracked, more units than the line's quantity, malformed serial). Audited (entity `OrderItem`, action `UPDATE`, `details.change: SERIALS_ASSIGNED`).
+- `unassignOrderItemSerials(input: { orderItemId: ID!, serials: [String!]! })` → `Order!` (`order.fulfil`). Same rules; each serial must be assigned to that line (`CONFLICT` + `SERIAL_NOT_AVAILABLE`). Audited (`SERIALS_UNASSIGNED`).
+- `serialUnitLookup(serial: String!)` → `[SerialUnitLookup!]!` (`order.view`): units with that serial on any variant (as typed: spaces and, for an IMEI, dashes ignored), with order, customer id, sale date and warranty window. Empty when unknown.
+- `OrderItem.serials: [OrderItemSerial!]!`: the units assigned to (`ASSIGNED`) or sold on (`SOLD`) the line, with their warranty. Customers see it on their own orders (`order`, `userOrders`); staff on every order.
 
 ---
 
@@ -3635,7 +3680,7 @@ Two **system types** exist and are read-only: **General** (`id: "product_type_ge
 - **Rules for a type that products use** (so stored values stay valid): new attributes must be optional; an attribute can be relabelled, reordered, made (un)filterable, made optional and given extra allowed values; making it required, changing its unit, narrowing its allowed values and removing it are refused with `CONFLICT`. System types refuse every change.
 - **Possible Errors**: `CONFLICT`, `NOT_FOUND`, `BAD_USER_INPUT`, `FORBIDDEN`.
 
-**Capability fields on Product** (typed, for rules later phases enforce; today they are stored and returned only): `requiresPrescription` (pharmacy checkout gate), `isPerishable` and `shelfLifeDays` (expiry tracking with the inventory ledger), `trackLots` (enforced since P4-C.1: lots with expiry, see [Lots and expiry](#lots-and-expiry-p4-c1)) and `trackSerials` (serial tracking), `fulfilmentKind` (`PHYSICAL` | `DIGITAL` | `SERVICE`, for delivery rules) and `unitOfMeasure` (`EACH` | `KG` | `G` | `L` | `ML` | `M`, for weighable goods). `createProduct` / `updateProduct` accept them (all optional; defaults `false`, `PHYSICAL`, `EACH`; `shelfLifeDays` 1-3650). Physical sizes live on the variant: `weightGrams`, `lengthMm`, `widthMm`, `heightMm`.
+**Capability fields on Product** (typed, for rules later phases enforce; today they are stored and returned only): `requiresPrescription` (pharmacy checkout gate), `isPerishable` and `shelfLifeDays` (expiry tracking with the inventory ledger), `trackLots` (enforced since P4-C.1: lots with expiry, see [Lots and expiry](#lots-and-expiry-p4-c1)) and `trackSerials` (serial tracking, enforced since P4-D.1: see [Serial units](#serial-units-p4-d1)), `fulfilmentKind` (`PHYSICAL` | `DIGITAL` | `SERVICE`, for delivery rules) and `unitOfMeasure` (`EACH` | `KG` | `G` | `L` | `ML` | `M`, for weighable goods). `createProduct` / `updateProduct` accept them (all optional; defaults `false`, `PHYSICAL`, `EACH`; `shelfLifeDays` 1-3650). Physical sizes live on the variant: `weightGrams`, `lengthMm`, `widthMm`, `heightMm`.
 
 ---
 

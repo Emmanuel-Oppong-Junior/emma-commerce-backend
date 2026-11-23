@@ -4,6 +4,7 @@ import { LoggerService } from '../../src/commons/logger.service';
 import { AppMetrics } from '../../src/observability/metrics';
 import { StockLedgerRepository } from '../../src/inventory/stock-ledger.repository';
 import { StockReconciliationTask } from '../../src/inventory/tasks/stock-reconciliation.task';
+import { SerialUnitsRepository } from '../../src/inventory/serials/serial-units.repository';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
@@ -307,6 +308,7 @@ describe('Stock transfers (P4-A.2, e2e)', () => {
       app.get(StockLedgerRepository),
       app.get(LoggerService),
       app.get(AppMetrics),
+      app.get(SerialUnitsRepository),
     );
 
     await expect(task.reconcile()).resolves.toEqual([]);

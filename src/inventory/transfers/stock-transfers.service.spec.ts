@@ -45,6 +45,10 @@ describe('StockTransfersService', () => {
       prisma as never,
       audit as never,
       lots as never,
+      {
+        dispatchTransfer: jest.fn(),
+        receiveTransfer: jest.fn(),
+      } as never,
     );
   });
 

@@ -22,6 +22,13 @@ export enum StockMismatchKind {
   LotTotal = 'LOT_TOTAL',
 }
 
+/** Units of a serial-tracked variant on the shelf differ from what the ledger expects there (P4-D.1). */
+export const SERIAL_UNITS_MISMATCH = 'SERIAL_UNITS';
+
+export interface SerialUnitsMismatch extends Omit<StockMismatch, 'kind'> {
+  kind: typeof SERIAL_UNITS_MISMATCH;
+}
+
 export interface StockMismatch {
   kind: StockMismatchKind;
   variantId: string;
@@ -69,7 +76,22 @@ export function stockMismatches(totals: LedgerTotals): StockMismatch[] {
     .map(([kind, expected, actual]) => ({ kind, variantId, locationId, expected, actual }));
 }
 
-/** Mismatch counts by kind, every kind present (0 when clean), for the metric. */
+/**
+ * A serial-tracked variant at a location whose IN_STOCK + ASSIGNED units differ from onHand plus its units sold online
+ * and not yet dispatched (expected); null when they agree.
+ */
+export function serialUnitsMismatch(totals: {
+  variantId: string;
+  locationId: string;
+  expected: number;
+  units: number;
+}): SerialUnitsMismatch | null {
+  if (totals.expected === totals.units) return null;
+  const { variantId, locationId, expected, units } = totals;
+  return { kind: SERIAL_UNITS_MISMATCH, variantId, locationId, expected, actual: units };
+}
+
+/** Mismatch counts by kind, every ledger kind present (0 when clean), for the metric. */
 export function countByKind(mismatches: StockMismatch[]): Record<StockMismatchKind, number> {
   const counts = Object.fromEntries(Object.values(StockMismatchKind).map((kind) => [kind, 0])) as Record<
     StockMismatchKind,

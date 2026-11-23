@@ -10,6 +10,7 @@ import { checkOptionValues, CheckedOptions, describeProblems } from '../product-
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { PriceHistoryService } from '../price-history/price-history.service';
+import { assertNoSerialisedOpeningStock } from '../inventory/serials/serial-rules';
 
 const AUDITED_VARIANT_FIELDS = [
   'productId',
@@ -43,9 +44,13 @@ export class VariantService {
     private readonly priceHistory: PriceHistoryService,
   ) {}
 
-  /** Creates a variant; its opening stock is received as a RECEIPT in the same transaction (VAR-05). */
+  /**
+   * Creates a variant; its opening stock is received as a RECEIPT in the same transaction (VAR-05). A product that
+   * tracks serials takes no opening stock: its units are received with their serials (restockVariant).
+   */
   async createVariant(input: CreateVariantInput, actorId: string): Promise<VariantWithProduct> {
     const product = await this.findProduct(input.productId);
+    assertNoSerialisedOpeningStock(product.trackSerials, [input]);
     const [prepared] = await this.prepare(product, [input]);
     return this.auditService.record(
       async (tx) => {

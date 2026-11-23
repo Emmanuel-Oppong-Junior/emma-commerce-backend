@@ -1,4 +1,5 @@
 import { Field, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
+import { SerialFormat } from '../../inventory/serials/entities/serial-unit.entity';
 import { Tag } from '../../tag/entities/tag.entity';
 import { Category } from '../../categories/entities/category.entity';
 import { SubCategory } from '../../sub-categories/entities/sub-category.entity';
@@ -85,6 +86,12 @@ export class Product {
 
   @Field(() => Boolean, { description: 'Each unit carries a serial number such as an IMEI (later phase)' })
   trackSerials: boolean;
+
+  @Field(() => SerialFormat, { description: 'How serials of this product are checked (P4-D.1)' })
+  serialFormat: SerialFormat;
+
+  @Field(() => Int, { nullable: true, description: 'Warranty of each serialised unit from delivery, in months' })
+  warrantyMonths?: number | null;
 
   @Field(() => FulfilmentKindEnum, { description: 'How the product reaches the customer' })
   fulfilmentKind: FulfilmentKindEnum;

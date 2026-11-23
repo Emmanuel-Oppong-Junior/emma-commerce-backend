@@ -17,6 +17,7 @@ import { Decimal } from '@prisma/client/runtime/client';
 import { ProductTypesRepository } from '../product-types/product-types.repository';
 import { VariantService } from '../variant/variant.service';
 import { LotsService } from '../inventory/lots/lots.service';
+import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 
 const AVAILABLE_STOCK = { stockLevels: { some: { onHand: { gt: 'reserved' } } } };
 const mockProductsRepository = {
@@ -62,6 +63,7 @@ describe('ProductsService', () => {
         { provide: ProductTypesRepository, useValue: mockProductTypesRepository },
         { provide: VariantService, useValue: mockVariantService },
         { provide: LotsService, useValue: mockLotsService },
+        { provide: SerialUnitsService, useValue: { assertTrackingChange: jest.fn() } },
       ],
     }).compile();
 

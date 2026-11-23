@@ -75,6 +75,8 @@ const AUDITED: Record<string, string> = {
   receiveStockTransfer: 'stock-transfers.service.spec (receive)',
   cancelStockTransfer: 'stock-transfers.service.spec (cancel)',
   updateShipmentStatus: 'order.service.spec (updateShipmentStatus)',
+  assignOrderItemSerials: 'serial-units.e2e-spec (SERIALS_ASSIGNED audit rows)',
+  unassignOrderItemSerials: 'serial-units.e2e-spec (SERIALS_UNASSIGNED audit row)',
   adminCancelOrder: 'order.service.spec',
   deleteOrder: 'order.service.spec',
   updateShipping: 'order.service.spec',

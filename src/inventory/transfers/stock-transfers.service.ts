@@ -1,11 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, StockTransferStatus } from '../../generated/prisma/client';
+import { Prisma, StockMovement, StockTransferStatus } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../commons/audit.service';
 import { StockLedgerService } from '../stock-ledger.service';
 import { LotsService } from '../lots/lots.service';
 import { canTransferTransition, ReceivedLine, receiptOf, transferDraftProblem } from './stock-transfer-rules';
 import { StockTransfersRepository, TransferFilter, TransferWithLines } from './stock-transfers.repository';
+import { SerialUnitsService } from '../serials/serial-units.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -16,6 +17,12 @@ export interface NewTransfer {
   toLocationId: string;
   lines: { variantId: string; quantity: number }[];
   note?: string;
+}
+
+/** The serials of a serial-tracked variant's units on a transfer line (P4-D.1). */
+export interface LineSerials {
+  variantId: string;
+  serials: string[];
 }
 
 export interface StockTransferPage {
@@ -42,6 +49,7 @@ export class StockTransfersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly lots: LotsService,
+    private readonly serialUnits: SerialUnitsService,
   ) {}
 
   async findOne(id: string): Promise<TransferWithLines> {
@@ -100,11 +108,14 @@ export class StockTransfersService {
   }
 
   /**
-   * DRAFT -> DISPATCHED: takes every line off the source's available stock, or nothing at all.
-   * @throws BadRequestException when the source has too few units available for a line; ConflictException when the
-   *   transfer is not a draft (already dispatched, received or cancelled, possibly by a concurrent request).
+   * DRAFT -> DISPATCHED: takes every line off the source's available stock, or nothing at all. A serial-tracked
+   * variant's line names the units sent (`serials`, one per unit, each IN_STOCK at the source); they go IN_TRANSIT.
+   * @throws BadRequestException when the source has too few units available for a line, or for serials of a variant
+   *   not on the transfer; ConflictException when the transfer is not a draft (already dispatched, received or
+   *   cancelled, possibly by a concurrent request).
    */
-  async dispatch(id: string, actorId: string): Promise<TransferWithLines> {
+  async dispatch(id: string, actorId: string, serials: LineSerials[] = []): Promise<TransferWithLines> {
+    const serialsByVariant = this.serialsByVariant(serials);
     return this.prisma.$transaction(async (tx) => {
       const transfer = await this.claim(tx, id, StockTransferStatus.DISPATCHED, {
         dispatchedById: actorId,
@@ -122,7 +133,18 @@ export class StockTransfersService {
             `Cannot dispatch ${line.quantity} of variant "${line.variantId}": only ${available} available at the source`,
           );
         }
+        await this.serialUnits.dispatchTransfer(
+          tx,
+          {
+            variantId: line.variantId,
+            quantity: line.quantity,
+            serials: serialsByVariant.get(line.variantId),
+            source: { movementId: movement.id, actorId, refType: 'StockTransfer', refId: transfer.id },
+          },
+          transfer.fromLocationId,
+        );
       }
+      this.assertSerialsOnTransfer(serialsByVariant, transfer);
       await this.auditStatus(tx, transfer, StockTransferStatus.DRAFT, StockTransferStatus.DISPATCHED, actorId);
       return this.repository.findByIdOrThrow(tx, id);
     });
@@ -130,10 +152,18 @@ export class StockTransfersService {
 
   /**
    * DISPATCHED -> RECEIVED or PARTIALLY_RECEIVED: adds what arrived to the destination and records each shortfall
-   * (with its required note) as the line's variance.
+   * (with its required note) as the line's variance. A serial-tracked line received short names the units that
+   * arrived (`serials`); its other units in transit are WRITTEN_OFF. A line received in full may omit them.
    * @throws BadRequestException for an invalid receipt; ConflictException when the transfer is not in transit.
    */
-  async receive(id: string, received: ReceivedLine[], actorId: string): Promise<TransferWithLines> {
+  async receive(
+    id: string,
+    received: (ReceivedLine & { serials?: string[] })[],
+    actorId: string,
+  ): Promise<TransferWithLines> {
+    const serialsByVariant = this.serialsByVariant(
+      received.flatMap((line) => (line.serials ? [{ variantId: line.variantId, serials: line.serials }] : [])),
+    );
     return this.prisma.$transaction(async (tx) => {
       const current = await this.repository.findById(id, tx);
       if (!current) throw new NotFoundException(`Stock transfer "${id}" not found`);
@@ -142,17 +172,32 @@ export class StockTransfersService {
       const transfer = await this.claim(tx, id, outcome.status, { receivedById: actorId, receivedAt: new Date() });
       for (const line of outcome.lines) {
         await this.repository.recordReceipt(tx, transfer.id, line);
-        if (line.receivedQuantity === 0) continue;
-        const source = {
-          refType: 'StockTransfer',
-          refId: transfer.id,
-          actorId,
-          ...(line.variance > 0 && { note: `Short by ${line.variance}: ${line.varianceNote}` }),
-        };
-        const lots = await this.lots.transferReceiptLots(tx, transfer, line.variantId, line.receivedQuantity);
-        if (lots)
-          await this.ledger.transferIn(tx, line.variantId, transfer.toLocationId, line.receivedQuantity, source, lots);
-        else await this.ledger.transferIn(tx, line.variantId, transfer.toLocationId, line.receivedQuantity, source);
+        let movement: StockMovement | null = null;
+        if (line.receivedQuantity > 0) {
+          const source = {
+            refType: 'StockTransfer',
+            refId: transfer.id,
+            actorId,
+            ...(line.variance > 0 && { note: `Short by ${line.variance}: ${line.varianceNote}` }),
+          };
+          const lots = await this.lots.transferReceiptLots(tx, transfer, line.variantId, line.receivedQuantity);
+          movement = lots
+            ? await this.ledger.transferIn(
+                tx,
+                line.variantId,
+                transfer.toLocationId,
+                line.receivedQuantity,
+                source,
+                lots,
+              )
+            : await this.ledger.transferIn(tx, line.variantId, transfer.toLocationId, line.receivedQuantity, source);
+        }
+        await this.serialUnits.receiveTransfer(
+          tx,
+          { transferId: transfer.id, ...line, serials: serialsByVariant.get(line.variantId) },
+          transfer.toLocationId,
+          { movementId: movement?.id, actorId, refType: 'StockTransfer', refId: transfer.id },
+        );
       }
       await this.auditStatus(tx, transfer, StockTransferStatus.DISPATCHED, outcome.status, actorId, {
         variances: outcome.lines
@@ -178,6 +223,17 @@ export class StockTransfersService {
       });
       return this.repository.findByIdOrThrow(tx, id);
     });
+  }
+
+  private serialsByVariant(lines: LineSerials[]): Map<string, string[]> {
+    const byVariant = new Map(lines.map((line) => [line.variantId, line.serials]));
+    if (byVariant.size !== lines.length) throw new BadRequestException("Name each variant's serials once");
+    return byVariant;
+  }
+
+  private assertSerialsOnTransfer(serialsByVariant: Map<string, string[]>, transfer: TransferWithLines): void {
+    const stranger = [...serialsByVariant.keys()].find((id) => !transfer.lines.some((line) => line.variantId === id));
+    if (stranger) throw new BadRequestException(`Variant "${stranger}" is not on this transfer`);
   }
 
   /** Moves the transfer to `to` from the one status that leads there, only if it is still in that status. */

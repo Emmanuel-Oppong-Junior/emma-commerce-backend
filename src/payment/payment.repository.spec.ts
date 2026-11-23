@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PaymentRepository } from './payment.repository';
+import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OrdersRepository } from '../order/order.repository';
 import { StoreRepository } from '../store/store.repository';
@@ -125,6 +126,10 @@ describe('PaymentRepository', () => {
         { provide: StoreRepository, useValue: mockStoreRepository },
         { provide: OutboxService, useValue: mockOutbox },
         { provide: StockLedgerService, useValue: mockStockLedger },
+        {
+          provide: SerialUnitsService,
+          useValue: { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() },
+        },
       ],
     }).compile();
 

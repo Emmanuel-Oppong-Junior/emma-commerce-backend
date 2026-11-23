@@ -11,12 +11,14 @@ import { VarianceReport, varianceOf, varianceReport, variancesToPost } from './s
 import { StockTakeLineView, StockTakeListFilter, StockTakeRepository } from './stock-take.repository';
 import { OpenStockTakeInput } from './dto/open-stock-take.input';
 import { RecordStockTakeCountsInput } from './dto/record-stock-take-counts.input';
+import { SerialUnitsService } from '../serials/serial-units.service';
 
 type Tx = Prisma.TransactionClient;
 
 export const STOCK_TAKE_ALREADY_OPEN = 'STOCK_TAKE_ALREADY_OPEN';
 export const STOCK_TAKE_BELOW_RESERVED = 'STOCK_TAKE_BELOW_RESERVED';
 export const STOCK_TAKE_NO_LOT = 'STOCK_TAKE_NO_LOT';
+export const STOCK_TAKE_SERIAL_VARIANCE = 'STOCK_TAKE_SERIAL_VARIANCE';
 
 const MAX_PAGE_SIZE = 200;
 const MAX_REASON_LENGTH = 500;
@@ -45,6 +47,7 @@ export class StockTakeService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly lots: LotsService,
+    private readonly serialUnits: SerialUnitsService,
   ) {}
 
   /**
@@ -181,7 +184,9 @@ export class StockTakeService {
    * SUBMITTED -> APPROVED, posting each non-zero variance as an ADJUSTMENT (STOCK_TAKE, ref StockTake) in the same
    * transaction. The status move is claimed first, so a second approve gets CONFLICT and posts nothing.
    * @throws NotFoundException; ConflictException when not SUBMITTED, or (STOCK_TAKE_BELOW_RESERVED) when a shortage
-   * would take on-hand stock below the units reserved for open orders (nothing is posted then).
+   * would take on-hand stock below the units reserved for open orders, or (STOCK_TAKE_SERIAL_VARIANCE) when a
+   * serial-tracked variant has a variance (nothing is posted then): a stock-take counts per variant and cannot say
+   * which units are missing or new, so those are adjusted by serial (adjustVariantStock) and counted again.
    */
   async approve(id: string, actorId: string): Promise<StockTake> {
     return this.prisma.$transaction(async (tx) => {
@@ -190,7 +195,20 @@ export class StockTakeService {
         approvedAt: new Date(),
       });
       const posted: { variantId: string; variance: number; movementId: string }[] = [];
-      for (const line of variancesToPost(await this.repository.countedLines(tx, id))) {
+      const variances = variancesToPost(await this.repository.countedLines(tx, id));
+      const serialised = await this.serialUnits.trackedVariantIds(
+        tx,
+        variances.map((line) => line.variantId),
+      );
+      if (serialised.length > 0) {
+        throw new ConflictException({
+          message:
+            `Serial-tracked variants have a variance: ${serialised.join(', ')}. Cancel this stock-take, adjust them ` +
+            'naming the serials written off or found (adjustVariantStock), then count them again',
+          extensions: { reason: STOCK_TAKE_SERIAL_VARIANCE, variantIds: serialised },
+        });
+      }
+      for (const line of variances) {
         const source = {
           actorId,
           adjustmentReason: StockAdjustmentReason.STOCK_TAKE,

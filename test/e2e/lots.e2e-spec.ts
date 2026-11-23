@@ -9,6 +9,7 @@ import { StockTransfersService } from '../../src/inventory/transfers/stock-trans
 import { StockTakeService } from '../../src/inventory/stock-take/stock-take.service';
 import { StockReconciliationTask } from '../../src/inventory/tasks/stock-reconciliation.task';
 import { StockLedgerRepository } from '../../src/inventory/stock-ledger.repository';
+import { SerialUnitsRepository } from '../../src/inventory/serials/serial-units.repository';
 import { LoggerService } from '../../src/commons/logger.service';
 import { AppMetrics } from '../../src/observability/metrics';
 import { createTestApp } from '../helpers/app.helper';
@@ -124,6 +125,7 @@ describe('Lots with expiry (P4-C.1, e2e)', () => {
       app.get(StockLedgerRepository),
       app.get(LoggerService),
       app.get(AppMetrics),
+      app.get(SerialUnitsRepository),
     ).reconcile();
 
   beforeAll(async () => {

@@ -24,6 +24,8 @@ import { StockTakeLineCountLoader, StockTakeResolver } from './stock-take/stock-
 import { LotStockRepository } from './lots/lot-stock.repository';
 import { LotsService } from './lots/lots.service';
 import { LotLoader, LotsResolver, StockMovementLotResolver } from './lots/lots.resolver';
+import { SerialUnitsRepository } from './serials/serial-units.repository';
+import { SerialUnitsService } from './serials/serial-units.service';
 
 @Module({
   imports: [CommonsModule, OutboxModule],
@@ -54,6 +56,8 @@ import { LotLoader, LotsResolver, StockMovementLotResolver } from './lots/lots.r
     LotsResolver,
     LotLoader,
     StockMovementLotResolver,
+    SerialUnitsRepository,
+    SerialUnitsService,
   ],
   exports: [
     InventoryService,
@@ -63,6 +67,8 @@ import { LotLoader, LotsResolver, StockMovementLotResolver } from './lots/lots.r
     StockLocationsRepository,
     LowStockAlertsService,
     LotsService,
+    SerialUnitsService,
+    SerialUnitsRepository,
   ],
 })
 export class InventoryModule {}

@@ -45,6 +45,7 @@ import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/ve
 import { CodAvailability, CodRiskService } from '../cod/cod-risk.service';
 import { DeliveryAddressFacts } from '../cod/cod-blacklist';
 import { ExpiredLotUnits, sellableLevels } from '../inventory/lots/lots';
+import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -166,6 +167,7 @@ export class OrdersService {
     private readonly velocity: VelocityService,
     private readonly codRisk: CodRiskService,
     private readonly stockLocations: StockLocationsService,
+    private readonly serialUnits: SerialUnitsService,
   ) {}
 
   /**
@@ -369,6 +371,8 @@ export class OrdersService {
    * (READY_FOR_PICKUP / OUT_FOR_DELIVERY) consumes a cash-on-delivery order's reserved stock (once: only ACTIVE
    * reservations are consumed) and records `shipment.status_changed.v1`; DELIVERED completes the order and records
    * `order.status_changed.v2`. A cash-on-delivery shipment is delivered by recording its cash (recordCodPayment).
+   * Dispatch is refused (BAD_REQUEST, SERIALS_NOT_ASSIGNED) until every serial-tracked line has a unit assigned per
+   * item; the units are then SOLD, and their warranty starts at delivery (P4-D.1).
    */
   async updateShipmentStatus(
     orderId: string,
@@ -415,6 +419,7 @@ export class OrdersService {
         await this.moveOrder(tx, orderId, OrderStatus.CONFIRMED, OrderStatus.IN_FULFILMENT, actorId, reason);
       }
       if (isDispatch(to)) {
+        await this.serialUnits.dispatchOrder(tx, orderId, { actorId, refType: 'Order', refId: orderId });
         if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
           await this.stockLedger.consumeOrder(tx, orderId, actorId);
         }
@@ -425,6 +430,7 @@ export class OrdersService {
         });
       }
       if (to === ShipmentStatus.DELIVERED) {
+        await this.serialUnits.startWarranty(tx, orderId, moved.deliveredAt!);
         await this.moveOrder(tx, orderId, OrderStatus.IN_FULFILMENT, OrderStatus.COMPLETED, actorId, reason);
         await this.outbox.record(tx, {
           type: 'order.status_changed.v2',
@@ -862,6 +868,7 @@ export class OrdersService {
         actorId: close.actorId,
         note: close.to === OrderStatus.EXPIRED ? 'Unpaid order expired' : 'Order cancelled',
       });
+      await this.serialUnits.releaseOrder(tx, order.id, { actorId: close.actorId, refType: 'Order', refId: order.id });
       await this.ordersRepository.cancelOpenPaymentIntent(tx, order.id);
       return closed;
     });
