@@ -397,9 +397,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P5-B.1** [b044c5d] `Shipment` + items (split/partial fulfilment) + status timeline
 - [x] **P5-B.2** [b635e32] Customer-visible tracking timeline (polling + SMS milestones)
 
-### P5-C — Riders & POD
+### P5-C — Riders & POD  🔄 in progress
 > Run: → · M · 🟧
-- [ ] **P5-C.1** Rider role + assignment + mobile-friendly endpoints
+- [ ] 🔄 **P5-C.1** Rider role + assignment + mobile-friendly endpoints
 - [ ] **P5-C.2** Proof of delivery (photo/OTP/signature)
 
 ### P5-D — Couriers
