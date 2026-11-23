@@ -1,8 +1,11 @@
 import { JobsOptions } from 'bullmq';
+import { ShipmentStatus } from '../../generated/prisma/client';
 
 /** SMS jobs on the notifications queue. */
 export interface SmsJobData {
   'sms.phone_otp.v1': { to: string; code: string; expiresInMinutes: number };
+  /** A shipment milestone (P5-B.2); ids only, the recipient and text are read when sending. */
+  'sms.shipment_milestone.v1': { orderId: string; shipmentId: string; status: ShipmentStatus };
 }
 
 export type SmsJobName = keyof SmsJobData;

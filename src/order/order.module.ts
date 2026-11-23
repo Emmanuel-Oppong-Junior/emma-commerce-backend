@@ -22,6 +22,7 @@ import { OrderItemSerialsLoader, OrderItemSerialsResolver, OrderSerialsResolver 
 import { ShipmentsService } from './shipments.service';
 import { ShipmentsRepository } from './shipments.repository';
 import { ShipmentsResolver } from './shipments.resolver';
+import { OrderTrackingResolver } from './order-tracking.resolver';
 
 @Module({
   providers: [
@@ -35,6 +36,7 @@ import { ShipmentsResolver } from './shipments.resolver';
     ShipmentsService,
     ShipmentsRepository,
     ShipmentsResolver,
+    OrderTrackingResolver,
   ],
   imports: [
     CartModule,

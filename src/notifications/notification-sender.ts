@@ -9,6 +9,9 @@ import { REFUND_REASON_LABELS } from '../returns/refund-reason';
 import { SmsSender } from './sms/sms-sender';
 import { phoneOtpText, SmsJobData } from './sms/sms-jobs';
 import { LowStockAlertsService } from '../inventory/low-stock/low-stock-alerts.service';
+import { verifiedPhoneOf } from '../phone-verification/phone-otp';
+import { NotificationsService } from './notifications.service';
+import { SHIPMENT_SMS_STATUSES, shipmentSmsRecipient, shipmentSmsText } from './sms/shipment-sms';
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -27,6 +30,7 @@ export class NotificationSender {
     private readonly sms: SmsSender,
     private readonly logger: LoggerService,
     private readonly lowStockAlerts: LowStockAlertsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async send(jobName: string, data: unknown, idempotencyKey: string): Promise<void> {
@@ -83,6 +87,10 @@ export class NotificationSender {
       }
       case 'shipment.status_changed.v1': {
         const { payload } = data as DomainEventJobData<'shipment.status_changed.v1'>;
+        if (SHIPMENT_SMS_STATUSES.includes(payload.status)) {
+          const { orderId, shipmentId, status } = payload;
+          await this.notifications.queueShipmentSms({ orderId, shipmentId, status }, `${idempotencyKey}-sms`);
+        }
         if (!EMAILED_SHIPMENT_STATUSES.includes(payload.status)) return;
         const order = await this.findOrder(payload.orderId, jobName);
         if (order) {
@@ -197,6 +205,49 @@ export class NotificationSender {
       case 'sms.phone_otp.v1': {
         const { to, code, expiresInMinutes } = data as SmsJobData['sms.phone_otp.v1'];
         return this.sms.send(to, phoneOtpText(code, expiresInMinutes), 'phone_otp');
+      }
+      case 'sms.shipment_milestone.v1': {
+        const { orderId, shipmentId, status } = data as SmsJobData['sms.shipment_milestone.v1'];
+        const shipment = await this.prisma.shipment.findUnique({
+          where: { id: shipmentId },
+          select: {
+            carrier: true,
+            trackingNumber: true,
+            order: {
+              select: {
+                orderNumber: true,
+                contactPhone: true,
+                shippingAddressSnapshot: true,
+                user: { select: { phoneNumber: true, phoneVerifiedAt: true, phoneVerifiedNumber: true } },
+              },
+            },
+          },
+        });
+        if (!shipment) {
+          this.logger.warn(
+            `No SMS sent: shipment not found | orderId: ${orderId} | shipmentId: ${shipmentId}`,
+            CONTEXT,
+          );
+          return;
+        }
+        const { order } = shipment;
+        const addressPhone = (order.shippingAddressSnapshot as { phone?: unknown } | null)?.phone;
+        const to = shipmentSmsRecipient({
+          verifiedPhone: verifiedPhoneOf(order.user),
+          addressPhone: typeof addressPhone === 'string' ? addressPhone : null,
+          contactPhone: order.contactPhone,
+        });
+        if (!to) {
+          this.logger.warn(`No SMS sent: no Ghana phone for the order | orderId: ${orderId}`, CONTEXT);
+          return;
+        }
+        const text = shipmentSmsText({
+          orderNumber: order.orderNumber,
+          status,
+          carrier: shipment.carrier,
+          trackingNumber: shipment.trackingNumber,
+        });
+        return this.sms.send(to, text, `shipment_${status.toLowerCase()}`);
       }
       default:
         throw new Error(`Unknown notification job "${jobName}"`);

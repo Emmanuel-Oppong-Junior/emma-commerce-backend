@@ -16,9 +16,21 @@ const SECTION = {
   items: [{ locationName: 'Main store', productName: 'Kente scarf', sku: 'KS-1', available: 2, threshold: 5 }],
 };
 
+const SHIPMENT = {
+  carrier: 'DHL',
+  trackingNumber: 'TRK1',
+  order: {
+    orderNumber: 1042,
+    contactPhone: '0243333333',
+    shippingAddressSnapshot: { phone: '0242222222' },
+    user: { phoneNumber: null, phoneVerifiedAt: null, phoneVerifiedNumber: null },
+  },
+};
+
 function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND | null = REFUND) {
   const prisma = {
     order: { findUnique: jest.fn().mockResolvedValue(order) },
+    shipment: { findUnique: jest.fn().mockResolvedValue(SHIPMENT) },
     refund: { findUnique: jest.fn().mockResolvedValue(refund) },
     user: { findUnique: jest.fn().mockResolvedValue({ email: 'ama@store.example', isActive: true }) },
   };
@@ -39,15 +51,18 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
     recordPending: jest.fn().mockResolvedValue(true),
     digestSections: jest.fn().mockResolvedValue([SECTION]),
   };
+  const notifications = { queueShipmentSms: jest.fn().mockResolvedValue(undefined) };
   return {
     sms,
     lowStockAlerts,
+    notifications,
     sender: new NotificationSender(
       prisma as never,
       email as never,
       sms as never,
       logger as never,
       lowStockAlerts as never,
+      notifications as never,
     ),
     prisma,
     email,
@@ -151,6 +166,99 @@ describe('NotificationSender', () => {
     );
 
     expect(email.sendOrderStatusEmail).not.toHaveBeenCalled();
+  });
+
+  it.each(['OUT_FOR_DELIVERY', 'DELIVERED'])(
+    'queues the milestone SMS for shipment.status_changed.v1 (%s) under a job id derived from the event',
+    async (status) => {
+      const { sender, notifications, sms } = buildSender();
+
+      await sender.send(
+        'shipment.status_changed.v1',
+        event({ orderId: 'order1', shipmentId: 'ship1', status, trackingNumber: 'TRK1' }),
+        'evt1',
+      );
+
+      expect(notifications.queueShipmentSms).toHaveBeenCalledWith(
+        { orderId: 'order1', shipmentId: 'ship1', status },
+        'evt1-sms',
+      );
+      expect(sms.send).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['READY_FOR_PICKUP', 'FAILED_DELIVERY'])('queues no SMS for %s', async (status) => {
+    const { sender, notifications } = buildSender();
+
+    await sender.send(
+      'shipment.status_changed.v1',
+      event({ orderId: 'order1', shipmentId: 'ship1', status, trackingNumber: null }),
+      'evt1',
+    );
+
+    expect(notifications.queueShipmentSms).not.toHaveBeenCalled();
+  });
+
+  it('texts the shipment milestone to the delivery address phone, reading the shipment when sending', async () => {
+    const { sender, sms, prisma } = buildSender();
+
+    await sender.send(
+      'sms.shipment_milestone.v1',
+      { orderId: 'order1', shipmentId: 'ship1', status: 'OUT_FOR_DELIVERY' },
+      'evt1-sms',
+    );
+
+    expect(prisma.shipment.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'ship1' } }));
+    expect(sms.send).toHaveBeenCalledWith(
+      '+233242222222',
+      'Your order #1042 is out for delivery with DHL. Tracking number: TRK1.',
+      'shipment_out_for_delivery',
+    );
+  });
+
+  it('texts the verified account phone first', async () => {
+    const { sender, sms, prisma } = buildSender();
+    const verified = {
+      phoneNumber: '+233201111111',
+      phoneVerifiedAt: new Date(),
+      phoneVerifiedNumber: '+233201111111',
+    };
+    prisma.shipment.findUnique.mockResolvedValue({ ...SHIPMENT, order: { ...SHIPMENT.order, user: verified } });
+
+    await sender.send(
+      'sms.shipment_milestone.v1',
+      { orderId: 'order1', shipmentId: 'ship1', status: 'DELIVERED' },
+      'j',
+    );
+
+    expect(sms.send).toHaveBeenCalledWith(
+      '+233201111111',
+      'Your order #1042 has been delivered. Thank you for shopping with us.',
+      'shipment_delivered',
+    );
+  });
+
+  it('sends no milestone SMS, with a warning naming ids only, when the shipment is gone or no phone is usable', async () => {
+    const { sender, sms, prisma, logger } = buildSender();
+    prisma.shipment.findUnique.mockResolvedValueOnce(null);
+    await sender.send(
+      'sms.shipment_milestone.v1',
+      { orderId: 'order1', shipmentId: 'ship1', status: 'DELIVERED' },
+      'j',
+    );
+    prisma.shipment.findUnique.mockResolvedValueOnce({
+      ...SHIPMENT,
+      order: { ...SHIPMENT.order, contactPhone: '+15550100', shippingAddressSnapshot: null },
+    });
+    await sender.send(
+      'sms.shipment_milestone.v1',
+      { orderId: 'order1', shipmentId: 'ship1', status: 'DELIVERED' },
+      'j',
+    );
+
+    expect(sms.send).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    for (const [message] of logger.warn.mock.calls as [string][]) expect(message).not.toContain('5550100');
   });
 
   it('sends the SHIPPED email for shipment.tracking_updated.v1', async () => {

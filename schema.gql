@@ -2309,6 +2309,11 @@ type Order {
 
   """Status history (tracking timeline), oldest first"""
   timeline: [OrderStatusEvent!]!
+
+  """
+  Customer tracking timeline (P5-B.2): order and shipment status changes, oldest first; poll it for updates
+  """
+  trackingTimeline: [TrackingStep!]!
   updatedAt: DateTime!
   user: User
   userId: ID!
@@ -5082,6 +5087,18 @@ type TopProduct {
 
   """Item sales of this product in paid orders (unit price paid x quantity)"""
   totalRevenue: Money!
+}
+
+"""
+One step of the tracking timeline: an order status (orderStatus set) or a shipment status (shipmentId and shipmentStatus set, with the shipment’s carrier and tracking number)
+"""
+type TrackingStep {
+  at: DateTime!
+  carrier: String
+  orderStatus: OrderStatus
+  shipmentId: ID
+  shipmentStatus: ShipmentStatus
+  trackingNumber: String
 }
 
 input TransferLineSerialsInput {

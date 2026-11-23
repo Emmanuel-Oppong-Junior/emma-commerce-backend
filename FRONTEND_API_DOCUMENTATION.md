@@ -1483,7 +1483,8 @@ All order operations require `Bearer` JWT.
   user?: User;                                 // Owner or admin only (FORBIDDEN otherwise)
   status: OrderStatus;                         // PLACED | CONFIRMED | IN_FULFILMENT | COMPLETED | CANCELLED | EXPIRED | PAYMENT_REVIEW
   paymentStatus?: OrderPaymentStatus;          // PENDING | CAPTURED | PARTIALLY_REFUNDED | REFUNDED | FAILED | CANCELLED; null before any payment
-  timeline: OrderStatusEvent[];                // Status history, oldest first (the customer's tracking timeline)
+  timeline: OrderStatusEvent[];                // Status history, oldest first
+  trackingTimeline: TrackingStep[];            // P5-B.2: the customer's tracking timeline, oldest first: order steps { at, orderStatus } and every shipment's steps { at, shipmentId, shipmentStatus, carrier, trackingNumber }; no actor or staff reason. Poll it (no subscription); on a tie order steps come first, so the order is stable
   shipments: Shipment[];                       // P5-B.1: several when split; empty until staff create one (createShipment). Each: id, orderId, status, items [{ id, orderItemId, quantity }], carrier, trackingNumber, dispatchedAt, deliveredAt, cancelledAt, events
   refunds: OrderRefund[];                      // P3-C.1: refunds of the order, oldest first (see below)
   fulfillmentType: FulfillmentType;            // DELIVERY | PICKUP
@@ -1619,6 +1620,8 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 ```
 
 **`OrderPaymentStatus` Enum**: the order's payment machine. `PENDING` (awaiting payment), `CAPTURED` (paid; Paystack captures at once, there is no authorised step), `PARTIALLY_REFUNDED` / `REFUNDED` (processed refunds of that payment), `FAILED` (the last attempt failed; a new attempt reopens it), `CANCELLED` (the order closed before payment).
+
+**New (P5-B.2):** `Order.trackingTimeline: [TrackingStep!]!` (`TrackingStep { at, orderStatus, shipmentId, shipmentStatus, carrier, trackingNumber }`); SMS milestones at dispatch and delivery. No guest tracking lookup (guest checkout is Phase 6).
 
 **Breaking changes (P5-B.1, split shipments):** `updateShipmentStatus` and `updateShipping` take `shipmentId` instead of `orderId`, and no longer create the shipment: create it first with `createShipment` (new; without `items` it ships everything). `assignOrderItemSerials` / `unassignOrderItemSerials` (`OrderItemSerialsInput { orderItemId }`) → `assignShipmentItemSerials` / `unassignShipmentItemSerials` (`ShipmentItemSerialsInput { shipmentItemId }`). The `SERIALS_NOT_ASSIGNED` lines now carry `shipmentItemId`. New: `cancelShipment`, `orderShipments`, `Shipment.orderId`, `Shipment.items` (`ShipmentItem`), `Shipment.cancelledAt`, `ShipmentStatus.CANCELLED`.
 
@@ -4709,6 +4712,7 @@ All notifications are **email-only** via Resend. There are no in-app notificatio
 | Email change requested (`updateMyProfile` / `updateUser` with a new email) | Verification token to the new address, and a notice to the current address | Both addresses |
 | Order created | Order confirmation | Account email (not `contactEmail`) |
 | Shipment dispatched (`OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`), order `COMPLETED` (`updateShipmentStatus(DELIVERED)` or `recordCodPayment`), or `updateShipping` with a tracking number | Status update (with tracking number when set) | Account email |
+| P5-B.2: a shipment goes `OUT_FOR_DELIVERY` (with carrier and tracking number when set), or is `DELIVERED` (also through `recordCodPayment`); one SMS per shipment and milestone, never repeated | SMS ("Your order #1042 is out for delivery with DHL. Tracking number: …" / "… has been delivered") | The account's verified phone, else the delivery address phone, else the checkout contact phone (Ghana numbers only; none usable: no SMS). `READY_FOR_PICKUP` gets no SMS here (pickup flow) |
 | Online payment confirmed (webhook, `verifyPayment` or sweep), once per order | Payment confirmation | Account email |
 | `forgotPassword` for an existing account | Password reset token | Requesting address |
 | A refund processed (`refundOrder`, `processRefund`, `processPendingRefund`; P3-C.1) | Refund: amount, reason label, refunded lines and delivery fee | Account email |
