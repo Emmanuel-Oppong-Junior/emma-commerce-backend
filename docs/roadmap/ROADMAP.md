@@ -27,7 +27,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
 | 4 — Inventory | 7 / 7 | ✅ complete |
-| 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
+| 5 — Delivery & fulfilment | 0 / 8 | 🔄 in progress |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
@@ -387,14 +387,14 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ## Phase 5 — Delivery & fulfilment
 
-### P5-A — Rates
+### P5-A — Rates  🔄 in progress
 > Run: → · M · 🟥 A.1 / 🟧 A.2
-- [ ] **P5-A.1** `DeliveryZone`/`ZoneArea`/`RateRule` (flat, by zone, by weight/size, free above threshold) replacing city strings (M9)
+- [ ] 🔄 **P5-A.1** `DeliveryZone`/`ZoneArea`/`RateRule` (flat, by zone, by weight/size, free above threshold) replacing city strings (M9)
 - [ ] **P5-A.2** Delivery slots (date/time windows)
 
-### P5-B — Shipments
+### P5-B — Shipments  🔄 in progress
 > Run: → · L · 🟥
-- [ ] **P5-B.1** `Shipment` + items (split/partial fulfilment) + status timeline
+- [ ] 🔄 **P5-B.1** `Shipment` + items (split/partial fulfilment) + status timeline
 - [ ] **P5-B.2** Customer-visible tracking timeline (polling + SMS milestones)
 
 ### P5-C — Riders & POD

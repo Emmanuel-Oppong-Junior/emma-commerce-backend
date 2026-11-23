@@ -2,10 +2,14 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-23 · **Current phase:** Phase 4 — Inventory (started 2026-11-22, Emmanuel; done 2026-11-23, 7/7); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-23 · **Current phase:** Phase 5 — Delivery & fulfilment (started 2026-11-23, Emmanuel; 0/8; P5-D couriers deferred until a client needs one); Phase 4 — Inventory (started 2026-11-22, Emmanuel; done 2026-11-23, 7/7); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Phase 4 is complete. Next phase needs Emmanuel's go-ahead (Phase 5 delivery & fulfilment depends on 1 and 4, both done except P1-K.2–K.4).
+Two lanes in worktrees (agents), from the start commit:
+- **Lane A: P5-A.1 rates → P5-A.2 delivery slots → P5-E.1 pickup points** · branch `feat/p5-a-rates` · DB `emma_wt_rates_test`, Redis DB 13 · **State:** in progress
+- **Lane B: P5-B.1 split shipments + timeline → P5-B.2 customer tracking + SMS milestones** · branch `feat/p5-b-shipments` · DB `emma_wt_shipments_test`, Redis DB 12 · **State:** in progress
+  - Then P5-C.1 riders → P5-C.2 proof of delivery (after lane B). P5-D couriers deferred.
+  - [ ] A (agent) ← **Next step** · [ ] B (agent) · [ ] merge both, gates + full e2e, push · [ ] P5-C
 
 **Last completed: P4-E.1 Purchasing (2026-11-23)** (ADR-0008, ADR-0013; no audit findings closed): `d41df4b` `58d2f78` (additive, no `[breaking-api]`), fast-forwarded into dev (agent stalled once on a stream timeout and was resumed). P4-E ✅, Phase 4 ✅.
   - Suppliers (`nameKey` unique case-insensitively; store currency only; deactivate, delete refused once referenced). `PurchaseOrder` ("PO-" + serial number; destination location) + lines (tax-exclusive unit cost, 4 dp): DRAFT → SENT | CANCELLED; SENT → PARTIALLY_RECEIVED | RECEIVED | CANCELLED (nothing received); PARTIALLY_RECEIVED → RECEIVED | CLOSED (closed short, reason required); lines/supplier/location DRAFT-only, expected date and note editable until final; conditional claims (CONFLICT). Receipts (`PurchaseOrderReceipt` + lines, PO row `FOR UPDATE`, conditional line increments, CHECK received <= ordered, no over-receipt) write RECEIPT movements (refType `PurchaseOrder`, `StockMovement.unitCost`); lot lines through `LotsService.receiveIntoLot`, serial lines through `SerialUnitsService.receive`. Weighted-average `Variant.costPrice` store-wide (variants locked in id order; 4 dp half-up; null/<=0 on hand → unit cost) with append-only `CostChange`; other stock paths don't change cost. `setVariantCost` (`purchasing.manage` + `inventory.cost.view`, reason) sets or corrects the cost at any time (Emmanuel 2026-11-23: the PO-costed refusal was removed in the follow-up commit). Permissions: `purchasing.view`/`purchasing.receive` (Owner, Manager, InventoryClerk), `purchasing.manage`/`inventory.cost.view` (Owner, Manager); cost fields null + field FORBIDDEN without `inventory.cost.view`; no step-up. Expiring-stock and stock-take variance reports gain cost values. Audited (receipts list serial counts, never serial lists). Migration `20261205100000_purchasing`.
@@ -186,7 +190,7 @@ None. Phase 4 is complete. Next phase needs Emmanuel's go-ahead (Phase 5 deliver
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | Next phase (Phase 5 delivery & fulfilment, or Phase 6/8) | → | Emmanuel's go-ahead |
+| 1 | Phase 5: lane A (A.1 → A.2 → E.1) ∥ lane B (B.1 → B.2), then P5-C.1 → C.2 | ∥ → | C after B (shipments) |
 | 2 | P3-C.2 MoMo refunds · P3-D Flutterwave | → | Paystack MoMo-refund confirmation · Flutterwave account |
 | 3 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
 | 4 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |
@@ -243,6 +247,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 | Date | Decision | Where recorded |
 |---|---|---|
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
+| 2026-11-23 | Phase 5 started. Zones match region + towns/areas (most specific wins, overlaps rejected, no match = delivery refused, never free); rates: base per zone + optional weight bands + free-above threshold, standard/express as rate rules; POD: SMS delivery code at dispatch + optional photo, staff override with reason; build all of Phase 5 except couriers (P5-D deferred) | STATUS (Phase 5) |
 | 2026-11-23 | P4-E: `setVariantCost` may correct a cost purchase orders set (no `COST_FROM_PURCHASES` refusal); later receipts average from the corrected cost | STATUS (P4-E) |
 | 2026-11-22 | P4-C/D/E: lots and expiry opt-in per product (lot + expiry on receipt, FEFO, expired unsellable); serials opt-in per product, recorded at receipt and picked at dispatch; purchasing: suppliers, POs DRAFT → SENT → PARTIALLY/RECEIVED into a location or CANCELLED, no approval; weighted-average unit cost per variant | STATUS (P4-C/D/E) |
 | 2026-11-22 | Phase 4 started. P4-A: one location per order by priority (zone / pickup point), two-step transfers. P4-B: count sessions + Manager approval, fixed adjustment reasons, low-stock email digest (`inventory.alerts`) | STATUS (P4-A/B) |
