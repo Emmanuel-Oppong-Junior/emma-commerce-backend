@@ -275,6 +275,7 @@ describe('expiringStockLines', () => {
     productId: 'prod1',
     productName: 'Milk',
     price: new Prisma.Decimal('12.50'),
+    costPrice: null,
     locationId: 'main',
     locationName: 'Main',
     onHand: 4,
@@ -305,6 +306,17 @@ describe('expiringStockLines', () => {
     });
     expect(lines[1].value?.toFixed(2)).toBe('62.50');
     expect(lines[1]).not.toHaveProperty('createdAt');
+  });
+
+  it('values the units at the weighted-average cost too, null when the cost is unknown (P4-E.1)', () => {
+    const [costed, uncosted] = expiringStockLines(
+      [row({ costPrice: new Prisma.Decimal('7.1234'), onHand: 3 }), row({ lotId: 'lot2', expiresAt: day(9) })],
+      NOW,
+    );
+
+    expect(costed.unitCost?.toFixed(4)).toBe('7.1234');
+    expect(costed.costValue?.toFixed(4)).toBe('21.3702');
+    expect(uncosted).toMatchObject({ unitCost: null, costValue: null });
   });
 
   it('leaves out rows without units', () => {

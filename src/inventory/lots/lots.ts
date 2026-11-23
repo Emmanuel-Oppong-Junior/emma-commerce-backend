@@ -223,6 +223,8 @@ export interface ExpiringLotRow {
   productId: string;
   productName: string;
   price: Prisma.Decimal | null;
+  /** Weighted-average unit cost (P4-E.1); null when unknown */
+  costPrice: Prisma.Decimal | null;
   locationId: string;
   locationName: string;
   onHand: number;
@@ -241,11 +243,14 @@ export interface ExpiringStockLine {
   locations: { locationId: string; locationName: string; onHand: number }[];
   onHand: number;
   unitPrice: Prisma.Decimal | null;
-  /** onHand at the variant's current selling price (cost arrives with purchasing) */
+  /** onHand at the variant's current selling price */
   value: Prisma.Decimal | null;
+  unitCost: Prisma.Decimal | null;
+  /** onHand at the variant's weighted-average cost (P4-E.1); null when the cost is unknown */
+  costValue: Prisma.Decimal | null;
 }
 
-/** Groups the rows per lot (locations by name), soonest expiry first, with the units valued at the current price. */
+/** Groups the rows per lot (locations by name), soonest expiry first, with the units valued at price and at cost. */
 export function expiringStockLines(rows: readonly ExpiringLotRow[], now: Date): ExpiringStockLine[] {
   const lines = new Map<string, ExpiringStockLine>();
   const receivedAt = new Map<string, Date>();
@@ -267,6 +272,8 @@ export function expiringStockLines(rows: readonly ExpiringLotRow[], now: Date): 
         onHand: 0,
         unitPrice: row.price,
         value: null,
+        unitCost: row.costPrice,
+        costValue: null,
       };
       lines.set(row.lotId, line);
       receivedAt.set(row.lotId, row.lotCreatedAt);
@@ -281,5 +288,6 @@ export function expiringStockLines(rows: readonly ExpiringLotRow[], now: Date): 
       ...line,
       locations: line.locations.sort((a, b) => a.locationName.localeCompare(b.locationName)),
       value: line.unitPrice ? line.unitPrice.mul(line.onHand) : null,
+      costValue: line.unitCost ? line.unitCost.mul(line.onHand) : null,
     }));
 }

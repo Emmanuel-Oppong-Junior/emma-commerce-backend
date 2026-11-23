@@ -20,6 +20,8 @@ export interface StockTakeLineFacts {
   variance: number | null;
   /** The variant's current price (tax-inclusive); null when it has none */
   unitPrice: Decimal | null;
+  /** The variant's weighted-average cost (P4-E.1); null when unknown */
+  unitCost: Decimal | null;
 }
 
 export interface VarianceReportLine {
@@ -34,6 +36,9 @@ export interface VarianceReportLine {
   variance: number;
   unitPrice: Decimal | null;
   varianceValue: Decimal | null;
+  unitCost: Decimal | null;
+  /** variance × unitCost; null when the cost is unknown */
+  varianceCostValue: Decimal | null;
 }
 
 export interface VarianceTotals {
@@ -47,6 +52,10 @@ export interface VarianceTotals {
   shortageValue: Decimal;
   surplusValue: Decimal;
   netVarianceValue: Decimal;
+  /** At cost, over the lines whose cost is known */
+  shortageCostValue: Decimal;
+  surplusCostValue: Decimal;
+  netVarianceCostValue: Decimal;
 }
 
 export interface VarianceReport {
@@ -61,8 +70,8 @@ function isCounted(
 }
 
 /**
- * The counted lines with their variance and its value at the variant's current price (cost is not tracked yet), and
- * totals over the session. Uncounted lines are only counted: approval leaves their stock as it is.
+ * The counted lines with their variance valued at the variant's current price and at its weighted-average cost
+ * (P4-E.1; lines of unknown price or cost add nothing to those totals), and totals over the session. Uncounted lines are only counted: approval leaves their stock as it is.
  */
 export function varianceReport(lines: StockTakeLineFacts[]): VarianceReport {
   const zero = new Decimal(0);
@@ -77,6 +86,9 @@ export function varianceReport(lines: StockTakeLineFacts[]): VarianceReport {
     shortageValue: zero,
     surplusValue: zero,
     netVarianceValue: zero,
+    shortageCostValue: zero,
+    surplusCostValue: zero,
+    netVarianceCostValue: zero,
   };
   const reported: VarianceReportLine[] = [];
   for (const line of lines) {
@@ -86,6 +98,12 @@ export function varianceReport(lines: StockTakeLineFacts[]): VarianceReport {
     }
     totals.countedCount += 1;
     const varianceValue = line.unitPrice ? line.unitPrice.mul(line.variance) : null;
+    const varianceCostValue = line.unitCost ? line.unitCost.mul(line.variance) : null;
+    if (varianceCostValue && line.variance < 0) {
+      totals.shortageCostValue = totals.shortageCostValue.sub(varianceCostValue);
+    } else if (varianceCostValue) {
+      totals.surplusCostValue = totals.surplusCostValue.add(varianceCostValue);
+    }
     if (line.variance !== 0) totals.linesWithVariance += 1;
     if (line.variance < 0) {
       totals.shortageUnits -= line.variance;
@@ -105,10 +123,13 @@ export function varianceReport(lines: StockTakeLineFacts[]): VarianceReport {
       variance: line.variance,
       unitPrice: line.unitPrice,
       varianceValue,
+      unitCost: line.unitCost,
+      varianceCostValue,
     });
   }
   totals.netVarianceUnits = totals.surplusUnits - totals.shortageUnits;
   totals.netVarianceValue = totals.surplusValue.sub(totals.shortageValue);
+  totals.netVarianceCostValue = totals.surplusCostValue.sub(totals.shortageCostValue);
   return { lines: reported, totals };
 }
 

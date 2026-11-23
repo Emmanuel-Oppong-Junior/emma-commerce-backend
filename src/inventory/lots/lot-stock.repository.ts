@@ -204,7 +204,7 @@ export class LotStockRepository {
   async findExpiringRows(filter: ExpiringFilter): Promise<ExpiringLotRow[]> {
     return this.prisma.$queryRaw<ExpiringLotRow[]>`
       SELECT lt."id" AS "lotId", lt."lotNumber", lt."expiresAt", lt."manufacturedAt", lt."createdAt" AS "lotCreatedAt",
-             v."id" AS "variantId", v."sku", p."id" AS "productId", p."name" AS "productName", v."price",
+             v."id" AS "variantId", v."sku", p."id" AS "productId", p."name" AS "productName", v."price", v."costPrice",
              l."id" AS "locationId", l."name" AS "locationName", ls."onHand"
       FROM "LotStock" ls
       JOIN "Lot" lt ON lt."id" = ls."lotId"

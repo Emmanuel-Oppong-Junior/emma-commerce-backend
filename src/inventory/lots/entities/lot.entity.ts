@@ -1,6 +1,8 @@
 import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { Decimal } from '@prisma/client/runtime/client';
 import { MoneyObject } from '../../../commons/money/money.object';
+import { GraphQLDecimal } from '../../../commons/money/decimal.scalar';
+import { COST_VIEWERS_ONLY } from '../../../purchasing/cost/cost-visibility';
 
 @ObjectType({ description: 'Units of a lot at one stock location' })
 export class LotLocationStock {
@@ -84,7 +86,19 @@ export class ExpiringStockLine {
 
   @Field(() => MoneyObject, {
     nullable: true,
-    description: 'onHand at the current selling price (cost value comes with purchasing); null when unpriced',
+    description: 'onHand at the current selling price; null when unpriced',
   })
   value: Decimal | null;
+
+  @Field(() => GraphQLDecimal, {
+    ...COST_VIEWERS_ONLY,
+    description: 'The variant’s weighted-average unit cost, 4 dp; null when unknown (inventory.cost.view)',
+  })
+  unitCost: Decimal | null;
+
+  @Field(() => MoneyObject, {
+    ...COST_VIEWERS_ONLY,
+    description: 'onHand at the weighted-average cost; null when the cost is unknown (inventory.cost.view)',
+  })
+  costValue: Decimal | null;
 }

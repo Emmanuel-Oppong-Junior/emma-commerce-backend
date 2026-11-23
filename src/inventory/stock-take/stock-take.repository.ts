@@ -255,7 +255,7 @@ export class StockTakeRepository {
         expectedQuantity: true,
         countedQuantity: true,
         variance: true,
-        variant: { select: { sku: true, price: true, product: { select: { name: true } } } },
+        variant: { select: { sku: true, price: true, costPrice: true, product: { select: { name: true } } } },
       },
       orderBy: { variant: { sku: 'asc' } },
     });
@@ -264,6 +264,7 @@ export class StockTakeRepository {
       sku: variant.sku,
       productName: variant.product.name,
       unitPrice: variant.price,
+      unitCost: variant.costPrice,
     }));
   }
 }

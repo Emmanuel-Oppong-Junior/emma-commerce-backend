@@ -1,5 +1,8 @@
 import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
+import { Decimal } from '@prisma/client/runtime/client';
 import { StockAdjustmentReason, StockMovementReason } from '../../generated/prisma/client';
+import { GraphQLDecimal } from '../../commons/money/decimal.scalar';
+import { COST_VIEWERS_ONLY } from '../../purchasing/cost/cost-visibility';
 
 registerEnumType(StockMovementReason, {
   name: 'StockMovementReason',
@@ -78,6 +81,12 @@ export class StockMovement {
     description: 'The lot moved (lot-tracked variants, P4-C.1): one movement per lot',
   })
   lotId: string | null;
+
+  @Field(() => GraphQLDecimal, {
+    ...COST_VIEWERS_ONLY,
+    description: 'Unit cost, 4 dp: RECEIPT movements of a purchase-order receipt only (inventory.cost.view)',
+  })
+  unitCost: Decimal | null;
 
   @Field()
   createdAt: Date;

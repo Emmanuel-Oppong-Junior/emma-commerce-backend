@@ -39,6 +39,8 @@ export interface MovementSource {
   actorId?: string;
   note?: string;
   adjustmentReason?: StockAdjustmentReason;
+  /** What one unit cost: purchase-order receipts only (P4-E.1; a CHECK allows it on RECEIPT movements only) */
+  unitCost?: Prisma.Decimal;
 }
 
 /**

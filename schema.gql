@@ -213,6 +213,10 @@ type Brand {
   updatedAt: DateTime!
 }
 
+input CancelPurchaseOrderInput {
+  reason: String
+}
+
 input CancelStockTransferInput {
   reason: String
 }
@@ -461,6 +465,11 @@ input ClearOrderReviewFlagsInput {
   orderId: ID!
 }
 
+input ClosePurchaseOrderInput {
+  """Why the outstanding units will not arrive"""
+  reason: String!
+}
+
 """A phone number or delivery address refused cash on delivery"""
 type CodBlacklistEntryEntity {
   createdAt: DateTime!
@@ -611,6 +620,46 @@ input CompleteMfaSignInInput {
 
   """A 6-digit authenticator code or an unused recovery code"""
   code: String!
+}
+
+"""
+One entry of a variant's append-only cost history (inventory.cost.view)
+"""
+type CostChange {
+  """The staff member who made or received it"""
+  actorId: ID
+  createdAt: DateTime!
+  currency: Currency!
+  id: ID!
+
+  """Unit cost after, 4 dp, tax-exclusive"""
+  newValue: Decimal!
+
+  """Unit cost before, 4 dp; null when it was unknown"""
+  oldValue: Decimal
+  reason: String
+  refId: ID
+
+  """What caused it, e.g. PurchaseOrderReceipt"""
+  refType: String
+  source: CostChangeSource!
+  variantId: ID!
+}
+
+type CostChangePage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [CostChange!]!
+  totalCount: Int!
+}
+
+"""What changed a variant's weighted-average cost (P4-E.1)"""
+enum CostChangeSource {
+  """Set by staff for a variant never bought through a purchase order"""
+  MANUAL
+
+  """A delivery received against a purchase order"""
+  PURCHASE_ORDER
 }
 
 """A code that unlocks a promotion at checkout (staff view)"""
@@ -987,6 +1036,21 @@ input CreatePromotionInput {
   value: Decimal
 }
 
+input CreatePurchaseOrderInput {
+  """When the supplier should deliver"""
+  expectedAt: DateTime
+
+  """1-100 lines, one per variant"""
+  lines: [PurchaseOrderLineInput!]!
+
+  """The active stock location the goods are received at"""
+  locationId: ID!
+  note: String
+
+  """An active supplier"""
+  supplierId: ID!
+}
+
 input CreateReturnRequestInput {
   orderId: ID!
   reason: String!
@@ -1056,6 +1120,23 @@ input CreateSubCategoryInput {
 
   """The name of the subcategory (e.g., "Shirts")"""
   name: String!
+}
+
+input CreateSupplierInput {
+  address: String
+  contactName: String
+
+  """Defaults to the store currency, the only one allowed"""
+  currency: Currency
+  email: String
+
+  """Defaults to true on creation"""
+  isActive: Boolean
+
+  """Unique ignoring case"""
+  name: String!
+  notes: String
+  phone: String
 }
 
 input CreateTaxInput {
@@ -1316,6 +1397,11 @@ A lot with stock expiring soon (or already expired), for the expiring-stock repo
 """
 type ExpiringStockLine {
   """
+  onHand at the weighted-average cost; null when the cost is unknown (inventory.cost.view)
+  """
+  costValue: Money
+
+  """
   Expired and not yet written off (units held for orders, or before the next expiry run)
   """
   expired: Boolean!
@@ -1333,12 +1419,15 @@ type ExpiringStockLine {
   productName: String!
   sku: String!
 
+  """
+  The variant’s weighted-average unit cost, 4 dp; null when unknown (inventory.cost.view)
+  """
+  unitCost: Decimal
+
   """The variant’s current selling price"""
   unitPrice: Money
 
-  """
-  onHand at the current selling price (cost value comes with purchasing); null when unpriced
-  """
+  """onHand at the current selling price; null when unpriced"""
   value: Money
   variantId: ID!
 }
@@ -1576,6 +1665,9 @@ type Mutation {
   """Cancels the authenticated user's own order and restores stock"""
   cancelOrder(orderId: String!, reason: String): Order!
 
+  """Cancel a DRAFT or SENT purchase order nothing was received on (staff)"""
+  cancelPurchaseOrder(id: ID!, input: CancelPurchaseOrderInput): PurchaseOrder!
+
   """Cancel an OPEN or SUBMITTED stock-take; no stock moves"""
   cancelStockTake(id: ID!, reason: String): StockTake!
 
@@ -1595,6 +1687,11 @@ type Mutation {
 
   """Clears the user’s wishlist"""
   clearWishlist: Wishlist!
+
+  """
+  Close a partly received purchase order short: the outstanding units will not come (staff)
+  """
+  closePurchaseOrder(id: ID!, input: ClosePurchaseOrderInput!): PurchaseOrder!
 
   """
   Finish a sign-in that failed with extensions.reason MFA_REQUIRED, using its extensions.mfaChallenge and an authenticator or recovery code
@@ -1637,6 +1734,9 @@ type Mutation {
   """Admin: create a promotion"""
   createPromotion(input: CreatePromotionInput!): Promotion!
 
+  """Create a DRAFT purchase order (staff)"""
+  createPurchaseOrder(input: CreatePurchaseOrderInput!): PurchaseOrder!
+
   """Create a return request for a delivered order"""
   createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
 
@@ -1662,6 +1762,9 @@ type Mutation {
     """Input data for the new subcategory"""
     input: CreateSubCategoryInput!
   ): SubCategory!
+
+  """Add a supplier; names are unique ignoring case (staff)"""
+  createSupplier(input: CreateSupplierInput!): Supplier!
 
   """Creates a new tag"""
   createTag(name: String!): Tag!
@@ -1718,6 +1821,11 @@ type Mutation {
   """
   deleteStockLocation(id: ID!): StockLocation!
 
+  """
+  Delete a supplier no purchase order refers to; otherwise deactivate it (staff)
+  """
+  deleteSupplier(id: ID!): Supplier!
+
   """Deletes a tag"""
   deleteTag(tagId: String!): Tag!
 
@@ -1755,6 +1863,11 @@ type Mutation {
 
   """Process a refund for an approved return (admin only)"""
   processRefund(returnRequestId: ID!): ReturnRequestEntity!
+
+  """
+  Receive a delivery against a sent purchase order into its location; lot-tracked lines name their lot, serial-tracked lines their serials (staff)
+  """
+  receivePurchaseOrder(id: ID!, input: ReceivePurchaseOrderInput!): PurchaseOrder!
 
   """
   Receive a dispatched transfer at the destination, recording any shortfall per line (staff)
@@ -1865,6 +1978,11 @@ type Mutation {
   retryFailedJob(jobId: ID!, queue: JobQueue!): FailedJob!
 
   """
+  Mark a DRAFT as sent to the supplier (no email is sent); its lines are frozen (staff)
+  """
+  sendPurchaseOrder(id: ID!): PurchaseOrder!
+
+  """
   Store the Paystack keys for this store, encrypted, replacing any earlier ones; they take precedence over PAYSTACK_SECRET_KEY and sign-check webhooks from then on. Owner, recent step-up, audited without the secret
   """
   setPaystackConfig(input: SetPaystackConfigInput!): PaymentSettings!
@@ -1888,6 +2006,11 @@ type Mutation {
   Set the locations that fulfil deliveries to a shipping zone, first tried first (staff)
   """
   setShippingZoneFulfilmentLocations(input: FulfilmentLocationsInput!, shippingZoneId: ID!): [StockLocation!]!
+
+  """
+  Set the unit cost of a variant never bought through a purchase order, with a reason (staff)
+  """
+  setVariantCost(input: SetVariantCostInput!): CostChange!
 
   """Sign in an existing user with email and password"""
   signIn(input: SignInInput!): AuthEntity!
@@ -1985,6 +2108,11 @@ type Mutation {
   """Admin: change a promotion"""
   updatePromotion(id: ID!, input: UpdatePromotionInput!): Promotion!
 
+  """
+  Edit a purchase order: lines, supplier and location only in DRAFT (staff)
+  """
+  updatePurchaseOrder(id: ID!, input: UpdatePurchaseOrderInput!): PurchaseOrder!
+
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
 
@@ -2022,6 +2150,9 @@ type Mutation {
     """Updated data for the subcategory"""
     input: UpdateSubCategoryInput!
   ): SubCategory!
+
+  """Edit a supplier; isActive: false deactivates it (staff)"""
+  updateSupplier(id: ID!, input: UpdateSupplierInput!): Supplier!
 
   """Updates an existing tag"""
   updateTag(name: String!, tagId: String!): Tag!
@@ -3069,6 +3200,139 @@ type PublicPromotion {
   name: String!
 }
 
+"""
+Goods ordered from a supplier for one stock location (staff with purchasing.view)
+"""
+type PurchaseOrder {
+  cancelReason: String
+  cancelledAt: DateTime
+  cancelledById: ID
+  closeReason: String
+  closedAt: DateTime
+  closedById: ID
+  createdAt: DateTime!
+  createdById: ID!
+  currency: Currency!
+  expectedAt: DateTime
+  id: ID!
+  lines: [PurchaseOrderLine!]!
+
+  """Where the goods are received"""
+  locationId: ID!
+  note: String
+  number: Int!
+
+  """Deliveries, oldest first"""
+  receipts: [PurchaseOrderReceipt!]!
+
+  """Value received so far at cost (inventory.cost.view)"""
+  receivedCost: Money
+
+  """Human-readable and unique, e.g. PO-00042"""
+  reference: String!
+  sentAt: DateTime
+  sentById: ID
+  status: PurchaseOrderStatus!
+  supplier: Supplier!
+  supplierId: ID!
+
+  """Sum of the line costs (inventory.cost.view)"""
+  totalCost: Money
+  updatedAt: DateTime!
+}
+
+type PurchaseOrderLine {
+  id: ID!
+
+  """unitCost × quantityOrdered (inventory.cost.view)"""
+  lineCost: Money
+  quantityOrdered: Int!
+
+  """quantityOrdered - quantityReceived"""
+  quantityOutstanding: Int!
+  quantityReceived: Int!
+
+  """Tax-exclusive cost of one unit, 4 dp (inventory.cost.view)"""
+  unitCost: Decimal
+  variantId: ID!
+}
+
+input PurchaseOrderLineInput {
+  """Units ordered, at least 1"""
+  quantity: Int!
+
+  """
+  Tax-exclusive cost of one unit in the store currency, at most 4 decimal places
+  """
+  unitCost: Decimal!
+  variantId: ID!
+}
+
+type PurchaseOrderPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [PurchaseOrder!]!
+  totalCount: Int!
+}
+
+"""One delivery received against a purchase order"""
+type PurchaseOrderReceipt {
+  """Value of the delivery at cost (inventory.cost.view)"""
+  cost: Money
+  id: ID!
+  lines: [PurchaseOrderReceiptLine!]!
+  note: String
+  receivedAt: DateTime!
+  receivedById: ID!
+}
+
+type PurchaseOrderReceiptLine {
+  """unitCost × quantity (inventory.cost.view)"""
+  cost: Money
+  id: ID!
+
+  """The purchase order line received against"""
+  lineId: ID!
+
+  """The lot the units went into (lot-tracked variants)"""
+  lotId: ID
+
+  """The (first) RECEIPT stock movement written for these units"""
+  movementId: ID!
+  quantity: Int!
+
+  """Unit cost, 4 dp (inventory.cost.view)"""
+  unitCost: Decimal
+  variantId: ID!
+}
+
+"""Where a purchase order stands (P4-E.1)"""
+enum PurchaseOrderStatus {
+  """Cancelled before anything arrived"""
+  CANCELLED
+
+  """
+  Closed short after a partial delivery; the outstanding units will not come
+  """
+  CLOSED
+
+  """
+  Being prepared; supplier, location and lines can change. Send or cancel it
+  """
+  DRAFT
+
+  """Some units arrived; receive the rest or close it short"""
+  PARTIALLY_RECEIVED
+
+  """Every unit arrived"""
+  RECEIVED
+
+  """
+  Sent to the supplier; lines are frozen. Receive deliveries, or cancel while nothing arrived
+  """
+  SENT
+}
+
 type Query {
   """Get all active pickup locations (public)"""
   activePickupLocations: [PickupLocationEntity!]!
@@ -3275,6 +3539,34 @@ type Query {
   """Admin: promotions, newest first, optionally filtered"""
   promotions(isActive: Boolean, scope: PromotionScope): [Promotion!]!
 
+  """A purchase order with its lines and receipts (staff)"""
+  purchaseOrder(id: ID!): PurchaseOrder!
+
+  """
+  Purchase orders, newest first, by status, supplier, location, variant or creation date (staff)
+  """
+  purchaseOrders(
+    """Id of the last purchase order of the previous page"""
+    after: ID
+
+    """Created at or after"""
+    createdFrom: DateTime
+
+    """Created before"""
+    createdTo: DateTime
+
+    """1-100"""
+    first: Int! = 50
+
+    """Orders received at this location"""
+    locationId: ID
+    status: PurchaseOrderStatus
+    supplierId: ID
+
+    """Orders with a line of this variant"""
+    variantId: ID
+  ): PurchaseOrderPage!
+
   """Admin: promotion uses by orders, newest first"""
   redemptions(
     """Id of the last redemption of the previous page"""
@@ -3419,6 +3711,24 @@ type Query {
     id: String!
   ): SubCategory
 
+  """A supplier (staff)"""
+  supplier(id: ID!): Supplier!
+
+  """Suppliers by name, optionally active only or matching a search (staff)"""
+  suppliers(
+    """Id of the last supplier of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+
+    """Only active (true) or inactive (false) suppliers"""
+    isActive: Boolean
+
+    """Part of the name, contact name, email or phone, ignoring case"""
+    search: String
+  ): SupplierPage!
+
   """Retrieves a specific tag by ID"""
   tag(tagId: String!): Tag!
 
@@ -3472,6 +3782,16 @@ type Query {
 
   """Admin: a variant by ID, archived or not"""
   variant(variantId: String!): Variant!
+
+  """A variant's cost changes, newest first (staff)"""
+  variantCostHistory(
+    """Id of the last entry of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+    variantId: ID!
+  ): CostChangePage!
 
   """The lots of a lot-tracked variant, soonest expiry first (staff)"""
   variantLots(variantId: ID!): [Lot!]!
@@ -3585,6 +3905,30 @@ type QuoteTaxLine {
 
   """The tax rate it comes from"""
   taxId: ID!
+}
+
+input ReceivePurchaseOrderInput {
+  """The lines in this delivery"""
+  lines: [ReceivePurchaseOrderLineInput!]!
+
+  """E.g. the delivery note number"""
+  note: String
+}
+
+input ReceivePurchaseOrderLineInput {
+  """
+  Lot-tracked variants only, and required for them: lot number and expiry (in the future)
+  """
+  lot: LotInput
+
+  """Units arriving now: at least 1, at most what is outstanding"""
+  quantity: Int!
+
+  """
+  Serial-tracked variants only, and required for them: one new serial per unit
+  """
+  serials: [String!]
+  variantId: ID!
 }
 
 input ReceiveStockTransferInput {
@@ -4041,6 +4385,19 @@ input SetPriceListEntriesInput {
   priceListId: ID!
 }
 
+input SetVariantCostInput {
+  """
+  Tax-exclusive unit cost in the store currency, at most 4 decimal places
+  """
+  cost: Decimal!
+
+  """
+  Why: where the cost comes from (an old invoice, a stock count valuation...)
+  """
+  reason: String!
+  variantId: ID!
+}
+
 """
 The goods of an order on their way to the customer (one per order for now)
 """
@@ -4273,6 +4630,11 @@ type StockMovement {
 
   """Signed change to reserved stock"""
   reservedDelta: Int!
+
+  """
+  Unit cost, 4 dp: RECEIPT movements of a purchase-order receipt only (inventory.cost.view)
+  """
+  unitCost: Decimal
   variantId: ID!
 }
 
@@ -4427,11 +4789,21 @@ type StockTakeVarianceLine {
   productName: String!
   sku: String!
 
+  """
+  The variant’s weighted-average unit cost, 4 dp; null when unknown (inventory.cost.view)
+  """
+  unitCost: Decimal
+
   """The variant’s current price; null when it has none"""
   unitPrice: Money
 
   """countedQuantity - expectedQuantity: negative is a shortage"""
   variance: Int!
+
+  """
+  variance × unitCost; null when the cost is unknown (inventory.cost.view)
+  """
+  varianceCostValue: Money
 
   """variance × unitPrice"""
   varianceValue: Money
@@ -4439,7 +4811,7 @@ type StockTakeVarianceLine {
 }
 
 """
-Variances of a stock-take, valued at current prices (cost is not tracked yet)
+Variances of a stock-take, valued at current prices and at weighted-average cost
 """
 type StockTakeVarianceReport {
   lines: [StockTakeVarianceLine!]!
@@ -4452,13 +4824,26 @@ type StockTakeVarianceTotals {
   lineCount: Int!
   linesWithVariance: Int!
 
+  """surplusCostValue - shortageCostValue (inventory.cost.view)"""
+  netVarianceCostValue: Money
+
   """surplusUnits - shortageUnits"""
   netVarianceUnits: Int!
   netVarianceValue: Money!
 
+  """
+  Shortages at cost, over lines whose cost is known (inventory.cost.view)
+  """
+  shortageCostValue: Money
+
   """Units missing, summed over shortages"""
   shortageUnits: Int!
   shortageValue: Money!
+
+  """
+  Surpluses at cost, over lines whose cost is known (inventory.cost.view)
+  """
+  surplusCostValue: Money
 
   """Units found over what was expected"""
   surplusUnits: Int!
@@ -4587,6 +4972,34 @@ type SubCategory {
 
   """Timestamp when the sub category was last updated"""
   updatedAt: DateTime!
+}
+
+"""Someone the store buys from (staff with purchasing.view)"""
+type Supplier {
+  address: String
+  contactName: String
+  createdAt: DateTime!
+
+  """The currency the supplier is paid in; the store currency for now"""
+  currency: Currency!
+  email: String
+  id: ID!
+
+  """Inactive suppliers take no new purchase orders; their history stays"""
+  isActive: Boolean!
+
+  """Unique ignoring case"""
+  name: String!
+  notes: String
+  phone: String
+  updatedAt: DateTime!
+}
+
+type SupplierPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [Supplier!]!
+  totalCount: Int!
 }
 
 type Tag {
@@ -4917,6 +5330,20 @@ input UpdatePromotionInput {
   value: Decimal
 }
 
+"""
+Fields left out stay as they are. Supplier, location and lines change only in DRAFT (lines given replace them all); the expected date and note until the order is final
+"""
+input UpdatePurchaseOrderInput {
+  """null clears it"""
+  expectedAt: DateTime
+  lines: [PurchaseOrderLineInput!]
+  locationId: ID
+
+  """null clears it"""
+  note: String
+  supplierId: ID
+}
+
 input UpdateReviewInput {
   comment: String
   id: String!
@@ -5003,6 +5430,23 @@ input UpdateSubCategoryInput {
 
   """The name of the subcategory (e.g., "Shirts")"""
   name: String
+}
+
+input UpdateSupplierInput {
+  address: String
+  contactName: String
+
+  """Defaults to the store currency, the only one allowed"""
+  currency: Currency
+  email: String
+
+  """Defaults to true on creation"""
+  isActive: Boolean
+
+  """Unique ignoring case"""
+  name: String
+  notes: String
+  phone: String
 }
 
 input UpdateTaxInput {
@@ -5198,6 +5642,11 @@ type Variant {
 
   """Price before tax, as entered by an admin"""
   basePrice: Money
+
+  """
+  Weighted-average unit cost over every location, tax-exclusive, 4 dp; null when unknown (inventory.cost.view)
+  """
+  costPrice: Decimal
 
   """
   The signed-in customer's B2B price at its minimum quantity (the first of priceTiers); null for a visitor or when none of their price lists prices this variant below its normal price

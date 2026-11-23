@@ -43,6 +43,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { CurrencyModule } from './currency/currency.module';
 import { TaxModule } from './tax/tax.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { PurchasingModule } from './purchasing/purchasing.module';
 import { ReturnsModule } from './returns/returns.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { PickupLocationsModule } from './pickup-locations/pickup-locations.module';
@@ -159,6 +160,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     CurrencyModule,
     TaxModule,
     InventoryModule,
+    PurchasingModule,
     ReturnsModule,
     AnalyticsModule,
     PickupLocationsModule,

@@ -11,6 +11,7 @@ function line(overrides: Partial<StockTakeLineFacts> = {}): StockTakeLineFacts {
     countedQuantity: null,
     variance: null,
     unitPrice: new Decimal('25.50'),
+    unitCost: null,
     ...overrides,
   };
 }
@@ -78,6 +79,28 @@ describe('varianceReport', () => {
     expect(lines[0].varianceValue).toBeNull();
     expect(totals.shortageUnits).toBe(2);
     expect(totals.shortageValue.toFixed(2)).toBe('0.00');
+  });
+});
+
+describe('varianceReport at cost (P4-E.1)', () => {
+  it('values variances at the weighted-average cost, totalling only lines whose cost is known', () => {
+    const { lines, totals } = varianceReport([
+      line({
+        variantId: 'v1',
+        expectedQuantity: 8,
+        countedQuantity: 5,
+        variance: -3,
+        unitCost: new Decimal('12.3456'),
+      }),
+      line({ variantId: 'v2', expectedQuantity: 5, countedQuantity: 7, variance: 2, unitCost: new Decimal('4.5') }),
+      line({ variantId: 'v3', expectedQuantity: 5, countedQuantity: 4, variance: -1 }),
+    ]);
+
+    expect(lines.map((l) => l.varianceCostValue?.toFixed(4) ?? null)).toEqual(['-37.0368', '9.0000', null]);
+    expect(totals.shortageCostValue.toFixed(4)).toBe('37.0368');
+    expect(totals.surplusCostValue.toFixed(4)).toBe('9.0000');
+    expect(totals.netVarianceCostValue.toFixed(4)).toBe('-28.0368');
+    expect(totals.shortageValue.toFixed(2)).toBe('102.00');
   });
 });
 

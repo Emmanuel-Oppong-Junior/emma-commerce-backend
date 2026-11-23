@@ -19,6 +19,7 @@ function movement(overrides: Partial<StockMovement> = {}): StockMovement {
     actorId: 'admin1',
     note: 'Manual restock',
     lotId: null,
+    unitCost: null,
     createdAt: fixedDate,
     ...overrides,
   };

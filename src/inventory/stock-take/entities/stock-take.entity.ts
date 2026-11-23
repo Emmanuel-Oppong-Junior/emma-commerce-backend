@@ -2,6 +2,8 @@ import { Field, ID, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
 import { Decimal } from '@prisma/client/runtime/client';
 import { StockTakeStatus } from '../../../generated/prisma/client';
 import { MoneyObject } from '../../../commons/money/money.object';
+import { GraphQLDecimal } from '../../../commons/money/decimal.scalar';
+import { COST_VIEWERS_ONLY } from '../../../purchasing/cost/cost-visibility';
 import { staffWith } from '../../../iam/authorization/staff-permission.field-middleware';
 
 registerEnumType(StockTakeStatus, {
@@ -167,6 +169,18 @@ export class StockTakeVarianceLine {
 
   @Field(() => MoneyObject, { nullable: true, description: 'variance × unitPrice' })
   varianceValue: Decimal | null;
+
+  @Field(() => GraphQLDecimal, {
+    ...COST_VIEWERS_ONLY,
+    description: 'The variant’s weighted-average unit cost, 4 dp; null when unknown (inventory.cost.view)',
+  })
+  unitCost: Decimal | null;
+
+  @Field(() => MoneyObject, {
+    ...COST_VIEWERS_ONLY,
+    description: 'variance × unitCost; null when the cost is unknown (inventory.cost.view)',
+  })
+  varianceCostValue: Decimal | null;
 }
 
 @ObjectType()
@@ -200,9 +214,27 @@ export class StockTakeVarianceTotals {
 
   @Field(() => MoneyObject)
   netVarianceValue: Decimal;
+
+  @Field(() => MoneyObject, {
+    ...COST_VIEWERS_ONLY,
+    description: 'Shortages at cost, over lines whose cost is known (inventory.cost.view)',
+  })
+  shortageCostValue: Decimal;
+
+  @Field(() => MoneyObject, {
+    ...COST_VIEWERS_ONLY,
+    description: 'Surpluses at cost, over lines whose cost is known (inventory.cost.view)',
+  })
+  surplusCostValue: Decimal;
+
+  @Field(() => MoneyObject, {
+    ...COST_VIEWERS_ONLY,
+    description: 'surplusCostValue - shortageCostValue (inventory.cost.view)',
+  })
+  netVarianceCostValue: Decimal;
 }
 
-@ObjectType({ description: 'Variances of a stock-take, valued at current prices (cost is not tracked yet)' })
+@ObjectType({ description: 'Variances of a stock-take, valued at current prices and at weighted-average cost' })
 export class StockTakeVarianceReport {
   @Field(() => StockTake)
   stockTake: StockTake;

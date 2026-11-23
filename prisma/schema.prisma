@@ -227,6 +227,11 @@ model Variant {
   lowStockAlerts    LowStockAlert[]
   lots              Lot[]
   serialUnits       SerialUnit[]
+  /// Weighted-average unit cost (P4-E.1), store-wide, tax-exclusive, 4 dp; null = unknown. Changes only through
+  /// VariantCostService (a purchase-order receipt or a manual set), each change recorded as a CostChange.
+  costPrice         Decimal?            @db.Decimal(14, 4)
+  costChanges       CostChange[]
+  purchaseLines     PurchaseOrderLine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1007,6 +1012,7 @@ model Store {
   stockLocations             StockLocation[]
   paymentProviderConfigs     PaymentProviderConfig[]
   velocityLimits             VelocityLimit[]
+  suppliers                  Supplier[]
 }
 
 /// Test or live keys, from the secret key's prefix (sk_test_ / sk_live_).
@@ -1244,6 +1250,7 @@ model StockLocation {
   transfersIn     StockTransfer[]               @relation("StockTransferTo")
   lotStocks       LotStock[]
   serialUnits     SerialUnit[]
+  purchaseOrders  PurchaseOrder[]
 
   @@unique([storeId], map: "StockLocation_one_default_per_store", where: raw("\"isDefault\""))
 }
@@ -1419,6 +1426,9 @@ model StockMovement {
   /// movement per lot; null for untracked variants and for RESERVE/RELEASE (a CHECK refuses it there)
   lotId            String?
   lot              Lot?                   @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  /// What one unit cost (P4-E.1): set on RECEIPT movements of a purchase-order receipt only (a CHECK refuses it on
+  /// other reasons); null for every other movement
+  unitCost         Decimal?               @db.Decimal(14, 4)
 
   @@index([variantId, createdAt])
   @@index([lotId])
@@ -1430,15 +1440,16 @@ model StockMovement {
 /// A batch of one variant with its expiry (P4-C.1), for products with trackLots; the lot number is unique per variant.
 /// Units of a lot past expiresAt are not sold; the hourly lot-expiry job writes them off (ADJUSTMENT, EXPIRED).
 model Lot {
-  id             String          @id @default(cuid())
+  id             String                     @id @default(cuid())
   variantId      String
-  lotNumber      String          @db.VarChar(100)
+  lotNumber      String                     @db.VarChar(100)
   expiresAt      DateTime
   manufacturedAt DateTime?
-  createdAt      DateTime        @default(now())
-  variant        Variant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdAt      DateTime                   @default(now())
+  variant        Variant                    @relation(fields: [variantId], references: [id], onDelete: Cascade)
   stock          LotStock[]
   movements      StockMovement[]
+  receiptLines   PurchaseOrderReceiptLine[]
 
   @@unique([variantId, lotNumber])
   @@index([expiresAt])
@@ -1899,4 +1910,145 @@ model SerialUnitEvent {
 
   @@index([serialUnitId, createdAt])
   @@index([refType, refId])
+}
+
+/// Who the store buys from (P4-E.1). The name is unique per store ignoring case (nameKey = trimmed, lower-cased name).
+/// A supplier a purchase order refers to cannot be deleted, only deactivated (no new purchase orders).
+model Supplier {
+  id             String          @id @default(cuid())
+  storeId        String
+  name           String          @db.VarChar(200)
+  nameKey        String          @db.VarChar(200)
+  contactName    String?         @db.VarChar(200)
+  phone          String?         @db.VarChar(50)
+  email          String?         @db.VarChar(320)
+  address        String?         @db.VarChar(1000)
+  notes          String?         @db.VarChar(2000)
+  /// The currency the supplier is paid in; only the store currency for now
+  currency       Currency
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  store          Store           @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([storeId, nameKey])
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+/// Goods ordered from a supplier for one stock location (P4-E.1). Lines change only in DRAFT; receipts add stock at
+/// the location (RECEIPT movements, refType PurchaseOrder) and update the weighted-average cost. Status changes are
+/// conditional updates through the pure table in src/purchasing/purchase-orders/purchase-order-status.ts.
+model PurchaseOrder {
+  id            String                 @id @default(cuid())
+  /// Shown as the reference "PO-00042"; a sequence, so a rolled-back creation leaves a gap
+  number        Int                    @unique @default(autoincrement())
+  supplierId    String
+  locationId    String
+  status        PurchaseOrderStatus    @default(DRAFT)
+  currency      Currency
+  expectedAt    DateTime?
+  note          String?                @db.VarChar(1000)
+  createdById   String
+  sentById      String?
+  sentAt        DateTime?
+  closedById    String?
+  closedAt      DateTime?
+  closeReason   String?                @db.VarChar(500)
+  cancelledById String?
+  cancelledAt   DateTime?
+  cancelReason  String?                @db.VarChar(500)
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  supplier      Supplier               @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  location      StockLocation          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  lines         PurchaseOrderLine[]
+  receipts      PurchaseOrderReceipt[]
+
+  @@index([status, createdAt])
+  @@index([supplierId])
+  @@index([locationId])
+  @@index([createdAt])
+}
+
+/// One variant on a purchase order: units ordered at a tax-exclusive unit cost, and units received so far
+/// (CHECK 0 <= quantityReceived <= quantityOrdered).
+model PurchaseOrderLine {
+  id               String                     @id @default(cuid())
+  purchaseOrderId  String
+  variantId        String
+  quantityOrdered  Int
+  unitCost         Decimal                    @db.Decimal(14, 4)
+  quantityReceived Int                        @default(0)
+  purchaseOrder    PurchaseOrder              @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  variant          Variant                    @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  receiptLines     PurchaseOrderReceiptLine[]
+
+  @@unique([purchaseOrderId, variantId])
+  @@index([variantId])
+}
+
+/// One delivery received against a purchase order (P4-E.1); a purchase order may have several.
+model PurchaseOrderReceipt {
+  id              String                     @id @default(cuid())
+  purchaseOrderId String
+  receivedById    String
+  receivedAt      DateTime                   @default(now())
+  note            String?                    @db.VarChar(500)
+  purchaseOrder   PurchaseOrder              @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  lines           PurchaseOrderReceiptLine[]
+
+  @@index([purchaseOrderId])
+}
+
+/// Units of one purchase-order line in a receipt, at the line's unit cost, with the lot they went into (lot-tracked
+/// variants) and the first stock movement written for them.
+model PurchaseOrderReceiptLine {
+  id         String               @id @default(cuid())
+  receiptId  String
+  lineId     String
+  quantity   Int
+  unitCost   Decimal              @db.Decimal(14, 4)
+  lotId      String?
+  movementId String
+  receipt    PurchaseOrderReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  line       PurchaseOrderLine    @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  lot        Lot?                 @relation(fields: [lotId], references: [id], onDelete: Cascade)
+
+  @@unique([receiptId, lineId])
+  @@index([lineId])
+  @@index([lotId])
+}
+
+enum CostChangeSource {
+  PURCHASE_ORDER
+  MANUAL
+}
+
+/// Every change of Variant.costPrice (P4-E.1), append-only (a trigger refuses updates and direct deletes; deleting
+/// the variant removes its rows). refType/refId name what caused it, e.g. ("PurchaseOrderReceipt", receiptId).
+model CostChange {
+  id        String           @id @default(cuid())
+  variantId String
+  /// Null when the cost was unknown before
+  oldValue  Decimal?         @db.Decimal(14, 4)
+  newValue  Decimal          @db.Decimal(14, 4)
+  currency  Currency
+  source    CostChangeSource
+  refType   String?
+  refId     String?
+  reason    String?          @db.VarChar(500)
+  actorId   String?
+  createdAt DateTime         @default(now())
+  variant   Variant          @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([variantId, createdAt])
 }

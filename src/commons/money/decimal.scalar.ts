@@ -107,3 +107,15 @@ export function IsRate(options?: ValidationOptions): PropertyDecorator {
     options,
   );
 }
+
+/** The largest unit cost a DECIMAL(14,4) cost column holds. */
+const UNIT_COST_LIMIT = new Decimal('10000000000');
+
+/** A unit cost (P4-E.1): a Decimal with at most 4 decimal places, not negative, below 10^10. */
+export function IsUnitCost(options?: ValidationOptions): PropertyDecorator {
+  return registerDecimalRule(
+    'isUnitCost',
+    { maxDecimalPlaces: 4, min: new Decimal(0), minExclusive: false, max: UNIT_COST_LIMIT, maxExclusive: true },
+    options,
+  );
+}

@@ -26,6 +26,7 @@ export interface NewMovement {
   note?: string;
   adjustmentReason?: StockAdjustmentReason;
   lotId?: string;
+  unitCost?: Prisma.Decimal;
 }
 
 export interface NewReservation {
