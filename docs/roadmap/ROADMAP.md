@@ -26,13 +26,13 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 1 — Foundations | 30 / 33 | 🔄 in progress |
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
-| 4 — Inventory | 4 / 7 | 🔄 in progress |
+| 4 — Inventory | 6 / 7 | 🔄 in progress |
 | 5 — Delivery & fulfilment | 0 / 8 | ⬜ not started |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **98 / 154** | |
+| **All** | **100 / 154** | |
 
 ---
 
@@ -373,13 +373,13 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [x] **P4-B.1** [13e59dc, 94825a8] Adjustments with reasons, stock-take with variance
 - [x] **P4-B.2** [76d7f00] Low-stock events → staff notifications (replace 6-hourly scan)
 
-### P4-C — Lots & expiry  🔄 in progress
+### P4-C — Lots & expiry ✅ complete
 > Run: → · L · 🟧 (🟥 for food/pharmacy clients)
-- [ ] 🔄 **P4-C.1** `Lot` with expiry; FEFO allocation; expired lots unsellable; expiring-stock report
+- [x] **P4-C.1** [747d7e4, c4a4d37] `Lot` with expiry; FEFO allocation; expired lots unsellable; expiring-stock report
 
-### P4-D — Serials  🔄 in progress
+### P4-D — Serials ✅ complete
 > Run: ∥ · M · 🟧
-- [ ] 🔄 **P4-D.1** `SerialUnit` (IMEI) assignment at pick; warranty start
+- [x] **P4-D.1** [32c457d, 1ca4ca3] `SerialUnit` (IMEI) assignment at pick; warranty start
 
 ### P4-E — Purchasing
 > Run: ∥ · L · ⬜
