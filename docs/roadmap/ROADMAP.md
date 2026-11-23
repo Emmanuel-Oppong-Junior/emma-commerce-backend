@@ -27,12 +27,12 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 2 — Pricing & tax engine | 10 / 15 | 🔄 in progress |
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
 | 4 — Inventory | 7 / 7 | ✅ complete |
-| 5 — Delivery & fulfilment | 2 / 8 | 🔄 in progress |
+| 5 — Delivery & fulfilment | 5 / 8 | 🔄 in progress |
 | 6 — Customer engagement | 0 / 17 | ⬜ not started |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **103 / 154** | |
+| **All** | **106 / 154** | |
 
 ---
 
@@ -387,10 +387,10 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ## Phase 5 — Delivery & fulfilment
 
-### P5-A — Rates  🔄 in progress
+### P5-A — Rates ✅ complete
 > Run: → · M · 🟥 A.1 / 🟧 A.2
-- [ ] 🔄 **P5-A.1** `DeliveryZone`/`ZoneArea`/`RateRule` (flat, by zone, by weight/size, free above threshold) replacing city strings (M9)
-- [ ] **P5-A.2** Delivery slots (date/time windows)
+- [x] **P5-A.1** [dad23a0] `DeliveryZone`/`ZoneArea`/`RateRule` (flat, by zone, by weight/size, free above threshold) replacing city strings (M9)
+- [x] **P5-A.2** [d93c42e] Delivery slots (date/time windows)
 
 ### P5-B — Shipments ✅ complete
 > Run: → · L · 🟥
@@ -406,9 +406,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > ⬜
 - [ ] **P5-D.1** Courier port + one integration when a client needs it (REST `/integrations/v1`)
 
-### P5-E — Pickup
+### P5-E — Pickup ✅ complete
 > Run: ∥ · S · 🟥
-- [ ] **P5-E.1** Pickup points with hours/contacts; ready-for-pickup notification
+- [x] **P5-E.1** [0d96532] Pickup points with hours/contacts; ready-for-pickup notification
 
 ## Phase 6 — Customer engagement
 
