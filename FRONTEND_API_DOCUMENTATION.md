@@ -2595,7 +2595,7 @@ StockTakeLine {
 - `stockTakes(status?, locationId?, first = 20 (1-200), after?)` → `StockTakePage! { nodes, totalCount, hasNextPage }`, newest first (`inventory.view`).
 - `stockTake(id)` → `StockTake!` (`inventory.view`).
 - `stockTakeLines(stockTakeId, counted?: Boolean, first = 50 (1-200), after?)` → `StockTakeLinePage!`, in SKU order (`inventory.view`; `counted: false` lists what is left to count).
-- `stockTakeVarianceReport(id)` → `StockTakeVarianceReport! { stockTake, lines, totals }` (`inventory.stocktake.approve`): each counted line with `expectedAtOpen`, `changeSinceOpen` (how the expected quantity moved before the count), `expectedQuantity`, `countedQuantity`, `variance`, `unitPrice` and `varianceValue` (`Money`, at the variant's **current price**; cost is not tracked yet; null without a price); `totals`: `lineCount`, `countedCount`, `uncountedCount`, `linesWithVariance`, `shortageUnits`, `surplusUnits`, `netVarianceUnits`, `shortageValue`, `surplusValue`, `netVarianceValue`.
+- `stockTakeVarianceReport(id)` → `StockTakeVarianceReport! { stockTake, lines, totals }` (`inventory.stocktake.approve`): each counted line with `expectedAtOpen`, `changeSinceOpen` (how the expected quantity moved before the count), `expectedQuantity`, `countedQuantity`, `variance`, `unitPrice` and `varianceValue` (`Money`, at the variant's **current price**; null without a price), and since P4-E.1 `unitCost` (`Decimal`, the weighted-average cost) and `varianceCostValue` (`Money`; null when the cost is unknown); `totals`: `lineCount`, `countedCount`, `uncountedCount`, `linesWithVariance`, `shortageUnits`, `surplusUnits`, `netVarianceUnits`, `shortageValue`, `surplusValue`, `netVarianceValue`, and at cost `shortageCostValue`, `surplusCostValue`, `netVarianceCostValue` (lines of unknown cost add nothing). Every cost field needs `inventory.cost.view` as well (`FORBIDDEN` on that field, `null` in `data`, otherwise).
 
 #### Lots and expiry (P4-C.1)
 
@@ -2629,7 +2629,9 @@ ExpiringStockLine {
   locations: { locationId: string; locationName: string; onHand: number }[]; // by location name
   onHand: number;
   unitPrice?: Money;               // the variant's current selling price
-  value?: Money;                   // onHand x unitPrice (cost value arrives with purchasing)
+  value?: Money;                   // onHand x unitPrice
+  unitCost?: Decimal;              // P4-E.1, inventory.cost.view: the variant's weighted-average cost; null when unknown
+  costValue?: Money;               // P4-E.1, inventory.cost.view: onHand x unitCost; null when the cost is unknown
 }
 ```
 
@@ -2670,6 +2672,50 @@ OrderItemSerial { serial: string; status: SerialUnitStatus; soldAt?: DateTime; w
 - `unassignOrderItemSerials(input: { orderItemId: ID!, serials: [String!]! })` → `Order!` (`order.fulfil`). Same rules; each serial must be assigned to that line (`CONFLICT` + `SERIAL_NOT_AVAILABLE`). Audited (`SERIALS_UNASSIGNED`).
 - `serialUnitLookup(serial: String!)` → `[SerialUnitLookup!]!` (`order.view`): units with that serial on any variant (as typed: spaces and, for an IMEI, dashes ignored), with order, customer id, sale date and warranty window. Empty when unknown.
 - `OrderItem.serials: [OrderItemSerial!]!`: the units assigned to (`ASSIGNED`) or sold on (`SOLD`) the line, with their warranty. Customers see it on their own orders (`order`, `userOrders`); staff on every order.
+
+---
+
+#### Purchasing: suppliers, purchase orders and cost (P4-E.1)
+
+Staff buy stock from **suppliers** on **purchase orders**; each delivery received adds the units at the order's stock location and updates the variant's **weighted-average cost**. All of it is additive (no existing operation changed). Not in this release: emailing or printing purchase orders, approvals, other currencies, landed costs (freight, duty), supplier invoices and reorder suggestions.
+
+**Permissions**: reads `purchasing.view` (Owner, Manager, Inventory clerk); suppliers and purchase-order changes `purchasing.manage` (Owner, Manager); receiving `purchasing.receive` (Owner, Manager, Inventory clerk). **Costs are hidden** without `inventory.cost.view` (Owner, Manager): every cost field below is nullable and, for anyone else, resolves to `null` with a `FORBIDDEN` error on that field, so an Inventory clerk should simply not select them. No step-up: costs never change a selling price.
+
+- **Suppliers.** `name` is unique ignoring case and spacing (`CONFLICT`). They are paid in the store currency (`currency` defaults to it; any other is `BAD_REQUEST`). A supplier a purchase order refers to cannot be deleted (`CONFLICT`): deactivate it (`updateSupplier` with `isActive: false`); an inactive supplier takes no new orders (`BAD_REQUEST`).
+- **Status** (`PurchaseOrderStatus`): `DRAFT` → `SENT` | `CANCELLED`; `SENT` → `PARTIALLY_RECEIVED` | `RECEIVED` (by receipts) | `CANCELLED` (nothing has arrived); `PARTIALLY_RECEIVED` → `PARTIALLY_RECEIVED` | `RECEIVED` (more receipts) | `CLOSED` (closed short: the rest will not come). `RECEIVED`, `CLOSED`, `CANCELLED` are final. Anything else is `CONFLICT`; of two concurrent changes one wins and the other gets `CONFLICT`. There is no approval step.
+- **Editing.** Supplier, location and lines change only in `DRAFT` (`CONFLICT` after); the expected date and note until the order is final. `sendPurchaseOrder` only records `sentAt` (nothing is emailed yet).
+- **Unit costs** are tax-exclusive, in the store currency, `Decimal` with up to 4 decimal places, `>= 0` (`BAD_USER_INPUT` otherwise).
+- **Receiving.** `receivePurchaseOrder` names, per line, the units in this delivery: at least 1 and **at most what is outstanding** (no over-receipt: `BAD_REQUEST`). One `PurchaseOrderReceipt` per call. The units are added at the order's location as `RECEIPT` stock movements with `refType: "PurchaseOrder"`, `refId`: the order id, and their `unitCost`. Lot-tracked variants need `lot` (number + expiry in the future; an existing lot number adds to it), serial-tracked variants exactly one new serial per unit (`BAD_REQUEST` + `reason: SERIALS_REQUIRED`; a known serial is `CONFLICT` + `reason: SERIAL_ALREADY_KNOWN`); others refuse both (`BAD_REQUEST`). The order becomes `RECEIVED` when every line is complete, otherwise `PARTIALLY_RECEIVED`. The destination must still be active (`BAD_REQUEST`).
+- **Weighted-average cost** (`Variant.costPrice`, store-wide over every location): on each receipt line, new = (units on hand before × old cost + units received × unit cost) / (on hand before + received), rounded half-up to 4 dp; when the cost was unknown (null) or nothing was on hand, the unit cost alone. Other ways stock comes in (manual restock, returns, transfers, found adjustments) do not change it. Every change is a `CostChange` (append-only history). `setVariantCost` sets the cost by hand, with a reason, only for a variant never bought through a purchase order (`BAD_REQUEST` + `reason: COST_FROM_PURCHASES` otherwise). Cost never affects selling prices or checkout.
+- **Audit**: entity `Supplier` (`CREATE`/`UPDATE`/`DELETE`), `PurchaseOrder` (`CREATE`, `UPDATE` with before/after, `STATUS_CHANGE` with from/to; a receipt's entry also lists its lines with unit cost, lot number and serial count), `Variant` `UPDATE` for a manual cost.
+
+```typescript
+Supplier { id; name; contactName?; phone?; email?; address?; notes?; currency: Currency; isActive: boolean; createdAt; updatedAt }
+PurchaseOrder {
+  id; number: number; reference: string;          // "PO-00042", unique
+  supplierId; supplier: Supplier; locationId; status: PurchaseOrderStatus; currency: Currency;
+  expectedAt?: DateTime; note?: string;
+  lines: PurchaseOrderLine[]; receipts: PurchaseOrderReceipt[];   // receipts oldest first
+  totalCost?: Money; receivedCost?: Money;        // inventory.cost.view
+  createdById; sentById?; sentAt?; closedById?; closedAt?; closeReason?; cancelledById?; cancelledAt?; cancelReason?;
+  createdAt; updatedAt;
+}
+PurchaseOrderLine { id; variantId; quantityOrdered; quantityReceived; quantityOutstanding; unitCost?: Decimal; lineCost?: Money }
+PurchaseOrderReceipt { id; receivedById; receivedAt; note?; lines: PurchaseOrderReceiptLine[]; cost?: Money }
+PurchaseOrderReceiptLine { id; lineId; variantId; quantity; unitCost?: Decimal; cost?: Money; lotId?: string; movementId: string }
+CostChange { id; variantId; oldValue?: Decimal; newValue: Decimal; currency; source: PURCHASE_ORDER | MANUAL; refType?; refId?; reason?; actorId?; createdAt }
+// New fields on existing types, each inventory.cost.view: Variant.costPrice?: Decimal; StockMovement.unitCost?: Decimal
+```
+
+- `suppliers(isActive?: Boolean, search?: String (name, contact, email or phone), first: Int = 50 (1-100), after?: ID)` → `SupplierPage! { nodes, totalCount, hasNextPage }` by name; `supplier(id: ID!)` → `Supplier!`.
+- `createSupplier(input: { name!, contactName?, phone?, email?, address?, notes?, currency?, isActive? })`, `updateSupplier(id, input)` (same fields, all optional; `null` clears an optional one), `deleteSupplier(id)` → `Supplier!`.
+- `purchaseOrders(status?, supplierId?, locationId?, variantId?, createdFrom?: DateTime, createdTo?: DateTime ([from, to)), first = 50, after?)` → `PurchaseOrderPage!` newest first; `purchaseOrder(id)` → `PurchaseOrder!`.
+- `createPurchaseOrder(input: { supplierId!, locationId!, expectedAt?, note?, lines: [{ variantId!, quantity!: Int >= 1, unitCost!: Decimal }] (1-100, one per variant) })` → `PurchaseOrder!` (`DRAFT`). `NOT_FOUND` for an unknown supplier, location or variant; `BAD_REQUEST` for an inactive supplier or location or a variant twice.
+- `updatePurchaseOrder(id, input: { supplierId?, locationId?, expectedAt?, note?, lines? })` → `PurchaseOrder!` (lines given replace them all).
+- `sendPurchaseOrder(id)`, `cancelPurchaseOrder(id, input?: { reason? })`, `closePurchaseOrder(id, input: { reason! })` → `PurchaseOrder!`.
+- `receivePurchaseOrder(id, input: { lines: [{ variantId!, quantity!, lot?: LotInput, serials?: [String!] }] (1-100), note? })` → `PurchaseOrder!`.
+- `variantCostHistory(variantId: ID!, first = 50, after?)` → `CostChangePage!` newest first (`inventory.cost.view`).
+- `setVariantCost(input: { variantId!, cost!: Decimal (<= 4 dp), reason!: String })` → `CostChange!` (`purchasing.manage` + `inventory.cost.view`).
 
 ---
 
@@ -3483,6 +3529,10 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `inventory.location.manage` | `createStockLocation`, `updateStockLocation`, `deleteStockLocation`, `setShippingZoneFulfilmentLocations`, `setPickupLocationFulfilmentLocations` (P4-A.1; held by Owner and Manager) |
 | `inventory.stocktake.approve` | `approveStockTake`, `cancelStockTake`, `stockTakeVarianceReport`; the `StockTakeLine.expectedAtOpen`, `expectedQuantity` and `variance` fields (P4-B.1; held by Owner and Manager) |
 | `inventory.transfer` | `createStockTransfer`, `dispatchStockTransfer`, `receiveStockTransfer`, `cancelStockTransfer` (P4-A.2; held by Owner, Manager and Inventory clerk) |
+| `inventory.cost.view` | `variantCostHistory`, `setVariantCost` (with `purchasing.manage`); every cost field: `Variant.costPrice`, `StockMovement.unitCost`, purchase-order `unitCost`/`lineCost`/`cost`/`totalCost`/`receivedCost`, cost values in `expiringStock` and `stockTakeVarianceReport` (P4-E.1; held by Owner and Manager) |
+| `purchasing.view` | `suppliers`, `supplier`, `purchaseOrders`, `purchaseOrder` (P4-E.1; held by Owner, Manager and Inventory clerk) |
+| `purchasing.manage` | `createSupplier`, `updateSupplier`, `deleteSupplier`, `createPurchaseOrder`, `updatePurchaseOrder`, `sendPurchaseOrder`, `cancelPurchaseOrder`, `closePurchaseOrder`, `setVariantCost` (P4-E.1; held by Owner and Manager) |
+| `purchasing.receive` | `receivePurchaseOrder` (P4-E.1; held by Owner, Manager and Inventory clerk) |
 | `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
 | `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |
 | `order.fulfil` | `updateShipmentStatus`, `updateShipping` (P1-O.2; held by Owner, Manager, Inventory clerk and Cashier) |
