@@ -65,7 +65,7 @@ describe('Permission-based RBAC (e2e)', () => {
       const roles = await prisma.staffRole.findMany({ where: { isSystem: true } });
       const byKey = Object.fromEntries(roles.map((role) => [role.key, role]));
 
-      expect(Object.keys(byKey).sort()).toEqual(['CASHIER', 'INVENTORY_CLERK', 'MANAGER', 'OWNER', 'SUPPORT']);
+      expect(Object.keys(byKey).sort()).toEqual(['CASHIER', 'INVENTORY_CLERK', 'MANAGER', 'OWNER', 'RIDER', 'SUPPORT']);
       expect([...byKey.MANAGER.permissions].sort()).toEqual([...MANAGER_PERMISSIONS].sort());
       expect([...byKey.OWNER.permissions].sort()).toEqual([...ALL_PERMISSIONS].sort());
       expect(byKey.OWNER.mfaRequired && byKey.MANAGER.mfaRequired).toBe(true);

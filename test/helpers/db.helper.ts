@@ -165,6 +165,20 @@ export async function relaxVelocityLimits(prisma: PrismaService): Promise<void> 
   });
 }
 
+/** Inserts an active user with the system Rider staff role (P5-C.1), who can take cash for deliveries. */
+export async function createRider(prisma: PrismaService, id: string, phoneNumber?: string): Promise<void> {
+  const store = await prisma.store.findFirstOrThrow({ where: { singleton: true }, select: { id: true } });
+  await prisma.user.create({
+    data: {
+      id,
+      email: `${id}@test.local`,
+      name: `Rider ${id}`,
+      phoneNumber,
+      storeMemberships: { create: { storeId: store.id, roleId: 'staff_role_rider' } },
+    },
+  });
+}
+
 /** Takes the store's next order number the way OrdersRepository does, for orders inserted directly by a test. */
 export async function takeOrderNumber(prisma: PrismaService): Promise<number> {
   const [{ orderNumber }] = await prisma.$queryRaw<{ orderNumber: number }[]>`

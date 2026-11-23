@@ -15,6 +15,7 @@ const ordersRepository = {
 const shipmentsRepository = {
   runTransaction: jest.fn(),
   findOrderId: jest.fn(),
+  findRiderId: jest.fn(),
   findShipment: jest.fn(),
   findAllocation: jest.fn(),
   create: jest.fn(),
@@ -287,6 +288,114 @@ describe('ShipmentsService', () => {
       );
       await expect(shipmentsRepository.runTransaction.mock.results[0].value).rejects.toThrow('audit insert failed');
       expect(outbox.record).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('proof of delivery (P5-C.2)', () => {
+    it('refuses DELIVERED by a staff step for a rider’s shipment (PROOF_OF_DELIVERY_REQUIRED)', async () => {
+      shipmentsRepository.findShipment.mockResolvedValue({ ...shipment('OUT_FOR_DELIVERY'), riderId: 'rider1' });
+
+      const error = await service.updateShipmentStatus('ship1', 'DELIVERED' as never, 'admin1').catch((e) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect(error.getResponse().extensions.reason).toBe('PROOF_OF_DELIVERY_REQUIRED');
+      expect(ordersRepository.transitionShipment).not.toHaveBeenCalled();
+    });
+
+    it('delivers with the proof on the caller’s transaction', async () => {
+      const out = { ...shipment('OUT_FOR_DELIVERY'), riderId: 'rider1' };
+      shipmentsRepository.findAllocation.mockResolvedValue({
+        lines: [{ id: 'item1', quantity: 2 }],
+        shipments: [{ id: 'ship1', status: 'DELIVERED', items }],
+      });
+
+      await service.deliverWithProof(
+        stubTx as never,
+        { ...confirmed, status: 'IN_FULFILMENT' } as never,
+        out as never,
+        'rider1',
+      );
+
+      expect(ordersRepository.transitionShipment).toHaveBeenCalledWith(
+        stubTx,
+        'ship1',
+        'OUT_FOR_DELIVERY',
+        'DELIVERED',
+        {
+          actorId: 'rider1',
+          reason: undefined,
+        },
+      );
+      expect(serialUnits.startWarranty).toHaveBeenCalled();
+    });
+  });
+
+  describe('moveAsRider', () => {
+    const riderShipment = (status: string, riderId: string | null = 'rider1') => ({ ...shipment(status), riderId });
+
+    it('takes the rider’s own packed shipment out for delivery, as the rider, with the order locked', async () => {
+      shipmentsRepository.findRiderId.mockResolvedValue('rider1');
+      shipmentsRepository.findShipment.mockResolvedValue(riderShipment('PACKED'));
+
+      await service.moveAsRider('ship1', 'OUT_FOR_DELIVERY' as never, 'rider1');
+
+      expect(ordersRepository.lockForFulfilment).toHaveBeenCalledWith(stubTx, 'order1');
+      expect(ordersRepository.transitionShipment).toHaveBeenCalledWith(stubTx, 'ship1', 'PACKED', 'OUT_FOR_DELIVERY', {
+        actorId: 'rider1',
+        reason: undefined,
+      });
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ entity: 'Shipment', action: 'STATUS_CHANGE', userId: 'rider1' }),
+        stubTx,
+      );
+      expect(outbox.record).toHaveBeenCalled();
+    });
+
+    it('says NOT_FOUND for a shipment of another rider, unknown, or reassigned before the lock', async () => {
+      shipmentsRepository.findRiderId.mockResolvedValue('rider2');
+      await expect(service.moveAsRider('ship1', 'OUT_FOR_DELIVERY' as never, 'rider1')).rejects.toThrow(
+        new NotFoundException('Shipment "ship1" not found'),
+      );
+      shipmentsRepository.findRiderId.mockResolvedValue(null);
+      await expect(service.moveAsRider('ship1', 'OUT_FOR_DELIVERY' as never, 'rider1')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(ordersRepository.lockForFulfilment).not.toHaveBeenCalled();
+
+      shipmentsRepository.findRiderId.mockResolvedValue('rider1');
+      shipmentsRepository.findShipment.mockResolvedValue(riderShipment('PACKED', 'rider2'));
+      await expect(service.moveAsRider('ship1', 'OUT_FOR_DELIVERY' as never, 'rider1')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(ordersRepository.transitionShipment).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['PENDING', 'OUT_FOR_DELIVERY'],
+      ['PACKED', 'FAILED_DELIVERY'],
+      ['OUT_FOR_DELIVERY', 'DELIVERED'],
+      ['OUT_FOR_DELIVERY', 'RETURNED'],
+    ])('refuses a rider step from %s to %s (CONFLICT)', async (from, to) => {
+      shipmentsRepository.findRiderId.mockResolvedValue('rider1');
+      shipmentsRepository.findShipment.mockResolvedValue(riderShipment(from));
+
+      await expect(service.moveAsRider('ship1', to as never, 'rider1')).rejects.toThrow(ConflictException);
+      expect(ordersRepository.transitionShipment).not.toHaveBeenCalled();
+    });
+
+    it('records a failed delivery with the rider’s reason', async () => {
+      shipmentsRepository.findRiderId.mockResolvedValue('rider1');
+      shipmentsRepository.findShipment.mockResolvedValue(riderShipment('OUT_FOR_DELIVERY'));
+
+      await service.moveAsRider('ship1', 'FAILED_DELIVERY' as never, 'rider1', 'Nobody home');
+
+      expect(ordersRepository.transitionShipment).toHaveBeenCalledWith(
+        stubTx,
+        'ship1',
+        'OUT_FOR_DELIVERY',
+        'FAILED_DELIVERY',
+        { actorId: 'rider1', reason: 'Nobody home' },
+      );
     });
   });
 

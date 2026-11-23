@@ -180,6 +180,7 @@ describe('Serial units (P4-D.1, e2e)', () => {
     customerToken = await signInUser(app);
     clerkToken = await staffMember('clerk-serials@test.local', 'INVENTORY_CLERK');
     supportToken = await staffMember('support-serials@test.local', 'SUPPORT');
+    await staffMember('rider-serials@test.local', 'RIDER');
     await prisma.staffRole.create({
       data: { key: 'SERIALS_CATALOG_ONLY', name: 'Catalogue only', permissions: ['catalog.product.read'] },
     });
@@ -333,7 +334,7 @@ describe('Serial units (P4-D.1, e2e)', () => {
       expect(await unit(variantId, serials[1])).toMatchObject({ status: 'IN_STOCK', locationId: mainId });
       expect(await stockOf(prisma, variantId)).toMatchObject({ onHand: 1, reserved: 0 });
 
-      const rider = await prisma.user.findUniqueOrThrow({ where: { email: 'clerk-serials@test.local' } });
+      const rider = await prisma.user.findUniqueOrThrow({ where: { email: 'rider-serials@test.local' } });
       const delivered = await gql(
         `mutation { recordCodPayment(input: { orderId: "${orderId}", riderId: "${rider.id}", amount: "${grandTotal}" }) { id } }`,
       );

@@ -10,6 +10,8 @@ import { isOrderDelivered, planShipment, ShipmentLine } from './shipment-allocat
 import { isShipmentMilestone, shipmentStatusChanged } from './shipment-events';
 import { canShipmentTransition, isDispatch, isShipmentOpen } from './shipment-status';
 import { ShipmentsRepository } from './shipments.repository';
+import { riderMayMove } from '../delivery/rider-assignment';
+import { proofRequired } from '../delivery/proof/proof-of-delivery';
 
 type Tx = Prisma.TransactionClient;
 type OrderWithItems = Order & { items: OrderItem[] };
@@ -124,51 +126,90 @@ export class ShipmentsService {
     }
     return this.shipmentsRepository.runTransaction(async (tx) => {
       const { order, shipment } = await this.lockShipment(tx, shipmentId);
-      if (to === ShipmentStatus.DELIVERED && order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
-        throw new BadRequestException(
-          `Order "${order.id}" is paid on delivery; record the cash collected (recordCodPayment) to deliver it`,
-        );
-      }
-      if (!canShipmentTransition(shipment.status, to, order.fulfillmentType)) {
-        throw new ConflictException(
-          `Shipment "${shipmentId}" of order "${order.id}" cannot move from ${shipment.status} to ${to} ` +
-            `(${order.fulfillmentType})`,
-        );
-      }
-      const moved = await this.ordersRepository.transitionShipment(tx, shipmentId, shipment.status, to, {
-        actorId,
-        reason,
-      });
-      if (!moved) throw this.changedMeanwhile(order.id);
-      await this.auditService.log(
-        {
-          entity: 'Shipment',
-          entityId: shipmentId,
-          action: 'STATUS_CHANGE',
-          userId: actorId,
-          details: { orderId: order.id, from: shipment.status, to, ...(reason && { reason }) },
-        },
-        tx,
-      );
-
-      let orderStatus = order.status;
-      if (orderStatus === OrderStatus.CONFIRMED) {
-        await this.moveOrder(tx, order.id, OrderStatus.CONFIRMED, OrderStatus.IN_FULFILMENT, actorId, reason);
-        orderStatus = OrderStatus.IN_FULFILMENT;
-      }
-      if (isDispatch(to)) {
-        await this.serialUnits.dispatchShipment(tx, shipmentId, { actorId, refType: 'Shipment', refId: shipmentId });
-        if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
-          await this.stockLedger.consumeOrder(tx, order.id, actorId);
-        }
-      }
-      if (to === ShipmentStatus.DELIVERED) {
-        await this.serialUnits.startWarranty(tx, shipmentId, moved.deliveredAt!);
-      }
-      if (isShipmentMilestone(to)) await this.outbox.record(tx, shipmentStatusChanged(order.id, moved));
-      if (!isShipmentOpen(to)) await this.completeIfDelivered(tx, order, orderStatus, actorId, reason);
+      if (to === ShipmentStatus.DELIVERED && shipment.riderId) throw proofRequired(shipmentId);
+      await this.moveLocked(tx, order, shipment, to, actorId, reason);
       return this.ordersRepository.findForTransaction(tx, order.id);
     });
+  }
+
+  /**
+   * DELIVERED for a rider's shipment of an online order, on the caller's transaction with the order locked
+   * (lockShipment), once its proof of delivery is recorded (P5-C.2).
+   */
+  async deliverWithProof(tx: Tx, order: OrderForFulfilment, shipment: ShipmentWithItems, actorId: string) {
+    await this.moveLocked(tx, order, shipment, ShipmentStatus.DELIVERED, actorId);
+  }
+
+  /**
+   * A rider's step on a shipment assigned to them (P5-C.1): out for delivery from packed or after a failed attempt, or
+   * failed. NOT_FOUND for a shipment that is not theirs, whether or not it exists; CONFLICT for any other step.
+   */
+  async moveAsRider(shipmentId: string, to: ShipmentStatus, riderId: string, reason?: string): Promise<void> {
+    const notYours = () => new NotFoundException(`Shipment "${shipmentId}" not found`);
+    if ((await this.shipmentsRepository.findRiderId(shipmentId)) !== riderId) throw notYours();
+    await this.shipmentsRepository.runTransaction(async (tx) => {
+      const { order, shipment } = await this.lockShipment(tx, shipmentId);
+      if (shipment.riderId !== riderId) throw notYours();
+      if (!riderMayMove(shipment.status, to)) {
+        throw new ConflictException(`Shipment "${shipmentId}" is ${shipment.status}; a rider cannot move it to ${to}`);
+      }
+      await this.moveLocked(tx, order, shipment, to, riderId, reason);
+    });
+  }
+
+  /** One step of updateShipmentStatus on the caller's transaction, with the shipment's order locked (lockShipment). */
+  private async moveLocked(
+    tx: Tx,
+    order: OrderForFulfilment,
+    shipment: ShipmentWithItems,
+    to: ShipmentStatus,
+    actorId: string,
+    reason?: string,
+  ): Promise<void> {
+    const shipmentId = shipment.id;
+    if (to === ShipmentStatus.DELIVERED && order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
+      throw new BadRequestException(
+        `Order "${order.id}" is paid on delivery; record the cash collected (recordCodPayment) to deliver it`,
+      );
+    }
+    if (!canShipmentTransition(shipment.status, to, order.fulfillmentType)) {
+      throw new ConflictException(
+        `Shipment "${shipmentId}" of order "${order.id}" cannot move from ${shipment.status} to ${to} ` +
+          `(${order.fulfillmentType})`,
+      );
+    }
+    const moved = await this.ordersRepository.transitionShipment(tx, shipmentId, shipment.status, to, {
+      actorId,
+      reason,
+    });
+    if (!moved) throw this.changedMeanwhile(order.id);
+    await this.auditService.log(
+      {
+        entity: 'Shipment',
+        entityId: shipmentId,
+        action: 'STATUS_CHANGE',
+        userId: actorId,
+        details: { orderId: order.id, from: shipment.status, to, ...(reason && { reason }) },
+      },
+      tx,
+    );
+
+    let orderStatus = order.status;
+    if (orderStatus === OrderStatus.CONFIRMED) {
+      await this.moveOrder(tx, order.id, OrderStatus.CONFIRMED, OrderStatus.IN_FULFILMENT, actorId, reason);
+      orderStatus = OrderStatus.IN_FULFILMENT;
+    }
+    if (isDispatch(to)) {
+      await this.serialUnits.dispatchShipment(tx, shipmentId, { actorId, refType: 'Shipment', refId: shipmentId });
+      if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
+        await this.stockLedger.consumeOrder(tx, order.id, actorId);
+      }
+    }
+    if (to === ShipmentStatus.DELIVERED) {
+      await this.serialUnits.startWarranty(tx, shipmentId, moved.deliveredAt!);
+    }
+    if (isShipmentMilestone(to)) await this.outbox.record(tx, shipmentStatusChanged(order.id, moved));
+    if (!isShipmentOpen(to)) await this.completeIfDelivered(tx, order, orderStatus, actorId, reason);
   }
 
   /**
@@ -225,10 +266,7 @@ export class ShipmentsService {
   }
 
   /** Locks the shipment's order (see lockOrder), then reads the shipment as it is under that lock. */
-  private async lockShipment(
-    tx: Tx,
-    shipmentId: string,
-  ): Promise<{ order: OrderForFulfilment; shipment: ShipmentWithItems }> {
+  async lockShipment(tx: Tx, shipmentId: string): Promise<{ order: OrderForFulfilment; shipment: ShipmentWithItems }> {
     const orderId = await this.shipmentsRepository.findOrderId(tx, shipmentId);
     if (!orderId) throw new NotFoundException(`Shipment "${shipmentId}" not found`);
     const order = await this.lockOrder(tx, orderId);

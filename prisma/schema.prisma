@@ -48,6 +48,8 @@ model User {
   returnRequests            ReturnRequest[]
   storeMemberships          StoreMembership[]
   cashCollected             CashCollection[]        @relation("CashCollectionRider")
+  shipmentsRidden           Shipment[]              @relation("ShipmentRider")
+  deliveriesConfirmed       ProofOfDelivery[]       @relation("ProofOfDeliveryActor")
   cashRemitted              CashRemittance[]        @relation("CashRemittanceRider")
   cashRemittancesReceived   CashRemittance[]        @relation("CashRemittanceReceiver")
   paymentProviderConfigs    PaymentProviderConfig[]
@@ -900,13 +902,49 @@ model Shipment {
   dispatchedAt   DateTime?
   deliveredAt    DateTime?
   cancelledAt    DateTime?
+  /// The rider delivering it (P5-C.1): an active staff member whose role holds delivery.ride; delivery orders only
+  riderId        String?
+  rider          User?                 @relation("ShipmentRider", fields: [riderId], references: [id], onDelete: Restrict)
+  /// When the current rider was assigned
+  assignedAt     DateTime?
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
   order          Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
   events         ShipmentStatusEvent[]
   items          ShipmentItem[]
+  proof          ProofOfDelivery?
 
   @@index([orderId])
+  @@index([riderId, status])
+}
+
+enum ProofOfDeliveryMethod {
+  CODE
+  OVERRIDE
+}
+
+/// How a rider's delivery was confirmed (P5-C.2): the customer's code, or a staff override with a reason; an optional
+/// photo (Cloudinary), recipient name and position. One per shipment, append-only (a trigger refuses updates and direct
+/// deletes; deleting the shipment removes it).
+model ProofOfDelivery {
+  id             String                @id @default(cuid())
+  shipmentId     String                @unique
+  shipment       Shipment              @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  method         ProofOfDeliveryMethod
+  /// Required for OVERRIDE (CHECK), null for CODE
+  overrideReason String?
+  /// The rider or staff member who confirmed it (for an override, the staff member who overrode)
+  deliveredById  String
+  deliveredBy    User                  @relation("ProofOfDeliveryActor", fields: [deliveredById], references: [id], onDelete: Restrict)
+  deliveredAt    DateTime
+  photoUrl       String?
+  photoPublicId  String?
+  recipientName  String?
+  latitude       Decimal?              @db.Decimal(9, 6)
+  longitude      Decimal?              @db.Decimal(9, 6)
+  createdAt      DateTime              @default(now())
+
+  @@index([deliveredById])
 }
 
 /// Units of one order line in a shipment (P5-B.1). Written with the shipment and never changed.

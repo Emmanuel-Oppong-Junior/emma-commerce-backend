@@ -101,6 +101,15 @@ input ApproveReturnInput {
   returnRequestId: ID!
 }
 
+input AssignShipmentRiderInput {
+  """Required to replace the rider once the shipment has been dispatched"""
+  reason: String
+
+  """An active staff member whose role holds delivery.ride"""
+  riderId: ID!
+  shipmentId: ID!
+}
+
 """
 Type of an attribute value: TEXT, NUMBER (in the attribute unit) or BOOLEAN
 """
@@ -670,6 +679,34 @@ type CodUncollectedDelivery {
   orderNumber: Int!
 }
 
+input CompleteDeliveryInput {
+  """
+  Cash on delivery: the cash collected, which must be the order total. Required for COD, refused otherwise
+  """
+  cashCollected: Decimal
+
+  """The customer’s delivery code; or send overrideReason instead"""
+  code: String
+
+  """Where it was delivered: latitude (kept to 6 decimals)"""
+  latitude: Float
+
+  """Longitude (send with latitude)"""
+  longitude: Float
+
+  """
+  Confirm without the code (needs delivery.override): why, e.g. the customer has no phone
+  """
+  overrideReason: String
+
+  """Public id returned by the delivery photo upload for this shipment"""
+  photoPublicId: String
+
+  """Who took the goods, when not the customer"""
+  recipientName: String
+  shipmentId: ID!
+}
+
 input CompleteMfaSignInInput {
   """
   extensions.mfaChallenge from the MFA_REQUIRED signIn error (valid 5 minutes)
@@ -678,6 +715,31 @@ input CompleteMfaSignInInput {
 
   """A 6-digit authenticator code or an unused recovery code"""
   code: String!
+}
+
+input CompleteMyDeliveryInput {
+  """
+  Cash on delivery: the cash collected, which must be the order total. Required for COD, refused otherwise
+  """
+  cashCollected: Decimal
+
+  """
+  The six-digit code the customer received by SMS when the shipment went out
+  """
+  code: String!
+
+  """Where it was delivered: latitude (kept to 6 decimals)"""
+  latitude: Float
+
+  """Longitude (send with latitude)"""
+  longitude: Float
+
+  """Public id returned by the delivery photo upload for this shipment"""
+  photoPublicId: String
+
+  """Who took the goods, when not the customer"""
+  recipientName: String
+  shipmentId: ID!
 }
 
 """
@@ -1461,6 +1523,12 @@ input DeliveryClosureInput {
   reason: String
 }
 
+"""That a delivery was confirmed, and how (what the customer sees)"""
+type DeliveryConfirmation {
+  confirmedAt: DateTime!
+  method: ProofOfDeliveryMethod!
+}
+
 """A service level the address's zone offers, with its fee for this cart"""
 type DeliveryOption {
   """The fee before free-shipping promotions"""
@@ -1482,6 +1550,13 @@ enum DeliveryOptions {
   INTERNATIONAL_DELIVERY
   LOCAL_DELIVERY
   SELECTED_REGIONS
+}
+
+"""A staff member who delivers shipments (their role holds delivery.ride)"""
+type DeliveryRider {
+  id: ID!
+  name: String
+  phoneNumber: String
 }
 
 """How fast an order is delivered; each zone prices the levels it offers"""
@@ -1654,6 +1729,14 @@ type ExpiringStockLine {
   """onHand at the current selling price; null when unpriced"""
   value: Money
   variantId: ID!
+}
+
+input FailMyDeliveryInput {
+  """
+  What happened (customer not reachable, wrong address, refused...); shown to staff
+  """
+  reason: String!
+  shipmentId: ID!
 }
 
 """
@@ -1885,6 +1968,11 @@ type Mutation {
   assignShipmentItemSerials(input: ShipmentItemSerialsInput!): Order!
 
   """
+  Assign a delivery shipment to a rider (staff), until it is delivered, returned or cancelled. BAD_REQUEST for a pickup shipment (reason PICKUP_HAS_NO_RIDER) or someone who is not an active rider (NOT_A_RIDER); replacing the rider after dispatch needs a reason (ASSIGNMENT_REASON_REQUIRED); CONFLICT for a closed shipment (SHIPMENT_CLOSED) or a first rider on a shipment already out for delivery (ASSIGN_BEFORE_DISPATCH). Audited
+  """
+  assignShipmentRider(input: AssignShipmentRiderInput!): Shipment!
+
+  """
   Give a user a staff role, replacing their current one (staff.manage). You may only assign a role whose permissions you all hold; only an Owner assigns or changes an Owner; the last Owner cannot be demoted. Audited.
   """
   assignStaffRole(roleKey: String!, userId: ID!): StaffMember!
@@ -1926,9 +2014,19 @@ type Mutation {
   closePurchaseOrder(id: ID!, input: ClosePurchaseOrderInput!): PurchaseOrder!
 
   """
+  Deliver a rider’s shipment out for delivery (staff): with the customer’s code, or overrideReason instead (needs delivery.override: FORBIDDEN reason OVERRIDE_NOT_ALLOWED). Cash on delivery is recorded as taken by the shipment’s rider. BAD_REQUEST RIDER_NOT_ASSIGNED for a shipment without a rider. NOT_FOUND for a shipment that is not yours; BAD_REQUEST: PROOF_OF_DELIVERY_REQUIRED, DELIVERY_CODE_INVALID (extensions.attemptsLeft), DELIVERY_CODE_LOCKED (after 5 wrong codes), DELIVERY_CODE_NOT_ISSUED, CASH_COLLECTION_REQUIRED, NO_CASH_TO_COLLECT, COLLECTION_AMOUNT_MISMATCH, INVALID_DELIVERY_PHOTO; CONFLICT when the shipment is not out for delivery
+  """
+  completeDelivery(input: CompleteDeliveryInput!): Shipment!
+
+  """
   Finish a sign-in that failed with extensions.reason MFA_REQUIRED, using its extensions.mfaChallenge and an authenticator or recovery code
   """
   completeMfaSignIn(input: CompleteMfaSignInInput!): AuthEntity!
+
+  """
+  Deliver one of your shipments out for delivery with the code the customer received by SMS, an optional photo (uploaded first), recipient name and position; for cash on delivery also the cash collected (the order total), recorded as yours. NOT_FOUND for a shipment that is not yours; BAD_REQUEST: PROOF_OF_DELIVERY_REQUIRED, DELIVERY_CODE_INVALID (extensions.attemptsLeft), DELIVERY_CODE_LOCKED (after 5 wrong codes), DELIVERY_CODE_NOT_ISSUED, CASH_COLLECTION_REQUIRED, NO_CASH_TO_COLLECT, COLLECTION_AMOUNT_MISMATCH, INVALID_DELIVERY_PHOTO; CONFLICT when the shipment is not out for delivery
+  """
+  completeMyDelivery(input: CompleteMyDeliveryInput!): RiderDelivery!
 
   """
   Finish enrolment with the first code from the authenticator app. Turns two-factor authentication on and returns 10 single-use recovery codes, shown only this once. Counts as a step-up for this session. Audited.
@@ -2102,6 +2200,11 @@ type Mutation {
   """
   dispatchStockTransfer(id: ID!, input: DispatchStockTransferInput): StockTransfer!
 
+  """
+  Record that a delivery you took out failed, with what happened. NOT_FOUND when it is not yours
+  """
+  failMyDelivery(input: FailMyDeliveryInput!): RiderDelivery!
+
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
 
@@ -2135,7 +2238,7 @@ type Mutation {
   recordCashRemittance(input: RecordCashRemittanceInput!): CashRemittanceEntity!
 
   """
-  Record the order total as cash collected by a rider (a staff member) for a dispatched cash-on-delivery order (out for delivery or ready for pickup). Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a rider who is not active staff (reason RIDER_NOT_STAFF), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.
+  Record the order total as cash collected for a dispatched cash-on-delivery order (out for delivery or ready for pickup). The collector (riderId) is a rider (role with delivery.ride) for a delivery, any active staff member at the pickup counter. Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a collector who is not active staff (reason RIDER_NOT_STAFF) or, for a delivery, not a rider (NOT_A_RIDER), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.
   """
   recordCodPayment(input: RecordCodPaymentInput!): Payment!
 
@@ -2292,6 +2395,11 @@ type Mutation {
   startMfaEnrollment: MfaEnrollment!
 
   """
+  Take one of your shipments out for delivery (from PACKED, or again after a failed attempt). NOT_FOUND when it is not assigned to you; CONFLICT from any other status
+  """
+  startMyDelivery(shipmentId: ID!): RiderDelivery!
+
+  """
   Verify this session with an authenticator or recovery code. Sensitive actions (role changes, refunds, price changes, exports) are then allowed for 10 minutes. Audited.
   """
   stepUp(code: String!): StepUpResult!
@@ -2303,6 +2411,11 @@ type Mutation {
   Put units assigned to a shipment line back in stock, before dispatch (staff)
   """
   unassignShipmentItemSerials(input: ShipmentItemSerialsInput!): Order!
+
+  """
+  Remove the rider of a delivery shipment (staff): before dispatch, or after a failed attempt with a reason. CONFLICT while it is out for delivery (reason RIDER_ON_THE_ROAD: reassign instead). Audited
+  """
+  unassignShipmentRider(input: UnassignShipmentRiderInput!): Shipment!
 
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
@@ -3503,6 +3616,31 @@ enum PromotionType {
   TIERED
 }
 
+"""How a rider’s delivery was confirmed (staff)"""
+type ProofOfDeliveryEntity {
+  deliveredAt: DateTime!
+
+  """The rider, or the staff member who overrode"""
+  deliveredById: ID!
+  id: ID!
+  latitude: Float
+  longitude: Float
+  method: ProofOfDeliveryMethod!
+
+  """Why staff confirmed it without the code"""
+  overrideReason: String
+  photoUrl: String
+  recipientName: String
+}
+
+"""
+CODE: the customer gave the rider the code texted at dispatch; OVERRIDE: staff confirmed it without one
+"""
+enum ProofOfDeliveryMethod {
+  CODE
+  OVERRIDE
+}
+
 """What other customers may see about a user, e.g. on reviews"""
 type PublicProfile {
   """
@@ -3791,6 +3929,27 @@ type Query {
   getUserPayment(userId: String!): [Payment!]!
 
   """
+  Shipments assigned to the signed-in rider: open ones by default, oldest assignment first
+  """
+  myDeliveries(
+    """
+    A day (YYYY-MM-DD, UTC = Ghana time): only shipments assigned, dispatched or delivered that day
+    """
+    date: String
+
+    """At most this many (1-100), oldest assignment first"""
+    first: Int! = 50
+
+    """
+    Only these statuses; omitted: the open ones (not delivered, returned or cancelled)
+    """
+    status: [ShipmentStatus!]
+  ): [RiderDelivery!]!
+
+  """One shipment assigned to the signed-in rider; NOT_FOUND otherwise"""
+  myDelivery(shipmentId: ID!): RiderDelivery!
+
+  """
   Whether the current user's phone number is verified (cash on delivery needs it)
   """
   myPhoneVerification: PhoneVerificationStatusEntity!
@@ -3921,6 +4080,9 @@ type Query {
 
   """Retrieves a specific review by ID"""
   review(reviewId: String!): Review!
+
+  """Active riders a delivery shipment can be assigned to (staff)"""
+  riders: [DeliveryRider!]!
 
   """
   Gross revenue, refunds and net revenue recognised in a date range (admin only)
@@ -4650,6 +4812,54 @@ type Review {
   userId: ID!
 }
 
+"""
+A shipment assigned to the signed-in rider, with only what the delivery needs: the recipient, the address, the items and the cash to collect
+"""
+type RiderDelivery {
+  address: RiderDeliveryAddress
+
+  """
+  Cash to collect on delivery (the order total); null when the order is paid online or already paid
+  """
+  amountToCollect: Money
+
+  """When the shipment was assigned to you"""
+  assignedAt: DateTime!
+  deliveredAt: DateTime
+  dispatchedAt: DateTime
+  items: [RiderDeliveryItem!]!
+  orderNumber: Int!
+  recipientName: String
+
+  """
+  The phone to call: the delivery address phone, else the order contact phone
+  """
+  recipientPhone: String!
+  shipmentId: ID!
+  status: ShipmentStatus!
+}
+
+"""Where a delivery goes, as the customer gave it when ordering"""
+type RiderDeliveryAddress {
+  area: String
+  city: String
+
+  """GhanaPostGPS digital address"""
+  ghanaPostGps: String
+  landmark: String
+  latitude: Float
+  longitude: Float
+  region: String
+  street: String
+}
+
+"""Units of one product in a delivery"""
+type RiderDeliveryItem {
+  productName: String!
+  quantity: Int!
+  sku: String
+}
+
 enum Role {
   ADMIN
   SUPER_ADMIN
@@ -4782,6 +4992,9 @@ input SetVariantCostInput {
 Some or all of the goods of an order on their way to the customer; an order may be split into several shipments
 """
 type Shipment {
+  """When the current rider was assigned (staff)"""
+  assignedAt: DateTime
+
   """When it was cancelled (before dispatch)"""
   cancelledAt: DateTime
   carrier: String
@@ -4798,6 +5011,14 @@ type Shipment {
   """The order lines and units in this shipment"""
   items: [ShipmentItem!]!
   orderId: ID!
+
+  """
+  How a rider’s delivery was confirmed: code or override, photo, recipient, position (staff)
+  """
+  proofOfDelivery: ProofOfDeliveryEntity
+
+  """The rider delivering it (staff)"""
+  rider: DeliveryRider
   status: ShipmentStatus!
   trackingNumber: String
   updatedAt: DateTime!
@@ -5456,6 +5677,11 @@ One step of the tracking timeline: an order status (orderStatus set) or a shipme
 type TrackingStep {
   at: DateTime!
   carrier: String
+
+  """
+  On a DELIVERED step of a rider’s shipment: how the delivery was confirmed (code or override) and when
+  """
+  deliveryConfirmation: DeliveryConfirmation
   orderStatus: OrderStatus
   shipmentId: ID
   shipmentStatus: ShipmentStatus
@@ -5466,6 +5692,12 @@ input TransferLineSerialsInput {
   """One serial per unit sent, each in stock at the source"""
   serials: [String!]!
   variantId: ID!
+}
+
+input UnassignShipmentRiderInput {
+  """Required after a failed delivery attempt"""
+  reason: String
+  shipmentId: ID!
 }
 
 """Unit the product is sold in"""

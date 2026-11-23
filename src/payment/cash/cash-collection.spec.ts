@@ -3,6 +3,7 @@ import { Prisma } from '../../generated/prisma/client';
 import {
   assertCollectedAmount,
   assertCollectedAt,
+  assertCollector,
   assertStaffRider,
   COLLECTED_AT_CLOCK_SKEW_MS,
 } from './cash-collection';
@@ -15,6 +16,36 @@ describe('cash collection rules', () => {
 
     it.each([null, { isActive: true, isStaff: false }, { isActive: false, isStaff: true }])('refuses %p', (rider) => {
       expect(() => assertStaffRider(rider, 'u1')).toThrow(BadRequestException);
+    });
+  });
+
+  describe('assertCollector', () => {
+    const reasonOf = (run: () => void) => {
+      try {
+        run();
+      } catch (error) {
+        return ((error as BadRequestException).getResponse() as { extensions: { reason: string } }).extensions.reason;
+      }
+      return null;
+    };
+
+    it('needs a rider for a delivery', () => {
+      expect(reasonOf(() => assertCollector({ isActive: true, isStaff: true, isRider: true }, 'u1', 'DELIVERY'))).toBe(
+        null,
+      );
+      expect(reasonOf(() => assertCollector({ isActive: true, isStaff: true, isRider: false }, 'u1', 'DELIVERY'))).toBe(
+        'NOT_A_RIDER',
+      );
+      expect(reasonOf(() => assertCollector({ isActive: false, isStaff: true, isRider: true }, 'u1', 'DELIVERY'))).toBe(
+        'RIDER_NOT_STAFF',
+      );
+    });
+
+    it('takes any active staff member at the pickup counter', () => {
+      expect(reasonOf(() => assertCollector({ isActive: true, isStaff: true, isRider: false }, 'u1', 'PICKUP'))).toBe(
+        null,
+      );
+      expect(reasonOf(() => assertCollector(null, 'u1', 'PICKUP'))).toBe('RIDER_NOT_STAFF');
     });
   });
 

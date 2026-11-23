@@ -50,7 +50,7 @@ export class PaymentResolver {
   @RequirePermission('payment.record')
   @Mutation(() => Payment, {
     description:
-      'Record the order total as cash collected by a rider (a staff member) for a dispatched cash-on-delivery order (out for delivery or ready for pickup). Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a rider who is not active staff (reason RIDER_NOT_STAFF), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.',
+      'Record the order total as cash collected for a dispatched cash-on-delivery order (out for delivery or ready for pickup). The collector (riderId) is a rider (role with delivery.ride) for a delivery, any active staff member at the pickup counter. Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a collector who is not active staff (reason RIDER_NOT_STAFF) or, for a delivery, not a rider (NOT_A_RIDER), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.',
   })
   recordCodPayment(@Args('input') input: RecordCodPaymentInput, @ActiveUser('id') adminId: string) {
     return this.paymentService.recordCodPayment(input, adminId);

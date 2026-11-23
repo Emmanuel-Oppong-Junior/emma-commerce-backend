@@ -1894,6 +1894,64 @@ Every change runs with the order row locked (two concurrent creates cannot over-
 
 ---
 
+#### Riders and deliveries (P5-C.1)
+
+A **rider** is an active staff member whose role lists `delivery.ride`: the system **Rider** role (seeded, holds only `delivery.ride`, no MFA requirement) or a custom role given it. The Owner is never a rider. Fulfilment staff (`order.fulfil`) assign a rider to a **delivery** shipment (`Shipment.rider`, `Shipment.assignedAt`, both staff-only fields: customers get `FORBIDDEN` for them); riders see and step only the shipments assigned to them, through a small type (`RiderDelivery`) that carries what a delivery needs and nothing else. Every assignment runs with the order row locked and is audited (`RIDER_ASSIGN` / `RIDER_UNASSIGN`, with from/to rider and reason). Staff keep every shipment step they had (`updateShipmentStatus`).
+
+##### `riders` (permission `order.fulfil`)
+- `[DeliveryRider!]!` — `{ id, name, phoneNumber }` of the active riders, by name.
+
+##### `assignShipmentRider` (permission `order.fulfil`)
+- **Args**: `input: AssignShipmentRiderInput!` — `{ shipmentId: ID!, riderId: ID!, reason?: String (max 500) }` → `Shipment!`
+- **Rules**: delivery shipments only (`BAD_REQUEST` + `reason: PICKUP_HAS_NO_RIDER`); not once `DELIVERED`, `RETURNED` or `CANCELLED` (`CONFLICT` + `SHIPMENT_CLOSED`); `riderId` must be an active rider (`BAD_REQUEST` + `NOT_A_RIDER`). The first rider is assigned before dispatch or after a failed attempt (a shipment already `OUT_FOR_DELIVERY` without a rider: `CONFLICT` + `ASSIGN_BEFORE_DISPATCH`). Replacing the rider is free before dispatch; once `OUT_FOR_DELIVERY` or `FAILED_DELIVERY` it needs a `reason` (`BAD_REQUEST` + `ASSIGNMENT_REASON_REQUIRED`). Assigning the rider it already has changes nothing.
+
+##### `unassignShipmentRider` (permission `order.fulfil`)
+- **Args**: `input: UnassignShipmentRiderInput!` — `{ shipmentId: ID!, reason?: String }` → `Shipment!`
+- **Rules**: before dispatch, or after a failed attempt with a `reason`; while `OUT_FOR_DELIVERY` → `CONFLICT` + `RIDER_ON_THE_ROAD` (reassign instead). No rider: nothing changes.
+
+##### `myDeliveries` / `myDelivery` (permission `delivery.ride`)
+- `myDeliveries(status: [ShipmentStatus!], date: String, first: Int = 50)` → `[RiderDelivery!]!`: the shipments assigned to the signed-in rider, oldest assignment first; `status` omitted = the open ones (not delivered, returned or cancelled); `date` (`YYYY-MM-DD`, UTC) = assigned, dispatched or delivered that day; `first` 1-100.
+- `myDelivery(shipmentId: ID!)` → `RiderDelivery!`; `NOT_FOUND` when the shipment is not assigned to the caller (the same answer as for an unknown id).
+
+```typescript
+RiderDelivery {
+  shipmentId: ID; status: ShipmentStatus; orderNumber: Int;
+  recipientName?: string;
+  recipientPhone: string;           // the delivery address phone, else the order contact phone
+  address?: { street, area, city, region, landmark, ghanaPostGps, latitude, longitude };
+  items: [{ productName: string; sku?: string; quantity: Int }];
+  amountToCollect?: Money;          // cash on delivery not yet paid: the order total; else null
+  assignedAt: DateTime; dispatchedAt?: DateTime; deliveredAt?: DateTime;
+}
+```
+
+##### `startMyDelivery` / `failMyDelivery` (permission `delivery.ride`)
+- `startMyDelivery(shipmentId: ID!)` → `RiderDelivery!`: `PACKED` (or `FAILED_DELIVERY`, to try again) → `OUT_FOR_DELIVERY`, exactly as staff dispatch does (stock, serials, events, the customer's SMS).
+- `failMyDelivery(input: { shipmentId: ID!, reason: String! (1-500) })` → `RiderDelivery!`: `OUT_FOR_DELIVERY` → `FAILED_DELIVERY` with the reason in the shipment history.
+- `NOT_FOUND` for a shipment not assigned to the caller; `CONFLICT` for any other step. Audited (`STATUS_CHANGE`, actor = the rider).
+
+#### Proof of delivery (P5-C.2)
+
+When a shipment **with a rider** goes `OUT_FOR_DELIVERY` (rider or staff), the customer's out-for-delivery SMS also carries a six-digit **delivery code** (one text: `... is out for delivery. Give the rider this code when you receive it: 123456.`; sent to the same phone as the milestone SMS: verified account phone, else address phone, else contact phone). The code is stored only as a keyed hash in Redis, for 7 days, and changes with every dispatch (a retry after `FAILED_DELIVERY` texts a new one). After **5 wrong entries** it locks; then only a staff override delivers. Shipments without a rider (a courier, staff delivering by hand) get no code and are delivered with `updateShipmentStatus` / `recordCodPayment` as before.
+
+A rider's shipment can no longer be moved to `DELIVERED` by `updateShipmentStatus`, nor its cash recorded by `recordCodPayment`: both answer `BAD_REQUEST` + `reason: PROOF_OF_DELIVERY_REQUIRED`. It is delivered with one of:
+
+##### `completeMyDelivery` (permission `delivery.ride`) → `RiderDelivery!`
+- **Args**: `input: CompleteMyDeliveryInput!` — `{ shipmentId: ID!, code: String!, photoPublicId?: String, recipientName?: String (max 120), latitude?: Float, longitude?: Float, cashCollected?: Decimal }`
+
+##### `completeDelivery` (permission `order.fulfil`) → `Shipment!`
+- **Args**: `input: CompleteDeliveryInput!` — the same fields, with `code?: String` **or** `overrideReason?: String (max 500)`. An override needs `delivery.override` (Owner, Manager): otherwise `FORBIDDEN` + `reason: OVERRIDE_NOT_ALLOWED`.
+
+**Rules (both)**: the shipment must have a rider (`BAD_REQUEST` + `RIDER_NOT_ASSIGNED`) and be `OUT_FOR_DELIVERY` (`CONFLICT`); a rider only for their own (`NOT_FOUND`). Exactly one proof (`PROOF_OF_DELIVERY_REQUIRED`). A wrong code: `BAD_REQUEST` + `DELIVERY_CODE_INVALID` with `extensions.attemptsLeft`; locked: `DELIVERY_CODE_LOCKED`; no code sent for this dispatch (no usable phone, or the SMS job has not run yet): `DELIVERY_CODE_NOT_ISSUED` (use an override). **Cash on delivery** is recorded in the same call: `cashCollected` is required (`CASH_COLLECTION_REQUIRED`) and must equal the order total (`COLLECTION_AMOUNT_MISMATCH`); it is refused for an order paid online (`NO_CASH_TO_COLLECT`). The collection is the shipment's rider's (recorded by the caller) and goes into their unremitted collections. `latitude`/`longitude` go together. In one transaction: a `ProofOfDelivery` (append-only), `DELIVERED` (warranty starts, events, customer SMS/email), the order's completion (online: when its last shipment is delivered; COD: payment captured and `COMPLETED`) and an audit row (`PROOF_OF_DELIVERY`).
+
+**Photo (optional)**: upload first, then pass its `publicId`. `POST /delivery/my-shipments/:shipmentId/photo` (rider, own shipment; `404` otherwise) or `POST /delivery/shipments/:shipmentId/photo` (`order.fulfil`), multipart field `file`, JPEG/PNG/WebP up to 5 MB (checked by content), 10 per minute → `201 { publicId, url }`. Only a photo uploaded for that shipment is accepted (`INVALID_DELIVERY_PHOTO`).
+
+**What people see**: staff read `Shipment.proofOfDelivery` (`{ id, method: CODE | OVERRIDE, overrideReason, deliveredById, deliveredAt, photoUrl, recipientName, latitude, longitude }`, permission `order.view`; customers get `FORBIDDEN`). The customer's `trackingTimeline` has `deliveryConfirmation { method, confirmedAt }` on the `DELIVERED` step of a rider's shipment (no photo, no staff data).
+
+**Breaking changes (P5-C.2)** `[breaking-api]`: `updateShipmentStatus(status: DELIVERED)` and `recordCodPayment` refuse a shipment that has a rider (`PROOF_OF_DELIVERY_REQUIRED`); the out-for-delivery SMS of a rider's shipment now includes the delivery code.
+
+---
+
 #### `deleteOrder` (ADMIN, SUPER_ADMIN)
 - **Type**: Mutation
 - **Args**: `orderId: String!`
@@ -1988,7 +2046,7 @@ Every change runs with the order row locked (two concurrent creates cannot over-
 - **Type**: Mutation
 - **Args**: `input: RecordCodPaymentInput!` — `{ orderId: ID!, riderId: ID!, amount: Decimal!, collectedAt: DateTime }`
 - **Description**: Records that a rider collected the grand total in cash. In one step it captures the payment (attempt `CAPTURED`, provider `CASH_ON_DELIVERY`, amount = `grandTotal`, GHS), stores the cash collection (who collected it, who recorded it, when), delivers the shipment (`DELIVERED`), completes the order (`COMPLETED`, customer emailed) and writes an audit entry (with the rider and collection time). The collection then waits to be handed in with `recordCashRemittance` (see [COD cash](#cod-cash-collection-remittances-and-report-p3-b3)).
-- **Rules**: only a non-deleted cash-on-delivery order in `IN_FULFILMENT` whose shipment has been dispatched (`OUT_FOR_DELIVERY`, or `READY_FOR_PICKUP` at the counter). `riderId` is the staff member who took the cash: riders are staff accounts for now (an active user with a store role). `amount` must equal the order's `grandTotal` exactly: a short collection is not recorded here (cash a rider fails to hand in shows up as a short remittance). `collectedAt` defaults to now; it may be backdated, but not to before dispatch nor into the future (5 minutes of clock skew allowed). Repeating the call for the same order (double click) records nothing more.
+- **Rules**: only a non-deleted cash-on-delivery order in `IN_FULFILMENT` whose shipment has been dispatched (`OUT_FOR_DELIVERY`, or `READY_FOR_PICKUP` at the counter). A shipment with a rider is refused (`BAD_REQUEST` + `reason: PROOF_OF_DELIVERY_REQUIRED`): its cash is recorded by `completeMyDelivery` / `completeDelivery` (P5-C.2). `riderId` is the staff member who took the cash: for a delivery it must be a rider (P5-C.1: a role with `delivery.ride`, `BAD_REQUEST` + `reason: NOT_A_RIDER` otherwise); at the pickup counter any active staff member. Collections recorded earlier by other staff stay valid and can still be remitted. `amount` must equal the order's `grandTotal` exactly: a short collection is not recorded here (cash a rider fails to hand in shows up as a short remittance). `collectedAt` defaults to now; it may be backdated, but not to before dispatch nor into the future (5 minutes of clock skew allowed). Repeating the call for the same order (double click) records nothing more.
 - **Response**: `Payment!`
 
 **Breaking change (P3-B.3):** the argument `orderId: String!` → `input: RecordCodPaymentInput!`, with the new required `riderId` and `amount`.
@@ -3594,8 +3652,9 @@ Authorization is permission-based (ADR-0013). **Permissions** are fixed in code;
 | Inventory clerk (`INVENTORY_CLERK`) | `catalog.product.read`, `catalog.product.write`, `catalog.taxonomy.write`, `catalog.media.upload`, `inventory.view`, `inventory.adjust` | No (may opt in) |
 | Cashier (`CASHIER`) | `catalog.product.read`, `order.view`, `order.fulfil`, `payment.view`, `payment.record`, `cod.cash.manage` | No (may opt in) |
 | Support (`SUPPORT`) | `order.view`, `return.manage`, `payment.view`, `user.view`, `review.moderate` | No (may opt in) |
+| Rider (`RIDER`) | `delivery.ride` (P5-C.1: their own assigned deliveries only) | No (may opt in) |
 
-Pharmacist and Rider roles come with their verticals. The Owner can create **custom roles** from the catalogue (`createStaffRole`).
+A Pharmacist role comes with its vertical. The Owner can create **custom roles** from the catalogue (`createStaffRole`).
 
 **Rules** (all enforced server-side, every change audited):
 - Managing staff needs `staff.manage` (by default only the Owner).
@@ -3625,7 +3684,9 @@ Pharmacist and Rider roles come with their verticals. The Owner can create **cus
 | `purchasing.receive` | `receivePurchaseOrder` (P4-E.1; held by Owner, Manager and Inventory clerk) |
 | `order.view` | `getOrders`, `viewOrder`, `flaggedOrders` (P3-E.1) |
 | `order.manage` | `adminCancelOrder`, `deleteOrder`, `clearOrderReviewFlags` (P3-E.1) |
-| `order.fulfil` | `createShipment`, `cancelShipment`, `updateShipmentStatus`, `updateShipping`, `assignShipmentItemSerials`, `unassignShipmentItemSerials` (P1-O.2, P5-B.1; held by Owner, Manager, Inventory clerk and Cashier) |
+| `order.fulfil` | `createShipment`, `cancelShipment`, `updateShipmentStatus`, `updateShipping`, `assignShipmentItemSerials`, `unassignShipmentItemSerials`, `riders`, `assignShipmentRider`, `unassignShipmentRider` (P1-O.2, P5-B.1, P5-C.1; held by Owner, Manager, Inventory clerk and Cashier) |
+| `delivery.ride` | `myDeliveries`, `myDelivery`, `startMyDelivery`, `failMyDelivery`, `completeMyDelivery`, `POST /delivery/my-shipments/:shipmentId/photo` (P5-C.1/C.2; held by the Rider role; the Owner holds it but is never assigned deliveries) |
+| `delivery.override` | `completeDelivery` with `overrideReason` (P5-C.2; held by Owner and Manager). `completeDelivery` itself and `POST /delivery/shipments/:shipmentId/photo` need `order.fulfil` |
 | `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund`, `refundOrder` |
 | `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
 | `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment`, `disputes`, `dispute` (P3-E.2) |

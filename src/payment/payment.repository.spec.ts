@@ -264,7 +264,10 @@ describe('PaymentRepository', () => {
 
     beforeEach(() => {
       mockPrismaOrder.findUnique.mockResolvedValue(shippedCod);
-      mockPrismaUser.findUnique.mockResolvedValue({ isActive: true, storeMemberships: [{ id: 'm1' }] });
+      mockPrismaUser.findUnique.mockResolvedValue({
+        isActive: true,
+        storeMemberships: [{ role: { key: 'CASHIER', permissions: ['order.view'] } }],
+      });
       mockPrismaIntent.upsert.mockResolvedValue({ id: 'intent1' });
       mockPrismaAttempt.create.mockResolvedValue({ id: 'pay1' });
       mockPrismaCashCollection.create.mockResolvedValue(collection);
@@ -290,7 +293,7 @@ describe('PaymentRepository', () => {
       await expect(repository.recordCashCollection('order1', request, refuse, onRecorded)).rejects.toBe(refusal);
 
       expect(mockTx.$queryRaw).toHaveBeenCalled();
-      expect(refuse).toHaveBeenCalledWith(shippedCod, { isActive: true, isStaff: true });
+      expect(refuse).toHaveBeenCalledWith(shippedCod, { isActive: true, isStaff: true, isRider: false });
       expect(mockPrismaIntent.upsert).not.toHaveBeenCalled();
       expect(mockPrismaAttempt.create).not.toHaveBeenCalled();
       expect(mockPrismaCashCollection.create).not.toHaveBeenCalled();
@@ -340,8 +343,25 @@ describe('PaymentRepository', () => {
       mockPrismaUser.findUnique.mockResolvedValueOnce(null);
       await repository.recordCashCollection('order1', request, check, onRecorded);
 
-      expect(check).toHaveBeenNthCalledWith(1, shippedCod, { isActive: true, isStaff: false });
+      expect(check).toHaveBeenNthCalledWith(1, shippedCod, { isActive: true, isStaff: false, isRider: false });
       expect(check).toHaveBeenNthCalledWith(2, shippedCod, null);
+    });
+
+    it('hands the re-check a Rider-role member as a rider, and the Owner as not one', async () => {
+      const check = jest.fn();
+      mockPrismaUser.findUnique.mockResolvedValueOnce({
+        isActive: true,
+        storeMemberships: [{ role: { key: 'RIDER', permissions: ['delivery.ride'] } }],
+      });
+      await repository.recordCashCollection('order1', request, check, onRecorded);
+      mockPrismaUser.findUnique.mockResolvedValueOnce({
+        isActive: true,
+        storeMemberships: [{ role: { key: 'OWNER', permissions: ['delivery.ride'] } }],
+      });
+      await repository.recordCashCollection('order1', request, check, onRecorded);
+
+      expect(check).toHaveBeenNthCalledWith(1, shippedCod, { isActive: true, isStaff: true, isRider: true });
+      expect(check).toHaveBeenNthCalledWith(2, shippedCod, { isActive: true, isStaff: true, isRider: false });
     });
 
     it('delivers the shipment and completes the order only from the status it was locked in, then hands the result to onRecorded', async () => {

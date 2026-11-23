@@ -101,6 +101,12 @@ const AUDITED: Record<string, string> = {
   deleteOrder: 'order.service.spec',
   updateShipping: 'shipments.service.spec (updateShipping)',
   recordCodPayment: 'payment.service.spec (recordCodPayment)',
+  assignShipmentRider: 'riders.service.spec (assign), riders.e2e-spec (audit rows)',
+  unassignShipmentRider: 'riders.service.spec (unassign)',
+  startMyDelivery: 'shipments.service.spec (moveAsRider)',
+  failMyDelivery: 'shipments.service.spec (moveAsRider)',
+  completeMyDelivery: 'proof-of-delivery.service.spec (PROOF_OF_DELIVERY audit row), proof-of-delivery.e2e-spec',
+  completeDelivery: 'proof-of-delivery.service.spec (PROOF_OF_DELIVERY audit row), proof-of-delivery.e2e-spec',
   recordCashRemittance: 'cash.service.spec (recordRemittance)',
   updateStoreSettings: 'store.service.spec',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.

@@ -8,9 +8,10 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { SMS_PROVIDER } from './sms/sms-provider.port';
 import { SmsSender, smsProviderFrom } from './sms/sms-sender';
 import { ReadyForPickupNotifier } from './ready-for-pickup.notifier';
+import { DeliveryCodeModule } from '../delivery/code/delivery-code.module';
 
 @Module({
-  imports: [CommonsModule, InventoryModule],
+  imports: [CommonsModule, InventoryModule, DeliveryCodeModule],
   providers: [
     NotificationsService,
     NotificationSender,

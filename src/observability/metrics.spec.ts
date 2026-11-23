@@ -206,6 +206,20 @@ describe('AppMetrics', () => {
       { value: 1, attributes: { kind: 'OVER' } },
     ]);
   });
+
+  it('counts refused delivery codes by result and overrides with no labels', () => {
+    const { metrics, samples } = build();
+
+    metrics.recordDeliveryCodeFailure('WRONG_CODE');
+    metrics.recordDeliveryCodeFailure('LOCKED');
+    metrics.recordDeliveryOverride();
+
+    expect(samples.delivery_code_failures).toEqual([
+      { value: 1, attributes: { result: 'WRONG_CODE' } },
+      { value: 1, attributes: { result: 'LOCKED' } },
+    ]);
+    expect(samples.delivery_overrides).toEqual([{ value: 1, attributes: {} }]);
+  });
 });
 
 describe('routeTemplate', () => {

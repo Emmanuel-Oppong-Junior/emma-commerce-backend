@@ -50,6 +50,8 @@ export class AppMetrics {
   private readonly velocityErrors: Counter;
   private readonly codGateRefusals: Counter;
   private readonly codRemittanceDiscrepancies: Counter;
+  private readonly deliveryCodeFailures: Counter;
+  private readonly deliveryOverrides: Counter;
   private readonly operationNames = new Set<string>();
 
   constructor(@Inject(METER) meter: Meter) {
@@ -97,6 +99,12 @@ export class AppMetrics {
     });
     this.codRemittanceDiscrepancies = meter.createCounter('cod_remittance_discrepancies', {
       description: 'Cash-on-delivery remittances that did not match their collections, by kind (SHORT or OVER)',
+    });
+    this.deliveryCodeFailures = meter.createCounter('delivery_code_failures', {
+      description: 'Delivery codes refused at completion, by result (WRONG_CODE, LOCKED, NOT_ISSUED)',
+    });
+    this.deliveryOverrides = meter.createCounter('delivery_overrides', {
+      description: 'Rider deliveries confirmed by a staff override instead of the customer code',
     });
   }
 
@@ -169,6 +177,14 @@ export class AppMetrics {
 
   recordCodRemittanceDiscrepancy(kind: 'SHORT' | 'OVER'): void {
     this.codRemittanceDiscrepancies.add(1, { kind });
+  }
+
+  recordDeliveryCodeFailure(result: 'WRONG_CODE' | 'LOCKED' | 'NOT_ISSUED'): void {
+    this.deliveryCodeFailures.add(1, { result });
+  }
+
+  recordDeliveryOverride(): void {
+    this.deliveryOverrides.add(1);
   }
 
   private boundedOperationName(name: string | null | undefined): string {

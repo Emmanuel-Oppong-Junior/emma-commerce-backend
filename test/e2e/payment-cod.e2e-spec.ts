@@ -4,7 +4,10 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin } from '../helpers/auth.helper';
-import { resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
+import { createRider, resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
+
+// Cash for a delivery is taken by a rider (P5-C.1).
+const RIDER_ID = 'cod_rider';
 
 describe('Cash-on-delivery collection (e2e)', () => {
   let app: INestApplication;
@@ -44,7 +47,7 @@ describe('Cash-on-delivery collection (e2e)', () => {
   const recordCod = (orderId: string) =>
     gqlRequest(
       app,
-      `mutation { recordCodPayment(input: { orderId: "${orderId}", riderId: "seed_admin", amount: "250.50" }) { id status amount { amount currency } currency paymentMethod } }`,
+      `mutation { recordCodPayment(input: { orderId: "${orderId}", riderId: "${RIDER_ID}", amount: "250.50" }) { id status amount { amount currency } currency paymentMethod } }`,
       undefined,
       adminToken,
     ).expect(200);
@@ -63,6 +66,7 @@ describe('Cash-on-delivery collection (e2e)', () => {
     ({ app, prisma } = await createTestApp());
     await resetDb(prisma);
     await seedMinimal(prisma);
+    await createRider(prisma, RIDER_ID);
     adminToken = await signInAdmin(app);
   });
 

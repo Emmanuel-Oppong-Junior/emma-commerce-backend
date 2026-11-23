@@ -19,6 +19,7 @@ Mutation approveStockTake                permission: inventory.stocktake.approve
 Mutation archiveProduct                  permission: catalog.product.write
 Mutation archiveUser                     permission: user.manage
 Mutation assignShipmentItemSerials       permission: order.fulfil
+Mutation assignShipmentRider             permission: order.fulfil
 Mutation assignStaffRole                 permission: staff.manage; step-up
 Mutation cancelOrder                     customer only
 Mutation cancelPurchaseOrder             permission: purchasing.manage
@@ -30,7 +31,9 @@ Mutation clearCart                       authenticated
 Mutation clearOrderReviewFlags           permission: order.manage
 Mutation clearWishlist                   authenticated
 Mutation closePurchaseOrder              permission: purchasing.manage
+Mutation completeDelivery                permission: order.fulfil
 Mutation completeMfaSignIn               public
+Mutation completeMyDelivery              permission: delivery.ride
 Mutation confirmMfaEnrollment            authenticated
 Mutation createAddress                   authenticated
 Mutation createBrand                     permission: catalog.taxonomy.write
@@ -79,6 +82,7 @@ Mutation deleteTag                       permission: catalog.taxonomy.write
 Mutation deleteTax                       permission: tax.manage; step-up
 Mutation deleteVariant                   permission: catalog.product.write
 Mutation dispatchStockTransfer           permission: inventory.transfer
+Mutation failMyDelivery                  permission: delivery.ride
 Mutation forgotPassword                  public
 Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
@@ -128,9 +132,11 @@ Mutation signOut                         authenticated
 Mutation signUp                          public
 Mutation softDeletePayment               permission: payment.manage
 Mutation startMfaEnrollment              authenticated
+Mutation startMyDelivery                 permission: delivery.ride
 Mutation stepUp                          authenticated
 Mutation submitStockTake                 permission: inventory.adjust
 Mutation unassignShipmentItemSerials     permission: order.fulfil
+Mutation unassignShipmentRider           permission: order.fulfil
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
@@ -195,6 +201,8 @@ Query failedJobs                         permission: jobs.manage
 Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only
 Query getUserPayment                     permission: payment.view
+Query myDeliveries                       permission: delivery.ride
+Query myDelivery                         permission: delivery.ride
 Query myPhoneVerification                authenticated
 Query myReturnRequests                   authenticated
 Query order                              authenticated
@@ -221,6 +229,7 @@ Query refunds                            permission: payment.view
 Query returnRequests                     permission: return.manage
 Query revenueByCategory                  permission: report.view
 Query review                             authenticated
+Query riders                             permission: order.fulfil
 Query salesReport                        permission: report.view
 Query serialUnitLookup                   permission: order.view
 Query shippingZone                       permission: shipping.manage
@@ -269,6 +278,8 @@ REST GET /                               authenticated
 REST GET /health                         public
 REST GET /health/live                    public
 REST GET /health/ready                   public
+REST POST /delivery/my-shipments/:shipmentId/photo permission: delivery.ride
+REST POST /delivery/shipments/:shipmentId/photo permission: order.fulfil
 REST POST /payment/initialize            authenticated
 REST POST /payment/webhook               public
 REST POST /upload/multiple-images        permission: catalog.media.upload

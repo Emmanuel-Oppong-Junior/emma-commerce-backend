@@ -16,6 +16,9 @@ export const PERMISSION_CATALOGUE = {
   'order.view': 'Read every order',
   'order.manage': 'Cancel and delete orders',
   'order.fulfil': 'Move shipments through picking, packing, dispatch and delivery, and set carrier and tracking',
+  'delivery.ride':
+    'Work as a rider: see the shipments assigned to you, take them out for delivery, record failed deliveries',
+  'delivery.override': "Confirm a rider's delivery without the customer's delivery code, giving a reason",
   'order.refund': 'Approve returns with a refund amount and send refunds',
   'return.manage': 'Read and reject return requests',
   'payment.view': 'Read payments and refunds of every customer',
