@@ -5,7 +5,9 @@
 **Last checkpoint:** 2026-11-23 · **Current phase:** Phase 4 — Inventory (started 2026-11-22, Emmanuel; 6/7: P4-A, P4-B, P4-C, P4-D done; P4-E.1 next); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
-None. Next: P4-E.1 purchasing (decisions made 2026-11-22, see Decisions log); start on Emmanuel's go-ahead.
+- **P4-E.1 — Suppliers, purchase orders, receiving into lots, weighted-average cost** (ADR-0008) · branch `feat/p4-e-purchasing` (agent in a worktree, from the start commit) · DB `emma_wt_purchasing_test`, Redis DB 11 · **State:** in progress (started 2026-11-23, Emmanuel)
+  - Decisions (Emmanuel, 2026-11-22): suppliers; POs DRAFT → SENT → PARTIALLY_RECEIVED/RECEIVED into a location, or CANCELLED; no approval step; weighted-average unit cost per variant; lot-tracked lines received through `LotsService.receiveIntoLot`.
+  - [ ] E.1 (agent) ← **Next step** · [ ] merge into dev, gates + full e2e, push
 
 **Last completed: P4-C Lots & expiry + P4-D Serials (2026-11-23)** (ADR-0008, ADR-0013; no audit findings closed): C.1 `747d7e4` `16abd1b` `c4a4d37` `d7c3151`, D.1 `32c457d` `1ca4ca3` (all additive, no `[breaking-api]`); merged into dev (`566c878` C, `4cd9b07` D; conflicts in inventory/stock-take/transfer/products services, reconciliation task, DTOs, module, specs, schema, docs: kept both; constructors take lots then serials; transfer receipt keeps the lot-aware `transferIn` and calls `receiveTransfer` also for zero-quantity lines; stock audit carries both `lots` and `serials`; lots e2e reconciliation task given `SerialUnitsRepository`). P4-C ✅ P4-D ✅.
   - C.1: `Product.trackLots` enforced (switch only with no stock on hand/in transit/sold-undispatched; product row locked). `Lot` (lotNumber unique per variant, expiresAt, manufacturedAt?) + `LotStock` per location; `StockMovement.lotId` (one movement per lot). Receipt needs lot + future expiry (existing lot: expiry must match). Reservations stay per variant+location; lots drawn FEFO at consumption, transfer dispatch, removals without a lot, stock-take shortages. Expired units excluded from placement/availability/cart/quote; hourly `inventory.expire-lots` (:05 UTC, lock `70_412_007`) writes them off as EXPIRED (reserved expired units kept, warning logged). Transfer shortfall falls on latest-expiring lots; return restock into named lot or the order's drawn lots; stock-take surplus into latest-expiring lot (`STOCK_TAKE_NO_LOT` if none). `expiringStock`, `variantLots` (`inventory.view`). Reconciliation kinds `LOT_MOVEMENTS`, `LOT_TOTAL`. Opening stock refused for tracked products. `LotsService.receiveIntoLot` for P4-E. Migration `20261204120000_lots_and_expiry`.
@@ -181,7 +183,7 @@ None. Next: P4-E.1 purchasing (decisions made 2026-11-22, see Decisions log); st
 ## Up next (in order)
 | # | Task | Run | Blocked by |
 |---|---|---|---|
-| 1 | P4-E.1 purchasing (suppliers, POs, weighted-average cost) | → | Emmanuel's go-ahead |
+| 1 | P4-E.1 purchasing (in progress) | → | — |
 | 2 | P3-C.2 MoMo refunds · P3-D Flutterwave | → | Paystack MoMo-refund confirmation · Flutterwave account |
 | 3 | P2-T tax engine | → | Ghanaian tax adviser sign-off (ADR-0006) |
 | 4 | P1-K.2–K.4 deploy pipeline, IaC, restore rehearsal | ∥ | Hosting choice per client (ADR-0016: EU region default) and cloud account access |

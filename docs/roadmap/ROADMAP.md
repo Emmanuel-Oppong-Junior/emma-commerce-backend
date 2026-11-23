@@ -381,9 +381,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > Run: ∥ · M · 🟧
 - [x] **P4-D.1** [32c457d, 1ca4ca3] `SerialUnit` (IMEI) assignment at pick; warranty start
 
-### P4-E — Purchasing
+### P4-E — Purchasing  🔄 in progress
 > Run: ∥ · L · ⬜
-- [ ] **P4-E.1** Suppliers, purchase orders, receiving into lots
+- [ ] 🔄 **P4-E.1** Suppliers, purchase orders, receiving into lots
 
 ## Phase 5 — Delivery & fulfilment
 
