@@ -92,6 +92,7 @@ Mutation receivePurchaseOrder            permission: purchasing.receive
 Mutation receiveStockTransfer            permission: inventory.transfer
 Mutation recordCashRemittance            permission: cod.cash.manage
 Mutation recordCodPayment                permission: payment.record
+Mutation recordCustomerConsent           permission: user.manage
 Mutation recordDispute                   permission: payment.dispute.manage
 Mutation recordStockTakeCounts           permission: inventory.adjust
 Mutation refreshToken                    public
@@ -148,6 +149,7 @@ Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateDeliverySlot              permission: shipping.manage
 Mutation updateDisputeStatus             permission: payment.dispute.manage
 Mutation updateMyProfile                 authenticated
+Mutation updateNotificationPreference    authenticated
 Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
 Mutation updatePickupLocation            permission: shipping.manage
 Mutation updatePriceList                 permission: pricelist.manage; step-up
@@ -190,6 +192,7 @@ Query checkoutQuote                      authenticated
 Query codBlacklist                       permission: payment.settings.manage
 Query codCashReport                      permission: cod.cash.manage
 Query codRiskSettings                    permission: payment.settings.manage
+Query customerConsentHistory             permission: user.view
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
@@ -203,6 +206,7 @@ Query getMyPayments                      customer only
 Query getUserPayment                     permission: payment.view
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
+Query myNotificationPreferences          authenticated
 Query myPhoneVerification                authenticated
 Query myReturnRequests                   authenticated
 Query order                              authenticated

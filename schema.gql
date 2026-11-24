@@ -742,6 +742,34 @@ input CompleteMyDeliveryInput {
   shipmentId: ID!
 }
 
+enum ConsentAction {
+  GRANTED
+  WITHDRAWN
+}
+
+"""One entry of the consent ledger (append-only)"""
+type ConsentEventEntity {
+  action: ConsentAction!
+
+  """The staff member who recorded it (STAFF_REQUEST)"""
+  actorId: ID
+  category: NotificationCategory!
+  channel: NotificationChannel!
+  createdAt: DateTime!
+  id: ID!
+  source: ConsentSource!
+}
+
+"""
+Where a consent change came from: CHECKOUT, ACCOUNT_SETTINGS, STAFF_REQUEST or EMAIL_LINK
+"""
+enum ConsentSource {
+  ACCOUNT_SETTINGS
+  CHECKOUT
+  EMAIL_LINK
+  STAFF_REQUEST
+}
+
 """
 One entry of a variant's append-only cost history (inventory.cost.view)
 """
@@ -2243,6 +2271,11 @@ type Mutation {
   recordCodPayment(input: RecordCodPaymentInput!): Payment!
 
   """
+  Record a customer's request (by phone, in store) to receive or stop marketing on a channel (staff, source STAFF_REQUEST); returns their preferences. Same refusals as updateNotificationPreference
+  """
+  recordCustomerConsent(input: RecordCustomerConsentInput!): [NotificationPreferenceEntity!]!
+
+  """
   Record a dispute against a captured online payment by hand (e.g. a chargeback notice by email). Owner, Manager, audited
   """
   recordDispute(input: RecordDisputeInput!): DisputeEntity!
@@ -2467,6 +2500,11 @@ type Mutation {
   ): User!
 
   """
+  Opt in to or out of a category on a channel; returns every preference. Each marketing change is recorded in the consent ledger. BAD_REQUEST with reason TRANSACTIONAL_ALWAYS_ON (transactional messages cannot be switched off), CHANNEL_NOT_AVAILABLE (marketing is EMAIL and SMS only) or PHONE_NOT_VERIFIED (marketing SMS needs a verified phone)
+  """
+  updateNotificationPreference(input: UpdateNotificationPreferenceInput!): [NotificationPreferenceEntity!]!
+
+  """
   Switch card, mobile money and cash on delivery on or off and choose the provider of each online method. Owner, recent step-up, audited
   """
   updatePaymentMethods(input: UpdatePaymentMethodsInput!): PaymentSettings!
@@ -2564,6 +2602,30 @@ type Mutation {
   Confirm the phone number with the code from the SMS. BAD_REQUEST with reason OTP_INVALID (attemptsRemaining), OTP_ATTEMPTS_EXCEEDED (5 wrong codes: the code is dead) or OTP_EXPIRED (none live: request a new one)
   """
   verifyPhone(input: VerifyPhoneInput!): PhoneVerificationStatusEntity!
+}
+
+"""
+TRANSACTIONAL (codes, receipts, order updates: always on) or MARKETING (opt-in only)
+"""
+enum NotificationCategory {
+  MARKETING
+  TRANSACTIONAL
+}
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  SMS
+}
+
+"""Whether a category of messages reaches the customer on a channel"""
+type NotificationPreferenceEntity {
+  category: NotificationCategory!
+  channel: NotificationChannel!
+  enabled: Boolean!
+
+  """True when the customer cannot switch it off (transactional messages)"""
+  locked: Boolean!
 }
 
 """How an ONLINE order is paid; chosen per payment attempt"""
@@ -3866,6 +3928,9 @@ type Query {
   """
   codRiskSettings: CodRiskSettingsEntity!
 
+  """A customer's consent ledger, newest first (staff)"""
+  customerConsentHistory(userId: ID!): [ConsentEventEntity!]!
+
   """Admin: one customer group"""
   customerGroup(id: ID!): CustomerGroup!
 
@@ -3948,6 +4013,11 @@ type Query {
 
   """One shipment assigned to the signed-in rider; NOT_FOUND otherwise"""
   myDelivery(shipmentId: ID!): RiderDelivery!
+
+  """
+  Every category and channel with its current choice: transactional always on (locked), marketing off until you opt in
+  """
+  myNotificationPreferences: [NotificationPreferenceEntity!]!
 
   """
   Whether the current user's phone number is verified (cash on delivery needs it)
@@ -4525,6 +4595,15 @@ input RecordCodPaymentInput {
   The staff member who took the cash (an active account with a store role)
   """
   riderId: ID!
+}
+
+input RecordCustomerConsentInput {
+  """EMAIL or SMS (marketing)"""
+  channel: NotificationChannel!
+
+  """true: the customer asked to receive marketing; false: to stop it"""
+  granted: Boolean!
+  userId: ID!
 }
 
 input RecordDisputeInput {
@@ -5829,6 +5908,15 @@ input UpdateDisputeStatusInput {
   """Kept in the dispute history"""
   note: String
   status: DisputeStatus!
+}
+
+input UpdateNotificationPreferenceInput {
+  category: NotificationCategory!
+  channel: NotificationChannel!
+  enabled: Boolean!
+
+  """CHECKOUT (the opt-in box at checkout) or ACCOUNT_SETTINGS (default)"""
+  source: ConsentSource = ACCOUNT_SETTINGS
 }
 
 """Payment-method switches to change; omitted fields keep their value"""

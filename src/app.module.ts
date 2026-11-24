@@ -40,6 +40,7 @@ import { PriceListsModule } from './price-lists/price-lists.module';
 import { BrandModule } from './brand/brand.module';
 import { HealthModule } from './health/health.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { CustomerNotificationsModule } from './notifications/customer/customer-notifications.module';
 import { CurrencyModule } from './currency/currency.module';
 import { TaxModule } from './tax/tax.module';
 import { InventoryModule } from './inventory/inventory.module';
@@ -158,6 +159,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     BrandModule,
     HealthModule,
     NotificationsModule,
+    CustomerNotificationsModule,
     CurrencyModule,
     TaxModule,
     InventoryModule,

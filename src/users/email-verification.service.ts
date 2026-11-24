@@ -67,7 +67,7 @@ export class EmailVerificationService {
     if (owner && owner.id !== user.id) throw new ConflictException('This email address is already in use');
 
     const updated = await this.issueToken(user.id, newEmail, { ...otherChanges, pendingEmail: newEmail }, tx);
-    this.notificationsService.sendEmailChangeRequested(user.email, newEmail);
+    this.notificationsService.sendEmailChangeRequested(user.id, user.email, newEmail);
     return updated;
   }
 
@@ -86,7 +86,7 @@ export class EmailVerificationService {
         throw new ConflictException('This email address is already in use; the email change was cancelled');
       case 'verified':
         if (outcome.firstVerification) {
-          this.notificationsService.sendWelcomeEmail(outcome.user.email, outcome.user.name ?? '');
+          this.notificationsService.sendWelcomeEmail(outcome.user.id, outcome.user.email, outcome.user.name ?? '');
         }
         return true;
       case 'email-changed':
@@ -108,7 +108,7 @@ export class EmailVerificationService {
       data,
       tx,
     );
-    this.notificationsService.sendEmailVerification(sendTo, token, VERIFICATION_TOKEN_TTL_HOURS);
+    this.notificationsService.sendEmailVerification(userId, sendTo, token, VERIFICATION_TOKEN_TTL_HOURS);
     return user;
   }
 

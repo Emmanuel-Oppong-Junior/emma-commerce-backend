@@ -1,4 +1,4 @@
-import { phoneOtpText } from '../notifications/sms/sms-jobs';
+import { renderSms } from '../notifications/templates/templates';
 import { generateOtpCode, hashOtp, otpHashKey, otpKeys, verifiedPhoneOf } from './phone-otp';
 
 describe('phone OTP', () => {
@@ -72,7 +72,7 @@ describe('phone OTP', () => {
   });
 
   it('keeps the SMS within one 160-character segment', () => {
-    const text = phoneOtpText('123456', 10);
+    const text = renderSms('account.phone_otp', { code: '123456', expiresInMinutes: 10 });
     expect(text).toContain('123456');
     expect(text.length).toBeLessThanOrEqual(160);
     expect(text).toMatch(/^[\x20-\x7E]+$/);

@@ -61,8 +61,8 @@ describe('EmailVerificationService', () => {
       service.sendSignUpVerification(user);
       await flushBackgroundWork();
 
-      expect(notifications.sendEmailVerification).toHaveBeenCalledWith(user.email, expect.any(String), 24);
-      const token = notifications.sendEmailVerification.mock.calls[0][1];
+      expect(notifications.sendEmailVerification).toHaveBeenCalledWith(user.id, user.email, expect.any(String), 24);
+      const token = notifications.sendEmailVerification.mock.calls[0][2];
       const [userId, saved] = repository.saveEmailVerificationToken.mock.calls[0];
       expect(userId).toBe(user.id);
       expect(saved.hash).toBe(sha256(token));
@@ -93,7 +93,7 @@ describe('EmailVerificationService', () => {
 
       await expect(service.resend(user.id)).resolves.toBe(true);
 
-      expect(notifications.sendEmailVerification).toHaveBeenCalledWith(user.email, expect.any(String), 24);
+      expect(notifications.sendEmailVerification).toHaveBeenCalledWith(user.id, user.email, expect.any(String), 24);
     });
 
     it('sends the token to the pending new email while a change is in progress', async () => {
@@ -102,7 +102,12 @@ describe('EmailVerificationService', () => {
 
       await service.resend(user.id);
 
-      expect(notifications.sendEmailVerification).toHaveBeenCalledWith('new@example.com', expect.any(String), 24);
+      expect(notifications.sendEmailVerification).toHaveBeenCalledWith(
+        user.id,
+        'new@example.com',
+        expect.any(String),
+        24,
+      );
     });
 
     it('refuses when the email is already verified and nothing is pending', async () => {
@@ -149,8 +154,13 @@ describe('EmailVerificationService', () => {
         { name: 'Ama', pendingEmail: 'new@example.com' },
         undefined,
       );
-      expect(notifications.sendEmailVerification).toHaveBeenCalledWith('new@example.com', expect.any(String), 24);
-      expect(notifications.sendEmailChangeRequested).toHaveBeenCalledWith(user.email, 'new@example.com');
+      expect(notifications.sendEmailVerification).toHaveBeenCalledWith(
+        user.id,
+        'new@example.com',
+        expect.any(String),
+        24,
+      );
+      expect(notifications.sendEmailChangeRequested).toHaveBeenCalledWith(user.id, user.email, 'new@example.com');
     });
 
     it("stores the pending address on the caller's transaction when given one", async () => {
@@ -196,7 +206,7 @@ describe('EmailVerificationService', () => {
 
       await service.verify('raw-token');
 
-      expect(notifications.sendWelcomeEmail).toHaveBeenCalledWith(user.email, user.name);
+      expect(notifications.sendWelcomeEmail).toHaveBeenCalledWith(user.id, user.email, user.name);
     });
 
     it('does not send the welcome email again for a re-verification', async () => {

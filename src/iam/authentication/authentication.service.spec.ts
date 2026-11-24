@@ -403,7 +403,11 @@ describe('AuthenticationService', () => {
         createHash('sha256').update('reset-token').digest('hex'),
         expect.any(Date),
       );
-      expect(mockNotificationsService.sendPasswordReset).toHaveBeenCalledWith(baseUser.email, 'reset-token');
+      expect(mockNotificationsService.sendPasswordReset).toHaveBeenCalledWith(
+        baseUser.id,
+        baseUser.email,
+        'reset-token',
+      );
     });
 
     it('issues nothing when the email has no account', async () => {

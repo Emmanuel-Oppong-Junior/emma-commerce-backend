@@ -53,6 +53,9 @@ model User {
   cashRemitted              CashRemittance[]        @relation("CashRemittanceRider")
   cashRemittancesReceived   CashRemittance[]        @relation("CashRemittanceReceiver")
   paymentProviderConfigs    PaymentProviderConfig[]
+  notifications             Notification[]
+  notificationPreferences   NotificationPreference[]
+  consentEvents             ConsentEvent[]
   /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
   mfaSecret                 String?
   /// Set once the first code confirmed enrolment; MFA is active only from then
@@ -2266,4 +2269,92 @@ model CostChange {
   variant   Variant          @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([variantId, createdAt])
+}
+
+/// Why a notification is sent (P6-N.1): transactional messages (codes, receipts, order updates) always go out;
+/// marketing needs the customer's explicit opt-in per channel (Act 843).
+enum NotificationCategory {
+  TRANSACTIONAL
+  MARKETING
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  IN_APP
+}
+
+/// QUEUED until the channel sender handles it; SKIPPED when it may not or cannot go out (errorCode: NO_CONSENT,
+/// NO_ADDRESS, NOT_CONFIGURED); FAILED after a failed attempt (the job retries, and a later success moves it on).
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// One message to one user on one channel (P6-N.1). Holds no rendered body. dedupeKey (job id + channel, or a key
+/// chosen when queued) makes a job that runs again find its row instead of sending twice.
+model Notification {
+  id                String               @id @default(cuid())
+  userId            String
+  templateKey       String
+  templateVersion   Int
+  locale            String               @default("en")
+  category          NotificationCategory
+  channel           NotificationChannel
+  status            NotificationStatus   @default(QUEUED)
+  dedupeKey         String               @unique
+  providerMessageId String?
+  errorCode         String?
+  attempts          Int                  @default(0)
+  sentAt            DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+/// A customer's choice for a category and channel. No row = the default: transactional on, marketing off. Only
+/// marketing rows are written (a CHECK refuses a disabled transactional row); each change is also a ConsentEvent.
+model NotificationPreference {
+  userId    String
+  category  NotificationCategory
+  channel   NotificationChannel
+  enabled   Boolean
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, category, channel])
+}
+
+enum ConsentAction {
+  GRANTED
+  WITHDRAWN
+}
+
+enum ConsentSource {
+  CHECKOUT
+  ACCOUNT_SETTINGS
+  STAFF_REQUEST
+  EMAIL_LINK
+}
+
+/// The consent ledger (P6-N.1), append-only (a trigger refuses updates and direct deletes; deleting the user removes
+/// their rows). actorId is the staff member for STAFF_REQUEST.
+model ConsentEvent {
+  id        String               @id @default(cuid())
+  userId    String
+  category  NotificationCategory
+  channel   NotificationChannel
+  action    ConsentAction
+  source    ConsentSource
+  actorId   String?
+  createdAt DateTime             @default(now())
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

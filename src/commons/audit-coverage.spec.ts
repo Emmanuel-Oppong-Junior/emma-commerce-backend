@@ -150,6 +150,9 @@ const NOT_AUDITED: Record<string, string> = {
   addProductsToTag: CATALOGUE_FOLLOW_UP,
   removeProductsFromTag: CATALOGUE_FOLLOW_UP,
   adminDeleteReview: CATALOGUE_FOLLOW_UP,
+  recordCustomerConsent:
+    'Its own audit trail: the append-only consent ledger (ConsentEvent with source STAFF_REQUEST and the staff actorId), ' +
+    'written in the same transaction (notification-preferences e2e)',
 };
 
 type ClassRef = { prototype: object; name: string };

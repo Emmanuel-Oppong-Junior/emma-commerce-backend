@@ -359,7 +359,7 @@ describe('Authentication (e2e)', () => {
         accessToken,
       ).expect(200);
       expect(update.body.errors).toBeUndefined();
-      const token = verificationEmails.mock.calls.find(([to]) => to === `moved-${email}`)![1];
+      const token = verificationEmails.mock.calls.find(([, to]) => to === `moved-${email}`)![2];
       verificationEmails.mockRestore();
       // The email (and so the sessions) only change once the new address is verified.
       expect(await prisma.refreshToken.count({ where: { userId, revoked: false } })).toBe(1);

@@ -349,8 +349,9 @@ describe('Partial refunds (e2e)', () => {
   });
 
   it('emails the customer once per refund through the outbox, with the amount, reason label and lines', async () => {
-    const sends = jest.spyOn(workerEmail, 'sendRefundEmail').mockResolvedValue();
+    const sends = jest.spyOn(workerEmail, 'send').mockResolvedValue({ messageId: 'em-1' });
     const { orderId, lineA } = await paidOrder();
+    const { orderNumber } = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
 
     refunded(await refundOrder({ orderId, lines: [{ orderItemId: lineA, quantity: 1 }], shipping: true }));
 
@@ -359,21 +360,13 @@ describe('Partial refunds (e2e)', () => {
     });
     const job = async () => getQueue(worker, JobQueue.NOTIFICATIONS).getJob(event.id);
     await waitUntil(async () => (await (await job())?.getState()) === 'completed');
-    const forOrder = sends.mock.calls.filter(([, id]) => id === orderId);
-    expect(forOrder).toEqual([
-      [
-        'user@example.com',
-        orderId,
-        {
-          amount: '128.33',
-          currency: 'GHS',
-          reasonLabel: 'Item arrived damaged',
-          lines: [{ productName: 'Kente scarf', quantity: 1 }],
-          includesShipping: true,
-        },
-        event.id,
-      ],
-    ]);
+    const forOrder = sends.mock.calls.filter(([, content]) => content.subject === `Refund for order #${orderNumber}`);
+    expect(forOrder).toHaveLength(1);
+    const [to, content, key] = forOrder[0];
+    expect([to, key]).toEqual(['user@example.com', event.id]);
+    expect(content.html).toContain('GHS 128.33');
+    expect(content.html).toContain('Reason: Item arrived damaged');
+    expect(content.html).toContain('<li>1 × Kente scarf</li><li>Delivery fee</li>');
   });
 
   it('shows the customer their refunds without the internal note or staff, as pending until processed', async () => {

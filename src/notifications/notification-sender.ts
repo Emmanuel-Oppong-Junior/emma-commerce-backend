@@ -1,20 +1,22 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../commons/logger.service';
-import { EmailService } from './email/email.service';
-import { EmailJobData } from './email-jobs';
+import { DirectNotificationRef, EmailJobData } from './email-jobs';
 import { DomainEventJobData } from '../outbox/domain-events';
-import { OrderStatus, ShipmentStatus } from '../generated/prisma/client';
+import { NotificationChannel, OrderStatus, PaymentMethod, ShipmentStatus } from '../generated/prisma/client';
 import { REFUND_REASON_LABELS } from '../returns/refund-reason';
-import { SmsSender } from './sms/sms-sender';
-import { phoneOtpText, readyForPickupText, SmsJobData } from './sms/sms-jobs';
+import { SmsJobData } from './sms/sms-jobs';
 import { ReadyForPickupNotifier } from './ready-for-pickup.notifier';
 import { LowStockAlertsService } from '../inventory/low-stock/low-stock-alerts.service';
 import { verifiedPhoneOf } from '../phone-verification/phone-otp';
 import { NotificationsService } from './notifications.service';
-import { SHIPMENT_SMS_STATUSES, shipmentSmsRecipient, shipmentSmsText } from './sms/shipment-sms';
+import { SHIPMENT_SMS_STATUSES, shipmentSmsRecipient } from './sms/shipment-sms';
 import { DeliveryCodes } from '../delivery/code/delivery-codes.service';
-import { deliveryCodeDispatch, withDeliveryCode } from '../delivery/code/delivery-code';
+import { deliveryCodeDispatch } from '../delivery/code/delivery-code';
+import { NotificationDispatcher } from './notification-dispatcher';
+import { TemplateData, TemplateKey } from './templates/templates';
+import { maskEmail } from './email/email.service';
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -22,117 +24,116 @@ const EMAILED_ORDER_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED];
 // READY_FOR_PICKUP has its own email and SMS (ReadyForPickupNotifier, P5-E.1).
 const EMAILED_SHIPMENT_STATUSES: ShipmentStatus[] = [ShipmentStatus.OUT_FOR_DELIVERY];
 
+/** Where the password-reset link sends the customer; the token goes in the fragment, which browsers never send on. */
+export function passwordResetUrl(frontendUrl: string, resetToken: string): string {
+  return `${frontendUrl.replace(/\/+$/, '')}/reset-password#token=${encodeURIComponent(resetToken)}`;
+}
+
 /**
- * Turns one notifications-queue job into the email (or SMS) it stands for. Outbox events carry ids only, so the recipient is
- * read when sending; direct email jobs carry their recipient. Throws on a failed send so the queue retries.
+ * Turns one notifications-queue job into the messages it stands for, each rendered from the template registry and
+ * recorded as a Notification row by the dispatcher. Outbox events carry ids only, so the recipient is read when
+ * sending; direct jobs carry their recipient. Throws on a failed send so the queue retries.
  */
 @Injectable()
 export class NotificationSender {
+  private readonly frontendUrl: string;
+  private readonly resetTokenMinutes: number;
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly email: EmailService,
-    private readonly sms: SmsSender,
+    private readonly dispatcher: NotificationDispatcher,
     private readonly logger: LoggerService,
     private readonly lowStockAlerts: LowStockAlertsService,
     private readonly notifications: NotificationsService,
     private readonly readyForPickup: ReadyForPickupNotifier,
     private readonly deliveryCodes: DeliveryCodes,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.frontendUrl = config.getOrThrow<string>('FRONTEND_URL');
+    this.resetTokenMinutes = Math.round(config.getOrThrow<number>('JWT_RESET_TOKEN_TTL') / 60);
+  }
 
-  async send(jobName: string, data: unknown, idempotencyKey: string): Promise<void> {
+  async send(jobName: string, data: unknown, jobId: string): Promise<void> {
     switch (jobName) {
       case 'order.placed.v1': {
         const { payload } = data as DomainEventJobData<'order.placed.v1'>;
         const order = await this.findOrder(payload.orderId, jobName);
-        if (order) {
-          await this.email.sendOrderConfirmationEmail(
-            order.user.email,
-            order.id,
-            order.grandTotal.toFixed(2),
-            idempotencyKey,
-          );
-        }
+        if (!order) return;
+        const placed: TemplateData['order.placed'] = {
+          orderNumber: order.orderNumber,
+          currency: order.currency,
+          lines: order.items.map((item) => ({
+            productName: item.productName,
+            quantity: item.quantity,
+            lineTotal: item.lineTotal.toFixed(2),
+          })),
+          shippingTotal: order.shippingTotal?.toFixed(2) ?? null,
+          discountTotal: order.discountTotal?.toFixed(2) ?? null,
+          grandTotal: order.grandTotal.toFixed(2),
+          cashOnDelivery: order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY,
+        };
+        await this.emailOrder(order, jobId, 'order.placed', placed);
         return;
       }
       case 'order.status_changed.v1': {
         const { payload } = data as DomainEventJobData<'order.status_changed.v1'>;
         const order = await this.findOrder(payload.orderId, jobName);
-        if (order) {
-          await this.email.sendOrderStatusEmail(
-            order.user.email,
-            order.id,
-            payload.status,
-            payload.trackingNumber ?? undefined,
-            idempotencyKey,
-          );
-        }
+        if (!order) return;
+        await this.emailOrder(order, jobId, 'order.updated', {
+          orderNumber: order.orderNumber,
+          status: payload.status,
+          trackingNumber: payload.trackingNumber,
+        });
         return;
       }
-      case 'order.shipment_updated.v1': {
-        const { payload } = data as DomainEventJobData<'order.shipment_updated.v1'>;
+      case 'order.shipment_updated.v1':
+      case 'shipment.tracking_updated.v1': {
+        const { payload } = data as DomainEventJobData<'shipment.tracking_updated.v1'>;
         const order = await this.findOrder(payload.orderId, jobName);
-        if (order) {
-          await this.email.sendOrderStatusEmail(
-            order.user.email,
-            order.id,
-            'SHIPPED',
-            payload.trackingNumber,
-            idempotencyKey,
-          );
-        }
+        if (!order) return;
+        await this.emailOrder(order, jobId, 'shipment.dispatched', {
+          orderNumber: order.orderNumber,
+          trackingNumber: payload.trackingNumber,
+        });
         return;
       }
       case 'order.status_changed.v2': {
         const { payload } = data as DomainEventJobData<'order.status_changed.v2'>;
         if (!EMAILED_ORDER_STATUSES.includes(payload.to)) return;
         const order = await this.findOrder(payload.orderId, jobName);
-        if (order) {
-          await this.email.sendOrderStatusEmail(order.user.email, order.id, payload.to, undefined, idempotencyKey);
-        }
+        if (!order) return;
+        await this.emailOrder(order, jobId, 'order.completed', { orderNumber: order.orderNumber });
         return;
       }
       case 'shipment.status_changed.v1': {
         const { payload } = data as DomainEventJobData<'shipment.status_changed.v1'>;
         if (payload.status === ShipmentStatus.READY_FOR_PICKUP) {
-          return this.readyForPickup.notify(payload.orderId, idempotencyKey);
+          return this.readyForPickup.notify(payload.orderId, jobId);
         }
         if (SHIPMENT_SMS_STATUSES.includes(payload.status)) {
           const { orderId, shipmentId, status } = payload;
-          await this.notifications.queueShipmentSms({ orderId, shipmentId, status }, `${idempotencyKey}-sms`);
+          await this.notifications.queueShipmentSms({ orderId, shipmentId, status }, `${jobId}-sms`);
         }
         if (!EMAILED_SHIPMENT_STATUSES.includes(payload.status)) return;
         const order = await this.findOrder(payload.orderId, jobName);
-        if (order) {
-          await this.email.sendOrderStatusEmail(
-            order.user.email,
-            order.id,
-            payload.status,
-            payload.trackingNumber ?? undefined,
-            idempotencyKey,
-          );
-        }
-        return;
-      }
-      case 'shipment.tracking_updated.v1': {
-        const { payload } = data as DomainEventJobData<'shipment.tracking_updated.v1'>;
-        const order = await this.findOrder(payload.orderId, jobName);
-        if (order) {
-          await this.email.sendOrderStatusEmail(
-            order.user.email,
-            order.id,
-            'SHIPPED',
-            payload.trackingNumber,
-            idempotencyKey,
-          );
-        }
+        if (!order) return;
+        await this.emailOrder(order, jobId, 'shipment.out_for_delivery', {
+          orderNumber: order.orderNumber,
+          carrier: payload.carrier ?? null,
+          trackingNumber: payload.trackingNumber,
+          deliveryCode: null,
+        });
         return;
       }
       case 'payment.succeeded.v1': {
         const { payload } = data as DomainEventJobData<'payment.succeeded.v1'>;
         const order = await this.findOrder(payload.orderId, jobName);
-        if (order) {
-          await this.email.sendPaymentConfirmationEmail(order.user.email, order.id, payload.amount, idempotencyKey);
-        }
+        if (!order) return;
+        await this.emailOrder(order, jobId, 'payment.received', {
+          orderNumber: order.orderNumber,
+          amount: payload.amount,
+          currency: order.currency,
+        });
         return;
       }
       case 'refund.succeeded.v1': {
@@ -140,18 +141,14 @@ export class NotificationSender {
         const refund = await this.findRefund(payload.refundId, jobName);
         const order = refund && (await this.findOrder(payload.orderId, jobName));
         if (!refund || !order) return;
-        await this.email.sendRefundEmail(
-          order.user.email,
-          order.id,
-          {
-            amount: refund.amount.toFixed(2),
-            currency: refund.currency,
-            reasonLabel: REFUND_REASON_LABELS[refund.reason],
-            lines: refund.lines.map((line) => ({ productName: line.orderItem.productName, quantity: line.quantity })),
-            includesShipping: refund.shippingAmount.gt(0),
-          },
-          idempotencyKey,
-        );
+        await this.emailOrder(order, jobId, 'refund.processed', {
+          orderNumber: order.orderNumber,
+          amount: refund.amount.toFixed(2),
+          currency: refund.currency,
+          reasonLabel: REFUND_REASON_LABELS[refund.reason],
+          lines: refund.lines.map((line) => ({ productName: line.orderItem.productName, quantity: line.quantity })),
+          includesShipping: refund.shippingAmount.gt(0),
+        });
         return;
       }
       case 'payment.dispute_opened.v1': {
@@ -182,7 +179,7 @@ export class NotificationSender {
         const { payload } = data as DomainEventJobData<'inventory.low_stock_digest.v1'>;
         const recipient = await this.prisma.user.findUnique({
           where: { id: payload.recipientId },
-          select: { email: true, isActive: true },
+          select: { id: true, email: true, isActive: true },
         });
         if (!recipient?.isActive) {
           this.logger.warn(
@@ -192,92 +189,221 @@ export class NotificationSender {
           return;
         }
         const sections = await this.lowStockAlerts.digestSections(payload.digestId);
-        await this.email.sendLowStockDigestEmail(recipient.email, sections, idempotencyKey);
+        await this.dispatcher.deliver({
+          dedupeKey: `${jobId}:${NotificationChannel.EMAIL}`,
+          userId: recipient.id,
+          template: 'inventory.low_stock_digest',
+          data: { sections },
+          channel: NotificationChannel.EMAIL,
+          to: recipient.email,
+          idempotencyKey: jobId,
+        });
         return;
       }
       case 'email.welcome.v1': {
-        const { to, name } = data as EmailJobData['email.welcome.v1'];
-        return this.email.sendWelcomeEmail(to, name, idempotencyKey);
+        const job = data as EmailJobData['email.welcome.v1'];
+        return this.emailDirect(job, jobId, 'account.welcome', { name: job.name || null });
       }
       case 'email.verification.v1': {
-        const { to, verificationToken, expiresInHours } = data as EmailJobData['email.verification.v1'];
-        return this.email.sendEmailVerificationEmail(to, verificationToken, expiresInHours, idempotencyKey);
+        const job = data as EmailJobData['email.verification.v1'];
+        return this.emailDirect(job, jobId, 'account.email_verification', {
+          verificationToken: job.verificationToken,
+          expiresInHours: job.expiresInHours,
+        });
       }
       case 'email.change_requested.v1': {
-        const { to, newEmail } = data as EmailJobData['email.change_requested.v1'];
-        return this.email.sendEmailChangeRequestedEmail(to, newEmail, idempotencyKey);
+        const job = data as EmailJobData['email.change_requested.v1'];
+        return this.emailDirect(job, jobId, 'account.email_change_requested', {
+          maskedNewEmail: maskEmail(job.newEmail),
+        });
       }
       case 'email.password_reset.v1': {
-        const { to, resetToken } = data as EmailJobData['email.password_reset.v1'];
-        return this.email.sendPasswordResetEmail(to, resetToken, idempotencyKey);
+        const job = data as EmailJobData['email.password_reset.v1'];
+        return this.emailDirect(job, jobId, 'account.password_reset', {
+          resetUrl: passwordResetUrl(this.frontendUrl, job.resetToken),
+          expiresInMinutes: this.resetTokenMinutes,
+        });
       }
       case 'sms.phone_otp.v1': {
-        const { to, code, expiresInMinutes } = data as SmsJobData['sms.phone_otp.v1'];
-        return this.sms.send(to, phoneOtpText(code, expiresInMinutes), 'phone_otp');
-      }
-      case 'sms.shipment_milestone.v1': {
-        const { orderId, shipmentId, status } = data as SmsJobData['sms.shipment_milestone.v1'];
-        const shipment = await this.prisma.shipment.findUnique({
-          where: { id: shipmentId },
-          select: {
-            carrier: true,
-            trackingNumber: true,
-            status: true,
-            riderId: true,
-            dispatchedAt: true,
-            order: {
-              select: {
-                orderNumber: true,
-                contactPhone: true,
-                shippingAddressSnapshot: true,
-                user: { select: { phoneNumber: true, phoneVerifiedAt: true, phoneVerifiedNumber: true } },
-              },
-            },
-          },
-        });
-        if (!shipment) {
-          this.logger.warn(
-            `No SMS sent: shipment not found | orderId: ${orderId} | shipmentId: ${shipmentId}`,
-            CONTEXT,
-          );
+        const job = data as SmsJobData['sms.phone_otp.v1'];
+        const userId = job.userId ?? (await this.userIdByPhone(job.to));
+        if (!userId) {
+          this.logger.warn(`No SMS sent: no account for the phone | job: ${jobName} | jobId: ${jobId}`, CONTEXT);
           return;
         }
-        const { order } = shipment;
-        const addressPhone = (order.shippingAddressSnapshot as { phone?: unknown } | null)?.phone;
-        const to = shipmentSmsRecipient({
-          verifiedPhone: verifiedPhoneOf(order.user),
-          addressPhone: typeof addressPhone === 'string' ? addressPhone : null,
-          contactPhone: order.contactPhone,
+        await this.dispatcher.deliver({
+          dedupeKey: job.dedupeKey ?? `${jobId}:${NotificationChannel.SMS}`,
+          userId,
+          template: 'account.phone_otp',
+          data: { code: job.code, expiresInMinutes: job.expiresInMinutes },
+          channel: NotificationChannel.SMS,
+          to: job.to,
         });
-        if (!to) {
-          this.logger.warn(`No SMS sent: no Ghana phone for the order | orderId: ${orderId}`, CONTEXT);
-          return;
-        }
-        const text = shipmentSmsText({
-          orderNumber: order.orderNumber,
-          status,
-          carrier: shipment.carrier,
-          trackingNumber: shipment.trackingNumber,
-        });
-        // P5-C.2: a rider's shipment still out for delivery carries its delivery code in the same text.
-        const codeFor = status === ShipmentStatus.OUT_FOR_DELIVERY && deliveryCodeDispatch(shipment);
-        const fullText = codeFor ? withDeliveryCode(text, await this.deliveryCodes.issue(shipmentId, codeFor)) : text;
-        return this.sms.send(to, fullText, `shipment_${status.toLowerCase()}`);
+        return;
       }
+      case 'sms.shipment_milestone.v1':
+        return this.sendShipmentSms(data as SmsJobData['sms.shipment_milestone.v1'], jobId);
       case 'sms.ready_for_pickup.v1': {
-        const { to, notice } = data as SmsJobData['sms.ready_for_pickup.v1'];
-        return this.sms.send(to, readyForPickupText(notice), 'ready_for_pickup');
+        const { to, notice, userId } = data as SmsJobData['sms.ready_for_pickup.v1'];
+        const recipientId = userId ?? (await this.userIdByOrderNumber(notice.orderNumber));
+        if (!recipientId) {
+          this.logger.warn(`No SMS sent: pickup order not found | orderNumber: ${notice.orderNumber}`, CONTEXT);
+          return;
+        }
+        await this.dispatcher.deliver({
+          dedupeKey: `${jobId}:${NotificationChannel.SMS}`,
+          userId: recipientId,
+          template: 'shipment.ready_for_pickup',
+          data: notice,
+          channel: NotificationChannel.SMS,
+          to,
+        });
+        return;
       }
       default:
         throw new Error(`Unknown notification job "${jobName}"`);
     }
   }
 
+  private async sendShipmentSms(
+    { orderId, shipmentId, status }: SmsJobData['sms.shipment_milestone.v1'],
+    jobId: string,
+  ) {
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: {
+        carrier: true,
+        trackingNumber: true,
+        status: true,
+        riderId: true,
+        dispatchedAt: true,
+        order: {
+          select: {
+            orderNumber: true,
+            userId: true,
+            contactPhone: true,
+            shippingAddressSnapshot: true,
+            user: { select: { phoneNumber: true, phoneVerifiedAt: true, phoneVerifiedNumber: true } },
+          },
+        },
+      },
+    });
+    if (!shipment) {
+      this.logger.warn(`No SMS sent: shipment not found | orderId: ${orderId} | shipmentId: ${shipmentId}`, CONTEXT);
+      return;
+    }
+    const { order } = shipment;
+    const addressPhone = (order.shippingAddressSnapshot as { phone?: unknown } | null)?.phone;
+    const to = shipmentSmsRecipient({
+      verifiedPhone: verifiedPhoneOf(order.user),
+      addressPhone: typeof addressPhone === 'string' ? addressPhone : null,
+      contactPhone: order.contactPhone,
+    });
+    if (!to) this.logger.warn(`No SMS sent: no Ghana phone for the order | orderId: ${orderId}`, CONTEXT);
+    const sms = {
+      dedupeKey: `${jobId}:${NotificationChannel.SMS}`,
+      userId: order.userId,
+      channel: NotificationChannel.SMS,
+      to,
+    };
+    if (status === ShipmentStatus.DELIVERED) {
+      await this.dispatcher.deliver({
+        ...sms,
+        template: 'shipment.delivered',
+        data: { orderNumber: order.orderNumber },
+      });
+      return;
+    }
+    // P5-C.2: a rider's shipment still out for delivery carries its delivery code in the same text.
+    const codeFor = to ? deliveryCodeDispatch(shipment) : null;
+    await this.dispatcher.deliver({
+      ...sms,
+      template: 'shipment.out_for_delivery',
+      data: {
+        orderNumber: order.orderNumber,
+        carrier: shipment.carrier,
+        trackingNumber: shipment.trackingNumber,
+        deliveryCode: codeFor ? await this.deliveryCodes.issue(shipmentId, codeFor) : null,
+      },
+    });
+  }
+
+  /** Emails the order's customer; the row is keyed on the job, so the event running again sends nothing more. */
+  private async emailOrder<K extends TemplateKey>(
+    order: { userId: string; user: { email: string } },
+    jobId: string,
+    template: K,
+    data: TemplateData[K],
+  ): Promise<void> {
+    await this.dispatcher.deliver({
+      dedupeKey: `${jobId}:${NotificationChannel.EMAIL}`,
+      userId: order.userId,
+      template,
+      data,
+      channel: NotificationChannel.EMAIL,
+      to: order.user.email,
+      idempotencyKey: jobId,
+    });
+  }
+
+  private async emailDirect<K extends TemplateKey>(
+    job: DirectNotificationRef & { to: string },
+    jobId: string,
+    template: K,
+    data: TemplateData[K],
+  ): Promise<void> {
+    const userId = job.userId ?? (await this.userIdByEmail(job.to));
+    if (!userId) {
+      this.logger.warn(`No email sent: no account for the address | job: ${template} | jobId: ${jobId}`, CONTEXT);
+      return;
+    }
+    await this.dispatcher.deliver({
+      dedupeKey: job.dedupeKey ?? `${jobId}:${NotificationChannel.EMAIL}`,
+      userId,
+      template,
+      data,
+      channel: NotificationChannel.EMAIL,
+      to: job.to,
+      idempotencyKey: jobId,
+    });
+  }
+
+  // Jobs queued before P6-N.1 name only the address; the account's current or pending address finds it.
+  private async userIdByEmail(email: string): Promise<string | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { OR: [{ email }, { pendingEmail: email }] },
+      select: { id: true },
+    });
+    return user?.id ?? null;
+  }
+
+  // Jobs queued before P6-N.1 name only the phone; the account verifying it holds it as its phone number.
+  private async userIdByPhone(phone: string): Promise<string | null> {
+    const user = await this.prisma.user.findUnique({ where: { phoneNumber: phone }, select: { id: true } });
+    return user?.id ?? null;
+  }
+
+  private async userIdByOrderNumber(orderNumber: number): Promise<string | null> {
+    const order = await this.prisma.order.findUnique({ where: { orderNumber }, select: { userId: true } });
+    return order?.userId ?? null;
+  }
+
   // An order hard-deleted since the event (only test cleanups do that) has nobody to notify; retrying cannot help.
   private async findOrder(orderId: string, jobName: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, grandTotal: true, user: { select: { email: true } } },
+      select: {
+        id: true,
+        orderNumber: true,
+        userId: true,
+        currency: true,
+        grandTotal: true,
+        shippingTotal: true,
+        discountTotal: true,
+        paymentMethod: true,
+        user: { select: { email: true } },
+        items: { select: { productName: true, quantity: true, lineTotal: true }, orderBy: { createdAt: 'asc' } },
+      },
     });
     if (!order) this.logger.warn(`No email sent: order not found | job: ${jobName} | orderId: ${orderId}`, CONTEXT);
     return order;

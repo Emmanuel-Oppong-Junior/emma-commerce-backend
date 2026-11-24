@@ -32,6 +32,9 @@ const productionEnv = {
   REDIS_HOST: 'redis.internal',
   MFA_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
   PAYMENT_CONFIG_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
+  RESEND_API_KEY: 're_unit_provider_value',
+  RESEND_FROM_EMAIL: 'orders@shop.example.com',
+  FRONTEND_URL: 'https://shop.example.com',
 };
 
 const messageOf = (env: Record<string, string | undefined>) => validate(env).error?.message ?? '';
@@ -221,6 +224,30 @@ describe('envValidationSchema', () => {
       expect(messageOf({ ...productionEnv, ...hubtel, HUBTEL_CLIENT_SECRET: 'change-me' })).toContain(
         'HUBTEL_CLIENT_SECRET',
       );
+    });
+  });
+
+  describe('email and frontend links', () => {
+    it.each(['RESEND_API_KEY', 'RESEND_FROM_EMAIL', 'FRONTEND_URL'])('requires %s in production', (key) => {
+      expect(messageOf({ ...productionEnv, [key]: undefined })).toContain(`"${key}" is required`);
+    });
+
+    it.each(['development', 'test'])('runs without an email provider in %s, with a local frontend URL', (nodeEnv) => {
+      const { error, value } = validate({ ...baseEnv, NODE_ENV: nodeEnv });
+      expect(error).toBeUndefined();
+      expect(value.FRONTEND_URL).toBe('http://localhost:3001');
+    });
+
+    it('refuses a Resend key without a sender address (there is no default sender)', () => {
+      const env = { ...baseEnv, NODE_ENV: 'development', RESEND_API_KEY: 're_dev_value' };
+      expect(messageOf(env)).toContain('missing required peer "RESEND_FROM_EMAIL"');
+    });
+
+    it('requires an https frontend URL in production and refuses a long one', () => {
+      expect(messageOf({ ...productionEnv, FRONTEND_URL: 'http://shop.example.com' })).toContain('"FRONTEND_URL"');
+      expect(
+        messageOf({ ...baseEnv, NODE_ENV: 'development', FRONTEND_URL: `https://${'a'.repeat(100)}.example.com` }),
+      ).toContain('"FRONTEND_URL"');
     });
   });
 

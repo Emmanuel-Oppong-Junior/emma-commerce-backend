@@ -56,13 +56,13 @@ describe('Failed background jobs (e2e)', () => {
 
   it('lists a job that spent its attempts, without PII, and runs it again on retry', async () => {
     const sends = jest
-      .spyOn(worker.get(EmailService), 'sendWelcomeEmail')
+      .spyOn(worker.get(EmailService), 'send')
       .mockRejectedValueOnce(new Error('Email not delivered: Welcome | mailbox kwame.asante@gmail.com is full'))
-      .mockResolvedValue();
+      .mockResolvedValue({ messageId: 'em-1' });
     const queue = getQueue(app, JobQueue.NOTIFICATIONS);
     const job = await queue.add(
       'email.welcome.v1',
-      { to: 'kwame.asante@gmail.com', name: 'Kwame' },
+      { to: 'kwame.asante@gmail.com', name: 'Kwame', userId: 'seed_user' },
       { attempts: 1, removeOnComplete: false },
     );
     await waitUntil(async () => (await job.getState()) === 'failed');

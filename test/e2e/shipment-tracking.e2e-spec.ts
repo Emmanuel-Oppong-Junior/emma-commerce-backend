@@ -85,7 +85,7 @@ describe('Shipment tracking timeline and SMS milestones (P5-B.2, e2e)', () => {
 
   beforeEach(() => {
     jest.restoreAllMocks();
-    jest.spyOn(worker.get(EmailService), 'sendOrderStatusEmail').mockResolvedValue();
+    jest.spyOn(worker.get(EmailService), 'send').mockResolvedValue({ messageId: 'em-1' });
   });
 
   afterAll(async () => {
@@ -96,7 +96,7 @@ describe('Shipment tracking timeline and SMS milestones (P5-B.2, e2e)', () => {
   });
 
   it('shows the customer their own order’s timeline: order and shipment steps by time, with the tracking number', async () => {
-    const sends = jest.spyOn(sms, 'send').mockResolvedValue();
+    const sends = jest.spyOn(sms, 'send').mockResolvedValue({ messageId: 'sms-1' });
     const { orderId, orderItemId } = await createOrder();
     const first = await shipments.createShipment(orderId, [{ orderItemId, quantity: 1 }], 'seed_admin');
     await shipments.updateShipping(first.id, 'TRK-9', 'DHL', 'seed_admin');
@@ -141,7 +141,7 @@ describe('Shipment tracking timeline and SMS milestones (P5-B.2, e2e)', () => {
   });
 
   it('texts the customer once when a shipment goes out (with carrier and tracking) and once when it is delivered', async () => {
-    const sends = jest.spyOn(sms, 'send').mockResolvedValue();
+    const sends = jest.spyOn(sms, 'send').mockResolvedValue({ messageId: 'sms-1' });
     const { orderId, orderNumber, contactPhone } = await createOrder();
     const shipment = await shipments.createShipment(orderId, undefined, 'seed_admin');
     await shipments.updateShipping(shipment.id, 'TRK-1', 'DHL', 'seed_admin');
@@ -151,7 +151,7 @@ describe('Shipment tracking timeline and SMS milestones (P5-B.2, e2e)', () => {
     expect(sends).toHaveBeenLastCalledWith(
       contactPhone,
       `Your order #${orderNumber} is out for delivery with DHL. Tracking number: TRK-1.`,
-      'shipment_out_for_delivery',
+      'shipment.out_for_delivery',
     );
 
     await shipments.updateShipmentStatus(shipment.id, ShipmentStatus.DELIVERED, 'seed_admin');
@@ -159,7 +159,7 @@ describe('Shipment tracking timeline and SMS milestones (P5-B.2, e2e)', () => {
     expect(sends).toHaveBeenLastCalledWith(
       contactPhone,
       `Your order #${orderNumber} has been delivered. Thank you for shopping with us.`,
-      'shipment_delivered',
+      'shipment.delivered',
     );
 
     // The dispatch event published again (and its job run again) sends nothing more.
@@ -180,7 +180,7 @@ describe('Shipment tracking timeline and SMS milestones (P5-B.2, e2e)', () => {
   });
 
   it('prefers the verified account phone, and sends no SMS for the pickup counter', async () => {
-    const sends = jest.spyOn(sms, 'send').mockResolvedValue();
+    const sends = jest.spyOn(sms, 'send').mockResolvedValue({ messageId: 'sms-1' });
     await verifyPhoneForCod(prisma, 'seed_user', '+233201234567');
     const pickup = await createOrder(FulfillmentType.PICKUP);
     const counter = await shipments.createShipment(pickup.orderId, undefined, 'seed_admin');
