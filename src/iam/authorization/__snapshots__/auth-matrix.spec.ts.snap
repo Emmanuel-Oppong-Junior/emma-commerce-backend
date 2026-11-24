@@ -216,6 +216,7 @@ Query priceChanges                       permission: catalog.product.read
 Query priceList                          permission: pricelist.manage
 Query priceLists                         permission: pricelist.manage
 Query product                            public, optional sign-in
+Query productFacets                      public, optional sign-in
 Query productReviews                     authenticated
 Query products                           public, optional sign-in
 Query productType                        public

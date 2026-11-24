@@ -1,16 +1,34 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { ProductSearch, ProductSearchFilters, ProductSearchPage, ProductSearchRequest } from '../product-search.port';
+import {
+  AttributeFacet,
+  FacetCount,
+  ProductFacets,
+  ProductSearch,
+  ProductSearchFilters,
+  ProductSearchPage,
+  ProductSearchRequest,
+} from '../product-search.port';
 import { decodeCursor, encodeCursor, SearchCursor, TextMatchMode } from './search-cursor';
 import {
   existsQuery,
+  facetQuery,
   filterConditions,
   FUZZY_WORD_SIMILARITY,
   pageQuery,
   sortKey,
   textMatch,
 } from './product-search-sql';
+
+interface FacetRow {
+  totalCount: number;
+  inStockCount: number;
+  price: { min: string | null; max: string | null } | null;
+  brands: FacetCount[];
+  categories: FacetCount[];
+  attributes: (Omit<AttributeFacet, 'values'> & { values: AttributeFacet['values'] | null })[];
+}
 
 interface PageRow {
   total: number;
@@ -48,6 +66,24 @@ export class PostgresProductSearch extends ProductSearch {
       })),
       hasNextPage: page.rows.length > first,
       totalCount: page.total,
+    };
+  }
+
+  async facets(filters: ProductSearchFilters): Promise<ProductFacets> {
+    const now = new Date();
+    const mode = filters.text ? await this.matchMode(filters, filterConditions(filters, now)) : undefined;
+    const text = filters.text && mode ? textMatch(filters.text, mode).condition : undefined;
+    const [row] = await this.run<FacetRow>(facetQuery(filters, now, text), mode === 'FUZZY');
+    return {
+      totalCount: row.totalCount,
+      inStockCount: row.inStockCount,
+      price:
+        row.price?.min && row.price.max
+          ? { min: new Prisma.Decimal(row.price.min), max: new Prisma.Decimal(row.price.max) }
+          : null,
+      brands: row.brands,
+      categories: row.categories,
+      attributes: row.attributes.map((facet) => ({ ...facet, values: facet.values ?? [] })),
     };
   }
 

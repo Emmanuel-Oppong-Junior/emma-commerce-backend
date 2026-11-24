@@ -46,7 +46,7 @@ const generalType = { id: 'product_type_general', key: 'general', attributes: []
 const mockProductTypesRepository = { findById: jest.fn() };
 const preparedDefault = [{ data: { optionsKey: '' }, quantity: 100 }];
 const mockVariantService = { prepare: jest.fn(), insertPrepared: jest.fn() };
-const mockProductSearch = { search: jest.fn() };
+const mockProductSearch = { search: jest.fn(), facets: jest.fn() };
 
 describe('ProductsService', () => {
   const mockLotsService = { assertTrackingChange: jest.fn() };
@@ -293,6 +293,29 @@ describe('ProductsService', () => {
       expect(searchArg().filters).toEqual(
         expect.objectContaining({ visibility: 'ADMIN', isActive: false, status: 'ARCHIVED' }),
       );
+    });
+
+    it('counts facets over public products only, with the same filters as the list', async () => {
+      mockProductSearch.facets.mockResolvedValue({ totalCount: 0 });
+
+      await service.findPublishedFacets({
+        isActive: false,
+        status: ProductStatusEnum.DRAFT,
+        attributes: [{ key: 'colour', values: ['Red'] }],
+      });
+
+      const filters = mockProductSearch.facets.mock.calls[0][0];
+      expect(filters).toEqual(
+        expect.objectContaining({ visibility: 'PUBLIC', attributes: [{ key: 'colour', values: ['Red'] }] }),
+      );
+      expect(filters).not.toHaveProperty('status');
+    });
+
+    it('refuses facets for an impossible price range', async () => {
+      await expect(service.findPublishedFacets({ priceMin: new Decimal(9), priceMax: new Decimal(1) })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockProductSearch.facets).not.toHaveBeenCalled();
     });
 
     it('looks up a single public product only among published ones', async () => {

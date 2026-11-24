@@ -1,5 +1,16 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsBoolean, IsDateString, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { AttributeFilterInput, MAX_ATTRIBUTE_FILTERS } from './attribute-filter.input';
 import { ProductStatusEnum } from '../enums/product.enum';
 import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
 import { Decimal } from '@prisma/client/runtime/client';
@@ -124,4 +135,16 @@ export class ProductFilterArgs {
   @IsOptional()
   @IsString()
   tagName?: string;
+
+  @Field(() => [AttributeFilterInput], {
+    nullable: true,
+    description:
+      'Attribute filters (P6-S.2): a product matches every attribute given (AND) and any of the values of each ' +
+      '(OR), on its own attributes or on an active variant. At most 10, one per key.',
+  })
+  @IsOptional()
+  @ArrayMaxSize(MAX_ATTRIBUTE_FILTERS)
+  @ValidateNested({ each: true })
+  @Type(() => AttributeFilterInput)
+  attributes?: AttributeFilterInput[];
 }

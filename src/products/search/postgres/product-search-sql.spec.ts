@@ -1,7 +1,17 @@
 import { Decimal } from '@prisma/client/runtime/client';
 import { Prisma } from '../../../generated/prisma/client';
 import { ProductSearchFilters } from '../product-search.port';
-import { filterConditions, fuzzyWords, pageQuery, sortKey, textMatch, tsQuery } from './product-search-sql';
+import {
+  FACET_ATTRIBUTES_LIMIT,
+  FACET_VALUES_LIMIT,
+  facetQuery,
+  filterConditions,
+  fuzzyWords,
+  pageQuery,
+  sortKey,
+  textMatch,
+  tsQuery,
+} from './product-search-sql';
 
 const NOW = new Date('2026-11-24T12:00:00Z');
 const flat = (sql: Prisma.Sql) => sql.sql.replace(/\s+/g, ' ');
@@ -37,18 +47,9 @@ describe('product search SQL', () => {
       };
       const conditions = filterConditions(filters, NOW);
       expect(conditions).toHaveLength(11);
-      expect(all(conditions).values).toEqual([
-        'cat',
-        'Food',
-        'sub',
-        'Sauces',
-        'brand',
-        'Acme',
-        'tag',
-        'hot',
-        'type',
-        NOW,
-      ]);
+      expect([...all(conditions).values].sort()).toEqual(
+        ['cat', 'Food', 'sub', 'Sauces', 'brand', 'Acme', 'tag', 'hot', 'type', NOW].sort(),
+      );
       const sql = flat(all(conditions));
       expect(sql).toContain('FROM "SubCategory" x WHERE x."id" = p."subcategoryId"');
       expect(sql).toContain('FROM "Category" x WHERE x."id" = p."categoryId"');
@@ -87,6 +88,71 @@ describe('product search SQL', () => {
       const [condition] = filterConditions({ visibility: 'ADMIN', inStock: true }, NOW);
       expect(condition.values).toContain(NOW);
       expect(flat(condition)).toContain('lt."expiresAt" <= ?');
+    });
+  });
+
+  describe('attribute filters', () => {
+    it('ANDs the attributes and ORs the values of one, on the product or an active variant, ignoring case', () => {
+      const conditions = filterConditions(
+        {
+          visibility: 'ADMIN',
+          attributes: [
+            { key: 'colour', values: ['Red', 'Blue'] },
+            { key: 'material', values: ['Cotton'] },
+          ],
+        },
+        NOW,
+      );
+      expect(conditions).toHaveLength(2);
+      expect(flat(conditions[0])).toBe(
+        '(lower(p."attributes" ->> ?) IN (lower(?),lower(?)) OR EXISTS (SELECT 1 FROM "Variant" v WHERE v."productId" = p."id" AND v."isActive" AND lower(v."optionValues" ->> ?) IN (lower(?),lower(?))))',
+      );
+      expect(conditions[0].values).toEqual(['colour', 'Red', 'Blue', 'colour', 'Red', 'Blue']);
+      expect(conditions[1].values).toEqual(['material', 'Cotton', 'material', 'Cotton']);
+    });
+  });
+
+  describe('facetQuery', () => {
+    const filters: ProductSearchFilters = {
+      visibility: 'PUBLIC',
+      brandName: 'Acme',
+      categoryId: 'cat',
+      priceMax: new Decimal(50),
+      inStock: true,
+      tagName: 'hot',
+      attributes: [{ key: 'colour', values: ['Red'] }],
+    };
+
+    it('applies only the unfaceted filters and the text to base, the others as flags', () => {
+      const sql = flat(
+        facetQuery(filters, NOW, Prisma.sql`p."searchVector" @@ websearch_to_tsquery('simple', ${'x'})`),
+      );
+      const baseWhere = sql.slice(sql.indexOf('FROM "Product" p WHERE'), sql.indexOf('), attribute_values'));
+      expect(baseWhere).toContain(`p."isActive" AND p."status" = 'PUBLISHED'`);
+      expect(baseWhere).toContain('lower(t."name") = lower(?)');
+      expect(baseWhere).toContain('p."searchVector" @@');
+      expect(baseWhere).not.toContain('p."categoryId" = ?');
+      expect(sql).toContain('AS "f_brand"');
+      expect(sql).toContain('AS "f_a0"');
+    });
+
+    it('counts each facet without its own flag', () => {
+      const sql = flat(facetQuery(filters, NOW));
+      expect(sql).toContain(
+        'JOIN "Brand" br ON br."id" = b."brandId" WHERE b."f_category" AND b."f_price" AND b."f_stock" AND b."f_a0"',
+      );
+      expect(sql).toContain(
+        'JOIN "Category" c ON c."id" = b."categoryId" WHERE b."f_brand" AND b."f_price" AND b."f_stock" AND b."f_a0"',
+      );
+      expect(sql).toContain('WHERE b."f_brand" AND b."f_category" AND b."f_stock_any" AND b."f_a0"');
+      expect(sql).toContain('WHERE b."f_brand" AND b."f_category" AND b."f_price" AND b."f_sellable" AND b."f_a0"');
+      expect(sql).toContain('(av."key" = ? OR b."f_a0")');
+    });
+
+    it('bounds every facet list', () => {
+      const query = facetQuery({ visibility: 'PUBLIC' }, NOW);
+      expect(query.values.filter((value) => value === FACET_VALUES_LIMIT).length).toBeGreaterThanOrEqual(3);
+      expect(query.values).toContain(FACET_ATTRIBUTES_LIMIT);
     });
   });
 

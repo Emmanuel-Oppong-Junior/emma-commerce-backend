@@ -42,6 +42,7 @@ export function toSearchFilters(filter: ProductFilterArgs, visibility: SearchVis
     priceMin: filter.priceMin,
     priceMax: filter.priceMax,
     inStock: filter.inStock,
+    attributes: filter.attributes?.map(({ key, values }) => ({ key, values: [...new Set(values)] })),
   };
 }
 
@@ -50,6 +51,9 @@ export function searchFiltersProblem(filters: ProductSearchFilters): string | nu
   if (filters.priceMin && filters.priceMax && filters.priceMin.greaterThan(filters.priceMax)) {
     return `priceMin ${filters.priceMin.toFixed(2)} is above priceMax ${filters.priceMax.toFixed(2)}`;
   }
+  const keys = (filters.attributes ?? []).map((filter) => filter.key);
+  const repeated = keys.find((key, index) => keys.indexOf(key) !== index);
+  if (repeated) return `Attribute "${repeated}" is filtered twice; put all its values in one filter`;
   return null;
 }
 

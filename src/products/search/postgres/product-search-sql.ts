@@ -1,7 +1,7 @@
 import { Prisma } from '../../../generated/prisma/client';
 import { SERVING_LOCATION_SQL } from '../../../inventory/locations/serving-locations';
 import { expiredLotUnitsSql } from '../../../inventory/lots/lot-stock.repository';
-import { ProductSearchFilters, ProductSortKey, SortDirection } from '../product-search.port';
+import { AttributeFilter, ProductSearchFilters, ProductSortKey, SortDirection } from '../product-search.port';
 import { SearchCursor, TextMatchMode } from './search-cursor';
 
 // SQL of the Postgres search adapter, built from parameterised fragments over "Product" aliased p. Pure: no I/O.
@@ -95,15 +95,25 @@ const nameIs = (table: string, idColumn: string, name: string) =>
   Prisma.sql`EXISTS (SELECT 1 FROM ${Prisma.raw(`"${table}"`)} x WHERE x."id" = p.${Prisma.raw(`"${idColumn}"`)}
     AND lower(x."name") = lower(${name}))`;
 
-/** Every filter except the search text, each its own condition, so no filter can replace another. */
-export function filterConditions(filters: ProductSearchFilters, now: Date): Prisma.Sql[] {
-  const conditions = visibilityConditions(filters);
+function categoryConditions(filters: ProductSearchFilters): Prisma.Sql[] {
+  const conditions: Prisma.Sql[] = [];
   if (filters.categoryId) conditions.push(Prisma.sql`p."categoryId" = ${filters.categoryId}`);
   if (filters.categoryName) conditions.push(nameIs('Category', 'categoryId', filters.categoryName));
-  if (filters.subcategoryId) conditions.push(Prisma.sql`p."subcategoryId" = ${filters.subcategoryId}`);
-  if (filters.subCategoryName) conditions.push(nameIs('SubCategory', 'subcategoryId', filters.subCategoryName));
+  return conditions;
+}
+
+function brandConditions(filters: ProductSearchFilters): Prisma.Sql[] {
+  const conditions: Prisma.Sql[] = [];
   if (filters.brandId) conditions.push(Prisma.sql`p."brandId" = ${filters.brandId}`);
   if (filters.brandName) conditions.push(nameIs('Brand', 'brandId', filters.brandName));
+  return conditions;
+}
+
+/** The filters no facet counts without: visibility, sub-category, tags, product type, creation date. */
+function unfacetedConditions(filters: ProductSearchFilters): Prisma.Sql[] {
+  const conditions = visibilityConditions(filters);
+  if (filters.subcategoryId) conditions.push(Prisma.sql`p."subcategoryId" = ${filters.subcategoryId}`);
+  if (filters.subCategoryName) conditions.push(nameIs('SubCategory', 'subcategoryId', filters.subCategoryName));
   if (filters.tagId) {
     conditions.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "_ProductToTag" pt WHERE pt."A" = p."id" AND pt."B" = ${filters.tagId})`,
@@ -115,8 +125,138 @@ export function filterConditions(filters: ProductSearchFilters, now: Date): Pris
   }
   if (filters.productTypeId) conditions.push(Prisma.sql`p."productTypeId" = ${filters.productTypeId}`);
   if (filters.createdAfter) conditions.push(Prisma.sql`p."createdAt" >= ${filters.createdAfter}`);
-  conditions.push(...variantConditions(filters, now));
   return conditions;
+}
+
+/** The product's own attribute, or an active variant's option value, is one of the values (ignoring case). */
+function attributeCondition(filter: AttributeFilter): Prisma.Sql {
+  const values = Prisma.join(filter.values.map((value) => Prisma.sql`lower(${value})`));
+  return Prisma.sql`(lower(p."attributes" ->> ${filter.key}) IN (${values})
+    OR EXISTS (SELECT 1 FROM "Variant" v WHERE v."productId" = p."id" AND v."isActive"
+      AND lower(v."optionValues" ->> ${filter.key}) IN (${values})))`;
+}
+
+/** Every filter except the search text, each its own condition, so no filter can replace another. */
+export function filterConditions(filters: ProductSearchFilters, now: Date): Prisma.Sql[] {
+  return [
+    ...unfacetedConditions(filters),
+    ...categoryConditions(filters),
+    ...brandConditions(filters),
+    ...variantConditions(filters, now),
+    ...(filters.attributes ?? []).map(attributeCondition),
+  ];
+}
+
+export const FACET_VALUES_LIMIT = 20;
+export const FACET_ATTRIBUTES_LIMIT = 10;
+
+const and = (conditions: Prisma.Sql[]) => (conditions.length ? Prisma.join(conditions, ' AND ') : Prisma.sql`TRUE`);
+
+/**
+ * Every facet of the filters in one statement, as JSON. `base` holds the products matching the filters no facet
+ * ignores (and the text match), with one flag per faceted filter; each facet then counts the rows whose flags hold
+ * except its own, so the other choices of that facet stay visible.
+ */
+export function facetQuery(filters: ProductSearchFilters, now: Date, textCondition?: Prisma.Sql): Prisma.Sql {
+  const bounds = priceBounds(filters);
+  const sellable = variantSellable(now);
+  const attributes = filters.attributes ?? [];
+  const stockFlag =
+    filters.inStock === true
+      ? activeVariantExists([...bounds, sellable])
+      : filters.inStock === false
+        ? Prisma.sql`NOT ${activeVariantExists([sellable])}`
+        : Prisma.sql`TRUE`;
+  const stockAnyPriceFlag =
+    filters.inStock === undefined
+      ? Prisma.sql`TRUE`
+      : filters.inStock
+        ? activeVariantExists([sellable])
+        : Prisma.sql`NOT ${activeVariantExists([sellable])}`;
+  const flags = {
+    brand: Prisma.sql`b."f_brand"`,
+    category: Prisma.sql`b."f_category"`,
+    price: Prisma.sql`b."f_price"`,
+    stock: Prisma.sql`b."f_stock"`,
+    attributes: attributes.map((_, i) => Prisma.raw(`b."f_a${i}"`)),
+  };
+  const allAttributes = flags.attributes;
+  // The price facet keeps inStock (any price) but drops the bounds; its variants are the sellable ones with inStock.
+  const priceVariants = filters.inStock === true ? Prisma.sql`AND ${sellable}` : Prisma.empty;
+  const attributeExcept = attributes.length
+    ? Prisma.join(
+        attributes.map((filter, i) => Prisma.sql`(av."key" = ${filter.key} OR ${flags.attributes[i]})`),
+        ' AND ',
+      )
+    : Prisma.sql`TRUE`;
+  const limitValues = FACET_VALUES_LIMIT;
+
+  return Prisma.sql`
+    WITH base AS (
+      SELECT p."id", p."brandId", p."categoryId", p."productTypeId", p."attributes",
+             (${and(brandConditions(filters))}) AS "f_brand",
+             (${and(categoryConditions(filters))}) AS "f_category",
+             (${bounds.length ? activeVariantExists(bounds) : Prisma.sql`TRUE`}) AS "f_price",
+             (${stockFlag}) AS "f_stock",
+             (${stockAnyPriceFlag}) AS "f_stock_any",
+             (${activeVariantExists([...bounds, sellable])}) AS "f_sellable"
+             ${attributes.length ? Prisma.sql`, ${Prisma.join(attributes.map((filter, i) => Prisma.sql`(${attributeCondition(filter)}) AS ${Prisma.raw(`"f_a${i}"`)}`))}` : Prisma.empty}
+      FROM "Product" p ${where([...unfacetedConditions(filters), ...(textCondition ? [textCondition] : [])])}
+    ),
+    attribute_values AS (
+      -- Spellings differing in case are one value, shown in its byte-wise first spelling ("Cotton" over "cotton").
+      SELECT av."key", min(av."value" COLLATE "C") AS "value", count(DISTINCT b."id")::int AS "count",
+             min(av."position") AS "position", min(av."label") AS "label"
+      FROM base b
+      JOIN LATERAL (
+        SELECT d."key", d."label", d."position", kv."value"
+        FROM "AttributeDefinition" d
+        CROSS JOIN LATERAL (
+          SELECT b."attributes" ->> d."key" AS "value" WHERE NOT d."isVariantAxis"
+          UNION
+          SELECT v."optionValues" ->> d."key" FROM "Variant" v
+          WHERE d."isVariantAxis" AND v."productId" = b."id" AND v."isActive"
+        ) kv
+        WHERE d."productTypeId" = b."productTypeId" AND d."isFilterable" AND kv."value" IS NOT NULL
+      ) av ON TRUE
+      WHERE ${flags.brand} AND ${flags.category} AND ${flags.price} AND ${flags.stock} AND ${attributeExcept}
+      GROUP BY av."key", lower(av."value")
+    ),
+    attribute_keys AS (
+      SELECT "key", min("position") AS "position", min("label") AS "label" FROM attribute_values
+      GROUP BY "key" ORDER BY min("position"), "key" LIMIT ${FACET_ATTRIBUTES_LIMIT}
+    ),
+    ranked_values AS (
+      SELECT v."key", v."value", v."count",
+             row_number() OVER (PARTITION BY v."key" ORDER BY v."count" DESC, v."value") AS "rank"
+      FROM attribute_values v JOIN attribute_keys k ON k."key" = v."key"
+    )
+    SELECT
+      (SELECT count(*) FROM base b
+       WHERE ${and([flags.brand, flags.category, flags.price, flags.stock, ...allAttributes])})::int AS "totalCount",
+      (SELECT count(*) FROM base b
+       WHERE ${and([flags.brand, flags.category, flags.price, Prisma.sql`b."f_sellable"`, ...allAttributes])})::int
+        AS "inStockCount",
+      (SELECT json_build_object('min', min(v."price")::text, 'max', max(v."price")::text)
+       FROM base b JOIN "Variant" v ON v."productId" = b."id" AND v."isActive" AND v."price" IS NOT NULL ${priceVariants}
+       WHERE ${and([flags.brand, flags.category, Prisma.sql`b."f_stock_any"`, ...allAttributes])}) AS "price",
+      COALESCE((SELECT json_agg(json_build_object('id', x."id", 'name', x."name", 'count', x."count")
+                                ORDER BY x."count" DESC, x."name", x."id")
+                FROM (SELECT br."id", br."name", count(*)::int AS "count" FROM base b JOIN "Brand" br ON br."id" = b."brandId"
+                      WHERE ${and([flags.category, flags.price, flags.stock, ...allAttributes])}
+                      GROUP BY br."id", br."name" ORDER BY count(*) DESC, br."name", br."id" LIMIT ${limitValues}) x),
+               '[]'::json) AS "brands",
+      COALESCE((SELECT json_agg(json_build_object('id', x."id", 'name', x."name", 'count', x."count")
+                                ORDER BY x."count" DESC, x."name", x."id")
+                FROM (SELECT c."id", c."name", count(*)::int AS "count" FROM base b JOIN "Category" c ON c."id" = b."categoryId"
+                      WHERE ${and([flags.brand, flags.price, flags.stock, ...allAttributes])}
+                      GROUP BY c."id", c."name" ORDER BY count(*) DESC, c."name", c."id" LIMIT ${limitValues}) x),
+               '[]'::json) AS "categories",
+      COALESCE((SELECT json_agg(json_build_object('key', k."key", 'label', k."label", 'values', (
+                  SELECT json_agg(json_build_object('value', r."value", 'count', r."count") ORDER BY r."rank")
+                  FROM ranked_values r WHERE r."key" = k."key" AND r."rank" <= ${limitValues}
+                )) ORDER BY k."position", k."key")
+                FROM attribute_keys k), '[]'::json) AS "attributes"`;
 }
 
 export function where(conditions: Prisma.Sql[]): Prisma.Sql {

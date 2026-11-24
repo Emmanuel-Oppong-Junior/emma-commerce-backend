@@ -18,7 +18,16 @@ interface Fixture {
   status?: 'DRAFT' | 'PUBLISHED';
   trackLots?: boolean;
   createdAt?: Date;
-  variants: { id: string; price: number; onHand?: number; reserved?: number; atClosedShop?: boolean }[];
+  productTypeId?: string;
+  attributes?: Record<string, string>;
+  variants: {
+    id: string;
+    price: number;
+    onHand?: number;
+    reserved?: number;
+    atClosedShop?: boolean;
+    optionValues?: Record<string, string>;
+  }[];
 }
 
 const PAGE = 'edges { cursor node { id name } } pageInfo { hasNextPage hasPreviousPage totalCount pageSize }';
@@ -55,6 +64,8 @@ describe('Product search (e2e)', () => {
         subcategoryId: fixture.subcategoryId,
         brandId: fixture.brandId,
         trackLots: fixture.trackLots ?? false,
+        ...(fixture.productTypeId && { productTypeId: fixture.productTypeId }),
+        ...(fixture.attributes && { attributes: fixture.attributes }),
         ...(fixture.createdAt && { createdAt: fixture.createdAt, updatedAt: fixture.createdAt }),
         tags: fixture.tagIds ? { connect: fixture.tagIds.map((id) => ({ id })) } : undefined,
       },
@@ -66,6 +77,7 @@ describe('Product search (e2e)', () => {
           productId: fixture.id,
           sku: variant.id.toUpperCase(),
           optionsKey: variant.id,
+          ...(variant.optionValues && { optionValues: variant.optionValues }),
           price: variant.price,
           basePrice: variant.price,
         },
@@ -447,6 +459,182 @@ describe('Product search (e2e)', () => {
         const body = await products(args);
         expect(body.errors?.[0].extensions.code).toBe('BAD_REQUEST');
       }
+    });
+  });
+
+  // Runs last: its products would change the exact lists above.
+  describe('facets and attribute filters (P6-S.2)', () => {
+    const FACETS = `totalCount inStockCount price { min { amount } max { amount } }
+      brands { id name count } categories { id name count } attributes { key label values { value count } }`;
+    const facets = async (filter: string) => {
+      const res = await gqlRequest(app, `{ productFacets(filterArgs: { ${filter} }) { ${FACETS} } }`).expect(200);
+      expect(res.body.errors).toBeUndefined();
+      return res.body.data.productFacets;
+    };
+    const values = (result: { attributes: { key: string; values: unknown[] }[] }, key: string) =>
+      result.attributes.find((facet) => facet.key === key)?.values;
+
+    beforeAll(async () => {
+      await prisma.productType.create({
+        data: {
+          id: 's_type_wear',
+          key: 'search_wear',
+          name: 'Search wear',
+          attributes: {
+            create: [
+              { key: 'material', label: 'Material', dataType: 'TEXT', isFilterable: true, position: 0 },
+              {
+                key: 'colour',
+                label: 'Colour',
+                dataType: 'TEXT',
+                isVariantAxis: true,
+                isFilterable: true,
+                position: 1,
+              },
+              { key: 'size', label: 'Size', dataType: 'TEXT', isVariantAxis: true, position: 2 },
+            ],
+          },
+        },
+      });
+      await prisma.brand.createMany({
+        data: [
+          { id: 's_brand_kofi', name: 'Kofi Wear' },
+          { id: 's_brand_ama', name: 'Ama Styles' },
+        ],
+      });
+      await prisma.tag.create({ data: { id: 's_tag_facet', name: 'facet' } });
+      const wear = { productTypeId: 's_type_wear', categoryId: 's_cat_fashion', tagIds: ['s_tag_facet'] };
+      await createProduct({
+        ...wear,
+        id: 's_f_tee',
+        name: 'Facet Tee',
+        brandId: 's_brand_kofi',
+        attributes: { material: 'Cotton' },
+        variants: [
+          { id: 's_v_tee_red', price: 50, onHand: 3, optionValues: { colour: 'Red', size: 'M' } },
+          { id: 's_v_tee_blue', price: 70, onHand: 0, optionValues: { colour: 'Blue', size: 'M' } },
+        ],
+      });
+      await createProduct({
+        ...wear,
+        id: 's_f_shirt',
+        name: 'Facet Shirt',
+        brandId: 's_brand_kofi',
+        attributes: { material: 'Linen' },
+        variants: [{ id: 's_v_shirt_blue', price: 90, onHand: 2, optionValues: { colour: 'Blue', size: 'L' } }],
+      });
+      await createProduct({
+        ...wear,
+        id: 's_f_dress',
+        name: 'Facet Dress',
+        brandId: 's_brand_ama',
+        attributes: { material: 'cotton' },
+        variants: [{ id: 's_v_dress_green', price: 200, onHand: 0, optionValues: { colour: 'Green', size: 'S' } }],
+      });
+    });
+
+    it('counts brands, categories, filterable attributes (product and variant axis), price and stock', async () => {
+      const result = await facets('tagName: "facet"');
+      expect(result).toEqual({
+        totalCount: 3,
+        inStockCount: 2,
+        price: { min: { amount: '50.00' }, max: { amount: '200.00' } },
+        brands: [
+          { id: 's_brand_kofi', name: 'Kofi Wear', count: 2 },
+          { id: 's_brand_ama', name: 'Ama Styles', count: 1 },
+        ],
+        categories: [{ id: 's_cat_fashion', name: 'Fashion', count: 3 }],
+        attributes: [
+          {
+            key: 'material',
+            label: 'Material',
+            values: [
+              { value: 'Cotton', count: 2 },
+              { value: 'Linen', count: 1 },
+            ],
+          },
+          {
+            key: 'colour',
+            label: 'Colour',
+            values: [
+              { value: 'Blue', count: 2 },
+              { value: 'Green', count: 1 },
+              { value: 'Red', count: 1 },
+            ],
+          },
+        ],
+      });
+    });
+
+    it('counts each facet without its own filter, and the rest with every filter', async () => {
+      const result = await facets('tagName: "facet", attributes: [{ key: "colour", values: ["blue"] }]');
+      expect(result.totalCount).toBe(2);
+      expect(values(result, 'colour')).toEqual([
+        { value: 'Blue', count: 2 },
+        { value: 'Green', count: 1 },
+        { value: 'Red', count: 1 },
+      ]);
+      expect(values(result, 'material')).toEqual([
+        { value: 'Cotton', count: 1 },
+        { value: 'Linen', count: 1 },
+      ]);
+      expect(result.brands).toEqual([{ id: 's_brand_kofi', name: 'Kofi Wear', count: 2 }]);
+
+      const byBrand = await facets('tagName: "facet", brandId: "s_brand_ama"');
+      expect(byBrand.totalCount).toBe(1);
+      expect(byBrand.brands.map((brand: { count: number }) => brand.count)).toEqual([2, 1]);
+    });
+
+    it('drops the price bounds from the price facet, and keeps only sellable variants with inStock', async () => {
+      const capped = await facets('tagName: "facet", priceMax: "80"');
+      expect(capped.totalCount).toBe(1);
+      expect(capped.price).toEqual({ min: { amount: '50.00' }, max: { amount: '200.00' } });
+
+      const inStock = await facets('tagName: "facet", inStock: true');
+      expect(inStock.totalCount).toBe(2);
+      expect(inStock.inStockCount).toBe(2);
+      expect(inStock.price).toEqual({ min: { amount: '50.00' }, max: { amount: '90.00' } });
+    });
+
+    it.each<[string, string[]]>([
+      ['attributes: [{ key: "colour", values: ["Red", "Green"] }]', ['s_f_dress', 's_f_tee']],
+      ['attributes: [{ key: "colour", values: ["Red", "Green"] }, { key: "material", values: ["linen"] }]', []],
+      ['attributes: [{ key: "material", values: ["COTTON"] }, { key: "colour", values: ["Green"] }]', ['s_f_dress']],
+      ['attributes: [{ key: "size", values: ["L"] }]', ['s_f_shirt']],
+    ])('filters by attributes, AND across keys and OR within one: %s', async (filter, expected) => {
+      expect((await filtered(`tagName: "facet", ${filter}`)).sort()).toEqual(expected);
+    });
+
+    it('agrees with the products the same filters return', async () => {
+      for (const filter of [
+        'tagName: "facet"',
+        'tagName: "facet", inStock: true',
+        'tagName: "facet", attributes: [{ key: "colour", values: ["Blue"] }]',
+        'search: "facet tee"',
+        'search: "facet", brand: "Kofi Wear"',
+      ]) {
+        const result = await facets(filter);
+        expect(result.totalCount).toBe((await filtered(filter)).length);
+      }
+    });
+
+    it('refuses the same attribute filtered twice, and an invalid key', async () => {
+      for (const filter of [
+        'attributes: [{ key: "colour", values: ["Red"] }, { key: "colour", values: ["Blue"] }]',
+        'attributes: [{ key: "Colour!", values: ["Red"] }]',
+        'attributes: [{ key: "colour", values: [] }]',
+      ]) {
+        const res = await gqlRequest(app, `{ productFacets(filterArgs: { ${filter} }) { totalCount } }`).expect(200);
+        expect(['BAD_REQUEST', 'BAD_USER_INPUT']).toContain(res.body.errors?.[0].extensions.code);
+      }
+    });
+
+    it('stays within the query cost limit with every facet field', async () => {
+      const res = await gqlRequest(
+        app,
+        `{ productFacets { ${FACETS} } products(paginationArgs: { first: 24 }) { ${PAGE} } }`,
+      ).expect(200);
+      expect(res.body.errors).toBeUndefined();
     });
   });
 });

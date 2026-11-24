@@ -72,6 +72,12 @@ describe('product search request', () => {
       expect(toSearchFilters(filter, 'ADMIN')).toEqual(expect.objectContaining({ isActive: false, status: 'DRAFT' }));
     });
 
+    it('passes attribute filters on, without repeated values', () => {
+      expect(
+        toSearchFilters({ attributes: [{ key: 'colour', values: ['Red', 'Red', 'Blue'] }] }, 'PUBLIC').attributes,
+      ).toEqual([{ key: 'colour', values: ['Red', 'Blue'] }]);
+    });
+
     it('keeps inStock false (it filters for products nobody can buy)', () => {
       expect(toSearchFilters({ inStock: false }, 'PUBLIC').inStock).toBe(false);
     });
@@ -82,6 +88,18 @@ describe('product search request', () => {
       expect(
         searchFiltersProblem({ visibility: 'PUBLIC', priceMin: new Decimal('10.5'), priceMax: new Decimal(10) }),
       ).toBe('priceMin 10.50 is above priceMax 10.00');
+    });
+
+    it('refuses an attribute filtered twice', () => {
+      expect(
+        searchFiltersProblem({
+          visibility: 'PUBLIC',
+          attributes: [
+            { key: 'colour', values: ['Red'] },
+            { key: 'colour', values: ['Blue'] },
+          ],
+        }),
+      ).toBe('Attribute "colour" is filtered twice; put all its values in one filter');
     });
 
     it('accepts equal bounds and a single bound', () => {

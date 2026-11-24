@@ -698,6 +698,7 @@ query {
   inStock?: boolean;          // true = a customer can buy an active variant now; false = of none; omitted = no filter
   tagId?: string;             // With tagName, the product needs both
   tagName?: string;           // Exact, case-insensitive
+  attributes?: { key: string; values: string[] }[];  // P6-S.2: see "Facets" below; at most 10 keys, 1-20 values each
 }
 
 // ProductSortArgs
@@ -782,6 +783,44 @@ query {
       }
     }
     pageInfo { hasNextPage totalCount }
+  }
+}
+```
+
+---
+
+#### `productFacets` (P6-S.2)
+- **Type**: Query
+- **Auth Required**: No (optional sign-in, like `products`)
+- **Args**: `filterArgs: ProductFilterArgs` (optional; the same filters as `products`)
+- **Response**: `ProductFacets!`
+- **Description**: Counts for building a filter sidebar next to `products`. Send the same `filterArgs` as the list. Each facet is counted **without its own filter** (brands without `brand`/`brandId`, categories without `categoryId`/`categoryName`, an attribute without its own `attributes` entry, the price range without `priceMin`/`priceMax`, `inStockCount` without `inStock`) and with every other filter, so the other choices stay visible; when that facet has no filter of its own, its counts are exactly what the list returns for that value. `totalCount` equals the list's `totalCount`.
+
+```typescript
+// ProductFacets
+{
+  totalCount: number;                 // Products matching every filter
+  inStockCount: number;               // Products that would match with inStock: true
+  price?: { min: Money; max: Money }; // Active variant prices (sellable ones only when inStock: true); null if none is priced
+  brands: { id: string; name: string; count: number }[];      // Up to 20, most products first
+  categories: { id: string; name: string; count: number }[];  // Up to 20, most products first
+  attributes: {                       // Up to 10 filterable attributes, in definition position order
+    key: string; label: string;
+    values: { value: string; count: number }[];  // Up to 20, most products first
+  }[];
+}
+```
+
+**Attributes.** Only attributes marked `isFilterable` on a product type ([2.26](#226-product-types-and-attributes)) are counted, both product attributes and variant axes (a product counts once per value whatever number of active variants carry it). The same key on several product types is one facet. Values that differ only in case are one value. Filter with `filterArgs.attributes: [{ key: "colour", values: ["Red", "Blue"] }, { key: "material", values: ["Cotton"] }]`: every key must match (AND), any of its values (OR), ignoring case, on the product's attributes or on one of its active variants. The same key twice is `BAD_REQUEST`; a malformed key or an empty `values` is `BAD_USER_INPUT`. Any attribute key can be filtered, filterable or not.
+
+**Example**:
+```graphql
+query {
+  productFacets(filterArgs: { categoryId: "clx_cat", attributes: [{ key: "colour", values: ["Red"] }] }) {
+    totalCount inStockCount
+    price { min { amount } max { amount } }
+    brands { id name count }
+    attributes { key label values { value count } }
   }
 }
 ```
@@ -4138,7 +4177,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 |---|---|
 | `AuthEntity` | [2.1](#21-authentication-iam) |
 | `User`, `UserConnection`, `UserEdge`, `PublicProfile` | [2.2](#22-users), [2.17](#217-reviews) |
-| `Product`, `PriceRange`, `ProductConnection`, `ProductEdge` | [2.3](#23-products) |
+| `Product`, `PriceRange`, `ProductConnection`, `ProductEdge`, `ProductFacets`, `FacetCount`, `AttributeFacet`, `AttributeFacetValue`, `AttributeFilterInput` | [2.3](#23-products) |
 | `ProductType`, `AttributeDefinition` | [2.26](#226-product-types-and-attributes) |
 | `Category`, `SubCategory`, `Brand`, `Tag`, `Variant` | [2.4](#24-categories)–[2.8](#28-variants) |
 | `Cart`, `CartItem`, `Wishlist` | [2.9](#29-cart), [2.10](#210-wishlist) |
@@ -4756,7 +4795,7 @@ query {
 
 ### Filtering Options per Resource
 
-**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName`, `subcategoryId`, `isActive` (default `true`, admin only), `status` (admin only), `search`, `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `brandId`, `productTypeId`, `inStock` (`true` = an active variant a customer can buy now, `false` = none), `tagId`, `tagName`. All filters combine; with `inStock: true` the price bounds and the stock must hold for the same active variant. See [2.3](#23-products).
+**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName`, `subcategoryId`, `isActive` (default `true`, admin only), `status` (admin only), `search`, `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `brandId`, `productTypeId`, `inStock` (`true` = an active variant a customer can buy now, `false` = none), `tagId`, `tagName`, `attributes` (P6-S.2, AND across keys, OR within one). All filters combine; with `inStock: true` the price bounds and the stock must hold for the same active variant. See [2.3](#23-products).
 
 **Users** (`UserPaginateArgs`): `email` (partial), `phoneNumber` (exact), `role`, `isActive`, `name` (partial), `createdAfter`.
 

@@ -20,8 +20,8 @@ import { VariantService } from '../variant/variant.service';
 import { LotsService } from '../inventory/lots/lots.service';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { assertNoSerialisedOpeningStock } from '../inventory/serials/serial-rules';
-import { ProductSearch, SearchVisibility } from './search/product-search.port';
-import { searchFiltersProblem, toSearchRequest } from './search/product-search-request';
+import { ProductFacets, ProductSearch, SearchVisibility } from './search/product-search.port';
+import { searchFiltersProblem, toSearchFilters, toSearchRequest } from './search/product-search-request';
 
 export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
 
@@ -194,6 +194,14 @@ export class ProductsService {
       { ...parent, ...PUBLIC_PRODUCT_WHERE },
       { createdAt: 'desc' },
     );
+  }
+
+  /** Facet counts for the public list with these filters. */
+  async findPublishedFacets(filter: ProductFilterArgs = {}): Promise<ProductFacets> {
+    const filters = toSearchFilters(filter, 'PUBLIC');
+    const problem = searchFiltersProblem(filters);
+    if (problem) throw new BadRequestException(problem);
+    return this.productSearch.facets(filters);
   }
 
   /** The search port picks and orders the page; the products are then loaded with the requested fields. */
