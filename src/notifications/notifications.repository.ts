@@ -42,12 +42,13 @@ export class NotificationsRepository {
     });
   }
 
-  async markSent(id: string, providerMessageId: string | null): Promise<void> {
+  async markSent(id: string, providerMessageId: string | null, providerStatus: string | null = null): Promise<void> {
     await this.prisma.notification.update({
       where: { id },
       data: {
         status: NotificationStatus.SENT,
         providerMessageId,
+        providerStatus,
         errorCode: null,
         sentAt: new Date(),
         attempts: { increment: 1 },

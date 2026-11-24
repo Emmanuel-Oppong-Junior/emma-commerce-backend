@@ -8,6 +8,8 @@ import {
 import { LoggerService } from '../commons/logger.service';
 import { EmailService } from './email/email.service';
 import { SmsSender } from './sms/sms-sender';
+import { SmsReceipt } from './sms/sms-provider.port';
+import { AppMetrics, SmsOutcome } from '../observability/metrics';
 import { NotificationErrorCode, NotificationsRepository } from './notifications.repository';
 import { mayDeliver } from './preferences/notification-preferences';
 import { renderEmail, renderInApp, renderSms, TemplateData, TemplateKey } from './templates/templates';
@@ -41,6 +43,7 @@ export class NotificationDispatcher {
     private readonly email: EmailService,
     private readonly sms: SmsSender,
     private readonly logger: LoggerService,
+    private readonly metrics: AppMetrics,
   ) {}
 
   async deliver<K extends TemplateKey>(delivery: Delivery<K>): Promise<NotificationStatus> {
@@ -60,19 +63,21 @@ export class NotificationDispatcher {
     }
     if (!delivery.to) return this.skip(row, 'NO_ADDRESS');
 
-    let sent: { messageId: string } | null;
+    let sent: SmsReceipt | null;
     try {
       sent = await this.send(delivery, delivery.to);
     } catch (error) {
       await this.notifications.markFailed(row.id, 'PROVIDER_ERROR', true);
+      this.countSms(row, 'failed');
       throw error;
     }
     if (!sent) return this.skip(row, 'NOT_CONFIGURED');
-    await this.notifications.markSent(row.id, sent.messageId || null);
+    await this.notifications.markSent(row.id, sent.messageId || null, sent.status ?? null);
+    this.countSms(row, 'sent');
     return NotificationStatus.SENT;
   }
 
-  private send<K extends TemplateKey>(delivery: Delivery<K>, to: string): Promise<{ messageId: string } | null> {
+  private send<K extends TemplateKey>(delivery: Delivery<K>, to: string): Promise<SmsReceipt | null> {
     switch (delivery.channel) {
       case NotificationChannel.EMAIL:
         return this.email.send(to, renderEmail(delivery.template, delivery.data), delivery.idempotencyKey);
@@ -83,8 +88,13 @@ export class NotificationDispatcher {
     }
   }
 
+  private countSms(row: Notification, outcome: SmsOutcome): void {
+    if (row.channel === NotificationChannel.SMS) this.metrics.recordSms(row.templateKey, outcome);
+  }
+
   private async skip(row: Notification, reason: NotificationErrorCode): Promise<NotificationStatus> {
     await this.notifications.markSkipped(row.id, reason);
+    this.countSms(row, 'skipped');
     this.logger.log(
       `Notification skipped | id: ${row.id} | template: ${row.templateKey} | channel: ${row.channel} | reason: ${reason}`,
       CONTEXT,

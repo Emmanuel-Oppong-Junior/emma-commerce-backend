@@ -2306,6 +2306,8 @@ model Notification {
   status            NotificationStatus   @default(QUEUED)
   dedupeKey         String               @unique
   providerMessageId String?
+  /// The provider's status code from the send response (P6-N.2; Hubtel: "0" = accepted), when it gives one
+  providerStatus    String?
   errorCode         String?
   attempts          Int                  @default(0)
   sentAt            DateTime?

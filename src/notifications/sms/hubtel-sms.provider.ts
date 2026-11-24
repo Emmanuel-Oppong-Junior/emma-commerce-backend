@@ -1,4 +1,4 @@
-import { SmsProvider } from './sms-provider.port';
+import { SmsProvider, SmsReceipt } from './sms-provider.port';
 
 export const HUBTEL_SMS_URL = 'https://smsc.hubtel.com/v1/messages/send';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -14,9 +14,10 @@ type Fetch = typeof fetch;
 
 /**
  * Hubtel's SMS API over Node's fetch: POST with Basic auth (client id and secret) and a JSON body of From, To and
- * Content. Hubtel's docs could not be reached when this was written, so the response is read defensively: success
- * needs HTTP 2xx, a message id (messageId or MessageId) and, when a status is present, status 0. Errors carry the HTTP
- * status and Hubtel's status only, never the phone number, text or credentials.
+ * Content (Basic auth on POST is confirmed by Hubtel's docs). The response schema could not be verified (the docs
+ * site was unreachable again in P6-N.2), so it is read defensively: success needs HTTP 2xx, a message id (messageId
+ * or MessageId) and, when a status is present, status 0, which is returned as the receipt status. Errors carry the
+ * HTTP status and Hubtel's status only, never the phone number, text or credentials.
  */
 export class HubtelSmsProvider implements SmsProvider {
   constructor(
@@ -25,7 +26,7 @@ export class HubtelSmsProvider implements SmsProvider {
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
   ) {}
 
-  async send(to: string, text: string): Promise<{ messageId: string }> {
+  async send(to: string, text: string): Promise<SmsReceipt> {
     const { clientId, clientSecret, senderId } = this.credentials;
     let response: Response;
     try {
@@ -46,7 +47,7 @@ export class HubtelSmsProvider implements SmsProvider {
       throw new Error(`Hubtel SMS request failed: ${reason}`);
     }
     if (!response.ok) throw new Error(`Hubtel SMS refused: HTTP ${response.status}`);
-    return { messageId: messageIdOf(await readJson(response)) };
+    return receiptOf(await readJson(response));
   }
 }
 
@@ -58,7 +59,7 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-function messageIdOf(body: unknown): string {
+function receiptOf(body: unknown): SmsReceipt {
   if (typeof body !== 'object' || body === null) throw new Error('Hubtel SMS answered with an unexpected body');
   const fields = body as Record<string, unknown>;
   const status = fields.status ?? fields.Status;
@@ -66,5 +67,5 @@ function messageIdOf(body: unknown): string {
     throw new Error(`Hubtel SMS not accepted: status ${String(status)}`);
   const messageId = fields.messageId ?? fields.MessageId;
   if (typeof messageId !== 'string' || messageId === '') throw new Error('Hubtel SMS answered without a message id');
-  return messageId;
+  return status === undefined ? { messageId } : { messageId, status: String(status) };
 }

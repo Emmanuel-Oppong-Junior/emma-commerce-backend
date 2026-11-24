@@ -1,6 +1,6 @@
 import { NotificationDispatcher } from './notification-dispatcher';
 
-function build(row: Partial<{ status: string; category: string; channel: string }> = {}) {
+function build(row: Partial<{ status: string; category: string; channel: string; templateKey: string }> = {}) {
   const notifications = {
     findOrCreate: jest.fn().mockResolvedValue({
       id: 'n1',
@@ -17,10 +17,17 @@ function build(row: Partial<{ status: string; category: string; channel: string 
     consentFacts: jest.fn().mockResolvedValue({ marketingConsent: false, phoneVerified: false }),
   };
   const email = { send: jest.fn().mockResolvedValue({ messageId: 'em-1' }) };
-  const sms = { send: jest.fn().mockResolvedValue({ messageId: 'sms-1' }) };
+  const sms = { send: jest.fn().mockResolvedValue({ messageId: 'sms-1', status: '0' }) };
   const logger = { log: jest.fn() };
-  const dispatcher = new NotificationDispatcher(notifications as never, email as never, sms as never, logger as never);
-  return { dispatcher, notifications, email, sms, logger };
+  const metrics = { recordSms: jest.fn() };
+  const dispatcher = new NotificationDispatcher(
+    notifications as never,
+    email as never,
+    sms as never,
+    logger as never,
+    metrics as never,
+  );
+  return { dispatcher, notifications, email, sms, logger, metrics };
 }
 
 const PAID = {
@@ -46,11 +53,11 @@ describe('NotificationDispatcher', () => {
       expect.objectContaining({ subject: 'Payment received for order #10042' }),
       'evt1',
     );
-    expect(notifications.markSent).toHaveBeenCalledWith('n1', 'em-1');
+    expect(notifications.markSent).toHaveBeenCalledWith('n1', 'em-1', null);
   });
 
-  it('sends an SMS rendered from the template, naming the template as its purpose', async () => {
-    const { dispatcher, notifications, sms } = build({ channel: 'SMS' });
+  it('sends an SMS rendered from the template, storing the provider status and counting it per template', async () => {
+    const { dispatcher, notifications, sms, metrics } = build({ channel: 'SMS', templateKey: 'shipment.delivered' });
 
     await dispatcher.deliver({
       dedupeKey: 'j:SMS',
@@ -66,7 +73,8 @@ describe('NotificationDispatcher', () => {
       'Your order #7 has been delivered. Thank you for shopping with us.',
       'shipment.delivered',
     );
-    expect(notifications.markSent).toHaveBeenCalledWith('n1', 'sms-1');
+    expect(notifications.markSent).toHaveBeenCalledWith('n1', 'sms-1', '0');
+    expect(metrics.recordSms).toHaveBeenCalledWith('shipment.delivered', 'sent');
   });
 
   it('delivers an in-app notification by storing its title, body and link (no address needed)', async () => {
@@ -136,6 +144,24 @@ describe('NotificationDispatcher', () => {
     noProvider.email.send.mockResolvedValue(null);
     await expect(noProvider.dispatcher.deliver(PAID)).resolves.toBe('SKIPPED');
     expect(noProvider.notifications.markSkipped).toHaveBeenCalledWith('n1', 'NOT_CONFIGURED');
+  });
+
+  it('counts failed and skipped SMS, and never counts other channels', async () => {
+    const failing = build({ channel: 'SMS', templateKey: 'account.phone_otp' });
+    failing.sms.send.mockRejectedValue(new Error('Hubtel SMS refused: HTTP 401'));
+    const otp = { ...PAID, template: 'account.phone_otp' as const, data: { code: '1', expiresInMinutes: 10 } };
+    await expect(failing.dispatcher.deliver({ ...otp, channel: 'SMS', to: '+233244123456' })).rejects.toThrow(
+      'HTTP 401',
+    );
+    expect(failing.metrics.recordSms).toHaveBeenCalledWith('account.phone_otp', 'failed');
+
+    const noPhone = build({ channel: 'SMS', templateKey: 'account.phone_otp' });
+    await noPhone.dispatcher.deliver({ ...otp, channel: 'SMS', to: null });
+    expect(noPhone.metrics.recordSms).toHaveBeenCalledWith('account.phone_otp', 'skipped');
+
+    const email = build();
+    await email.dispatcher.deliver(PAID);
+    expect(email.metrics.recordSms).not.toHaveBeenCalled();
   });
 
   it('marks the row FAILED (one more attempt) and rethrows so the queue retries', async () => {

@@ -17,6 +17,7 @@ const DURATION_BUCKETS_SECONDS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2
 export type WebhookFailureReason = 'invalid_signature' | 'settlement_failed' | 'dispute_failed';
 
 export type VelocityCheckStage = 'screen' | 'record';
+export type SmsOutcome = 'sent' | 'failed' | 'skipped';
 
 export interface HttpRequestSample {
   method: string;
@@ -52,6 +53,7 @@ export class AppMetrics {
   private readonly codRemittanceDiscrepancies: Counter;
   private readonly deliveryCodeFailures: Counter;
   private readonly deliveryOverrides: Counter;
+  private readonly smsMessages: Counter;
   private readonly operationNames = new Set<string>();
 
   constructor(@Inject(METER) meter: Meter) {
@@ -105,6 +107,9 @@ export class AppMetrics {
     });
     this.deliveryOverrides = meter.createCounter('delivery_overrides', {
       description: 'Rider deliveries confirmed by a staff override instead of the customer code',
+    });
+    this.smsMessages = meter.createCounter('sms_messages', {
+      description: 'SMS handled by the notification dispatcher, by template and outcome (sent, failed, skipped)',
     });
   }
 
@@ -185,6 +190,11 @@ export class AppMetrics {
 
   recordDeliveryOverride(): void {
     this.deliveryOverrides.add(1);
+  }
+
+  /** `template` is a key of the template registry, so the label stays bounded. */
+  recordSms(template: string, outcome: SmsOutcome): void {
+    this.smsMessages.add(1, { template, outcome });
   }
 
   private boundedOperationName(name: string | null | undefined): string {

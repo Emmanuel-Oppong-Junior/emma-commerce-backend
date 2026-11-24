@@ -11,7 +11,7 @@ describe('HubtelSmsProvider', () => {
     const fetchFn = jest.fn().mockResolvedValue(jsonResponse(201, { messageId: 'msg-1', status: 0, rate: 0.03 }));
     const provider = new HubtelSmsProvider(credentials, fetchFn);
 
-    await expect(provider.send('+233244123456', 'Hello')).resolves.toEqual({ messageId: 'msg-1' });
+    await expect(provider.send('+233244123456', 'Hello')).resolves.toEqual({ messageId: 'msg-1', status: '0' });
 
     const [url, init] = fetchFn.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(HUBTEL_SMS_URL);
@@ -27,6 +27,14 @@ describe('HubtelSmsProvider', () => {
     const fetchFn = jest.fn().mockResolvedValue(jsonResponse(200, { MessageId: 'msg-2', Status: 0 }));
     await expect(new HubtelSmsProvider(credentials, fetchFn).send('+233244123456', 'Hi')).resolves.toEqual({
       messageId: 'msg-2',
+      status: '0',
+    });
+  });
+
+  it('returns no status when Hubtel gives none', async () => {
+    const fetchFn = jest.fn().mockResolvedValue(jsonResponse(201, { messageId: 'msg-4' }));
+    await expect(new HubtelSmsProvider(credentials, fetchFn).send('+233244123456', 'Hi')).resolves.toEqual({
+      messageId: 'msg-4',
     });
   });
 
