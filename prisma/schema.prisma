@@ -31,6 +31,7 @@ model User {
   lockedUntil               DateTime?
   addresses                 Address[]
   reviews                   Review[]
+  reviewReports             ReviewReport[]
   cart                      Cart?
   order                     Order[]
   authProvider              AuthProvider[]
@@ -349,6 +350,16 @@ model Product {
   fulfilmentKind       FulfilmentKind @default(PHYSICAL)
   unitOfMeasure        UnitOfMeasure  @default(EACH)
 
+  /// Rating of the PUBLISHED reviews (P6-V.1), kept in step by the review service under the product row lock
+  ratingCount   Int      @default(0)
+  /// Mean score to 2 decimals; null while there is no published review
+  ratingAverage Decimal? @db.Decimal(3, 2)
+  rating1Count  Int      @default(0)
+  rating2Count  Int      @default(0)
+  rating3Count  Int      @default(0)
+  rating4Count  Int      @default(0)
+  rating5Count  Int      @default(0)
+
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   categoryId       String?
@@ -395,20 +406,79 @@ enum DeliveryOptions {
 }
 
 model Review {
-  id        String    @id @default(cuid())
-  score     Int
-  comment   String?
-  productId String
-  userId    String
-  deleted   Boolean   @default(false)
-  deletedAt DateTime?
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id               String           @id @default(cuid())
+  score            Int
+  title            String?          @db.VarChar(120)
+  comment          String?
+  productId        String
+  userId           String
+  status           ModerationStatus @default(PUBLISHED)
+  /// Written by a customer who received the product (P6-V.1); false on reviews written before the check
+  verifiedPurchase Boolean          @default(false)
+  /// The delivered order line that made the purchase verified
+  orderItemId      String?
+  orderItem        OrderItem?       @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  /// Why staff hid it (staff only); set while HIDDEN
+  hiddenReason     String?
+  hiddenAt         DateTime?
+  /// The store's public reply
+  reply            String?
+  repliedAt        DateTime?
+  /// When its author last changed it
+  editedAt         DateTime?
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  photos           ReviewPhoto[]
+  reports          ReviewReport[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
-  @@index([productId])
-  @@index([userId])
+  @@unique([userId, productId])
+  @@index([productId, status, createdAt])
+  @@index([orderItemId])
+}
+
+/// Visibility of customer content (reviews, product questions): published at once, hidden by staff
+enum ModerationStatus {
+  PUBLISHED
+  HIDDEN
+}
+
+/// A photo on a review, uploaded into Cloudinary folder reviews/<reviewId>/ (at most MAX_REVIEW_PHOTOS)
+model ReviewPhoto {
+  id        String   @id @default(cuid())
+  reviewId  String
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  publicId  String
+  url       String
+  createdAt DateTime @default(now())
+
+  @@index([reviewId])
+}
+
+enum ContentReportReason {
+  SPAM
+  OFFENSIVE
+  OFF_TOPIC
+  FAKE
+  PERSONAL_INFORMATION
+  OTHER
+}
+
+/// A customer's report of a review (one per customer and review); open until staff hide the review or dismiss it
+model ReviewReport {
+  id         String              @id @default(cuid())
+  reviewId   String
+  review     Review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter   User                @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  reason     ContentReportReason
+  note       String?             @db.VarChar(500)
+  resolvedAt DateTime?
+  createdAt  DateTime            @default(now())
+
+  @@unique([reviewId, reporterId])
+  @@index([reporterId])
 }
 
 model Cart {
@@ -549,6 +619,7 @@ model OrderItem {
   refundLines          RefundLine[]
   serialUnits          SerialUnit[]
   shipmentItems        ShipmentItem[]
+  reviews              Review[]
 
   @@index([orderId])
   @@index([productId, orderId])

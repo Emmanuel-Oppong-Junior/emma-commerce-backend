@@ -1,5 +1,9 @@
 import { Field, InputType, Int } from '@nestjs/graphql';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { MAX_REVIEW_COMMENT_LENGTH, MAX_REVIEW_TITLE_LENGTH } from '../review-rules';
+
+export const trim = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
 @InputType()
 export class CreateReviewInput {
@@ -14,8 +18,17 @@ export class CreateReviewInput {
   @Max(5)
   score: number;
 
-  @Field(() => String, { nullable: true })
-  @IsString()
+  @Field(() => String, { nullable: true, description: `Up to ${MAX_REVIEW_TITLE_LENGTH} characters, trimmed` })
   @IsOptional()
-  comment?: string;
+  @IsString()
+  @Transform(trim)
+  @MaxLength(MAX_REVIEW_TITLE_LENGTH)
+  title?: string | null;
+
+  @Field(() => String, { nullable: true, description: `Up to ${MAX_REVIEW_COMMENT_LENGTH} characters, trimmed` })
+  @IsOptional()
+  @IsString()
+  @Transform(trim)
+  @MaxLength(MAX_REVIEW_COMMENT_LENGTH)
+  comment?: string | null;
 }

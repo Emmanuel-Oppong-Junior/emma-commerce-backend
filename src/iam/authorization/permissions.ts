@@ -32,7 +32,7 @@ export const PERMISSION_CATALOGUE = {
   'pricelist.manage': 'Manage B2B price lists and their entries (what members of customer groups pay)',
   'tax.manage': 'Manage tax rates',
   'shipping.manage': 'Manage shipping zones and pickup locations',
-  'review.moderate': 'Delete any customer review',
+  'review.moderate': 'Moderate customer reviews: hide and unhide them, dismiss reports and reply',
   'user.view': 'Read customer accounts and their addresses',
   'user.manage': 'Edit, archive, restore and delete customer accounts',
   'customer.data.export': 'Export every customer address at once',

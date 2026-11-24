@@ -102,6 +102,11 @@ const THROTTLERS: ThrottlerOptions[] = [
     ttl: 60000, // 1 minute
     limit: 5, // two-factor enrolment, sign-in completion and step-up attempts
   },
+  {
+    name: 'contentWrite',
+    ttl: 60000, // 1 minute
+    limit: 10, // reviews, product questions and reports written per minute
+  },
 ];
 
 @Module({

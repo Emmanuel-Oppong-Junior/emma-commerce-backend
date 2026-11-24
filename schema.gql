@@ -742,6 +742,23 @@ input CompleteMyDeliveryInput {
   shipmentId: ID!
 }
 
+"""A customer report, without the reporter"""
+type ContentReport {
+  createdAt: DateTime!
+  id: ID!
+  note: String
+  reason: ContentReportReason!
+}
+
+enum ContentReportReason {
+  FAKE
+  OFFENSIVE
+  OFF_TOPIC
+  OTHER
+  PERSONAL_INFORMATION
+  SPAM
+}
+
 """
 One entry of a variant's append-only cost history (inventory.cost.view)
 """
@@ -1243,11 +1260,15 @@ input CreateReturnRequestInput {
 }
 
 input CreateReviewInput {
+  """Up to 2000 characters, trimmed"""
   comment: String
   productId: String!
 
   """Rate number 1 - 5"""
   score: Int!
+
+  """Up to 120 characters, trimmed"""
+  title: String
 }
 
 input CreateShipmentInput {
@@ -1900,6 +1921,22 @@ type MfaRecoveryCodes {
   recoveryCodes: [String!]!
 }
 
+input ModerateContentInput {
+  """The review or question"""
+  id: ID!
+
+  """Why (staff only, audited)"""
+  reason: String!
+}
+
+"""
+PUBLISHED content is public; HIDDEN content was hidden by staff and only its author and staff see it
+"""
+enum ModerationStatus {
+  HIDDEN
+  PUBLISHED
+}
+
 """An amount of money in the store currency"""
 type Money {
   """
@@ -1946,9 +1983,6 @@ type Mutation {
 
   """Admin: cancel any order by ID and restore its stock"""
   adminCancelOrder(orderId: String!, reason: String): Order!
-
-  """Admin: permanently delete any review for moderation purposes"""
-  adminDeleteReview(reviewId: String!): Review!
 
   """Approve a return request (admin only)"""
   approveReturn(input: ApproveReturnInput!): ReturnRequestEntity!
@@ -2078,7 +2112,9 @@ type Mutation {
   """Create a return request for a delivered order"""
   createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
 
-  """Creates a review for a product"""
+  """
+  Reviews a product the caller received (refused with reason REVIEW_NOT_VERIFIED_PURCHASE otherwise); one per product (REVIEW_ALREADY_EXISTS)
+  """
   createReview(input: CreateReviewInput!): Review!
 
   """
@@ -2163,7 +2199,7 @@ type Mutation {
   """Delete a rate rule. A price change: recent step-up; audited"""
   deleteRateRule(id: ID!): RateRuleEntity!
 
-  """Deletes the authenticated user's own review"""
+  """Deletes the caller's own review for good"""
   deleteReview(reviewId: String!): Review!
 
   """Delete a shipping zone with its areas and rate rules. Audited"""
@@ -2195,6 +2231,9 @@ type Mutation {
   """
   deleteVariant(variantId: String!): Variant!
 
+  """Closes a review's open reports and leaves it published (audited)"""
+  dismissReviewReports(input: ModerateContentInput!): Review!
+
   """
   Dispatch a DRAFT transfer: its units leave the source and are in transit; serial-tracked lines name their units (staff)
   """
@@ -2207,6 +2246,11 @@ type Mutation {
 
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
+
+  """
+  Hides a review from public reads and the rating, closing its open reports (audited)
+  """
+  hideReview(input: ModerateContentInput!): Review!
 
   """
   Open a stock count at a location for a category, a list of variants or everything (admin only)
@@ -2298,6 +2342,9 @@ type Mutation {
   """Add products to a tag"""
   removeProductsFromTag(tagId: String!, updateDiscountInput: RemoveProductsFromTagDto!): Tag!
 
+  """Removes a photo from the caller's review"""
+  removeReviewPhoto(photoId: String!): Boolean!
+
   """
   Take away a user's staff role so they become a customer (staff.manage). Only an Owner removes an Owner; the last Owner cannot be removed. Audited.
   """
@@ -2312,6 +2359,14 @@ type Mutation {
 
   """Delete a user permanently"""
   removeUser(id: String!): User!
+
+  """Sets the store's public reply to a review (audited)"""
+  replyToReview(input: ReplyToReviewInput!): Review!
+
+  """
+  Reports a published review to staff; once per customer and review (ALREADY_REPORTED)
+  """
+  reportReview(input: ReportContentInput!): Boolean!
 
   """
   Text a 6-digit code to the current user's phone number (valid 10 minutes, replacing an earlier one). BAD_REQUEST with reason PHONE_REQUIRED (no number on the profile), PHONE_ALREADY_VERIFIED, or OTP_RATE_LIMITED (limit: COOLDOWN 60 s between codes, PHONE_DAILY 5 per number or ACCOUNT_DAILY 10 per account a day; retryAfterSeconds)
@@ -2417,6 +2472,9 @@ type Mutation {
   """
   unassignShipmentRider(input: UnassignShipmentRiderInput!): Shipment!
 
+  """Publishes a hidden review again (audited)"""
+  unhideReview(input: ModerateContentInput!): Review!
+
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
 
@@ -2494,7 +2552,7 @@ type Mutation {
   """
   updateRateRule(id: ID!, input: UpdateRateRuleInput!): RateRuleEntity!
 
-  """Updates a user's review"""
+  """Updates the caller's review; null or blank title/comment clears it"""
   updateReview(input: UpdateReviewInput!): Review!
 
   """
@@ -3291,9 +3349,19 @@ type Product {
   """When the product was published"""
   publishedAt: DateTime
 
+  """Rating over the published reviews"""
+  rating: ProductRating!
+
   """Sold only against a prescription (pharmacy; enforced in a later phase)"""
   requiresPrescription: Boolean!
-  reviews: [Review!]
+
+  """
+  The latest published reviews, newest first; productReviews pages through all of them
+  """
+  reviews(
+    """1-20"""
+    first: Int! = 5
+  ): [Review!]
 
   """Region names when deliveryOptions includes SELECTED_REGIONS"""
   selectedDeliveryRegions: [String!]
@@ -3394,6 +3462,16 @@ input ProductFilterArgs {
 
   """Filter by tag name"""
   tagName: String
+}
+
+"""Rating over the published reviews"""
+type ProductRating {
+  """Mean score to 2 decimals; null without reviews"""
+  average: Float
+  count: Int!
+
+  """Reviews per star, 5 stars first"""
+  distribution: [RatingBucket!]!
 }
 
 input ProductSortArgs {
@@ -4008,8 +4086,18 @@ type Query {
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
 
-  """Retrieves all reviews for a product"""
-  productReviews(productId: String!): [Review!]!
+  """
+  Published reviews of a public product, a page at a time (pass the last id as after)
+  """
+  productReviews(
+    """The id of the last item of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+    productId: ID!
+    sort: ReviewSort! = NEWEST
+  ): [Review!]!
 
   """A product type and its attribute definitions"""
   productType(id: ID!): ProductType!
@@ -4072,13 +4160,24 @@ type Query {
   """List refunds, optionally by status, newest first (admin only)"""
   refunds(status: RefundStatusEnum): [RefundEntity!]!
 
+  """Moderation queue: reviews with open reports, oldest review first"""
+  reportedReviews(
+    """The id of the last item of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+  ): [ReportedReview!]!
+
   """Get all return requests (admin only)"""
   returnRequests: [ReturnRequestEntity!]!
 
   """Item sales of paid orders grouped by category, all time (admin only)"""
   revenueByCategory: [RevenueByCategoryEntity!]!
 
-  """Retrieves a specific review by ID"""
+  """
+  A published review of a public product; its author and moderators also see it hidden
+  """
   review(reviewId: String!): Review!
 
   """Active riders a delivery shipment can be assigned to (staff)"""
@@ -4261,8 +4360,14 @@ type Query {
   """Fetch a user's profile with related data"""
   userProfile: User!
 
-  """Retrieves all reviews by the user"""
-  userReviews: [Review!]!
+  """The caller's own reviews in any status (hidden ones too), newest first"""
+  userReviews(
+    """The id of the last item of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+  ): [Review!]!
 
   """Fetch a paginated list of users"""
   users(filter: UserPaginateArgs!): UserConnection!
@@ -4447,6 +4552,13 @@ type RateRuleEntity {
   """Ascending; the heaviest band the cart reaches sets the fee"""
   weightBands: [WeightBandEntity!]!
   zoneId: ID!
+}
+
+type RatingBucket {
+  count: Int!
+
+  """1-5"""
+  stars: Int!
 }
 
 input ReceivePurchaseOrderInput {
@@ -4728,6 +4840,27 @@ input RemoveProductsFromTagDto {
   productIds: [ID!] = []
 }
 
+input ReplyToReviewInput {
+  """The public reply; replaces an earlier one"""
+  body: String!
+  reviewId: ID!
+}
+
+input ReportContentInput {
+  """The review or question reported"""
+  id: ID!
+
+  """Up to 500 characters; required for OTHER"""
+  note: String
+  reason: ContentReportReason!
+}
+
+"""A review with open reports, waiting for staff"""
+type ReportedReview {
+  openReports: [ContentReport!]!
+  review: Review!
+}
+
 input ResetPasswordInput {
   """
   New password: 8-128 characters, with at least one uppercase letter, one lowercase letter, one number and one special character (@$!%*?&_-#); no other characters
@@ -4801,15 +4934,49 @@ type RevenueByCategoryEntity {
 type Review {
   comment: String
   createdAt: DateTime!
+
+  """When its author last changed it"""
+  editedAt: DateTime
+
+  """Why staff hid it (staff with review.moderate only)"""
+  hiddenReason: String
   id: ID!
+  photos: [ReviewPhoto!]!
   product: Product!
   productId: ID!
+  reply: ReviewReply
   score: Int!
+  status: ModerationStatus!
+  title: String
   updatedAt: DateTime!
 
   """Public profile of the reviewer (never the full user)"""
   user: PublicProfile!
-  userId: ID!
+
+  """
+  Written by a customer who received the product; false on reviews older than the check
+  """
+  verifiedPurchase: Boolean!
+}
+
+type ReviewPhoto {
+  id: ID!
+  url: String!
+}
+
+"""The store's public reply to a review"""
+type ReviewReply {
+  body: String!
+  repliedAt: DateTime!
+}
+
+"""
+NEWEST first, HIGHEST or LOWEST score first (newest first within a score)
+"""
+enum ReviewSort {
+  HIGHEST
+  LOWEST
+  NEWEST
 }
 
 """
@@ -6044,13 +6211,14 @@ input UpdateRateRuleInput {
   weightBands: [WeightBandInput!]
 }
 
+"""
+Omitted fields stay as they are; title or comment null (or blank) clears it
+"""
 input UpdateReviewInput {
   comment: String
   id: String!
-  productId: String
-
-  """Rate number 1 - 5"""
   score: Int
+  title: String
 }
 
 input UpdateShipmentStatusInput {
