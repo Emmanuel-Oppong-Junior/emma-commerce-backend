@@ -4871,6 +4871,24 @@ Every marketing change is written to an append-only consent ledger (channel, gra
 - `recordCustomerConsent(input: { userId, channel, granted }): [NotificationPreferenceEntity!]!`: a customer's request by phone or in store (`user.manage`; source `STAFF_REQUEST`, staff id kept). Same refusals.
 - `customerConsentHistory(userId: ID!): [ConsentEventEntity!]!`: the ledger, newest first (`user.view`). `ConsentEventEntity { id category channel action(GRANTED|WITHDRAWN) source actorId createdAt }`.
 
+### In-app feed (P6-N.4)
+
+Besides email/SMS, these events add an entry to the customer's feed: order placed, payment received, out for delivery, delivered, ready for pickup, refund sent. Poll it (no subscriptions); entries are kept 90 days. Every operation needs a signed-in user and sees only their own entries.
+
+```graphql
+type InAppNotification {
+  id: ID!  title: String!  body: String!
+  templateKey: String!            # e.g. order.placed, payment.received, shipment.delivered, refund.processed
+  refType: String  refId: ID      # "Order" + the order id: link to the order page
+  readAt: DateTime                # null while unread
+  createdAt: DateTime!
+}
+query { myNotifications(first: 20, after: ID, unreadOnly: false) { totalCount hasNextPage nodes { id title body templateKey refType refId readAt createdAt } } }   # newest first; first 1-50; after = last node id of the previous page (an unknown id: BAD_REQUEST)
+query { unreadNotificationCount }                       # Int
+mutation { markNotificationsRead(ids: ["..."]) }        # Int: how many changed; up to 100 ids; ids not yours or already read are ignored
+mutation { markAllNotificationsRead }                   # Int
+```
+
 ### Asynchronous, queued and retried
 
 Messages are sent by the background worker, never on the request path, so they do not block or fail the request and may arrive a few seconds later. Messages that follow an order or payment change are written to the outbox in the same database transaction as the change. A failed send (including one the provider rejects) is retried with exponential backoff, up to 6 attempts; after that the job is listed by `failedJobs` and can be retried with `retryFailedJob`. A message is sent at most once, even when its job runs again. Without an email provider (development and test only; production refuses to start without `RESEND_API_KEY` and `RESEND_FROM_EMAIL`) emails are recorded `SKIPPED` with `NOT_CONFIGURED`.

@@ -40,6 +40,7 @@ describe('MaintenanceScheduler', () => {
       [MaintenanceJob.ReconcileStock]: { pattern: '30 2 * * *', tz: 'UTC' },
       [MaintenanceJob.SendLowStockDigest]: { pattern: '0 6-21/3 * * *', tz: 'UTC' },
       [MaintenanceJob.WriteOffExpiredLots]: { pattern: '5 * * * *', tz: 'UTC' },
+      [MaintenanceJob.PurgeNotifications]: { pattern: '15 3 * * *', tz: 'UTC' },
     });
   });
 

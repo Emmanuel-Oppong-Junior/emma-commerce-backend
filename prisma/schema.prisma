@@ -2309,12 +2309,19 @@ model Notification {
   errorCode         String?
   attempts          Int                  @default(0)
   sentAt            DateTime?
+  /// In-app feed only (P6-N.4): the text shown, what it is about (refType "Order" + refId) and when it was read
+  title             String?
+  body              String?
+  refType           String?
+  refId             String?
+  readAt            DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([createdAt])
+  @@index([userId, channel, createdAt(sort: Desc), id(sort: Desc)])
 }
 
 /// A customer's choice for a category and channel. No row = the default: transactional on, marketing off. Only

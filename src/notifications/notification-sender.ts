@@ -23,6 +23,11 @@ const CONTEXT = 'NotificationSender';
 const EMAILED_ORDER_STATUSES: OrderStatus[] = [OrderStatus.COMPLETED];
 // READY_FOR_PICKUP has its own email and SMS (ReadyForPickupNotifier, P5-E.1).
 const EMAILED_SHIPMENT_STATUSES: ShipmentStatus[] = [ShipmentStatus.OUT_FOR_DELIVERY];
+/**
+ * The in-app feed (P6-N.4) gets what a customer acts on: order placed, payment received, out for delivery, delivered,
+ * ready for pickup (ReadyForPickupNotifier) and refund sent. Completion and tracking-number edits stay email only.
+ */
+const IN_APP_SHIPMENT_STATUSES: ShipmentStatus[] = [ShipmentStatus.OUT_FOR_DELIVERY, ShipmentStatus.DELIVERED];
 
 /** Where the password-reset link sends the customer; the token goes in the fragment, which browsers never send on. */
 export function passwordResetUrl(frontendUrl: string, resetToken: string): string {
@@ -73,6 +78,7 @@ export class NotificationSender {
           cashOnDelivery: order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY,
         };
         await this.emailOrder(order, jobId, 'order.placed', placed);
+        await this.inAppOrder(order, jobId, 'order.placed', placed);
         return;
       }
       case 'order.status_changed.v1': {
@@ -114,26 +120,31 @@ export class NotificationSender {
           const { orderId, shipmentId, status } = payload;
           await this.notifications.queueShipmentSms({ orderId, shipmentId, status }, `${jobId}-sms`);
         }
-        if (!EMAILED_SHIPMENT_STATUSES.includes(payload.status)) return;
+        const emailed = EMAILED_SHIPMENT_STATUSES.includes(payload.status);
+        if (!emailed && !IN_APP_SHIPMENT_STATUSES.includes(payload.status)) return;
         const order = await this.findOrder(payload.orderId, jobName);
         if (!order) return;
-        await this.emailOrder(order, jobId, 'shipment.out_for_delivery', {
+        if (payload.status === ShipmentStatus.DELIVERED) {
+          await this.inAppOrder(order, jobId, 'shipment.delivered', { orderNumber: order.orderNumber });
+          return;
+        }
+        const outForDelivery = {
           orderNumber: order.orderNumber,
           carrier: payload.carrier ?? null,
           trackingNumber: payload.trackingNumber,
           deliveryCode: null,
-        });
+        };
+        if (emailed) await this.emailOrder(order, jobId, 'shipment.out_for_delivery', outForDelivery);
+        await this.inAppOrder(order, jobId, 'shipment.out_for_delivery', outForDelivery);
         return;
       }
       case 'payment.succeeded.v1': {
         const { payload } = data as DomainEventJobData<'payment.succeeded.v1'>;
         const order = await this.findOrder(payload.orderId, jobName);
         if (!order) return;
-        await this.emailOrder(order, jobId, 'payment.received', {
-          orderNumber: order.orderNumber,
-          amount: payload.amount,
-          currency: order.currency,
-        });
+        const received = { orderNumber: order.orderNumber, amount: payload.amount, currency: order.currency };
+        await this.emailOrder(order, jobId, 'payment.received', received);
+        await this.inAppOrder(order, jobId, 'payment.received', received);
         return;
       }
       case 'refund.succeeded.v1': {
@@ -141,14 +152,16 @@ export class NotificationSender {
         const refund = await this.findRefund(payload.refundId, jobName);
         const order = refund && (await this.findOrder(payload.orderId, jobName));
         if (!refund || !order) return;
-        await this.emailOrder(order, jobId, 'refund.processed', {
+        const processed = {
           orderNumber: order.orderNumber,
           amount: refund.amount.toFixed(2),
           currency: refund.currency,
           reasonLabel: REFUND_REASON_LABELS[refund.reason],
           lines: refund.lines.map((line) => ({ productName: line.orderItem.productName, quantity: line.quantity })),
           includesShipping: refund.shippingAmount.gt(0),
-        });
+        };
+        await this.emailOrder(order, jobId, 'refund.processed', processed);
+        await this.inAppOrder(order, jobId, 'refund.processed', processed);
         return;
       }
       case 'payment.dispute_opened.v1': {
@@ -343,6 +356,24 @@ export class NotificationSender {
       channel: NotificationChannel.EMAIL,
       to: order.user.email,
       idempotencyKey: jobId,
+    });
+  }
+
+  /** The customer's in-app feed entry for the same event (P6-N.4), linking to the order. */
+  private async inAppOrder<K extends TemplateKey>(
+    order: { id: string; userId: string },
+    jobId: string,
+    template: K,
+    data: TemplateData[K],
+  ): Promise<void> {
+    await this.dispatcher.deliver({
+      dedupeKey: `${jobId}:${NotificationChannel.IN_APP}`,
+      userId: order.userId,
+      template,
+      data,
+      channel: NotificationChannel.IN_APP,
+      to: null,
+      ref: { type: 'Order', id: order.id },
     });
   }
 

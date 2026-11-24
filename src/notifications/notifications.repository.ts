@@ -7,7 +7,7 @@ import {
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { verifiedPhoneOf } from '../phone-verification/phone-otp';
-import { DEFAULT_LOCALE, TemplateKey, templateDefinition } from './templates/templates';
+import { DEFAULT_LOCALE, InAppContent, TemplateKey, templateDefinition } from './templates/templates';
 
 /** Why a notification was skipped or failed; stored in Notification.errorCode. */
 export type NotificationErrorCode = 'NO_CONSENT' | 'NO_ADDRESS' | 'NOT_CONFIGURED' | 'PROVIDER_ERROR' | 'QUEUE_ERROR';
@@ -48,6 +48,23 @@ export class NotificationsRepository {
       data: {
         status: NotificationStatus.SENT,
         providerMessageId,
+        errorCode: null,
+        sentAt: new Date(),
+        attempts: { increment: 1 },
+      },
+    });
+  }
+
+  /** An in-app notification is delivered by storing its text in the feed. */
+  async markSentInApp(id: string, content: InAppContent, ref?: { type: string; id: string }): Promise<void> {
+    await this.prisma.notification.update({
+      where: { id },
+      data: {
+        status: NotificationStatus.SENT,
+        title: content.title,
+        body: content.body,
+        refType: ref?.type ?? null,
+        refId: ref?.id ?? null,
         errorCode: null,
         sentAt: new Date(),
         attempts: { increment: 1 },

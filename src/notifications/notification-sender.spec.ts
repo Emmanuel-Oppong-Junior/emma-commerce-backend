@@ -584,6 +584,81 @@ describe('NotificationSender', () => {
   });
 });
 
+describe('NotificationSender in-app feed (P6-N.4)', () => {
+  const inApp = (template: string, data: object) => ({
+    dedupeKey: 'evt1:IN_APP',
+    userId: 'user1',
+    template,
+    data,
+    channel: 'IN_APP',
+    to: null,
+    ref: { type: 'Order', id: 'order1' },
+  });
+
+  it.each([
+    ['order.placed.v1', { orderId: 'order1' }, 'order.placed'],
+    ['payment.succeeded.v1', { orderId: 'order1', paymentId: 'pay1', amount: '250.50' }, 'payment.received'],
+    ['refund.succeeded.v1', { orderId: 'order1', refundId: 'rf1' }, 'refund.processed'],
+  ])(
+    'adds %s to the customer’s feed with the same data as the email, linked to the order',
+    async (name, payload, template) => {
+      const { sender, dispatcher } = buildSender();
+
+      await sender.send(name, event(payload), 'evt1');
+
+      const [email, feed] = (dispatcher.deliver.mock.calls as [{ channel: string; data: object }][]).map(([d]) => d);
+      expect(email.channel).toBe('EMAIL');
+      expect(feed).toEqual(inApp(template, email.data));
+    },
+  );
+
+  it('adds out for delivery and delivered to the feed; delivered sends no email', async () => {
+    const { sender, dispatcher } = buildSender();
+
+    await sender.send(
+      'shipment.status_changed.v1',
+      event({ orderId: 'order1', shipmentId: 's1', status: 'OUT_FOR_DELIVERY', trackingNumber: null, carrier: null }),
+      'evt1',
+    );
+    expect(dispatcher.deliver).toHaveBeenLastCalledWith(
+      inApp('shipment.out_for_delivery', {
+        orderNumber: 10042,
+        carrier: null,
+        trackingNumber: null,
+        deliveryCode: null,
+      }),
+    );
+
+    dispatcher.deliver.mockClear();
+    await sender.send(
+      'shipment.status_changed.v1',
+      event({ orderId: 'order1', shipmentId: 's1', status: 'DELIVERED', trackingNumber: null }),
+      'evt1',
+    );
+    expect(dispatcher.deliver).toHaveBeenCalledTimes(1);
+    expect(dispatcher.deliver).toHaveBeenCalledWith(inApp('shipment.delivered', { orderNumber: 10042 }));
+  });
+
+  it('keeps completion and tracking-number edits out of the feed', async () => {
+    const { sender, dispatcher } = buildSender();
+
+    await sender.send(
+      'order.status_changed.v2',
+      event({ orderId: 'order1', from: 'IN_FULFILMENT', to: 'COMPLETED' }),
+      'e1',
+    );
+    await sender.send(
+      'shipment.tracking_updated.v1',
+      event({ orderId: 'order1', shipmentId: 's', trackingNumber: 'T' }),
+      'e2',
+    );
+
+    for (const [delivery] of dispatcher.deliver.mock.calls as [{ channel: string }][]) {
+      expect(delivery.channel).toBe('EMAIL');
+    }
+  });
+});
+
 describe('passwordResetUrl', () => {
   it('puts the encoded token in the fragment of the frontend reset page', () => {
     expect(passwordResetUrl('https://shop.example.com/', 'a.b+c')).toBe(

@@ -84,6 +84,8 @@ Mutation deleteVariant                   permission: catalog.product.write
 Mutation dispatchStockTransfer           permission: inventory.transfer
 Mutation failMyDelivery                  permission: delivery.ride
 Mutation forgotPassword                  public
+Mutation markAllNotificationsRead        authenticated
+Mutation markNotificationsRead           authenticated
 Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
@@ -207,6 +209,7 @@ Query getUserPayment                     permission: payment.view
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
 Query myNotificationPreferences          authenticated
+Query myNotifications                    authenticated
 Query myPhoneVerification                authenticated
 Query myReturnRequests                   authenticated
 Query order                              authenticated
@@ -261,6 +264,7 @@ Query tags                               authenticated
 Query tax                                permission: tax.manage
 Query taxes                              permission: tax.manage
 Query topProducts                        permission: report.view
+Query unreadNotificationCount            authenticated
 Query unremittedCashCollections          permission: cod.cash.manage
 Query userAddresses                      authenticated
 Query userByEmail                        permission: user.view

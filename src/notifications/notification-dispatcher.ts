@@ -10,7 +10,7 @@ import { EmailService } from './email/email.service';
 import { SmsSender } from './sms/sms-sender';
 import { NotificationErrorCode, NotificationsRepository } from './notifications.repository';
 import { mayDeliver } from './preferences/notification-preferences';
-import { renderEmail, renderSms, TemplateData, TemplateKey } from './templates/templates';
+import { renderEmail, renderInApp, renderSms, TemplateData, TemplateKey } from './templates/templates';
 
 const CONTEXT = 'NotificationDispatcher';
 
@@ -25,6 +25,8 @@ export interface Delivery<K extends TemplateKey = TemplateKey> {
   to: string | null;
   /** Passed to the provider so it drops a repeat of a message it already accepted (the job id). */
   idempotencyKey?: string;
+  /** What an in-app notification is about, for the feed to link to. */
+  ref?: { type: 'Order'; id: string };
 }
 
 /**
@@ -51,6 +53,10 @@ export class NotificationDispatcher {
         : await this.notifications.consentFacts(delivery.userId, delivery.channel);
     if (!mayDeliver(row.category, delivery.channel, marketingConsent, phoneVerified)) {
       return this.skip(row, 'NO_CONSENT');
+    }
+    if (delivery.channel === NotificationChannel.IN_APP) {
+      await this.notifications.markSentInApp(row.id, renderInApp(delivery.template, delivery.data), delivery.ref);
+      return NotificationStatus.SENT;
     }
     if (!delivery.to) return this.skip(row, 'NO_ADDRESS');
 

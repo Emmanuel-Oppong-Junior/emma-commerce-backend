@@ -11,6 +11,7 @@ function build(row: Partial<{ status: string; category: string; channel: string 
       ...row,
     }),
     markSent: jest.fn().mockResolvedValue(undefined),
+    markSentInApp: jest.fn().mockResolvedValue(undefined),
     markSkipped: jest.fn().mockResolvedValue(undefined),
     markFailed: jest.fn().mockResolvedValue(undefined),
     consentFacts: jest.fn().mockResolvedValue({ marketingConsent: false, phoneVerified: false }),
@@ -66,6 +67,29 @@ describe('NotificationDispatcher', () => {
       'shipment.delivered',
     );
     expect(notifications.markSent).toHaveBeenCalledWith('n1', 'sms-1');
+  });
+
+  it('delivers an in-app notification by storing its title, body and link (no address needed)', async () => {
+    const { dispatcher, notifications, email, sms } = build({ channel: 'IN_APP' });
+
+    await expect(
+      dispatcher.deliver({
+        ...PAID,
+        dedupeKey: 'evt1:IN_APP',
+        channel: 'IN_APP',
+        to: null,
+        ref: { type: 'Order', id: 'o1' },
+      }),
+    ).resolves.toBe('SENT');
+
+    expect(notifications.markSentInApp).toHaveBeenCalledWith(
+      'n1',
+      { title: 'Payment received', body: 'We received your payment of GHS 99.00 for order #10042.' },
+      { type: 'Order', id: 'o1' },
+    );
+    expect(email.send).not.toHaveBeenCalled();
+    expect(sms.send).not.toHaveBeenCalled();
+    expect(notifications.markSkipped).not.toHaveBeenCalled();
   });
 
   it.each(['SENT', 'SKIPPED'])('sends nothing again for a row already %s (the job ran again)', async (status) => {

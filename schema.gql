@@ -1845,6 +1845,31 @@ enum GhanaRegion {
   WESTERN_NORTH
 }
 
+"""A message in your in-app notification feed"""
+type InAppNotification {
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+
+  """Null while unread"""
+  readAt: DateTime
+  refId: ID
+
+  """What it is about: Order (refId = the order id)"""
+  refType: String
+
+  """The template it came from, e.g. order.placed, refund.processed"""
+  templateKey: String!
+  title: String!
+}
+
+type InAppNotificationPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [InAppNotification!]!
+  totalCount: Int!
+}
+
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
@@ -2235,6 +2260,14 @@ type Mutation {
 
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
+
+  """Mark all your notifications read; returns how many changed"""
+  markAllNotificationsRead: Int!
+
+  """
+  Mark up to 100 of your notifications read; returns how many changed (ids not yours, or already read, are ignored)
+  """
+  markNotificationsRead(ids: [ID!]!): Int!
 
   """
   Open a stock count at a location for a category, a list of variants or everything (admin only)
@@ -4019,6 +4052,18 @@ type Query {
   """
   myNotificationPreferences: [NotificationPreferenceEntity!]!
 
+  """Your in-app notifications, newest first (poll it; kept 90 days)"""
+  myNotifications(
+    """Id of the last notification of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+
+    """Only unread notifications"""
+    unreadOnly: Boolean! = false
+  ): InAppNotificationPage!
+
   """
   Whether the current user's phone number is verified (cash on delivery needs it)
   """
@@ -4307,6 +4352,9 @@ type Query {
   Best-selling products of paid orders by quantity, all time (admin only)
   """
   topProducts(limit: Int! = 10): [TopProduct!]!
+
+  """How many of your in-app notifications are unread"""
+  unreadNotificationCount: Int!
 
   """
   A rider's cash collections not handed in yet, oldest first (staff: Owner, Manager, Cashier)

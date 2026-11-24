@@ -11,6 +11,7 @@ import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliati
 import { StockReconciliationTask } from '../inventory/tasks/stock-reconciliation.task';
 import { LowStockDigestTask } from '../inventory/tasks/low-stock-digest.task';
 import { LotExpiryTask } from '../inventory/tasks/lot-expiry.task';
+import { NotificationRetentionTask } from '../notifications/notification-retention.task';
 import { WorkerHealthServer } from './worker-health.server';
 import { MaintenanceScheduler } from './maintenance.scheduler';
 import { MaintenanceProcessor } from './maintenance.processor';
@@ -33,6 +34,7 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
     StockReconciliationTask,
     LowStockDigestTask,
     LotExpiryTask,
+    NotificationRetentionTask,
     MaintenanceScheduler,
     MaintenanceProcessor,
     NotificationsProcessor,

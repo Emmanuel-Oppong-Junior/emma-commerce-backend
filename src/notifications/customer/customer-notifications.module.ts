@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { NotificationPreferencesService } from './notification-preferences.service';
 import { NotificationPreferencesResolver } from './notification-preferences.resolver';
+import { InAppFeedService } from './in-app-feed.service';
+import { InAppFeedResolver } from './in-app-feed.resolver';
 
-/** The customer-facing notification API: preferences and consent. */
+/** The customer-facing notification API: preferences and consent, and the in-app feed. */
 @Module({
-  providers: [NotificationPreferencesService, NotificationPreferencesResolver],
+  providers: [NotificationPreferencesService, NotificationPreferencesResolver, InAppFeedService, InAppFeedResolver],
   exports: [NotificationPreferencesService],
 })
 export class CustomerNotificationsModule {}

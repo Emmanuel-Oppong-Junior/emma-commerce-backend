@@ -54,6 +54,15 @@ describe('ReadyForPickupNotifier', () => {
       to: 'kwame@gmail.com',
       idempotencyKey: 'evt1',
     });
+    expect(dispatcher.deliver).toHaveBeenCalledWith({
+      dedupeKey: 'evt1:IN_APP',
+      userId: 'user1',
+      template: 'shipment.ready_for_pickup',
+      data: notice,
+      channel: 'IN_APP',
+      to: null,
+      ref: { type: 'Order', id: 'order1' },
+    });
     expect(notifications.queueReadyForPickupSms).toHaveBeenCalledWith('evt1-sms', {
       to: '+233244123456',
       notice,

@@ -59,6 +59,15 @@ export class ReadyForPickupNotifier {
       to: order.user.email,
       idempotencyKey,
     });
+    await this.dispatcher.deliver({
+      dedupeKey: `${idempotencyKey}:${NotificationChannel.IN_APP}`,
+      userId: order.userId,
+      template: 'shipment.ready_for_pickup',
+      data: notice,
+      channel: NotificationChannel.IN_APP,
+      to: null,
+      ref: { type: 'Order', id: order.id },
+    });
     const to = normaliseGhanaPhone(order.contactPhone);
     if (!to) {
       this.logger.warn(`No pickup SMS sent: the contact phone is not a Ghana number | orderId: ${orderId}`, CONTEXT);
