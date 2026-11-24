@@ -3,7 +3,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal } from '../helpers/db.helper';
-import { signInAdmin } from '../helpers/auth.helper';
+import { signInAdmin, signInUser } from '../helpers/auth.helper';
 
 // P6-S.1: product filters, full-text search, trigram fallback and keyset pagination through the search port.
 
@@ -37,6 +37,9 @@ describe('Product search (e2e)', () => {
   let prisma: PrismaService;
   let defaultLocationId: string;
   let inactiveLocationId: string;
+  let adminTokenPromise: Promise<string> | undefined;
+  // One sign-in per suite: a second one within the same TOTP step would be refused as a replay.
+  const adminToken = () => (adminTokenPromise ??= signInAdmin(app));
 
   const products = async (args: string, token?: string) => {
     const res = await gqlRequest(app, `{ products(${args}) { ${PAGE} } }`, undefined, token).expect(200);
@@ -326,7 +329,7 @@ describe('Product search (e2e)', () => {
     });
 
     it('lets staff search drafts through adminProducts', async () => {
-      const token = await signInAdmin(app);
+      const token = await adminToken();
       const res = await gqlRequest(
         app,
         `{ adminProducts(filterArgs: { status: DRAFT, search: "galaxy tab" }) { edges { node { id } } } }`,
@@ -635,6 +638,130 @@ describe('Product search (e2e)', () => {
         `{ productFacets { ${FACETS} } products(paginationArgs: { first: 24 }) { ${PAGE} } }`,
       ).expect(200);
       expect(res.body.errors).toBeUndefined();
+    });
+  });
+
+  describe('suggestions (P6-S.4)', () => {
+    const SUGGEST = 'products { id name } brands { id name } categories { id name }';
+    const suggest = async (prefix: string, first?: number) => {
+      const args = `prefix: ${JSON.stringify(prefix)}${first ? `, first: ${first}` : ''}`;
+      const res = await gqlRequest(app, `{ searchSuggestions(${args}) { ${SUGGEST} } }`).expect(200);
+      expect(res.body.errors).toBeUndefined();
+      return res.body.data.searchSuggestions as Record<'products' | 'brands' | 'categories', { id: string }[]>;
+    };
+    const idsOf = (list: { id: string }[]) => list.map((item) => item.id);
+
+    it('suggests published products by name, names starting with the prefix first', async () => {
+      const result = await suggest('gal');
+      // "Gari Premium" may follow as a similar name; names containing "gal" come first, those starting with it first.
+      expect(idsOf(result.products).slice(0, 2)).toEqual(['s_case', 's_galaxy']);
+    });
+
+    it('suggests brands and categories that have published products', async () => {
+      expect(idsOf((await suggest('sams')).brands)).toEqual(['s_brand_samsung']);
+      expect(idsOf((await suggest('fash')).categories)).toEqual(['s_cat_fashion']);
+      expect(idsOf((await suggest('Bonwire')).brands)).toEqual(['s_brand_kente']);
+    });
+
+    it('allows typos', async () => {
+      const result = await suggest('samsnug');
+      expect(idsOf(result.products)).toContain('s_galaxy');
+      expect(idsOf(result.brands)).toEqual(['s_brand_samsung']);
+    });
+
+    it('never suggests a draft product, and caps each list', async () => {
+      expect(idsOf((await suggest('galaxy tab')).products)).not.toContain('s_draft');
+      expect((await suggest('facet', 1)).products).toHaveLength(1);
+    });
+
+    it('suggests nothing for under two letters or digits, and treats LIKE wildcards literally', async () => {
+      expect(await suggest('g')).toEqual({ products: [], brands: [], categories: [] });
+      expect(await suggest('%%')).toEqual({ products: [], brands: [], categories: [] });
+      expect((await suggest('%_zq')).products).toEqual([]);
+    });
+
+    it('refuses more than 10 of each kind', async () => {
+      const res = await gqlRequest(app, `{ searchSuggestions(prefix: "ga", first: 11) { products { id } } }`).expect(
+        200,
+      );
+      expect(res.body.errors?.[0].extensions.code).toBe('BAD_USER_INPUT');
+    });
+  });
+
+  describe('synonyms (P6-S.4)', () => {
+    const SYNONYM = 'id kind term synonyms';
+    const mutate = async (operation: string, token?: string) =>
+      (
+        await gqlRequest(
+          app,
+          `mutation { ${operation} { ${SYNONYM} } }`,
+          undefined,
+          token ?? (await adminToken()),
+        ).expect(200)
+      ).body as {
+        data: Record<string, { id: string; kind: string; term: string | null; synonyms: string[] }> | null;
+        errors?: { extensions: { code: string }; message: string }[];
+      };
+
+    it('needs catalog.taxonomy.write to change synonyms', async () => {
+      const create = 'createSearchSynonym(input: { kind: TWO_WAY, synonyms: ["handset", "phone"] })';
+      const anonymous = await gqlRequest(app, `mutation { ${create} { id } }`).expect(200);
+      expect(anonymous.body.errors?.[0].extensions.code).toBe('UNAUTHENTICATED');
+      const customer = await mutate(create, await signInUser(app));
+      expect(customer.errors?.[0].extensions.code).toBe('FORBIDDEN');
+    });
+
+    it('expands a search two ways once staff add a group, and stops when they remove it', async () => {
+      expect(await filtered('search: "handset"')).toEqual([]);
+
+      const created = await mutate('createSearchSynonym(input: { kind: TWO_WAY, synonyms: [" Handset ", "PHONE"] })');
+      expect(created.errors).toBeUndefined();
+      const synonym = created.data!.createSearchSynonym;
+      expect(synonym).toEqual(expect.objectContaining({ kind: 'TWO_WAY', term: null, synonyms: ['handset', 'phone'] }));
+      expect((await filtered('search: "handset"')).sort()).toEqual(['s_case', 's_galaxy']);
+
+      const updated = await mutate(
+        `updateSearchSynonym(id: "${synonym.id}", input: { kind: TWO_WAY, synonyms: ["handset", "case"] })`,
+      );
+      expect(updated.data!.updateSearchSynonym.synonyms).toEqual(['handset', 'case']);
+      expect(await filtered('search: "handset"')).toEqual(['s_case']);
+
+      const facets = await gqlRequest(
+        app,
+        `{ productFacets(filterArgs: { search: "handset" }) { totalCount } }`,
+      ).expect(200);
+      expect(facets.body.data.productFacets.totalCount).toBe(1);
+
+      expect((await mutate(`deleteSearchSynonym(id: "${synonym.id}")`)).errors).toBeUndefined();
+      expect(await filtered('search: "handset"')).toEqual([]);
+
+      const audit = await prisma.auditLog.findMany({
+        where: { entity: 'SearchSynonym', entityId: synonym.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(audit.map((entry) => entry.action)).toEqual(['CREATE', 'UPDATE', 'DELETE']);
+    });
+
+    it('expands a one-way term from its own side only', async () => {
+      const created = await mutate('createSearchSynonym(input: { kind: ONE_WAY, term: "gari", synonyms: ["shito"] })');
+      expect(created.errors).toBeUndefined();
+      expect((await filtered('search: "gari"')).sort()).toEqual(['s_gari', 's_shito']);
+      expect(await filtered('search: "shito"')).toEqual(['s_shito']);
+
+      const res = await gqlRequest(app, `{ searchSynonyms { ${SYNONYM} } }`, undefined, await adminToken()).expect(200);
+      expect(res.body.data.searchSynonyms).toEqual([
+        expect.objectContaining({ kind: 'ONE_WAY', term: 'gari', synonyms: ['shito'] }),
+      ]);
+    });
+
+    it.each([
+      ['search syntax in a term', 'kind: TWO_WAY, synonyms: ["\\"phone\\"", "mobile"]', 'only letters'],
+      ['a one-way group without its term', 'kind: ONE_WAY, synonyms: ["mobile"]', 'needs the term'],
+      ['a two-way group of one', 'kind: TWO_WAY, synonyms: ["mobile"]', 'takes 2-20 synonyms'],
+    ])('refuses %s', async (_case, input, message) => {
+      const body = await mutate(`createSearchSynonym(input: { ${input} })`);
+      expect(body.errors?.[0].extensions.code).toBe('BAD_REQUEST');
+      expect(body.errors?.[0].message).toContain(message);
     });
   });
 });

@@ -15,6 +15,7 @@ import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { VariantSummaryLoader } from './loaders/variant-summary.loader';
 import { PriceRange } from './entities/price-range.entity';
 import { ProductFacets } from './entities/product-facets.entity';
+import { SearchSuggestions, SearchSuggestionsArgs } from './entities/search-suggestions.entity';
 import { VariantsLoader } from './loaders/variants.loader';
 import { ReviewsLoader } from './loaders/reviews.loader';
 import { Variant } from '../variant/entities/variant.entity';
@@ -141,6 +142,15 @@ export class ProductsResolver {
     filterArgs: ProductFilterArgs = {},
   ) {
     return this.productsService.findPublishedFacets(filterArgs);
+  }
+
+  @Auth(AuthType.Optional)
+  @Query(() => SearchSuggestions, {
+    name: 'searchSuggestions',
+    description: 'Autocomplete: published products, brands and categories matching a typed prefix (typos allowed)',
+  })
+  searchSuggestions(@Args() { prefix, first }: SearchSuggestionsArgs) {
+    return this.productsService.suggest(prefix, first);
   }
 
   @Auth(AuthType.Optional)

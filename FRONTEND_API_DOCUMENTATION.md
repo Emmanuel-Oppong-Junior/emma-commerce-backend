@@ -827,6 +827,21 @@ query {
 
 ---
 
+#### `searchSuggestions` (P6-S.4)
+- **Type**: Query
+- **Auth Required**: No (optional sign-in); rate-limited like every public query (global throttler, 120 requests a minute per client)
+- **Args**: `prefix: String!` (at most 50 characters), `first: Int = 5` (1-10, per kind; anything else is `BAD_USER_INPUT`)
+- **Response**: `SearchSuggestions! { products: [Suggestion!]!; brands: [Suggestion!]!; categories: [Suggestion!]! }`, `Suggestion { id: ID!; name: String! }`
+- **Description**: Autocomplete while the customer types. Returns up to `first` published products, brands with a published product and categories with a published product whose name contains the prefix (ignoring case; `%` and `_` are literal) or resembles it allowing typos (`samsnug` → Samsung). Names starting with the prefix come first, then the most similar. A prefix with fewer than two letters or digits returns empty lists (no error). Synonyms are not applied here; they apply to `products(filterArgs: { search })`. Debounce keystrokes on the client (~200 ms).
+
+```graphql
+query { searchSuggestions(prefix: "gal", first: 5) { products { id name } brands { id name } categories { id name } } }
+```
+
+**Synonyms (P6-S.4).** Staff manage synonym groups that the product `search` expands at query time (see [2.7](#27-tags), "Search synonyms"). A search for a term of a `TWO_WAY` group also matches the other terms of the group; a `ONE_WAY` group's `term` also matches its `synonyms`, not the reverse. Terms are matched as whole words (or phrases); excluded words (`-phone`) and the `OR` keyword are left as they are. Synonyms apply to full-text matching, not to the typo fallback.
+
+---
+
 #### `product`
 - **Type**: Query
 - **Auth Required**: No
@@ -1216,6 +1231,38 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user.
   productIds?: string[]; // Default []
 }
 ```
+
+---
+
+#### Search synonyms (P6-S.4)
+
+Staff-managed groups the product `search` expands with (see [2.3](#23-products), "Synonyms"). Reads need `catalog.product.read`; changes need `catalog.taxonomy.write` (the taxonomy permission, like tags) and are audited (`AuditLog` entity `SearchSynonym`). Changes apply to the next search on every server (not cached).
+
+- `searchSynonyms: [SearchSynonym!]!` (oldest first)
+- `createSearchSynonym(input: SearchSynonymInput!): SearchSynonym!` (at most 500 groups)
+- `updateSearchSynonym(id: ID!, input: SearchSynonymInput!): SearchSynonym!` (replaces the group)
+- `deleteSearchSynonym(id: ID!): SearchSynonym!`
+
+```typescript
+// SearchSynonym
+{
+  id: string;
+  kind: SearchSynonymKind;  // TWO_WAY: every term finds the others; ONE_WAY: term also finds synonyms, not the reverse
+  term?: string;            // ONE_WAY only
+  synonyms: string[];
+  createdAt: DateTime; updatedAt: DateTime;
+}
+// SearchSynonymInput
+{
+  kind: SearchSynonymKind;
+  term?: string;            // Required for ONE_WAY, refused for TWO_WAY
+  synonyms: string[];       // TWO_WAY: 2-20 terms; ONE_WAY: 1-20
+}
+```
+
+Terms are stored lower case, trimmed and single-spaced; each is 1-100 characters of letters, digits, single spaces and hyphens (no quotes or other search syntax), and appears once per group. **Possible Errors**: `BAD_REQUEST` (a rule above, with the reason; more than 500 groups), `NOT_FOUND` (unknown id), `FORBIDDEN`.
+
+**Example**: `createSearchSynonym(input: { kind: TWO_WAY, synonyms: ["phone", "mobile", "cellphone"] })`, `createSearchSynonym(input: { kind: ONE_WAY, term: "tv", synonyms: ["television"] })`.
 
 ---
 
@@ -4166,6 +4213,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `DiscountType` | `PERCENTAGE`, `FLAT` | `Discount.type`, discount inputs |
 | `DiscountTypeEnum` | `PERCENTAGE`, `FLAT` | `Coupon.discountType`, coupon inputs (a separate enum with the same values) |
 | `ProductStatus` | `DRAFT`, `PUBLISHED`, `ARCHIVED` | `Product.status`, product inputs, `ProductFilterArgs.status` |
+| `SearchSynonymKind` | `TWO_WAY`, `ONE_WAY` (P6-S.4) | `SearchSynonym.kind`, `SearchSynonymInput.kind` |
 | `Currency` | `GHS`, `USD`, `EUR`, `GBP`, `NGN` | `Product.currency` (only products in the store currency, GHS, can be checked out) |
 | `DeliveryOptions` | `LOCAL_DELIVERY`, `INTERNATIONAL_DELIVERY`, `SELECTED_REGIONS` | `Product.deliveryOptions` (informational; not enforced at checkout) |
 | `ProductSortField` | `RELEVANCE` (P6-S.1), `CREATED_AT`, `NAME`, `UPDATED_AT` (`PRICE` and `QUANTITY` removed in P1-V.3) | `ProductSortArgs.sortBy` |
@@ -4177,7 +4225,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 |---|---|
 | `AuthEntity` | [2.1](#21-authentication-iam) |
 | `User`, `UserConnection`, `UserEdge`, `PublicProfile` | [2.2](#22-users), [2.17](#217-reviews) |
-| `Product`, `PriceRange`, `ProductConnection`, `ProductEdge`, `ProductFacets`, `FacetCount`, `AttributeFacet`, `AttributeFacetValue`, `AttributeFilterInput` | [2.3](#23-products) |
+| `Product`, `PriceRange`, `ProductConnection`, `ProductEdge`, `ProductFacets`, `FacetCount`, `AttributeFacet`, `AttributeFacetValue`, `AttributeFilterInput`, `SearchSuggestions`, `Suggestion` | [2.3](#23-products) |
 | `ProductType`, `AttributeDefinition` | [2.26](#226-product-types-and-attributes) |
 | `Category`, `SubCategory`, `Brand`, `Tag`, `Variant` | [2.4](#24-categories)–[2.8](#28-variants) |
 | `Cart`, `CartItem`, `Wishlist` | [2.9](#29-cart), [2.10](#210-wishlist) |

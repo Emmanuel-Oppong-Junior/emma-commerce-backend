@@ -2276,3 +2276,21 @@ model CostChange {
 
   @@index([variantId, createdAt])
 }
+
+/// TWO_WAY: every term finds the others. ONE_WAY: term also finds synonyms, not the reverse (P6-S.4).
+enum SearchSynonymKind {
+  TWO_WAY
+  ONE_WAY
+}
+
+/// Staff-managed search synonyms, applied at query time by expanding the search text (P6-S.4).
+model SearchSynonym {
+  id        String            @id @default(cuid())
+  kind      SearchSynonymKind
+  /// ONE_WAY: the term searched for; null for TWO_WAY (CHECK)
+  term      String?           @db.VarChar(100)
+  /// TWO_WAY: 2-20 interchangeable terms; ONE_WAY: 1-20 terms the term also finds. Lower case, single-spaced.
+  synonyms  String[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+}

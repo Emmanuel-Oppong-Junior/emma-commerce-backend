@@ -9,6 +9,8 @@ import {
   fuzzyWords,
   pageQuery,
   sortKey,
+  suggestionQuery,
+  containsPattern,
   textMatch,
   tsQuery,
 } from './product-search-sql';
@@ -162,14 +164,14 @@ describe('product search SQL', () => {
       const query = tsQuery(text);
       expect(query.sql).toBe(`websearch_to_tsquery('simple', ?)`);
       expect(query.values).toEqual([text]);
-      const { condition, score } = textMatch(text, 'FTS');
+      const { condition, score } = textMatch([text], 'FTS');
       expect(flat(condition)).toBe(`p."searchVector" @@ websearch_to_tsquery('simple', ?)`);
       expect(flat(score)).toBe(`ts_rank(p."searchVector", websearch_to_tsquery('simple', ?))::float8`);
       expect(`${condition.sql} ${score.sql}`).not.toMatch(/(^|[^_])to_tsquery/);
     });
 
     it('fuzzy: every word must be similar to part of the name, relevance is the mean similarity', () => {
-      const { condition, score } = textMatch('Samsnug  Galxy samsnug', 'FUZZY');
+      const { condition, score } = textMatch(['Samsnug  Galxy samsnug', 'mobile'], 'FUZZY');
       expect(flat(condition)).toBe('? <% p."name" AND ? <% p."name"');
       expect(condition.values).toEqual(['samsnug', 'galxy']);
       expect(flat(score)).toBe('((word_similarity(?, p."name") + word_similarity(?, p."name")) / ?)::float8');
@@ -180,6 +182,33 @@ describe('product search SQL', () => {
       expect(fuzzyWords("Men's  shoes!")).toEqual(['men', 'shoes']);
       expect(fuzzyWords('a b')).toEqual(['a b']);
       expect(fuzzyWords('one two three four five six seven eight nine')).toHaveLength(8);
+    });
+
+    it('matches any synonym variant of the text in full-text, each through websearch_to_tsquery', () => {
+      const { condition, score } = textMatch(['phone case', 'mobile case'], 'FTS');
+      expect(flat(condition)).toBe(
+        `p."searchVector" @@ (websearch_to_tsquery('simple', ?) || websearch_to_tsquery('simple', ?))`,
+      );
+      expect(condition.values).toEqual(['phone case', 'mobile case']);
+      expect(score.values).toEqual(['phone case', 'mobile case']);
+    });
+  });
+
+  describe('suggestionQuery', () => {
+    it('escapes LIKE wildcards in the prefix', () => {
+      expect(containsPattern('50%_off\\')).toBe('%50\\%\\_off\\\\%');
+    });
+
+    it('binds the prefix, ranks names starting with it first and caps each list', () => {
+      const query = suggestionQuery('gal', 5);
+      const sql = flat(query);
+      expect(sql).toContain('ORDER BY (x."name" ILIKE ?) DESC, word_similarity(?, x."name") DESC, x."name", x."id"');
+      expect(sql).toContain('WHERE (x."name" ILIKE ? OR ? <% x."name")');
+      expect(sql).toContain(`x."isActive" AND x."status" = 'PUBLISHED'`);
+      expect(sql).toContain('p."brandId" = x."id"');
+      expect(sql).toContain('p."categoryId" = x."id"');
+      expect(query.values.filter((value) => value === 5)).toHaveLength(3);
+      expect(query.values).toEqual(expect.arrayContaining(['gal%', '%gal%', 'gal']));
     });
   });
 

@@ -2115,6 +2115,9 @@ type Mutation {
   """Creates a review for a product"""
   createReview(input: CreateReviewInput!): Review!
 
+  """Adds a search synonym group (at most 500); audited"""
+  createSearchSynonym(input: SearchSynonymInput!): SearchSynonym!
+
   """
   Create a PENDING shipment of a confirmed or in-fulfilment order with the given lines and units, or every unit not yet in a shipment (staff). BAD_REQUEST for a line not on the order or named twice, and for a cash-on-delivery order not shipped whole (reason COD_ORDER_NOT_SPLIT); CONFLICT for more units than are unshipped (SHIPMENT_QUANTITY_EXCEEDED) or nothing left to ship (NOTHING_TO_SHIP)
   """
@@ -2199,6 +2202,9 @@ type Mutation {
 
   """Deletes the authenticated user's own review"""
   deleteReview(reviewId: String!): Review!
+
+  """Removes a search synonym group; audited"""
+  deleteSearchSynonym(id: ID!): SearchSynonym!
 
   """Delete a shipping zone with its areas and rate rules. Audited"""
   deleteShippingZone(id: ID!): ShippingZoneEntity!
@@ -2530,6 +2536,9 @@ type Mutation {
 
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
+
+  """Replaces a search synonym group; audited"""
+  updateSearchSynonym(id: ID!, input: SearchSynonymInput!): SearchSynonym!
 
   """
   Move a shipment to its next fulfilment step (staff); the order follows: IN_FULFILMENT on the first step of any shipment, COMPLETED once every unit is delivered (online orders). Dispatch needs a serial on every serialised unit of the shipment (BAD_REQUEST, reason SERIALS_NOT_ASSIGNED)
@@ -4180,6 +4189,22 @@ type Query {
   salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
 
   """
+  Autocomplete: published products, brands and categories matching a typed prefix (typos allowed)
+  """
+  searchSuggestions(
+    """Suggestions of each kind, 1-10"""
+    first: Int! = 5
+
+    """
+    What the customer typed (at most 50 characters); under two letters or digits gives no suggestions
+    """
+    prefix: String!
+  ): SearchSuggestions!
+
+  """Every search synonym group, oldest first (P6-S.4)"""
+  searchSynonyms: [SearchSynonym!]!
+
+  """
   Find serialised units by serial (any variant): status, order, customer id, sale date and warranty (staff)
   """
   serialUnitLookup(serial: String!): [SerialUnitLookup!]!
@@ -4984,6 +5009,55 @@ type SalesReport {
   totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
 }
 
+"""Autocomplete for a typed prefix (P6-S.4)"""
+type SearchSuggestions {
+  """Brands with a published product"""
+  brands: [Suggestion!]!
+
+  """Categories with a published product"""
+  categories: [Suggestion!]!
+
+  """Published products"""
+  products: [Suggestion!]!
+}
+
+"""A staff-managed search synonym group (P6-S.4)"""
+type SearchSynonym {
+  createdAt: DateTime!
+  id: ID!
+  kind: SearchSynonymKind!
+
+  """Lower case, single-spaced"""
+  synonyms: [String!]!
+
+  """ONE_WAY: the term searched for; null for TWO_WAY"""
+  term: String
+  updatedAt: DateTime!
+}
+
+input SearchSynonymInput {
+  kind: SearchSynonymKind!
+
+  """
+  TWO_WAY: 2-20 interchangeable terms; ONE_WAY: 1-20 terms. Letters, digits, single spaces and hyphens; stored lower case
+  """
+  synonyms: [String!]!
+
+  """ONE_WAY only: the term that also finds the synonyms"""
+  term: String
+}
+
+"""How a synonym group expands searches (P6-S.4)"""
+enum SearchSynonymKind {
+  """
+  term also finds the synonyms, not the reverse ("tv" finds "television")
+  """
+  ONE_WAY
+
+  """Every term finds the others ("phone, mobile, cellphone")"""
+  TWO_WAY
+}
+
 """
 How serial numbers are checked: FREE_TEXT (1-64 letters, digits, - _ . /) or IMEI (15 digits, Luhn)
 """
@@ -5700,6 +5774,11 @@ type SubCategory {
 
   """Timestamp when the sub category was last updated"""
   updatedAt: DateTime!
+}
+
+type Suggestion {
+  id: ID!
+  name: String!
 }
 
 """Someone the store buys from (staff with purchasing.view)"""

@@ -46,7 +46,7 @@ const generalType = { id: 'product_type_general', key: 'general', attributes: []
 const mockProductTypesRepository = { findById: jest.fn() };
 const preparedDefault = [{ data: { optionsKey: '' }, quantity: 100 }];
 const mockVariantService = { prepare: jest.fn(), insertPrepared: jest.fn() };
-const mockProductSearch = { search: jest.fn(), facets: jest.fn() };
+const mockProductSearch = { search: jest.fn(), facets: jest.fn(), suggest: jest.fn() };
 
 describe('ProductsService', () => {
   const mockLotsService = { assertTrackingChange: jest.fn() };
@@ -342,6 +342,21 @@ describe('ProductsService', () => {
     it.each([0, 101, 2.5])('rejects first = %p', async (first) => {
       await expect(service.findPublishedIn({ categoryId: 'cat1' }, first)).rejects.toThrow(BadRequestException);
       expect(productsRepository.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('suggest', () => {
+    it('asks the search port with the trimmed prefix', async () => {
+      const suggestions = { products: [{ id: 'p1', name: 'Galaxy' }], brands: [], categories: [] };
+      mockProductSearch.suggest.mockResolvedValue(suggestions);
+
+      await expect(service.suggest('  gal ', 5)).resolves.toBe(suggestions);
+      expect(mockProductSearch.suggest).toHaveBeenCalledWith('gal', 5);
+    });
+
+    it.each(['', 'g', ' % ', '%_'])('suggests nothing for %p', async (prefix) => {
+      await expect(service.suggest(prefix, 5)).resolves.toEqual({ products: [], brands: [], categories: [] });
+      expect(mockProductSearch.suggest).not.toHaveBeenCalled();
     });
   });
 

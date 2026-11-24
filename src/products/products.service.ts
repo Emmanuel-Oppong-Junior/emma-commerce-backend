@@ -20,7 +20,7 @@ import { VariantService } from '../variant/variant.service';
 import { LotsService } from '../inventory/lots/lots.service';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { assertNoSerialisedOpeningStock } from '../inventory/serials/serial-rules';
-import { ProductFacets, ProductSearch, SearchVisibility } from './search/product-search.port';
+import { ProductFacets, ProductSearch, SearchSuggestions, SearchVisibility } from './search/product-search.port';
 import { searchFiltersProblem, toSearchFilters, toSearchRequest } from './search/product-search-request';
 
 export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
@@ -202,6 +202,13 @@ export class ProductsService {
     const problem = searchFiltersProblem(filters);
     if (problem) throw new BadRequestException(problem);
     return this.productSearch.facets(filters);
+  }
+
+  /** Autocomplete; a prefix with fewer than two letters or digits suggests nothing. */
+  async suggest(prefix: string, first: number): Promise<SearchSuggestions> {
+    const text = prefix.trim();
+    if ((text.match(/[\p{L}\p{N}]/gu) ?? []).length < 2) return { products: [], brands: [], categories: [] };
+    return this.productSearch.suggest(text, first);
   }
 
   /** The search port picks and orders the page; the products are then loaded with the requested fields. */

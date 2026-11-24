@@ -28,12 +28,15 @@ export function fuzzyWords(text: string): string[] {
 }
 
 /**
- * Whether p matches the search text, and its relevance (higher is better) as float8. FUZZY: every word must be
- * similar to a part of the name (index-backed <% operator); relevance is the mean similarity.
+ * Whether p matches the search text (the first of `texts`; the others are its synonym variants, full-text only), and
+ * its relevance (higher is better) as float8. FUZZY: every word must be similar to a part of the name (index-backed
+ * <% operator); relevance is the mean similarity.
  */
-export function textMatch(text: string, mode: TextMatchMode): { condition: Prisma.Sql; score: Prisma.Sql } {
+export function textMatch(texts: readonly string[], mode: TextMatchMode): { condition: Prisma.Sql; score: Prisma.Sql } {
+  const [text] = texts;
   if (mode === 'FTS') {
-    const query = tsQuery(text);
+    // Synonym variants of the text: a product matches any of them.
+    const query = texts.length === 1 ? tsQuery(text) : Prisma.sql`(${Prisma.join(texts.map(tsQuery), ' || ')})`;
     return {
       condition: Prisma.sql`p."searchVector" @@ ${query}`,
       score: Prisma.sql`ts_rank(p."searchVector", ${query})::float8`,
@@ -307,6 +310,43 @@ export function pageQuery(args: {
              FROM (SELECT m."id", m."k" FROM matched m ${afterCursor(args.cursor, args.direction)}
                    ORDER BY m."k" ${order}, m."id" LIMIT ${args.limit}) page
            ), '[]'::json) AS "rows"`;
+}
+
+/** The text as a LIKE pattern matching it anywhere, its wildcards escaped. */
+export function containsPattern(text: string): string {
+  return `%${text.replace(/[\\%_]/g, (character) => `\\${character}`)}%`;
+}
+
+const PUBLISHED_PRODUCT = Prisma.sql`p."isActive" AND p."status" = 'PUBLISHED'`;
+
+/**
+ * Autocomplete in one statement (run with the fuzzy threshold set): names containing the prefix (trigram index) or
+ * resembling it by word similarity (typos). Names starting with the prefix come first, then by similarity, name, id.
+ * Brands and categories only when they have a published product.
+ */
+export function suggestionQuery(prefix: string, limit: number): Prisma.Sql {
+  const pattern = containsPattern(prefix);
+  const startsWith = pattern.slice(1);
+  const suggestions = (table: string, extra: Prisma.Sql) => {
+    const alias = Prisma.raw(`"${table}"`);
+    return Prisma.sql`COALESCE((
+      SELECT json_agg(json_build_object('id', s."id", 'name', s."name") ORDER BY s."rank")
+      FROM (
+        SELECT x."id", x."name", row_number() OVER (
+                 ORDER BY (x."name" ILIKE ${startsWith}) DESC, word_similarity(${prefix}, x."name") DESC, x."name", x."id"
+               ) AS "rank"
+        FROM ${alias} x
+        WHERE (x."name" ILIKE ${pattern} OR ${prefix} <% x."name") AND ${extra}
+        ORDER BY "rank" LIMIT ${limit}
+      ) s
+    ), '[]'::json)`;
+  };
+  const hasPublished = (column: string) =>
+    Prisma.sql`EXISTS (SELECT 1 FROM "Product" p WHERE p.${Prisma.raw(`"${column}"`)} = x."id" AND ${PUBLISHED_PRODUCT})`;
+  return Prisma.sql`SELECT
+    ${suggestions('Product', Prisma.sql`x."isActive" AND x."status" = 'PUBLISHED'`)} AS "products",
+    ${suggestions('Brand', hasPublished('brandId'))} AS "brands",
+    ${suggestions('Category', hasPublished('categoryId'))} AS "categories"`;
 }
 
 export function existsQuery(conditions: Prisma.Sql[]): Prisma.Sql {

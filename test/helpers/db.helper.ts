@@ -80,6 +80,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.category.deleteMany();
   await prisma.brand.deleteMany();
   await prisma.tag.deleteMany();
+  await prisma.searchSynonym.deleteMany();
 
   // User-adjacent tables (must precede user deletion due to Restrict FK on order→user)
   await prisma.address.deleteMany();

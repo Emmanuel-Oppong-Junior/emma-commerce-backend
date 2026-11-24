@@ -86,7 +86,21 @@ export interface ProductFacets {
   attributes: AttributeFacet[];
 }
 
+export interface Suggestion {
+  id: string;
+  name: string;
+}
+
+/** Autocomplete for a typed prefix: published products, and brands and categories that have some. */
+export interface SearchSuggestions {
+  products: Suggestion[];
+  brands: Suggestion[];
+  categories: Suggestion[];
+}
+
 export abstract class ProductSearch {
   abstract search(request: ProductSearchRequest): Promise<ProductSearchPage>;
   abstract facets(filters: ProductSearchFilters): Promise<ProductFacets>;
+  /** Up to `limit` of each kind whose name starts with, contains or (allowing typos) resembles the prefix. */
+  abstract suggest(prefix: string, limit: number): Promise<SearchSuggestions>;
 }
