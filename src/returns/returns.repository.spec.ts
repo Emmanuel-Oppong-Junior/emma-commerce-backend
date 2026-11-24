@@ -1,141 +1,138 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { ReturnsRepository } from './returns.repository';
+import { Prisma, ReturnReason, ReturnResolution, ReturnStatus } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { ReturnRequest } from '../generated/prisma/client';
-import { Decimal } from '@prisma/client/runtime/client';
+import { ReturnsRepository } from './returns.repository';
 
-const fixedDate = new Date('2025-01-01T00:00:00.000Z');
-
-const mockReturnRequest = {
-  id: 'return1',
-  orderId: 'order1',
-  userId: 'user1',
-  reason: 'Defective item',
-  status: 'PENDING',
-  refundAmount: null,
-  adminNote: null,
-  createdAt: fixedDate,
-  updatedAt: fixedDate,
-} as unknown as ReturnRequest;
-
-const mockPrismaReturnRequest = {
-  create: jest.fn(),
-  findUnique: jest.fn(),
-  findMany: jest.fn(),
-  findUniqueOrThrow: jest.fn(),
-  updateMany: jest.fn(),
-};
-
-const mockPrisma = { returnRequest: mockPrismaReturnRequest };
+const at = new Date('2026-12-01T00:00:00Z');
 
 describe('ReturnsRepository', () => {
-  let repository: ReturnsRepository;
+  const db = {
+    returnRequest: {
+      create: jest.fn(async () => ({ id: 'rr1' })),
+      findUniqueOrThrow: jest.fn(async () => ({ id: 'rr1', lines: [] })),
+      findUnique: jest.fn(),
+      findMany: jest.fn(async () => []),
+      count: jest.fn(async () => 0),
+    },
+    returnLine: { create: jest.fn() },
+    orderItem: { findMany: jest.fn() },
+  };
+  const repository = new ReturnsRepository(db as unknown as PrismaService);
+  const tx = db as unknown as Prisma.TransactionClient;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [ReturnsRepository, { provide: PrismaService, useValue: mockPrisma }],
-    }).compile();
-
-    repository = module.get<ReturnsRepository>(ReturnsRepository);
-    jest.clearAllMocks();
-  });
+  beforeEach(() => jest.clearAllMocks());
 
   describe('create', () => {
-    it('should create a return request', async () => {
-      mockPrismaReturnRequest.create.mockResolvedValue(mockReturnRequest);
+    const line = {
+      orderItemId: 'oi1',
+      quantity: 1,
+      reason: ReturnReason.DAMAGED,
+      note: null,
+      photoPublicIds: [],
+      exchangeVariantId: null,
+    };
 
-      const result = await repository.create({ orderId: 'order1', userId: 'user1', reason: 'Defective item' });
+    it('writes a REQUESTED request with its first event, then each line on its own insert', async () => {
+      await repository.create(tx, {
+        orderId: 'o1',
+        userId: 'u1',
+        resolution: ReturnResolution.REFUND,
+        lines: [line, { ...line, orderItemId: 'oi2' }],
+        actorId: 'u1',
+      });
 
-      expect(result).toEqual(mockReturnRequest);
-      expect(mockPrismaReturnRequest.create).toHaveBeenCalledWith({
-        data: { orderId: 'order1', userId: 'user1', reason: 'Defective item' },
+      expect(db.returnRequest.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          status: ReturnStatus.REQUESTED,
+          createdById: null,
+          policyOverrideReason: null,
+          events: { create: [{ from: null, to: ReturnStatus.REQUESTED, actorId: 'u1' }] },
+        }),
+      });
+      expect(db.returnLine.create).toHaveBeenNthCalledWith(1, { data: { ...line, returnRequestId: 'rr1' } });
+      expect(db.returnLine.create).toHaveBeenNthCalledWith(2, {
+        data: { ...line, orderItemId: 'oi2', returnRequestId: 'rr1' },
+      });
+    });
+
+    it('writes an approved staff return with both events, the override reason on the approval', async () => {
+      await repository.create(tx, {
+        orderId: 'o1',
+        userId: 'u1',
+        resolution: ReturnResolution.REFUND,
+        lines: [line],
+        actorId: 'staff1',
+        createdById: 'staff1',
+        policyOverrideReason: 'Faulty batch',
+        approved: true,
+      });
+
+      expect(db.returnRequest.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          status: ReturnStatus.APPROVED,
+          createdById: 'staff1',
+          events: {
+            create: [
+              { from: null, to: ReturnStatus.REQUESTED, actorId: 'staff1' },
+              { from: ReturnStatus.REQUESTED, to: ReturnStatus.APPROVED, actorId: 'staff1', note: 'Faulty batch' },
+            ],
+          },
+        }),
       });
     });
   });
 
-  describe('findById', () => {
-    it('should find a return request by ID', async () => {
-      mockPrismaReturnRequest.findUnique.mockResolvedValue(mockReturnRequest);
+  it('pages newest first after a cursor, with the filters', async () => {
+    await repository.findMany(
+      { status: ReturnStatus.APPROVED, userId: 'u1', createdFrom: at },
+      { take: 11, after: 'rr9' },
+    );
 
-      const result = await repository.findById('return1');
-
-      expect(result).toEqual(mockReturnRequest);
-    });
-
-    it('should return null if not found', async () => {
-      mockPrismaReturnRequest.findUnique.mockResolvedValue(null);
-
-      const result = await repository.findById('nonexistent');
-
-      expect(result).toBeNull();
-    });
+    expect(db.returnRequest.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: ReturnStatus.APPROVED,
+          orderId: undefined,
+          userId: 'u1',
+          createdAt: { gte: at, lt: undefined },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 11,
+        cursor: { id: 'rr9' },
+        skip: 1,
+      }),
+    );
   });
 
-  describe('findByOrder', () => {
-    it('should return all return requests for an order', async () => {
-      mockPrismaReturnRequest.findMany.mockResolvedValue([mockReturnRequest]);
+  it('sums each line: delivered per shipment, refunded outside returns, received or requested under live returns', async () => {
+    db.orderItem.findMany.mockResolvedValue([
+      {
+        id: 'oi1',
+        productId: 'p1',
+        variantId: 'v1',
+        productName: 'Kettle',
+        unitListPrice: new Prisma.Decimal(100),
+        product: { productType: { name: 'General', returnable: true, returnWindowDays: null } },
+        shipmentItems: [
+          { quantity: 2, shipment: { deliveredAt: at } },
+          { quantity: 1, shipment: { deliveredAt: null } },
+        ],
+        refundLines: [{ quantity: 1 }],
+        returnLines: [
+          { quantity: 2, receivedQuantity: 1 },
+          { quantity: 1, receivedQuantity: null },
+        ],
+      },
+    ]);
 
-      const result = await repository.findByOrder('order1');
+    const [line] = await repository.returnableLines(tx, 'o1');
 
-      expect(result).toEqual([mockReturnRequest]);
-      expect(mockPrismaReturnRequest.findMany).toHaveBeenCalledWith({ where: { orderId: 'order1' } });
-    });
-  });
-
-  describe('findByUser', () => {
-    it('should return all return requests for a user ordered by date desc', async () => {
-      mockPrismaReturnRequest.findMany.mockResolvedValue([mockReturnRequest]);
-
-      const result = await repository.findByUser('user1');
-
-      expect(result).toEqual([mockReturnRequest]);
-      expect(mockPrismaReturnRequest.findMany).toHaveBeenCalledWith({
-        where: { userId: 'user1' },
-        orderBy: { createdAt: 'desc' },
-      });
-    });
-  });
-
-  describe('findAll', () => {
-    it('should return all return requests ordered by date desc', async () => {
-      mockPrismaReturnRequest.findMany.mockResolvedValue([mockReturnRequest]);
-
-      const result = await repository.findAll();
-
-      expect(result).toEqual([mockReturnRequest]);
-      expect(mockPrismaReturnRequest.findMany).toHaveBeenCalledWith({ orderBy: { createdAt: 'desc' } });
-    });
-  });
-
-  describe('transitionStatus', () => {
-    it('updates the request only while it still has the expected status, and returns it', async () => {
-      const updated = { ...mockReturnRequest, status: 'APPROVED', refundAmount: 50, adminNote: 'Approved by admin' };
-      mockPrismaReturnRequest.updateMany.mockResolvedValue({ count: 1 });
-      mockPrismaReturnRequest.findUniqueOrThrow.mockResolvedValue(updated);
-
-      const result = await repository.transitionStatus('return1', 'PENDING', 'APPROVED', {
-        refundAmount: new Decimal('50'),
-        adminNote: 'Approved by admin',
-      });
-
-      expect(result).toEqual(updated);
-      expect(mockPrismaReturnRequest.updateMany).toHaveBeenCalledWith({
-        where: { id: 'return1', status: 'PENDING' },
-        data: { status: 'APPROVED', refundAmount: new Decimal('50'), adminNote: 'Approved by admin' },
-      });
-    });
-
-    it('returns null and reads nothing back when the request is missing or no longer has the expected status', async () => {
-      mockPrismaReturnRequest.updateMany.mockResolvedValue({ count: 0 });
-
-      await expect(repository.transitionStatus('return1', 'PENDING', 'REJECTED', {})).resolves.toBeNull();
-      expect(mockPrismaReturnRequest.findUniqueOrThrow).not.toHaveBeenCalled();
-    });
-
-    it('rethrows database errors', async () => {
-      mockPrismaReturnRequest.updateMany.mockRejectedValue(new Error('DB error'));
-
-      await expect(repository.transitionStatus('return1', 'PENDING', 'APPROVED', {})).rejects.toThrow('DB error');
+    expect(line.units).toEqual({
+      deliveries: [
+        { deliveredAt: at, quantity: 2 },
+        { deliveredAt: null, quantity: 1 },
+      ],
+      refundedOutsideReturns: 1,
+      claimedByReturns: 2,
     });
   });
 });

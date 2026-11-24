@@ -400,6 +400,45 @@ describe('Lots with expiry (P4-C.1, e2e)', () => {
     expect([await lotOnHand(soon.id), await lotOnHand(late.id)]).toEqual([1, 5]);
   });
 
+  it('restocks an inspected item-level return into the lots the order drew from (P6-R.1)', async () => {
+    const variantId = await newVariant(true);
+    const soon = await receiveLot(variantId, 'I-SOON', inDays(10), 1);
+    const late = await receiveLot(variantId, 'I-LATE', inDays(60), 5);
+    const order = await placeOrder(variantId, 3);
+    await pay(order.id, Number(order.grandTotal));
+    await prisma.order.update({ where: { id: order.id }, data: { status: 'COMPLETED' } });
+    await prisma.shipment.update({
+      where: { id: await shipmentOf(prisma, order.id) },
+      data: { status: 'DELIVERED', dispatchedAt: new Date(), deliveredAt: new Date() },
+    });
+    const returned = await prisma.returnRequest.create({
+      data: {
+        orderId: order.id,
+        userId: BUYER,
+        status: 'RECEIVED',
+        lines: { create: { orderItemId: order.items[0].id, quantity: 3, receivedQuantity: 3, reason: 'CHANGED_MIND' } },
+      },
+      include: { lines: true },
+    });
+
+    const body = await gql(
+      `mutation { inspectReturn(input: { returnRequestId: "${returned.id}", lines: [{ returnLineId: "${returned.lines[0].id}", restockQuantity: 2, writeOffQuantity: 1 }] }) { status } }`,
+    );
+
+    expect(body.errors).toBeUndefined();
+    // The sale drew the soonest-expiring lot first (1 unit), then 2 of the later one; the return goes back the same way.
+    expect([await lotOnHand(soon.id), await lotOnHand(late.id)]).toEqual([1, 4]);
+    const restocked = await prisma.stockMovement.findMany({
+      where: { variantId, reason: 'RETURN_RESTOCK' },
+      select: { lotId: true, onHandDelta: true, refId: true, locationId: true },
+    });
+    expect(restocked.reduce((sum, movement) => sum + movement.onHandDelta, 0)).toBe(2);
+    expect(
+      restocked.every((movement) => movement.refId === returned.id && movement.locationId === defaultLocationId),
+    ).toBe(true);
+    expect(await reconcile()).toEqual([]);
+  });
+
   it('posts a stock-take of a lot-tracked variant: a shortage first expiry first, a surplus into the latest lot', async () => {
     const short = await newVariant(true);
     const shortSoon = await receiveLot(short, 'S-SOON', inDays(10), 2);

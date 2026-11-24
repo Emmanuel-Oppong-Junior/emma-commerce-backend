@@ -72,6 +72,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.product.deleteMany();
   // Custom product types a test created (their attributes cascade); the seeded system types stay
   await prisma.productType.deleteMany({ where: { isSystem: false } });
+  await prisma.productType.updateMany({ data: { returnable: true, returnWindowDays: null } });
 
   // Catalogue
   await prisma.priceList.deleteMany();
@@ -97,6 +98,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
       cashOnDeliveryEnabled: true,
       cardPaymentProvider: 'PAYSTACK',
       mobileMoneyPaymentProvider: 'PAYSTACK',
+      returnWindowDays: 14,
     },
   });
   await relaxVelocityLimits(prisma);

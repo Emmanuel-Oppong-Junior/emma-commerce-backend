@@ -172,6 +172,15 @@ export class NotificationSender {
         );
         return;
       }
+      case 'return.status_changed.v1': {
+        // No customer email yet (it comes with the template registry): a structured log line with ids only.
+        const { payload } = data as DomainEventJobData<'return.status_changed.v1'>;
+        this.logger.log(
+          `Return status changed | returnRequestId: ${payload.returnRequestId} | orderId: ${payload.orderId} | status: ${payload.status}`,
+          CONTEXT,
+        );
+        return;
+      }
       case 'inventory.low_stock.v1': {
         // Staff are emailed in the next digest (LowStockDigestTask), one pending alert per variant and location.
         const { eventId, payload } = data as DomainEventJobData<'inventory.low_stock.v1'>;

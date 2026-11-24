@@ -12,9 +12,13 @@ export const REFUND_REASON_LABELS: Record<RefundReason, string> = {
   OTHER: 'Other',
   RETURN: 'Returned items',
   PAYMENT_NOT_ACCEPTED: 'Payment could not be accepted',
+  ORDER_CANCELLED: 'Order cancelled',
 };
 
-/** RETURN and PAYMENT_NOT_ACCEPTED are set by the returns flow and by payment verification, never chosen by staff. */
+/**
+ * RETURN, PAYMENT_NOT_ACCEPTED and ORDER_CANCELLED are set by the returns flow, payment verification and order
+ * cancellation, never chosen by staff.
+ */
 export const STAFF_REFUND_REASONS: RefundReason[] = [
   RefundReason.CUSTOMER_REQUEST,
   RefundReason.DAMAGED,

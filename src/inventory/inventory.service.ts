@@ -8,8 +8,19 @@ import { StockLedgerService } from './stock-ledger.service';
 import { MovementFilter, StockLedgerRepository } from './stock-ledger.repository';
 import { manualAdjustmentError } from './stock-adjustment';
 import { LotsService } from './lots/lots.service';
-import { LotQuantity } from './lots/lots';
+import { LotQuantity, LotSpec } from './lots/lots';
 import { SerialUnitsService } from './serials/serial-units.service';
+
+export interface ReturnRestock {
+  variantId: string;
+  quantity: number;
+  returnRequestId: string;
+  orderId: string;
+  locationId?: string;
+  lot?: LotSpec;
+  serials?: string[];
+  note: string;
+}
 
 export interface StockMovementPage {
   nodes: StockMovement[];
@@ -32,90 +43,141 @@ export class InventoryService {
   ) {}
 
   /**
-   * Adds stock to a variant as a RECEIPT, or as a RETURN_RESTOCK when it is goods from a return request, with an
+   * Adds stock to a variant as a RECEIPT, or as a RETURN_RESTOCK when it is goods from a legacy whole-order return
+   * request (an item-level return's units are restocked by its inspection, ReturnsService.inspectReturn), with an
    * audit entry in the same transaction. Returned goods go back to the location their order was fulfilled from unless
    * a location is given. A lot-tracked variant's receipt goes into the lot given (lot number and expiry required);
    * returned units go into the lot named or, by default, the lots the order's sale drew them from (P4-C.1). Returns
    * the first movement when the units spread over several lots. A variant whose product tracks serials needs one
    * serial per unit: new ones for a receipt, units sold on the return's order for a return (SerialUnitsService).
    * @throws NotFoundException if the variant, the return request or the location does not exist; BadRequestException
-   *   for a missing, invalid or unexpected lot.
+   *   for a missing, invalid or unexpected lot, or an item-level return request.
    */
   async restockVariant(input: RestockVariantInput, actorId: string): Promise<StockMovement> {
     return this.prisma.$transaction(async (tx) => {
       await this.ensureVariant(tx, input.variantId);
-      let locationId = input.locationId && (await this.ensureLocation(tx, input.locationId));
-      let orderId: string | undefined;
+      const locationId = input.locationId && (await this.ensureLocation(tx, input.locationId));
+      let restocked: { movements: StockMovement[]; serials: string[] };
       if (input.returnRequestId) {
         const returned = await this.repository.findReturnRequestLocation(tx, input.returnRequestId);
         if (!returned) throw new NotFoundException(`Return request "${input.returnRequestId}" not found`);
-        locationId ||= returned.stockLocationId ?? undefined;
-        orderId = returned.orderId;
-      }
-      const reason = input.returnRequestId ? StockMovementReason.RETURN_RESTOCK : StockMovementReason.RECEIPT;
-      const source = {
-        actorId,
-        note: input.reason ?? (input.returnRequestId ? 'Returned goods restocked' : 'Manual restock'),
-        ...(input.returnRequestId && { refType: 'ReturnRequest', refId: input.returnRequestId }),
-      };
-      const lots = await this.restockLots(tx, input, orderId);
-      const movements = lots
-        ? await this.ledger.receiveLots(
-            tx,
-            input.variantId,
-            input.quantity,
-            reason,
-            source,
-            locationId || undefined,
-            lots,
-          )
-        : [await this.ledger.receive(tx, input.variantId, input.quantity, reason, source, locationId || undefined)];
-      const [movement] = movements;
-      const change = {
-        variantId: input.variantId,
-        quantity: input.quantity,
-        serials: input.serials,
-        source: {
-          movementId: movement.id,
+        if (returned.lineCount > 0) {
+          throw new BadRequestException(
+            `Return request "${input.returnRequestId}" is an item-level return: its units are restocked when it is inspected (inspectReturn)`,
+          );
+        }
+        restocked = await this.restockReturn(
+          tx,
+          {
+            variantId: input.variantId,
+            quantity: input.quantity,
+            returnRequestId: input.returnRequestId,
+            orderId: returned.orderId,
+            locationId: locationId || returned.stockLocationId || undefined,
+            lot: input.lot,
+            serials: input.serials,
+            note: input.reason ?? 'Returned goods restocked',
+          },
           actorId,
-          refType: movement.refType ?? undefined,
-          refId: movement.refId ?? undefined,
-        },
-      };
-      const serials = input.returnRequestId
-        ? await this.serialUnits.restockReturned(tx, change, input.returnRequestId, movement.locationId)
-        : await this.serialUnits.receive(tx, change, movement.locationId);
-      await this.auditStockChange(tx, movements, serials);
-      return movement;
+        );
+      } else {
+        restocked = await this.receiveStock(tx, input, locationId || undefined, actorId);
+      }
+      await this.auditStockChange(tx, restocked.movements, restocked.serials);
+      return restocked.movements[0];
     });
   }
 
-  /** The lots a restock goes into: none for an untracked variant. */
-  private async restockLots(
+  /**
+   * Puts returned units of an order back into sellable stock at `locationId` (default: the store's default location)
+   * as RETURN_RESTOCK movements referring to the return request, on the caller's transaction; the caller audits. A
+   * lot-tracked variant's units go into the lot named or the lots the order's sale drew them from; a serial-tracked
+   * variant names one unit SOLD on that order per unit.
+   */
+  async restockReturn(
+    tx: Prisma.TransactionClient,
+    restock: ReturnRestock,
+    actorId: string,
+  ): Promise<{ movements: StockMovement[]; serials: string[] }> {
+    const reason = StockMovementReason.RETURN_RESTOCK;
+    const source = { actorId, note: restock.note, refType: 'ReturnRequest', refId: restock.returnRequestId };
+    const lots = await this.returnLots(tx, restock);
+    const movements = lots
+      ? await this.ledger.receiveLots(tx, restock.variantId, restock.quantity, reason, source, restock.locationId, lots)
+      : [await this.ledger.receive(tx, restock.variantId, restock.quantity, reason, source, restock.locationId)];
+    const [movement] = movements;
+    const serials = await this.serialUnits.restockReturned(
+      tx,
+      {
+        variantId: restock.variantId,
+        quantity: restock.quantity,
+        serials: restock.serials,
+        source: { movementId: movement.id, actorId, refType: 'ReturnRequest', refId: restock.returnRequestId },
+      },
+      restock.returnRequestId,
+      movement.locationId,
+    );
+    return { movements, serials };
+  }
+
+  private async receiveStock(
     tx: Prisma.TransactionClient,
     input: RestockVariantInput,
-    orderId: string | undefined,
+    locationId: string | undefined,
+    actorId: string,
+  ): Promise<{ movements: StockMovement[]; serials: string[] }> {
+    const reason = StockMovementReason.RECEIPT;
+    const source = { actorId, note: input.reason ?? 'Manual restock' };
+    const lots = await this.receiptLots(tx, input);
+    const movements = lots
+      ? await this.ledger.receiveLots(tx, input.variantId, input.quantity, reason, source, locationId, lots)
+      : [await this.ledger.receive(tx, input.variantId, input.quantity, reason, source, locationId)];
+    const [movement] = movements;
+    const serials = await this.serialUnits.receive(
+      tx,
+      {
+        variantId: input.variantId,
+        quantity: input.quantity,
+        serials: input.serials,
+        source: { movementId: movement.id, actorId },
+      },
+      movement.locationId,
+    );
+    return { movements, serials };
+  }
+
+  /** The lots a receipt goes into: none for an untracked variant. */
+  private async receiptLots(
+    tx: Prisma.TransactionClient,
+    input: RestockVariantInput,
   ): Promise<LotQuantity[] | undefined> {
     if (!(await this.lots.isTracked(tx, input.variantId))) {
       if (input.lot)
         throw new BadRequestException(`Variant "${input.variantId}" does not track lots; leave the lot out`);
       return undefined;
     }
+    if (!input.lot) {
+      throw new BadRequestException(
+        `Variant "${input.variantId}" tracks lots: give the lot number and expiry of the units received`,
+      );
+    }
+    const lot = await this.lots.resolveLot(tx, input.variantId, input.lot, new Date(), true);
+    return [{ lotId: lot.id, quantity: input.quantity }];
+  }
+
+  /** The lots returned units go into: none for an untracked variant. */
+  private async returnLots(tx: Prisma.TransactionClient, restock: ReturnRestock): Promise<LotQuantity[] | undefined> {
+    if (!(await this.lots.isTracked(tx, restock.variantId))) {
+      if (restock.lot)
+        throw new BadRequestException(`Variant "${restock.variantId}" does not track lots; leave the lot out`);
+      return undefined;
+    }
     const now = new Date();
-    if (!orderId) {
-      if (!input.lot) {
-        throw new BadRequestException(
-          `Variant "${input.variantId}" tracks lots: give the lot number and expiry of the units received`,
-        );
-      }
-      const lot = await this.lots.resolveLot(tx, input.variantId, input.lot, now, true);
-      return [{ lotId: lot.id, quantity: input.quantity }];
+    if (restock.lot) {
+      const lot = await this.lots.existingLot(tx, restock.variantId, restock.lot, now);
+      return [{ lotId: lot.id, quantity: restock.quantity }];
     }
-    if (input.lot) {
-      const lot = await this.lots.existingLot(tx, input.variantId, input.lot, now);
-      return [{ lotId: lot.id, quantity: input.quantity }];
-    }
-    return this.lots.returnLots(tx, orderId, input.variantId, input.quantity, now);
+    return this.lots.returnLots(tx, restock.orderId, restock.variantId, restock.quantity, now);
   }
 
   /**

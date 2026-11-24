@@ -15,6 +15,7 @@ import { ghs, gqlRequest, MoneyValue } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 /** Computes the HMAC-SHA512 webhook signature the same way the PaymentService does. */
 function computeSignature(body: object): string {
@@ -316,109 +317,87 @@ describe('Payments & Returns (e2e)', () => {
     });
   });
 
-  // ─── createReturnRequest ──────────────────────────────────────────────────────
+  // ─── requestReturn (P6-R.1: item-level, replaces createReturnRequest) ─────────
 
-  describe('createReturnRequest', () => {
-    it('succeeds on a DELIVERED order', async () => {
-      // Arrange — create an order and forcibly mark it as DELIVERED in the DB
+  /** Marks the order COMPLETED and its goods delivered (one DELIVERED shipment); returns its single line id. */
+  async function deliver(orderId: string): Promise<string> {
+    await prisma.order.update({ where: { id: orderId }, data: { status: OrderStatus.COMPLETED } });
+    await prisma.shipment.update({
+      where: { id: await shipmentOf(prisma, orderId) },
+      data: { status: 'DELIVERED', dispatchedAt: new Date(), deliveredAt: new Date() },
+    });
+    const [item] = await prisma.orderItem.findMany({ where: { orderId } });
+    return item.id;
+  }
+
+  const requestReturn = (orderId: string, orderItemId: string) => `
+    mutation {
+      requestReturn(input: {
+        orderId: "${orderId}"
+        lines: [{ orderItemId: "${orderItemId}", quantity: 1, reason: DAMAGED, note: "Item arrived damaged" }]
+      }) {
+        id
+        status
+        lines { quantity reason note }
+      }
+    }
+  `;
+
+  describe('requestReturn', () => {
+    it('succeeds on a delivered order', async () => {
+      // Arrange — create an order and mark its goods delivered in the DB
       const orderId = await createOrderForUser();
-      await prisma.order.update({ where: { id: orderId }, data: { status: OrderStatus.COMPLETED } });
-
-      const mutation = `
-        mutation {
-          createReturnRequest(input: {
-            orderId: "${orderId}"
-            reason: "Item arrived damaged"
-          }) {
-            id
-            status
-            reason
-          }
-        }
-      `;
+      const itemId = await deliver(orderId);
 
       // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
+      const res = await gqlRequest(app, requestReturn(orderId, itemId), undefined, userToken).expect(200);
 
       // Assert
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.data.createReturnRequest.status).toBe('PENDING');
-      expect(res.body.data.createReturnRequest.reason).toBe('Item arrived damaged');
+      expect(res.body.data.requestReturn.status).toBe('REQUESTED');
+      expect(res.body.data.requestReturn.lines).toEqual([
+        { quantity: 1, reason: 'DAMAGED', note: 'Item arrived damaged' },
+      ]);
     });
 
-    it('fails when the order is not yet DELIVERED', async () => {
-      // Arrange — create a PENDING order (default status)
+    it('fails when the order is not yet delivered', async () => {
+      // Arrange — a placed order (default status), nothing delivered
       const orderId = await createOrderForUser();
-
-      const mutation = `
-        mutation {
-          createReturnRequest(input: {
-            orderId: "${orderId}"
-            reason: "Changed my mind"
-          }) {
-            id
-          }
-        }
-      `;
+      const [item] = await prisma.orderItem.findMany({ where: { orderId } });
 
       // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
+      const res = await gqlRequest(app, requestReturn(orderId, item.id), undefined, userToken).expect(200);
 
       // Assert
       expect(res.body.errors).toBeDefined();
-      expect(res.body.errors[0].message).toMatch(/delivered orders/i);
+      expect(res.body.errors[0].extensions.reason).toBe('NOT_DELIVERED');
     });
 
-    it('fails when an active return request already exists for the order', async () => {
-      // Arrange — create a DELIVERED order with an existing PENDING return request
+    it('fails when the units are already under another return of the order', async () => {
+      // Arrange — a delivered order whose only unit is already under a return
       const orderId = await createOrderForUser();
-      await prisma.order.update({ where: { id: orderId }, data: { status: OrderStatus.COMPLETED } });
-
-      // Submit the first return request
-      await gqlRequest(
-        app,
-        `mutation {
-          createReturnRequest(input: {
-            orderId: "${orderId}"
-            reason: "First return reason here"
-          }) { id }
-        }`,
-        undefined,
-        userToken,
-      ).expect(200);
-
-      const mutation = `
-        mutation {
-          createReturnRequest(input: {
-            orderId: "${orderId}"
-            reason: "Duplicate return request"
-          }) {
-            id
-          }
-        }
-      `;
+      const itemId = await deliver(orderId);
+      await gqlRequest(app, requestReturn(orderId, itemId), undefined, userToken).expect(200);
 
       // Act
-      const res = await gqlRequest(app, mutation, undefined, userToken).expect(200);
+      const res = await gqlRequest(app, requestReturn(orderId, itemId), undefined, userToken).expect(200);
 
       // Assert
       expect(res.body.errors).toBeDefined();
-      expect(res.body.errors[0].message).toMatch(/already exists/i);
+      expect(res.body.errors[0].extensions).toMatchObject({ code: 'CONFLICT', reason: 'RETURN_QUANTITY_EXCEEDED' });
     });
   });
 
-  // ─── myReturnRequests ─────────────────────────────────────────────────────────
+  // ─── myReturns (replaces myReturnRequests) ────────────────────────────────────
 
-  describe('myReturnRequests', () => {
-    it("returns the authenticated user's own return requests", async () => {
+  describe('myReturns', () => {
+    it("returns the authenticated user's own returns", async () => {
       // Arrange
       const query = `
         query {
-          myReturnRequests {
-            id
-            orderId
-            status
-            reason
+          myReturns(first: 50) {
+            totalCount
+            nodes { id orderId status lines { quantity } }
           }
         }
       `;
@@ -428,7 +407,7 @@ describe('Payments & Returns (e2e)', () => {
 
       // Assert
       expect(res.body.errors).toBeUndefined();
-      const requests: Array<{ id: string }> = res.body.data.myReturnRequests;
+      const requests: Array<{ id: string }> = res.body.data.myReturns.nodes;
       expect(requests.length).toBeGreaterThanOrEqual(1);
     });
   });

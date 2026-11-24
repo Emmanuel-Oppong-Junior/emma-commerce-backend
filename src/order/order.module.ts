@@ -10,7 +10,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { OutboxModule } from '../outbox/outbox.module';
 import { ShippingZonesModule } from '../shipping-zones/shipping-zones.module';
 import { PickupLocationsModule } from '../pickup-locations/pickup-locations.module';
-import { ReturnsModule } from '../returns/returns.module';
+import { RefundsModule } from '../returns/refunds.module';
 import { UsersModule } from '../users/users.module';
 import { StoreModule } from '../store/store.module';
 import { TaxModule } from '../tax/tax.module';
@@ -47,7 +47,7 @@ import { OrderTrackingResolver } from './order-tracking.resolver';
     OutboxModule,
     ShippingZonesModule,
     PickupLocationsModule,
-    ReturnsModule,
+    RefundsModule,
     UsersModule,
     StoreModule,
     TaxModule,

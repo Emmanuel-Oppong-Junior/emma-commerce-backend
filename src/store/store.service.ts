@@ -12,6 +12,7 @@ const AUDITED_STORE_FIELDS = [
   'pricesIncludeTax',
   'supportEmail',
   'supportPhone',
+  'returnWindowDays',
 ] as const satisfies readonly (keyof Store)[];
 
 @Injectable()

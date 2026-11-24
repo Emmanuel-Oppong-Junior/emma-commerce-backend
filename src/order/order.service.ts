@@ -37,7 +37,7 @@ import {
   upcomingSlots,
 } from '../shipping-zones/slots/delivery-slots';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
-import { ReturnsService } from '../returns/returns.service';
+import { RefundsService } from '../returns/refunds.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { PriceListsService } from '../price-lists/price-lists.service';
 import { CouponNotApplicableError, price, Quote, QuoteAdjustment } from '../pricing/price';
@@ -191,7 +191,7 @@ export class OrdersService {
     private readonly outbox: OutboxService,
     private readonly shippingZonesService: ShippingZonesService,
     private readonly pickupLocationsService: PickupLocationsService,
-    private readonly returnsService: ReturnsService,
+    private readonly refunds: RefundsService,
     private readonly promotionsService: PromotionsService,
     private readonly priceListsService: PriceListsService,
     private readonly storeService: StoreService,
@@ -409,7 +409,8 @@ export class OrdersService {
   }
 
   /**
-   * Cancels an order owned by the requesting user before fulfilment starts, and restores the reserved stock.
+   * Cancels an order owned by the requesting user before fulfilment starts, and restores the reserved stock. A paid
+   * online order gets a PENDING refund of its payment for staff to send.
    */
   async cancelOrder(userId: string, orderId: string, reason?: string): Promise<Order & { items: OrderItem[] }> {
     const order = await this.retrieveUserOrder(userId, orderId);
@@ -420,7 +421,6 @@ export class OrdersService {
       actorId: userId,
       reason: reason ?? 'Cancelled by the customer',
     });
-    await this.requestReturnIfPaidOnline(order);
     return cancelled;
   }
 
@@ -428,7 +428,7 @@ export class OrdersService {
    * Cancels any order without an ownership check (staff), and restores the reserved stock. During fulfilment only
    * while no shipment has left the shop (every shipment pending, picking, packed, returned or cancelled): after a
    * partial dispatch staff cancel the remaining shipments and refund what will not ship instead. Shipments not yet
-   * dispatched are cancelled with the order.
+   * dispatched are cancelled with the order. A paid online order gets a PENDING refund of its payment for staff to send.
    */
   async adminCancelOrder(
     orderId: string,
@@ -445,7 +445,6 @@ export class OrdersService {
       reason,
       audit: true,
     });
-    await this.requestReturnIfPaidOnline(order);
     return cancelled;
   }
 
@@ -893,6 +892,9 @@ export class OrdersService {
       await this.serialUnits.releaseOrder(tx, order.id, { actorId: close.actorId, refType: 'Order', refId: order.id });
       await this.deliverySlots.releaseForOrder(tx, order.id);
       await this.ordersRepository.cancelOpenPaymentIntent(tx, order.id);
+      if (close.to === OrderStatus.CANCELLED && order.paymentMethod === PaymentMethod.ONLINE) {
+        await this.refunds.openCancellationRefund(tx, order.id, close.actorId);
+      }
       return closed;
     });
   }
@@ -931,15 +933,5 @@ export class OrdersService {
     const order = await this.ordersRepository.findById(orderId, { items: true });
     if (!order) throw new NotFoundException(`Order "${orderId}" not found`);
     return order;
-  }
-
-  private async requestReturnIfPaidOnline(order: Order & { items: OrderItem[] }): Promise<void> {
-    if (order.paymentMethod !== PaymentMethod.ONLINE) return;
-    if (!(await this.ordersRepository.hasCapturedPayment(order.id))) return;
-    await this.returnsService.createSystemReturnRequest(
-      order.id,
-      order.userId,
-      'Automatic refund request for cancelled paid order',
-    );
   }
 }

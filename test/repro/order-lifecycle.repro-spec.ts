@@ -23,7 +23,7 @@ function buildOrdersService(order: Record<string, unknown>) {
     { sendOrderStatusUpdate: jest.fn() } as never,
     {} as never,
     {} as never,
-    { createSystemReturnRequest: jest.fn() } as never,
+    { openCancellationRefund: jest.fn() } as never,
     {} as never,
     {} as never,
     { getCurrency: jest.fn().mockResolvedValue('GHS') } as never,

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import {
   Prisma,
   Refund,
@@ -7,6 +7,7 @@ import {
   RefundReason,
   RefundStatus,
   ReturnRequest,
+  ReturnStatus,
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
@@ -118,6 +119,7 @@ export class RefundsService {
     return this.refundRepository.openForReturn(
       returnRequest,
       attemptId,
+      adminUserId,
       (ledger) => assertRefundable(ledger, { amount: returnRequest.refundAmount }),
       (tx, refund) =>
         this.auditService.log(
@@ -136,6 +138,104 @@ export class RefundsService {
           },
           tx,
         ),
+    );
+  }
+
+  /**
+   * Refunds an INSPECTED item-level return: the units received on its lines, priced from what the order stored
+   * (planRefund), plus the delivery fee only when staff choose `shipping`. An online payment's refund is recorded
+   * (return REFUND_PENDING) and sent through its provider at once; a cash-on-delivery payment's is recorded as cash
+   * handed back (return REFUNDED). A return already REFUND_PENDING resends its refund if it was never sent or was
+   * refused. Returns the refund.
+   */
+  async refundReturnLines(
+    returnRequest: ReturnRequest,
+    params: { shipping: boolean; note: string | null },
+    adminUserId: string,
+  ): Promise<Refund> {
+    if (returnRequest.status === ReturnStatus.REFUND_PENDING) {
+      const existing = await this.refundRepository.findByReturnRequest(returnRequest.id);
+      if (!existing) {
+        throw new ConflictException(`Return request "${returnRequest.id}" is REFUND_PENDING but has no refund`);
+      }
+      return (await this.send(existing.id, adminUserId)).refund;
+    }
+    const refund = await this.refundRepository.openForReturnLines(
+      { returnRequestId: returnRequest.id, shipping: params.shipping, actorId: adminUserId, note: params.note },
+      (ledger, plan, method) =>
+        method === RefundMethod.CASH
+          ? assertWithinCaptured(ledger, { amount: plan.amount })
+          : assertRefundable(ledger, { amount: plan.amount }),
+      async (tx, opened, request) => {
+        const cash = opened.method === RefundMethod.CASH;
+        await this.auditService.log(
+          {
+            entity: 'ReturnRequest',
+            entityId: request.id,
+            action: cash ? 'REFUND' : 'STATUS_CHANGE',
+            userId: adminUserId,
+            details: {
+              orderId: request.orderId,
+              from: ReturnStatus.INSPECTED,
+              to: cash ? ReturnStatus.REFUNDED : ReturnStatus.REFUND_PENDING,
+              refundId: opened.id,
+              amount: String(opened.amount),
+              shippingAmount: String(opened.shippingAmount),
+              method: opened.method,
+            },
+          },
+          tx,
+        );
+        await this.auditService.log(
+          {
+            entity: 'Refund',
+            entityId: opened.id,
+            action: cash ? 'REFUND' : 'CREATE',
+            userId: adminUserId,
+            details: {
+              orderId: request.orderId,
+              returnRequestId: request.id,
+              attemptId: opened.attemptId,
+              status: opened.status,
+              method: opened.method,
+              reason: opened.reason,
+              amount: String(opened.amount),
+              shippingAmount: String(opened.shippingAmount),
+              currency: opened.currency,
+            },
+          },
+          tx,
+        );
+      },
+    );
+    if (refund.method === RefundMethod.CASH) return refund;
+    return (await this.send(refund.id, adminUserId)).refund;
+  }
+
+  /**
+   * On a paid online order's cancel transaction: records a PENDING refund of what its payment still holds (reason
+   * ORDER_CANCELLED) for staff to send with processPendingRefund, audited. Nothing for an order without an accepted
+   * capture.
+   */
+  async openCancellationRefund(tx: Prisma.TransactionClient, orderId: string, actorId?: string): Promise<void> {
+    await this.refundRepository.openForCancelledOrder(tx, orderId, (inTx, refund) =>
+      this.auditService.log(
+        {
+          entity: 'Refund',
+          entityId: refund.id,
+          action: 'CREATE',
+          userId: actorId,
+          details: {
+            orderId,
+            attemptId: refund.attemptId,
+            status: refund.status,
+            reason: refund.reason,
+            amount: String(refund.amount),
+            currency: refund.currency,
+          },
+        },
+        inTx,
+      ),
     );
   }
 
@@ -199,7 +299,7 @@ export class RefundsService {
       `${provider.label} refund accepted | refundId: ${refund.id} | providerRefundId: ${providerRefundId} | reference: ${reference}`,
       'RefundsService',
     );
-    return this.refundRepository.recordProcessed(refund.id, providerRefundId, async (tx, recorded) => {
+    return this.refundRepository.recordProcessed(refund.id, providerRefundId, adminUserId, async (tx, recorded) => {
       const amount = String(recorded.refund.amount);
       await this.auditService.log(
         {

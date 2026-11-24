@@ -80,15 +80,14 @@ describe('Stock is restored exactly once (e2e)', () => {
     expect(cancel.body.errors).toBeUndefined();
     expect(await stockOf()).toBe(before);
 
-    const returnRequest = await prisma.returnRequest.findFirstOrThrow({ where: { orderId } });
-    const approve = await admin(
-      `mutation { approveReturn(input: { returnRequestId: "${returnRequest.id}", refundAmount: "100.00" }) { status } }`,
-    );
-    expect(approve.body.errors).toBeUndefined();
-    const refund = await admin(`mutation { processRefund(returnRequestId: "${returnRequest.id}") { status } }`);
+    // P6-R.1: the cancellation records a PENDING refund of the payment (no return request) for staff to send.
+    const pending = await prisma.refund.findFirstOrThrow({ where: { attempt: { intent: { orderId } } } });
+    expect(pending).toMatchObject({ status: 'PENDING', reason: 'ORDER_CANCELLED', returnRequestId: null });
+    expect(await prisma.returnRequest.count({ where: { orderId } })).toBe(0);
+    const refund = await admin(`mutation { processPendingRefund(refundId: "${pending.id}") { status } }`);
 
     expect(refund.body.errors).toBeUndefined();
-    expect(refund.body.data.processRefund.status).toBe('REFUNDED');
+    expect(refund.body.data.processPendingRefund.status).toBe('PROCESSED');
     expect(paystack.createRefund).toHaveBeenCalledTimes(1);
     expect(await stockOf()).toBe(before);
     expect(await restoreLogsFor(orderId)).toBe(1);

@@ -1,7 +1,7 @@
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { ProductType } from './entities/product-type.entity';
 import { ProductTypesService } from './product-types.service';
-import { CreateProductTypeInput, UpdateProductTypeInput } from './dto/product-type.input';
+import { CreateProductTypeInput, ProductTypeReturnPolicyInput, UpdateProductTypeInput } from './dto/product-type.input';
 import { AttributeDefinitionInput, UpdateAttributeDefinitionInput } from './dto/attribute-definition.input';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
@@ -38,6 +38,18 @@ export class ProductTypesResolver {
     @Args('input') input: UpdateProductTypeInput,
   ) {
     return this.productTypesService.update(id, input, actorId);
+  }
+
+  @RequirePermission('catalog.taxonomy.write')
+  @Mutation(() => ProductType, {
+    description: "Sets whether a product type's products can be returned and its return window (system types too)",
+  })
+  setProductTypeReturnPolicy(
+    @ActiveUser('id') actorId: string,
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input') input: ProductTypeReturnPolicyInput,
+  ) {
+    return this.productTypesService.setReturnPolicy(id, input, actorId);
   }
 
   @RequirePermission('catalog.taxonomy.write')

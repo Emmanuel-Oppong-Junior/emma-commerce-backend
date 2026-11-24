@@ -1,13 +1,16 @@
-import { Field, InputType } from '@nestjs/graphql';
+import { Field, InputType, Int } from '@nestjs/graphql';
 import {
   IsBoolean,
   IsEmail,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
@@ -63,4 +66,14 @@ export class UpdateStoreSettingsInput {
   @Transform(trim)
   @IsPhoneNumber(undefined, { message: 'supportPhone must be a valid phone number in international format' })
   supportPhone?: string | null;
+
+  @Field(() => Int, {
+    nullable: true,
+    description: 'Days after delivery goods may be returned in (0-365), unless their product type sets its own',
+  })
+  @unlessOmitted
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  returnWindowDays?: number;
 }

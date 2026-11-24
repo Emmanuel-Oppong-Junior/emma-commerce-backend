@@ -309,7 +309,7 @@ describe('Order, payment and fulfilment state machines (P1-O.2, e2e)', () => {
       const returned = await prisma.returnRequest.create({
         data: { orderId, userId: 'seed_user', reason, status: 'APPROVED', refundAmount: amount },
       });
-      const res = await gql(`mutation { processRefund(returnRequestId: "${returned.id}") { status } }`);
+      const res = await gql(`mutation { refundReturn(input: { returnRequestId: "${returned.id}" }) { status } }`);
       expect(res.errors).toBeUndefined();
     };
 

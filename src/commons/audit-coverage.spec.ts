@@ -12,9 +12,13 @@ const AUDITED: Record<string, string> = {
   removeUser: 'users.service.spec (audit trail)',
   archiveUser: 'users.service.spec (audit trail)',
   deArchiveUser: 'users.service.spec (audit trail)',
+  acceptReturnOutsidePolicy: 'returns.service.spec (CREATE audit row)',
   approveReturn: 'returns.service.spec',
   rejectReturn: 'returns.service.spec',
-  processRefund: 'refunds.service.spec (claim, outcome and return audit rows)',
+  receiveReturn: 'returns.service.spec',
+  inspectReturn: 'returns.service.spec (with the restock movements)',
+  exchangeReturn: 'returns.service.spec',
+  refundReturn: 'refunds.service.spec (claim, outcome and return audit rows); returns.e2e-spec (item-level refund)',
   processPendingRefund: 'refunds.service.spec',
   refundOrder: 'refunds.service.spec (CREATE, or REFUND for cash, then the send audit rows)',
   createProduct: 'products.service.spec (audit trail)',
@@ -30,6 +34,7 @@ const AUDITED: Record<string, string> = {
   createProductType: 'product-types.service.spec (audit trail)',
   updateProductType: 'product-types.service.spec (audit trail)',
   deleteProductType: 'product-types.service.spec (audit trail)',
+  setProductTypeReturnPolicy: 'product-types.service.spec (audit trail)',
   addAttributeDefinition: 'product-types.service.spec (audit trail)',
   updateAttributeDefinition: 'product-types.service.spec (audit trail)',
   removeAttributeDefinition: 'product-types.service.spec (audit trail)',
@@ -185,7 +190,7 @@ describe('Audit coverage of privileged mutations', () => {
   });
 
   it('finds the admin-only mutations it is meant to check', () => {
-    expect(mutations).toEqual(expect.arrayContaining(['processRefund', 'updateUser', 'adjustVariantStock']));
+    expect(mutations).toEqual(expect.arrayContaining(['refundReturn', 'updateUser', 'adjustVariantStock']));
   });
 
   it('classifies every admin-only mutation as audited or as a reviewed exemption', () => {

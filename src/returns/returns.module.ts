@@ -3,25 +3,15 @@ import { ReturnsService } from './returns.service';
 import { ReturnsResolver } from './returns.resolver';
 import { ReturnsRepository } from './returns.repository';
 import { CommonsModule } from '../commons/commons.module';
-import { RefundsService } from './refunds.service';
-import { RefundsResolver } from './refunds.resolver';
-import { RefundRepository } from './refund.repository';
-import { OrderRefundsResolver } from './order-refunds.resolver';
-import { PaymentProvidersModule } from '../payment/providers/payment-providers.module';
 import { OutboxModule } from '../outbox/outbox.module';
-import { DisputesModule } from '../payment/disputes/disputes.module';
+import { InventoryModule } from '../inventory/inventory.module';
+import { OrderModule } from '../order/order.module';
+import { RefundsModule } from './refunds.module';
+import { ReturnPhotoController } from './return-photo.controller';
 
 @Module({
-  imports: [CommonsModule, PaymentProvidersModule, OutboxModule, DisputesModule],
-  providers: [
-    ReturnsService,
-    ReturnsResolver,
-    ReturnsRepository,
-    RefundsService,
-    RefundsResolver,
-    RefundRepository,
-    OrderRefundsResolver,
-  ],
-  exports: [ReturnsService],
+  imports: [CommonsModule, OutboxModule, InventoryModule, OrderModule, RefundsModule],
+  controllers: [ReturnPhotoController],
+  providers: [ReturnsService, ReturnsResolver, ReturnsRepository],
 })
 export class ReturnsModule {}

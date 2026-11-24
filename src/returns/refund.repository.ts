@@ -20,6 +20,8 @@ import { OutboxService } from '../outbox/outbox.service';
 import { RefundLedger, refundableAmount } from './refund-cap';
 import { planRefund, RefundableOrder, RefundPlan, RefundRequestParts } from './refund-plan';
 import { OrderTaxSnapshot, refundTax } from './refund-tax';
+import { transitionReturn } from './return-transition';
+import { returnRefundParts } from './return-rules';
 
 type Tx = Prisma.TransactionClient;
 
@@ -28,6 +30,11 @@ const SENDABLE_REFUND_STATUSES: RefundStatus[] = [RefundStatus.PENDING, RefundSt
 
 export function returnRefundKey(returnRequestId: string): string {
   return `return:${returnRequestId}`;
+}
+
+/** The refund a paid order's cancellation records, at most one per order. */
+export function cancellationRefundKey(orderId: string): string {
+  return `cancel:${orderId}`;
 }
 
 /** Staff keys live in their own namespace, so they can never collide with the system's return or auto-refund keys. */
@@ -157,15 +164,15 @@ export class RefundRepository {
   async openForReturn(
     returnRequest: ReturnRequest & { refundAmount: Prisma.Decimal },
     attemptId: string,
+    actorId: string,
     check: (ledger: RefundLedger) => void,
     onOpened: (tx: Tx, refund: Refund) => Promise<void>,
   ): Promise<Refund> {
     return this.prisma.$transaction(async (tx) => {
-      const { count } = await tx.returnRequest.updateMany({
-        where: { id: returnRequest.id, status: ReturnStatus.APPROVED },
-        data: { status: ReturnStatus.REFUND_PENDING },
+      const left = await transitionReturn(tx, returnRequest.id, ReturnStatus.REFUND_PENDING, [ReturnStatus.APPROVED], {
+        actorId,
       });
-      if (count === 0) {
+      if (!left) {
         throw new ConflictException(`Return request "${returnRequest.id}" is no longer APPROVED`);
       }
       const ledger = await this.lockLedger(tx, attemptId);
@@ -185,6 +192,107 @@ export class RefundRepository {
       await onOpened(tx, refund);
       return refund;
     });
+  }
+
+  /**
+   * Records the refund of an INSPECTED item-level return in one transaction: the return is claimed first (conditional
+   * move with its history event: REFUND_PENDING, or REFUNDED at once for a cash-on-delivery payment, whose refund is
+   * cash handed back), then, under the paying attempt's row lock, the units received on each line (and the delivery fee
+   * when `shipping`) are priced from the order's stored snapshot (planRefund) into a refund with one RefundLine per
+   * line. A return no longer INSPECTED was claimed by another request: CONFLICT, nothing written. `check` sees the
+   * payment's refunds and the plan and throws to refuse.
+   */
+  async openForReturnLines(
+    request: { returnRequestId: string; shipping: boolean; actorId: string; note: string | null },
+    check: (ledger: RefundLedger, plan: RefundPlan, method: RefundMethod) => void,
+    onOpened: (tx: Tx, refund: Refund, returnRequest: ReturnRequest) => Promise<void>,
+  ): Promise<Refund> {
+    return this.prisma.$transaction(async (tx) => {
+      const returnRequest = await tx.returnRequest.findUnique({
+        where: { id: request.returnRequestId },
+        include: { lines: { select: { orderItemId: true, receivedQuantity: true }, orderBy: { id: 'asc' } } },
+      });
+      if (!returnRequest) throw new NotFoundException(`Return request "${request.returnRequestId}" not found`);
+      const payment = await tx.paymentAttempt.findFirst({
+        where: { intent: { orderId: returnRequest.orderId }, status: PaymentStatus.CAPTURED, reviewReason: null },
+        select: { id: true, provider: true },
+      });
+      if (!payment) {
+        throw new BadRequestException(`Order "${returnRequest.orderId}" has no captured payment to refund`);
+      }
+      const method = payment.provider === PaymentProvider.CASH_ON_DELIVERY ? RefundMethod.CASH : RefundMethod.PROVIDER;
+      const left = await transitionReturn(
+        tx,
+        returnRequest.id,
+        method === RefundMethod.CASH ? ReturnStatus.REFUNDED : ReturnStatus.REFUND_PENDING,
+        [ReturnStatus.INSPECTED],
+        { actorId: request.actorId, note: request.note },
+      );
+      if (!left) throw new ConflictException(`Return request "${returnRequest.id}" is no longer INSPECTED`);
+      const ledger = await this.lockLedger(tx, payment.id);
+      const plan = planRefund(
+        await this.refundableOrder(tx, returnRequest.orderId, ledger),
+        returnRefundParts(returnRequest.lines, request.shipping),
+      );
+      check(ledger, plan, method);
+      const refund = await tx.refund.create({
+        data: {
+          attemptId: payment.id,
+          returnRequestId: returnRequest.id,
+          amount: plan.amount,
+          taxAmount: plan.taxAmount,
+          shippingAmount: plan.shippingAmount,
+          currency: ledger.attempt.currency,
+          idempotencyKey: returnRefundKey(returnRequest.id),
+          reason: RefundReason.RETURN,
+          method,
+          createdById: request.actorId,
+          status: method === RefundMethod.CASH ? RefundStatus.PROCESSED : RefundStatus.PENDING,
+          lines: { create: plan.lines },
+        },
+      });
+      if (method === RefundMethod.CASH) await this.followProcessed(tx, refund);
+      await onOpened(tx, refund, returnRequest);
+      return refund;
+    });
+  }
+
+  /**
+   * Records, on the cancel transaction of a paid online order, a PENDING refund of everything still refundable on its
+   * payment (reason ORDER_CANCELLED), for staff to send with processPendingRefund. Nothing when the order has no
+   * accepted capture, nothing is left to refund, or its cancellation refund already exists.
+   */
+  async openForCancelledOrder(
+    tx: Tx,
+    orderId: string,
+    onOpened: (tx: Tx, refund: Refund) => Promise<void>,
+  ): Promise<Refund | null> {
+    const payment = await tx.paymentAttempt.findFirst({
+      where: { intent: { orderId }, status: PaymentStatus.CAPTURED, reviewReason: null },
+      select: { id: true },
+    });
+    if (!payment) return null;
+    const ledger = await this.lockLedger(tx, payment.id);
+    if (ledger.refunds.some((refund) => refund.idempotencyKey === cancellationRefundKey(orderId))) return null;
+    const refundable = refundableAmount(ledger);
+    if (refundable.lte(0)) return null;
+    const plan = planRefund(await this.refundableOrder(tx, orderId, ledger), {
+      lines: [],
+      shipping: false,
+      amount: refundable,
+    });
+    const refund = await tx.refund.create({
+      data: {
+        attemptId: payment.id,
+        amount: plan.amount,
+        taxAmount: plan.taxAmount,
+        currency: ledger.attempt.currency,
+        idempotencyKey: cancellationRefundKey(orderId),
+        reason: RefundReason.ORDER_CANCELLED,
+      },
+    });
+    await onOpened(tx, refund);
+    return refund;
   }
 
   /**
@@ -224,17 +332,21 @@ export class RefundRepository {
   async recordProcessed(
     refundId: string,
     providerRef: string,
+    actorId: string,
     onRecorded: (tx: Tx, recorded: RecordedRefund) => Promise<void>,
   ): Promise<RecordedRefund> {
     return this.prisma.$transaction(async (tx) => {
       const refund = await this.finishSending(tx, refundId, { status: RefundStatus.PROCESSED, providerRef });
       let returnRequest: ReturnRequest | null = null;
       if (refund.returnRequestId) {
-        const { count } = await tx.returnRequest.updateMany({
-          where: { id: refund.returnRequestId, status: ReturnStatus.REFUND_PENDING },
-          data: { status: ReturnStatus.REFUNDED },
-        });
-        if (count === 0) {
+        const left = await transitionReturn(
+          tx,
+          refund.returnRequestId,
+          ReturnStatus.REFUNDED,
+          [ReturnStatus.REFUND_PENDING],
+          { actorId },
+        );
+        if (!left) {
           throw new ConflictException(
             `Return request "${refund.returnRequestId}" left REFUND_PENDING during its refund`,
           );

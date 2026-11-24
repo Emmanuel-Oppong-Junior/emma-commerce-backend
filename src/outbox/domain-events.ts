@@ -1,4 +1,4 @@
-import { DisputeSource, OrderStatus, ShipmentStatus } from '../generated/prisma/client';
+import { DisputeSource, OrderStatus, ReturnStatus, ShipmentStatus } from '../generated/prisma/client';
 import { JobQueue } from '../jobs/job-queues';
 import { JobMeta } from '../jobs/job-context';
 
@@ -38,6 +38,11 @@ export interface DomainEventPayloads {
   'inventory.low_stock.v1': { variantId: string; locationId: string; available: number; movementId: string };
   /** One staff member's copy of a low-stock digest (P4-B.2); the email lists the digest's alerts. */
   'inventory.low_stock_digest.v1': { digestId: string; recipientId: string };
+  /**
+   * A return moved to a status the customer is told about (P6-R.1: APPROVED, REJECTED, RECEIVED, EXCHANGED; a refund
+   * is told by refund.succeeded.v1). The worker logs the ids until the customer email moves onto the template registry.
+   */
+  'return.status_changed.v1': { returnRequestId: string; orderId: string; status: ReturnStatus };
 }
 
 export type DomainEventType = keyof DomainEventPayloads;
@@ -62,6 +67,7 @@ export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
   'cod.remittance_discrepancy.v1': JobQueue.NOTIFICATIONS,
   'inventory.low_stock.v1': JobQueue.NOTIFICATIONS,
   'inventory.low_stock_digest.v1': JobQueue.NOTIFICATIONS,
+  'return.status_changed.v1': JobQueue.NOTIFICATIONS,
 };
 
 export function isDomainEventType(type: string): type is DomainEventType {

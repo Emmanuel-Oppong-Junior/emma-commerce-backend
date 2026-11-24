@@ -209,7 +209,7 @@ describe('Order totals, line snapshots and tax lines (P1-O.1, e2e)', () => {
 
       const res = await gqlRequest(
         app,
-        `mutation { processRefund(returnRequestId: "${returned.id}") { id status } }`,
+        `mutation { refundReturn(input: { returnRequestId: "${returned.id}" }) { id status } }`,
         undefined,
         adminToken,
       ).expect(200);

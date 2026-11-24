@@ -216,6 +216,73 @@ export class OrdersRepository {
   }
 
   /**
+   * Writes a PLACED replacement order for an exchange (P6-R.1): the original order's customer, contact and fulfilment
+   * (address or pickup point, zone and service level, no delivery slot), one zero-priced line per replacement variant
+   * and a zero total, since the returned units paid for it. Its own stock is reserved by the caller.
+   */
+  async createReplacement(
+    tx: Prisma.TransactionClient,
+    original: Order,
+    lines: {
+      productId: string;
+      variantId: string;
+      productName: string;
+      sku: string;
+      optionValues: unknown;
+      quantity: number;
+    }[],
+    stockLocationId: string,
+    pricingVersion: number,
+  ): Promise<OrderWithItems> {
+    const zero = new Prisma.Decimal(0);
+    const order = await tx.order.create({
+      data: {
+        orderNumber: await this.takeOrderNumber(tx),
+        userId: original.userId,
+        currency: original.currency,
+        pricingVersion,
+        subtotal: zero,
+        discountTotal: zero,
+        taxTotal: zero,
+        shippingTotal: zero,
+        grandTotal: zero,
+        fulfillmentType: original.fulfillmentType,
+        shippingAddressId: original.shippingAddressId,
+        pickupLocationId: original.pickupLocationId,
+        shippingAddressSnapshot: (original.shippingAddressSnapshot as Prisma.JsonObject | null) ?? Prisma.JsonNull,
+        pickupLocationSnapshot: (original.pickupLocationSnapshot as Prisma.JsonObject | null) ?? Prisma.JsonNull,
+        paymentMethod: PaymentMethod.ONLINE,
+        status: OrderStatus.PLACED,
+        contactEmail: original.contactEmail,
+        contactPhone: original.contactPhone,
+        stockLocationId,
+        shippingZoneId: original.shippingZoneId,
+        shippingZoneName: original.shippingZoneName,
+        rateRuleId: original.rateRuleId,
+        serviceLevel: original.serviceLevel,
+        shippingFee: original.shippingZoneId ? zero : null,
+        statusEvents: { create: { from: null, to: OrderStatus.PLACED, reason: 'Replacement for returned goods' } },
+        items: {
+          create: lines.map((line) => ({
+            productId: line.productId,
+            variantId: line.variantId,
+            productName: line.productName,
+            sku: line.sku,
+            optionValues: (line.optionValues as Prisma.InputJsonValue | null) ?? Prisma.JsonNull,
+            quantity: line.quantity,
+            unitListPrice: zero,
+            unitDiscount: zero,
+            unitNet: zero,
+            unitTax: zero,
+            lineTotal: zero,
+          })),
+        },
+      },
+    });
+    return this.findInTransaction(tx, order.id);
+  }
+
+  /**
    * Takes the store's next order number. The row lock it takes is held until the order transaction ends, so
    * concurrent orders get distinct numbers; a rolled-back order leaves a gap.
    */

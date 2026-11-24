@@ -1,352 +1,550 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Prisma, ReturnReason, ReturnResolution, ReturnStatus } from '../generated/prisma/client';
 import { ReturnsService } from './returns.service';
 import { ReturnsRepository } from './returns.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, ReturnRequest } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
-import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
+import { CloudinaryService } from '../commons/cloudinary.service';
+import { OutboxService } from '../outbox/outbox.service';
+import { InventoryService } from '../inventory/inventory.service';
+import { StockLedgerService } from '../inventory/stock-ledger.service';
+import { StockLedgerRepository } from '../inventory/stock-ledger.repository';
+import { StockLocationsService } from '../inventory/locations/stock-locations.service';
+import { OrdersRepository } from '../order/order.repository';
 import { RefundsService } from './refunds.service';
 import { RefundRepository } from './refund.repository';
-import { Decimal } from '@prisma/client/runtime/client';
+import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 
-const mockReturnsRepository = {
-  create: jest.fn(),
-  findById: jest.fn(),
-  findByOrder: jest.fn(),
-  findByUser: jest.fn(),
-  findAll: jest.fn(),
-  transitionStatus: jest.fn(),
-};
+const at = new Date('2026-12-10T10:00:00Z');
+const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-const mockPrisma = {
-  order: { findUnique: jest.fn() },
-  paymentAttempt: { findFirst: jest.fn() },
-  $transaction: jest.fn(),
-};
+function returnLine(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'line1',
+    returnRequestId: 'rr1',
+    orderItemId: 'oi1',
+    quantity: 2,
+    reason: ReturnReason.DAMAGED,
+    note: null,
+    photoPublicIds: [] as string[],
+    exchangeVariantId: null as string | null,
+    receivedQuantity: null as number | null,
+    restockQuantity: null as number | null,
+    writeOffQuantity: null as number | null,
+    createdAt: at,
+    orderItem: { productName: 'Kettle', sku: 'KET-1', productId: 'p1', variantId: 'v1' },
+    ...overrides,
+  };
+}
 
-const mockAuditService = createAuditServiceMock();
-const mockRefundsService = { openForReturn: jest.fn(), send: jest.fn() };
-const mockRefundRepository = { findByReturnRequest: jest.fn() };
+function returnRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'rr1',
+    orderId: 'o1',
+    userId: 'u1',
+    reason: null as string | null,
+    status: ReturnStatus.REQUESTED as ReturnStatus,
+    resolution: ReturnResolution.REFUND as ReturnResolution,
+    refundAmount: null as Prisma.Decimal | null,
+    staffNote: 'internal' as string | null,
+    rejectionReason: null,
+    policyOverrideReason: null,
+    createdById: null,
+    replacementOrderId: null,
+    createdAt: at,
+    updatedAt: at,
+    lines: [returnLine()],
+    events: [],
+    ...overrides,
+  };
+}
 
-const fixedDate = new Date('2025-01-01T00:00:00.000Z');
-
-const mockReturnRequest = {
-  id: 'return1',
-  orderId: 'order1',
-  userId: 'user1',
-  reason: 'Defective item',
-  status: 'PENDING',
-  refundAmount: null,
-  adminNote: null,
-  createdAt: fixedDate,
-  updatedAt: fixedDate,
-} as unknown as ReturnRequest;
-
-const mockOrder = {
-  id: 'order1',
-  userId: 'user1',
-  status: 'COMPLETED',
-};
+const orderLine = (overrides: Record<string, unknown> = {}) => ({
+  id: 'oi1',
+  productId: 'p1',
+  variantId: 'v1',
+  productName: 'Kettle',
+  unitListPrice: new Prisma.Decimal(100),
+  productType: { name: 'General', returnable: true, returnWindowDays: null },
+  units: { deliveries: [{ deliveredAt: daysAgo(2), quantity: 2 }], refundedOutsideReturns: 0, claimedByReturns: 0 },
+  ...overrides,
+});
 
 describe('ReturnsService', () => {
   let service: ReturnsService;
+  let status: ReturnStatus;
+  const audit = createAuditServiceMock();
+  const tx = {
+    // The replacement order's row lock reads PLACED; every other lock is the return request's.
+    $queryRaw: jest.fn(async (sql: TemplateStringsArray) =>
+      sql.join('').includes('FROM "Order"') ? [{ status: 'PLACED' }] : [{ status }],
+    ),
+    returnRequest: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    orderStatusEvent: { create: jest.fn() },
+    returnStatusEvent: { create: jest.fn() },
+    order: { findUniqueOrThrow: jest.fn(), updateMany: jest.fn(async () => ({ count: 1 })) },
+  };
+  const prisma = {
+    $transaction: jest.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
+    order: { findUniqueOrThrow: jest.fn(async () => ({ stockLocationId: 'loc_branch' })) },
+    paymentAttempt: { findFirst: jest.fn() },
+  };
+  const repository = {
+    lockOrder: jest.fn(),
+    storeWindowDays: jest.fn(async () => 14),
+    returnableLines: jest.fn(async () => [orderLine()]),
+    findVariants: jest.fn(),
+    create: jest.fn(),
+    findById: jest.fn(),
+    findMany: jest.fn(),
+    setReceived: jest.fn(),
+    setDisposition: jest.fn(),
+  };
+  const outbox = { record: jest.fn() };
+  const refunds = { refundReturnLines: jest.fn(), openForReturn: jest.fn(), send: jest.fn() };
+  const refundRepository = { findByReturnRequest: jest.fn() };
+  const inventory = { restockReturn: jest.fn() };
+  const ledger = { reserve: jest.fn(async () => true), consumeOrder: jest.fn() };
+  const ledgerRepository = { defaultLocationId: jest.fn(async () => 'loc_default') };
+  const stockLocations = { candidatesFor: jest.fn(async () => ['loc_branch']), lockFulfilmentLocation: jest.fn() };
+  const orders = { createReplacement: jest.fn(), lockSellableVariant: jest.fn(async () => true) };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
+    status = ReturnStatus.REQUESTED;
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ReturnsService,
-        { provide: ReturnsRepository, useValue: mockReturnsRepository },
-        { provide: PrismaService, useValue: mockPrisma },
-        { provide: AuditService, useValue: mockAuditService },
-        { provide: RefundsService, useValue: mockRefundsService },
-        { provide: RefundRepository, useValue: mockRefundRepository },
+        { provide: ReturnsRepository, useValue: repository },
+        { provide: PrismaService, useValue: prisma },
+        { provide: AuditService, useValue: audit },
+        { provide: CloudinaryService, useValue: { urlFor: (id: string) => `https://img/${id}` } },
+        { provide: OutboxService, useValue: outbox },
+        { provide: RefundsService, useValue: refunds },
+        { provide: RefundRepository, useValue: refundRepository },
+        { provide: InventoryService, useValue: inventory },
+        { provide: StockLedgerService, useValue: ledger },
+        { provide: StockLedgerRepository, useValue: ledgerRepository },
+        { provide: StockLocationsService, useValue: stockLocations },
+        { provide: OrdersRepository, useValue: orders },
       ],
     }).compile();
-
-    service = module.get<ReturnsService>(ReturnsService);
-    jest.clearAllMocks();
+    service = module.get(ReturnsService);
   });
 
-  describe('createReturnRequest', () => {
-    it('should create a return request for a delivered order', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
-      mockReturnsRepository.findByOrder.mockResolvedValue([]);
-      mockReturnsRepository.create.mockResolvedValue(mockReturnRequest);
+  const request = (lines = [{ orderItemId: 'oi1', quantity: 1, reason: ReturnReason.DAMAGED }]) => ({
+    orderId: 'o1',
+    resolution: ReturnResolution.REFUND,
+    lines,
+  });
 
-      const result = await service.createReturnRequest('user1', {
-        orderId: 'order1',
-        reason: 'Defective item',
+  describe('requestReturn', () => {
+    beforeEach(() => {
+      repository.lockOrder.mockResolvedValue({ id: 'o1', userId: 'u1', deleted: false });
+      repository.create.mockResolvedValue(returnRequest());
+    });
+
+    it('creates the request under the order lock and shows it without staff notes', async () => {
+      const created = await service.requestReturn('u1', request());
+
+      expect(repository.lockOrder).toHaveBeenCalledWith(tx, 'o1');
+      expect(repository.create).toHaveBeenCalledWith(tx, {
+        orderId: 'o1',
+        userId: 'u1',
+        resolution: ReturnResolution.REFUND,
+        lines: [
+          {
+            orderItemId: 'oi1',
+            quantity: 1,
+            reason: ReturnReason.DAMAGED,
+            note: null,
+            photoPublicIds: [],
+            exchangeVariantId: null,
+          },
+        ],
+        actorId: 'u1',
       });
-
-      expect(result).toEqual(mockReturnRequest);
-      expect(mockReturnsRepository.create).toHaveBeenCalledWith(
-        expect.objectContaining({ orderId: 'order1', userId: 'user1', reason: 'Defective item' }),
-      );
+      expect(created).not.toHaveProperty('staffNote');
+      expect(created.lines[0]).not.toHaveProperty('restockQuantity');
     });
 
-    it('should throw NotFoundException if order not found or not owned by user', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(null);
-
-      await expect(service.createReturnRequest('user1', { orderId: 'nonexistent', reason: 'reason' })).rejects.toThrow(
-        NotFoundException,
-      );
+    it("refuses another customer's order as NOT_FOUND", async () => {
+      await expect(service.requestReturn('u2', request())).rejects.toThrow(NotFoundException);
+      expect(repository.create).not.toHaveBeenCalled();
     });
 
-    it('should throw NotFoundException if order belongs to a different user', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue({ ...mockOrder, userId: 'other-user' });
+    it('refuses units delivered outside the window with BAD_REQUEST and its reason', async () => {
+      repository.returnableLines.mockResolvedValueOnce([
+        orderLine({
+          units: {
+            deliveries: [{ deliveredAt: daysAgo(20), quantity: 2 }],
+            refundedOutsideReturns: 0,
+            claimedByReturns: 0,
+          },
+        }),
+      ]);
 
-      await expect(service.createReturnRequest('user1', { orderId: 'order1', reason: 'reason' })).rejects.toThrow(
-        NotFoundException,
-      );
+      const error = await service.requestReturn('u1', request()).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        extensions: { reason: 'OUTSIDE_RETURN_WINDOW' },
+      });
+      expect(repository.create).not.toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException if order is not delivered', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue({ ...mockOrder, status: 'PENDING' });
+    it('refuses more units than are left with CONFLICT', async () => {
+      repository.returnableLines.mockResolvedValueOnce([
+        orderLine({
+          units: {
+            deliveries: [{ deliveredAt: daysAgo(1), quantity: 2 }],
+            refundedOutsideReturns: 0,
+            claimedByReturns: 2,
+          },
+        }),
+      ]);
 
-      await expect(service.createReturnRequest('user1', { orderId: 'order1', reason: 'reason' })).rejects.toThrow(
-        'Return requests can only be made for delivered orders',
-      );
+      await expect(service.requestReturn('u1', request())).rejects.toThrow(ConflictException);
     });
 
-    it('should throw BadRequestException if an active return request already exists', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
-      mockReturnsRepository.findByOrder.mockResolvedValue([{ ...mockReturnRequest, status: 'PENDING' }]);
+    it('refuses an exchange for a variant at another price', async () => {
+      repository.findVariants.mockResolvedValueOnce([
+        {
+          id: 'v2',
+          productId: 'p1',
+          sku: 'KET-2',
+          price: new Prisma.Decimal(110),
+          isActive: true,
+          product: { name: 'Kettle', isActive: true, status: 'PUBLISHED' },
+        },
+      ]);
 
-      await expect(service.createReturnRequest('user1', { orderId: 'order1', reason: 'reason' })).rejects.toThrow(
-        'A return request for this order already exists',
-      );
-    });
+      const error = await service
+        .requestReturn('u1', {
+          ...request([
+            { orderItemId: 'oi1', quantity: 1, reason: ReturnReason.SIZE_FIT, exchangeVariantId: 'v2' } as never,
+          ]),
+          resolution: ReturnResolution.EXCHANGE,
+        })
+        .catch((caught: unknown) => caught);
 
-    it('should allow a new request if previous one was rejected', async () => {
-      mockPrisma.order.findUnique.mockResolvedValue(mockOrder);
-      mockReturnsRepository.findByOrder.mockResolvedValue([{ ...mockReturnRequest, status: 'REJECTED' }]);
-      mockReturnsRepository.create.mockResolvedValue(mockReturnRequest);
-
-      const result = await service.createReturnRequest('user1', { orderId: 'order1', reason: 'reason' });
-
-      expect(result).toEqual(mockReturnRequest);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        extensions: { reason: 'EXCHANGE_NOT_ALLOWED' },
+      });
     });
   });
 
-  describe('approveReturn', () => {
-    it('should approve a pending return request', async () => {
-      const approved = { ...mockReturnRequest, status: 'APPROVED', refundAmount: 50 };
-      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.transitionStatus.mockResolvedValue(approved);
-
-      const result = await service.approveReturn(
-        { returnRequestId: 'return1', refundAmount: new Decimal('50'), adminNote: 'Approved' },
-        'admin1',
+  describe('acceptReturnOutsidePolicy', () => {
+    it('creates an APPROVED return past the window for the order customer, audited with the reason', async () => {
+      repository.lockOrder.mockResolvedValue({ id: 'o1', userId: 'u1', deleted: false });
+      repository.returnableLines.mockResolvedValueOnce([
+        orderLine({
+          productType: { name: 'Groceries', returnable: false, returnWindowDays: null },
+          units: {
+            deliveries: [{ deliveredAt: daysAgo(60), quantity: 2 }],
+            refundedOutsideReturns: 0,
+            claimedByReturns: 0,
+          },
+        }),
+      ]);
+      repository.create.mockResolvedValue(
+        returnRequest({ status: ReturnStatus.APPROVED, policyOverrideReason: 'Faulty batch' }),
       );
 
-      expect(result.status).toBe('APPROVED');
-      expect(mockReturnsRepository.transitionStatus).toHaveBeenCalledWith(
-        'return1',
-        'PENDING',
-        'APPROVED',
-        { refundAmount: new Decimal('50'), adminNote: 'Approved' },
+      await service.acceptReturnOutsidePolicy({ ...request(), overrideReason: 'Faulty batch' }, 'staff1');
+
+      expect(repository.create).toHaveBeenCalledWith(
+        AUDIT_TX,
+        expect.objectContaining({
+          userId: 'u1',
+          createdById: 'staff1',
+          policyOverrideReason: 'Faulty batch',
+          approved: true,
+        }),
+      );
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entity: 'ReturnRequest',
+          action: 'CREATE',
+          userId: 'staff1',
+          details: expect.objectContaining({ policyOverrideReason: 'Faulty batch' }),
+        }),
         AUDIT_TX,
       );
+      expect(outbox.record).toHaveBeenCalledWith(
+        AUDIT_TX,
+        expect.objectContaining({ type: 'return.status_changed.v1' }),
+      );
     });
+  });
 
-    it('audits the approval with the admin, the status change and the refund amount in the same transaction', async () => {
-      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.transitionStatus.mockResolvedValue({
-        ...mockReturnRequest,
-        status: 'APPROVED',
-        refundAmount: 50,
+  describe('approve, reject and cancel', () => {
+    it('approves with the history event, audit row and customer event in one transaction', async () => {
+      repository.findById.mockResolvedValue(returnRequest());
+
+      await service.approveReturn('rr1', ' looks fine ', 'staff1');
+
+      expect(tx.returnRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: 'rr1', status: ReturnStatus.REQUESTED },
+        data: { staffNote: 'looks fine', status: ReturnStatus.APPROVED },
       });
-
-      await service.approveReturn({ returnRequestId: 'return1', refundAmount: new Decimal('50') }, 'admin1');
-
-      expect(mockAuditService.log).toHaveBeenCalledWith(
+      expect(tx.returnStatusEvent.create).toHaveBeenCalledWith({
+        data: { returnRequestId: 'rr1', from: 'REQUESTED', to: 'APPROVED', actorId: 'staff1', note: 'looks fine' },
+      });
+      expect(audit.log).toHaveBeenCalledWith(
         {
           entity: 'ReturnRequest',
-          entityId: 'return1',
+          entityId: 'rr1',
           action: 'STATUS_CHANGE',
-          userId: 'admin1',
-          details: { orderId: 'order1', from: 'PENDING', to: 'APPROVED', refundAmount: '50' },
+          userId: 'staff1',
+          details: { orderId: 'o1', from: 'REQUESTED', to: 'APPROVED' },
         },
-        AUDIT_TX,
+        tx,
+      );
+      expect(outbox.record).toHaveBeenCalledWith(tx, {
+        type: 'return.status_changed.v1',
+        aggregateId: 'rr1',
+        payload: { returnRequestId: 'rr1', orderId: 'o1', status: 'APPROVED' },
+      });
+    });
+
+    it('fails with CONFLICT and audits nothing when another request moved it first', async () => {
+      repository.findById.mockResolvedValue(returnRequest());
+      status = ReturnStatus.REJECTED;
+
+      await expect(service.approveReturn('rr1', undefined, 'staff1')).rejects.toThrow(ConflictException);
+      expect(audit.log).not.toHaveBeenCalled();
+      expect(outbox.record).not.toHaveBeenCalled();
+    });
+
+    it('refuses to approve a legacy whole-order request', async () => {
+      repository.findById.mockResolvedValue(returnRequest({ lines: [], reason: 'Broken' }));
+
+      await expect(service.approveReturn('rr1', undefined, 'staff1')).rejects.toThrow(/legacy whole-order request/);
+    });
+
+    it('rejects an approved return with the reason the customer sees', async () => {
+      repository.findById.mockResolvedValue(returnRequest({ status: ReturnStatus.APPROVED }));
+      status = ReturnStatus.APPROVED;
+
+      await service.rejectReturn('rr1', 'Nothing arrived', undefined, 'staff1');
+
+      expect(tx.returnRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: 'rr1', status: ReturnStatus.APPROVED },
+        data: { rejectionReason: 'Nothing arrived', status: ReturnStatus.REJECTED },
+      });
+    });
+
+    it('lets a customer cancel only their own return, before it is received', async () => {
+      repository.findById.mockResolvedValue(returnRequest());
+      await expect(service.cancelReturn('u2', 'rr1')).rejects.toThrow(NotFoundException);
+
+      repository.findById.mockResolvedValue(returnRequest({ status: ReturnStatus.RECEIVED }));
+      await expect(service.cancelReturn('u1', 'rr1')).rejects.toThrow(ConflictException);
+
+      repository.findById.mockResolvedValue(returnRequest());
+      await service.cancelReturn('u1', 'rr1');
+      expect(tx.returnStatusEvent.create).toHaveBeenCalledWith({
+        data: { returnRequestId: 'rr1', from: 'REQUESTED', to: 'CANCELLED', actorId: 'u1', note: null },
+      });
+      expect(audit.log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('receive and inspect', () => {
+    it('records the units received per line', async () => {
+      repository.findById.mockResolvedValue(returnRequest({ status: ReturnStatus.APPROVED }));
+      status = ReturnStatus.APPROVED;
+
+      await service.receiveReturn('rr1', [{ returnLineId: 'line1', receivedQuantity: 1 }], undefined, 'staff1');
+
+      expect(repository.setReceived).toHaveBeenCalledWith(tx, 'line1', 1);
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          details: expect.objectContaining({ to: 'RECEIVED', lines: [{ returnLineId: 'line1', receivedQuantity: 1 }] }),
+        }),
+        tx,
       );
     });
 
-    it('fails with CONFLICT and audits nothing when another request reviewed it after it was read', async () => {
-      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.transitionStatus.mockResolvedValue(null);
+    it('refuses a receipt above the line quantity before writing anything', async () => {
+      repository.findById.mockResolvedValue(returnRequest({ status: ReturnStatus.APPROVED }));
 
       await expect(
-        service.approveReturn({ returnRequestId: 'return1', refundAmount: new Decimal('50') }, 'admin1'),
-      ).rejects.toThrow(ConflictException);
-      expect(mockAuditService.log).not.toHaveBeenCalled();
-    });
-
-    it('should throw NotFoundException if return request not found', async () => {
-      mockReturnsRepository.findById.mockResolvedValue(null);
-
-      await expect(
-        service.approveReturn({ returnRequestId: 'nonexistent', refundAmount: new Decimal('50') }, 'admin1'),
-      ).rejects.toThrow(NotFoundException);
-    });
-
-    it('should throw BadRequestException if return is not pending', async () => {
-      mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'APPROVED' });
-
-      await expect(
-        service.approveReturn({ returnRequestId: 'return1', refundAmount: new Decimal('50') }, 'admin1'),
+        service.receiveReturn('rr1', [{ returnLineId: 'line1', receivedQuantity: 3 }], undefined, 'staff1'),
       ).rejects.toThrow(BadRequestException);
-      expect(mockAuditService.log).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("restocks units at the order's location and writes the others off without moving stock", async () => {
+      repository.findById.mockResolvedValue(
+        returnRequest({ status: ReturnStatus.RECEIVED, lines: [returnLine({ receivedQuantity: 2 })] }),
+      );
+      status = ReturnStatus.RECEIVED;
+      inventory.restockReturn.mockResolvedValue({ movements: [{ id: 'mv1', locationId: 'loc_branch' }], serials: [] });
+
+      await service.inspectReturn(
+        'rr1',
+        [{ returnLineId: 'line1', restockQuantity: 1, writeOffQuantity: 1, lot: { lotNumber: 'L1' } }],
+        undefined,
+        'staff1',
+      );
+
+      expect(repository.setDisposition).toHaveBeenCalledWith(tx, 'line1', 1, 1);
+      expect(inventory.restockReturn).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          variantId: 'v1',
+          quantity: 1,
+          returnRequestId: 'rr1',
+          orderId: 'o1',
+          locationId: 'loc_branch',
+          lot: { lotNumber: 'L1' },
+        }),
+        'staff1',
+      );
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          details: expect.objectContaining({
+            to: 'INSPECTED',
+            movements: [{ returnLineId: 'line1', stockMovementIds: ['mv1'], locationId: 'loc_branch', serials: [] }],
+          }),
+        }),
+        tx,
+      );
+      expect(outbox.record).not.toHaveBeenCalled();
+    });
+
+    it('restocks nothing for a line written off in full', async () => {
+      repository.findById.mockResolvedValue(
+        returnRequest({ status: ReturnStatus.RECEIVED, lines: [returnLine({ receivedQuantity: 2 })] }),
+      );
+      status = ReturnStatus.RECEIVED;
+
+      await service.inspectReturn(
+        'rr1',
+        [{ returnLineId: 'line1', restockQuantity: 0, writeOffQuantity: 2 }],
+        undefined,
+        'staff1',
+      );
+
+      expect(inventory.restockReturn).not.toHaveBeenCalled();
     });
   });
 
-  describe('rejectReturn', () => {
-    it('should reject a pending return request', async () => {
-      const rejected = { ...mockReturnRequest, status: 'REJECTED' };
-      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.transitionStatus.mockResolvedValue(rejected);
+  describe('refundReturn', () => {
+    it('refunds an inspected item-level return through RefundsService', async () => {
+      const inspected = returnRequest({ status: ReturnStatus.INSPECTED, lines: [returnLine({ receivedQuantity: 1 })] });
+      repository.findById.mockResolvedValue(inspected);
 
-      const result = await service.rejectReturn({ returnRequestId: 'return1', adminNote: 'Not eligible' }, 'admin1');
+      await service.refundReturn('rr1', { refundShipping: true, staffNote: ' ok ' }, 'staff1');
 
-      expect(result.status).toBe('REJECTED');
-      expect(mockReturnsRepository.transitionStatus).toHaveBeenCalledWith(
-        'return1',
-        'PENDING',
-        'REJECTED',
-        { adminNote: 'Not eligible' },
-        AUDIT_TX,
-      );
-      expect(mockAuditService.log).toHaveBeenCalledWith(
-        {
-          entity: 'ReturnRequest',
-          entityId: 'return1',
-          action: 'STATUS_CHANGE',
-          userId: 'admin1',
-          details: { orderId: 'order1', from: 'PENDING', to: 'REJECTED', refundAmount: null },
-        },
-        AUDIT_TX,
-      );
+      expect(refunds.refundReturnLines).toHaveBeenCalledWith(inspected, { shipping: true, note: 'ok' }, 'staff1');
     });
 
-    it('fails with CONFLICT and audits nothing when another request reviewed it after it was read', async () => {
-      mockReturnsRepository.findById.mockResolvedValue(mockReturnRequest);
-      mockReturnsRepository.transitionStatus.mockResolvedValue(null);
+    it('refuses an item-level return that was not inspected yet', async () => {
+      repository.findById.mockResolvedValue(returnRequest({ status: ReturnStatus.APPROVED }));
 
-      await expect(service.rejectReturn({ returnRequestId: 'return1', adminNote: 'note' }, 'admin1')).rejects.toThrow(
-        ConflictException,
-      );
-      expect(mockAuditService.log).not.toHaveBeenCalled();
+      await expect(service.refundReturn('rr1', { refundShipping: false }, 'staff1')).rejects.toThrow(ConflictException);
+      expect(refunds.refundReturnLines).not.toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException if return is not pending', async () => {
-      mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status: 'APPROVED' });
+    it('opens and sends the approved amount of a legacy request on its paying attempt', async () => {
+      const legacy = returnRequest({ lines: [], status: ReturnStatus.APPROVED, refundAmount: new Prisma.Decimal(50) });
+      repository.findById.mockResolvedValue(legacy);
+      prisma.paymentAttempt.findFirst.mockResolvedValue({ id: 'att1', reference: 'ref1' });
+      refunds.openForReturn.mockResolvedValue({ id: 'rf1' });
 
-      await expect(service.rejectReturn({ returnRequestId: 'return1', adminNote: 'note' }, 'admin1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await service.refundReturn('rr1', { refundShipping: false }, 'staff1');
+
+      expect(refunds.openForReturn).toHaveBeenCalledWith(expect.objectContaining({ id: 'rr1' }), 'att1', 'staff1');
+      expect(refunds.send).toHaveBeenCalledWith('rf1', 'staff1');
+    });
+
+    it('resends the existing refund of a REFUND_PENDING legacy request', async () => {
+      repository.findById.mockResolvedValue(returnRequest({ lines: [], status: ReturnStatus.REFUND_PENDING }));
+      refundRepository.findByReturnRequest.mockResolvedValue({ id: 'rf1' });
+
+      await service.refundReturn('rr1', { refundShipping: false }, 'staff1');
+
+      expect(refunds.openForReturn).not.toHaveBeenCalled();
+      expect(refunds.send).toHaveBeenCalledWith('rf1', 'staff1');
     });
   });
 
-  describe('processRefund', () => {
-    const approvedReturn = {
-      ...mockReturnRequest,
-      status: 'APPROVED',
-      refundAmount: new Prisma.Decimal(50),
-    } as unknown as ReturnRequest;
-    const refundedReturn = { ...approvedReturn, status: 'REFUNDED' };
-
-    it('opens the refund on the paying attempt, then sends it, and returns the refunded request', async () => {
-      mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
-      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ id: 'attempt1', reference: 'txn_123' });
-      mockRefundsService.openForReturn.mockResolvedValue({ id: 'refund1' });
-      mockRefundsService.send.mockResolvedValue({ refund: { id: 'refund1' }, returnRequest: refundedReturn });
-
-      const result = await service.processRefund('return1', 'admin1');
-
-      expect(result).toBe(refundedReturn);
-      expect(mockPrisma.paymentAttempt.findFirst).toHaveBeenCalledWith({
-        where: { intent: { orderId: 'order1' }, status: 'CAPTURED', reference: { not: null } },
-        orderBy: [{ reviewReason: { sort: 'asc', nulls: 'first' } }, { createdAt: 'desc' }],
+  describe('exchangeReturn', () => {
+    const exchange = () =>
+      returnRequest({
+        status: ReturnStatus.INSPECTED,
+        resolution: ReturnResolution.EXCHANGE,
+        lines: [returnLine({ receivedQuantity: 2, exchangeVariantId: 'v2' })],
       });
-      expect(mockRefundsService.openForReturn).toHaveBeenCalledWith(approvedReturn, 'attempt1', 'admin1');
-      expect(mockRefundsService.send).toHaveBeenCalledWith('refund1', 'admin1');
+    const variant = {
+      id: 'v2',
+      productId: 'p1',
+      sku: 'KET-2',
+      optionValues: { colour: 'Red' },
+      price: new Prisma.Decimal(100),
+      isActive: true,
+      product: { name: 'Kettle', isActive: true, status: 'PUBLISHED' },
+    };
+
+    beforeEach(() => {
+      status = ReturnStatus.INSPECTED;
+      repository.findById.mockResolvedValue(exchange());
+      repository.lockOrder.mockResolvedValue({
+        id: 'o1',
+        userId: 'u1',
+        shippingZoneId: 'zone1',
+        pickupLocationId: null,
+      });
+      repository.findVariants.mockResolvedValue([variant]);
+      stockLocations.lockFulfilmentLocation.mockResolvedValue({ locationId: 'loc_branch' });
+      orders.createReplacement.mockResolvedValue({ id: 'o2', items: [{ id: 'oi9', variantId: 'v2', quantity: 2 }] });
     });
 
-    it('resends the existing refund of a REFUND_PENDING request instead of opening another', async () => {
-      mockReturnsRepository.findById.mockResolvedValue({ ...approvedReturn, status: 'REFUND_PENDING' });
-      mockRefundRepository.findByReturnRequest.mockResolvedValue({ id: 'refund1' });
-      mockRefundsService.send.mockResolvedValue({ refund: { id: 'refund1' }, returnRequest: refundedReturn });
+    it('places a paid replacement order with its stock reserved and sold, then moves the return to EXCHANGED', async () => {
+      await service.exchangeReturn('rr1', undefined, 'staff1');
 
-      await service.processRefund('return1', 'admin1');
-
-      expect(mockRefundsService.openForReturn).not.toHaveBeenCalled();
-      expect(mockRefundsService.send).toHaveBeenCalledWith('refund1', 'admin1');
-    });
-
-    it('fails with CONFLICT for a REFUND_PENDING request without a refund', async () => {
-      mockReturnsRepository.findById.mockResolvedValue({ ...approvedReturn, status: 'REFUND_PENDING' });
-      mockRefundRepository.findByReturnRequest.mockResolvedValue(null);
-
-      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(ConflictException);
-      expect(mockRefundsService.send).not.toHaveBeenCalled();
-    });
-
-    it('does not send when another request claimed the return first', async () => {
-      mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
-      mockPrisma.paymentAttempt.findFirst.mockResolvedValue({ id: 'attempt1', reference: 'txn_123' });
-      mockRefundsService.openForReturn.mockRejectedValue(new ConflictException('no longer APPROVED'));
-
-      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(ConflictException);
-      expect(mockRefundsService.send).not.toHaveBeenCalled();
-    });
-
-    it.each(['PENDING', 'REJECTED', 'REFUNDED'])('should throw BadRequestException if return is %s', async (status) => {
-      mockReturnsRepository.findById.mockResolvedValue({ ...mockReturnRequest, status });
-
-      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(
-        'Only approved return requests can be refunded',
+      expect(stockLocations.candidatesFor).toHaveBeenCalledWith({ shippingZoneId: 'zone1' }, tx);
+      expect(stockLocations.lockFulfilmentLocation).toHaveBeenCalledWith(
+        tx,
+        ['loc_branch'],
+        [{ orderItemId: 'oi1', variantId: 'v2', quantity: 2 }],
       );
-      expect(mockRefundsService.send).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      ['not set', null],
-      ['zero', new Prisma.Decimal(0)],
-    ])('should throw BadRequestException if refund amount is %s', async (_case, refundAmount) => {
-      mockReturnsRepository.findById.mockResolvedValue({ ...approvedReturn, refundAmount });
-
-      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow('Refund amount not set');
-      expect(mockRefundsService.openForReturn).not.toHaveBeenCalled();
-    });
-
-    it('should throw BadRequestException if no payment transaction found', async () => {
-      mockReturnsRepository.findById.mockResolvedValue(approvedReturn);
-      mockPrisma.paymentAttempt.findFirst.mockResolvedValue(null);
-
-      await expect(service.processRefund('return1', 'admin1')).rejects.toThrow(
-        'No payment transaction found for this order',
+      expect(ledger.reserve).toHaveBeenCalledWith(
+        tx,
+        { variantId: 'v2', quantity: 2, orderId: 'o2', orderItemId: 'oi9', expiresAt: null, locationId: 'loc_branch' },
+        'staff1',
       );
-      expect(mockRefundsService.openForReturn).not.toHaveBeenCalled();
+      expect(ledger.consumeOrder).toHaveBeenCalledWith(tx, 'o2', 'staff1');
+      expect(tx.returnRequest.updateMany).toHaveBeenCalledWith({
+        where: { id: 'rr1', status: ReturnStatus.INSPECTED },
+        data: { replacementOrderId: 'o2', status: ReturnStatus.EXCHANGED },
+      });
+      expect(outbox.record).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ type: 'order.placed.v1', aggregateId: 'o2' }),
+      );
     });
-  });
 
-  describe('findByUser', () => {
-    it('should return user return requests', async () => {
-      mockReturnsRepository.findByUser.mockResolvedValue([mockReturnRequest]);
+    it('refuses with EXCHANGE_OUT_OF_STOCK when no serving location holds every unit', async () => {
+      stockLocations.lockFulfilmentLocation.mockResolvedValue({ locationId: null, shortVariantId: 'v2' });
 
-      const result = await service.findByUser('user1');
+      const error = await service.exchangeReturn('rr1', undefined, 'staff1').catch((caught: unknown) => caught);
 
-      expect(result).toEqual([mockReturnRequest]);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        extensions: { reason: 'EXCHANGE_OUT_OF_STOCK' },
+      });
+      expect(orders.createReplacement).not.toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
     });
-  });
 
-  describe('findAll', () => {
-    it('should return all return requests', async () => {
-      mockReturnsRepository.findAll.mockResolvedValue([mockReturnRequest]);
+    it('refuses a return that asked for a refund', async () => {
+      repository.findById.mockResolvedValue({ ...exchange(), resolution: ReturnResolution.REFUND });
 
-      const result = await service.findAll();
-
-      expect(result).toEqual([mockReturnRequest]);
+      await expect(service.exchangeReturn('rr1', undefined, 'staff1')).rejects.toThrow(/asks for a refund/);
     });
   });
 });

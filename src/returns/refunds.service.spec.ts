@@ -46,6 +46,9 @@ describe('RefundsService', () => {
     findAll: jest.fn(),
     openForReturn: jest.fn(),
     openForOrder: jest.fn(),
+    openForReturnLines: jest.fn(),
+    openForCancelledOrder: jest.fn(),
+    findByReturnRequest: jest.fn(),
     claimForSending: jest.fn(),
     recordProcessed: jest.fn(),
     recordRejected: jest.fn(),
@@ -72,7 +75,7 @@ describe('RefundsService', () => {
       await onClaimed(AUDIT_TX, refund);
       return { refund, ledger };
     });
-    repository.recordProcessed.mockImplementation(async (id, providerRef, onRecorded) => {
+    repository.recordProcessed.mockImplementation(async (id, providerRef, actorId, onRecorded) => {
       const recorded = {
         refund: { ...refund, status: RefundStatus.PROCESSED, providerRef },
         returnRequest: { id: 'return1', orderId: 'order1', status: 'REFUNDED' },
@@ -94,7 +97,7 @@ describe('RefundsService', () => {
 
     expect(paystack.createRefund).toHaveBeenCalledTimes(1);
     expect(paystack.createRefund).toHaveBeenCalledWith({ transaction: 'txn_123', amount: 4050 });
-    expect(repository.recordProcessed).toHaveBeenCalledWith('refund1', '3018284', expect.any(Function));
+    expect(repository.recordProcessed).toHaveBeenCalledWith('refund1', '3018284', 'admin1', expect.any(Function));
     expect(result.returnRequest?.status).toBe('REFUNDED');
     expect(auditService.log.mock.calls).toEqual([
       [
@@ -318,5 +321,94 @@ describe('RefundsService', () => {
       );
       expect(repository.openForOrder).not.toHaveBeenCalled();
     });
+  });
+  describe('refundReturnLines', () => {
+    const inspected = { id: 'return1', orderId: 'order1', status: 'INSPECTED' } as never;
+    const plan = { amount: new Prisma.Decimal('40.50') };
+    const openWith = (opened: Refund, openLedger: RefundLedger = ledger) =>
+      repository.openForReturnLines.mockImplementation(async (_request, check, onOpened) => {
+        check(openLedger, plan, opened.method);
+        await onOpened(AUDIT_TX, opened, inspected);
+        return opened;
+      });
+
+    it('records the refund of the units received, audits the return and the refund, then sends it', async () => {
+      openWith({ ...refund, method: RefundMethod.PROVIDER, shippingAmount: new Prisma.Decimal(0) } as Refund);
+      paystack.createRefund.mockResolvedValue({ id: '9', status: 'pending' });
+
+      await service.refundReturnLines(inspected, { shipping: false, note: null }, 'admin1');
+
+      expect(repository.openForReturnLines).toHaveBeenCalledWith(
+        { returnRequestId: 'return1', shipping: false, actorId: 'admin1', note: null },
+        expect.any(Function),
+        expect.any(Function),
+      );
+      expect(auditService.log.mock.calls.slice(0, 2).map(([entry]) => [entry.entity, entry.action])).toEqual([
+        ['ReturnRequest', 'STATUS_CHANGE'],
+        ['Refund', 'CREATE'],
+      ]);
+      expect(paystack.createRefund).toHaveBeenCalledTimes(1);
+    });
+
+    it('records a cash-on-delivery return refund as cash handed back, without a provider call', async () => {
+      const codLedger: RefundLedger = {
+        ...ledger,
+        attempt: { ...ledger.attempt, provider: PaymentProvider.CASH_ON_DELIVERY, reference: null },
+        refunds: [],
+      };
+      openWith(
+        {
+          ...refund,
+          method: RefundMethod.CASH,
+          status: RefundStatus.PROCESSED,
+          shippingAmount: new Prisma.Decimal(0),
+        } as Refund,
+        codLedger,
+      );
+
+      await expect(
+        service.refundReturnLines(inspected, { shipping: false, note: null }, 'admin1'),
+      ).resolves.toMatchObject({
+        method: 'CASH',
+      });
+      expect(paystack.createRefund).not.toHaveBeenCalled();
+      expect(auditService.log.mock.calls[0][0]).toMatchObject({ action: 'REFUND', details: { to: 'REFUNDED' } });
+    });
+
+    it('resends the existing refund of a REFUND_PENDING return instead of opening another', async () => {
+      repository.findByReturnRequest.mockResolvedValue(refund);
+      paystack.createRefund.mockResolvedValue({ id: '9', status: 'pending' });
+
+      await service.refundReturnLines(
+        { ...(inspected as object), status: 'REFUND_PENDING' } as never,
+        { shipping: false, note: null },
+        'admin1',
+      );
+
+      expect(repository.openForReturnLines).not.toHaveBeenCalled();
+      expect(repository.claimForSending).toHaveBeenCalledWith('refund1', expect.any(Function), expect.any(Function));
+    });
+  });
+
+  it('records a cancelled paid order refund as PENDING with an audit row, on the cancel transaction', async () => {
+    repository.openForCancelledOrder.mockImplementation(async (_tx, _orderId, onOpened) => {
+      const pending = { ...refund, reason: RefundReason.ORDER_CANCELLED, returnRequestId: null } as Refund;
+      await onOpened(AUDIT_TX, pending);
+      return pending;
+    });
+
+    await service.openCancellationRefund(AUDIT_TX, 'order1', 'user1');
+
+    expect(repository.openForCancelledOrder).toHaveBeenCalledWith(AUDIT_TX, 'order1', expect.any(Function));
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: 'Refund',
+        action: 'CREATE',
+        userId: 'user1',
+        details: expect.objectContaining({ reason: 'ORDER_CANCELLED' }),
+      }),
+      AUDIT_TX,
+    );
+    expect(paystack.createRefund).not.toHaveBeenCalled();
   });
 });

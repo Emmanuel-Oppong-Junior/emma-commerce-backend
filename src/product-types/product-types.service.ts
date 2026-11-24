@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { AttributeDefinition } from '../generated/prisma/client';
 import { AuditService, fieldChanges, fieldValues } from '../commons/audit.service';
 import { ProductTypesRepository, ProductTypeWithAttributes } from './product-types.repository';
-import { CreateProductTypeInput, UpdateProductTypeInput } from './dto/product-type.input';
+import { CreateProductTypeInput, ProductTypeReturnPolicyInput, UpdateProductTypeInput } from './dto/product-type.input';
 import { AttributeDefinitionInput, UpdateAttributeDefinitionInput } from './dto/attribute-definition.input';
 import { AttributeRule, checkAttributeRule } from './domain/attribute-validation';
 
@@ -10,6 +10,8 @@ const AUDITED_TYPE_FIELDS = [
   'key',
   'name',
   'description',
+  'returnable',
+  'returnWindowDays',
 ] as const satisfies readonly (keyof ProductTypeWithAttributes)[];
 const AUDITED_ATTRIBUTE_FIELDS = [
   'productTypeId',
@@ -101,6 +103,30 @@ export class ProductTypesService {
     const existing = await this.findEditable(id);
     return this.auditService.record(
       (tx) => this.repository.update(id, { name: input.name, description: input.description }, tx),
+      (updated) => ({
+        entity: 'ProductType',
+        entityId: id,
+        action: 'UPDATE',
+        userId: actorId,
+        details: { changes: fieldChanges(existing, updated, AUDITED_TYPE_FIELDS) },
+      }),
+    );
+  }
+
+  /** Sets whether a product type's products can be returned and in how many days; allowed on system types too. */
+  async setReturnPolicy(
+    id: string,
+    input: ProductTypeReturnPolicyInput,
+    actorId: string,
+  ): Promise<ProductTypeWithAttributes> {
+    const existing = await this.findOne(id);
+    return this.auditService.record(
+      (tx) =>
+        this.repository.update(
+          id,
+          { returnable: input.returnable, returnWindowDays: input.returnWindowDays ?? null },
+          tx,
+        ),
       (updated) => ({
         entity: 'ProductType',
         entityId: id,

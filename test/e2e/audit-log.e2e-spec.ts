@@ -7,6 +7,7 @@ import { gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt } from '../helpers/db.helper';
 import { signInAdmin, signInSuperAdmin, signInUser } from '../helpers/auth.helper';
 import { quoteHashFor } from '../helpers/checkout.helper';
+import { shipmentOf } from '../helpers/shipment.helper';
 
 describe('Audit log for privileged mutations (e2e)', () => {
   let app: INestApplication;
@@ -64,7 +65,7 @@ describe('Audit log for privileged mutations (e2e)', () => {
     expect(JSON.stringify(rows)).not.toMatch(/Staff@12345|\$2[aby]\$|audit-staff@example\.com/);
   });
 
-  it('records the approval and the refund of a return with the admin, amounts and provider reference', async () => {
+  it('records each step and the refund of a return with the admin, amounts and provider reference', async () => {
     const address = await run(
       `mutation { createAddress(input: { street: "1 Audit St", city: "Accra", recipientName: "Test Customer", phone: "0244000000", region: GREATER_ACCRA,
         zipCode: "00233", country: "GH" }) { id } }`,
@@ -77,32 +78,71 @@ describe('Audit log for privileged mutations (e2e)', () => {
       userToken,
     );
     const orderId = order.createOrder.id;
-    await seedPaymentAttempt(prisma, { orderId, status: 'CAPTURED', reference: `ref-${orderId}` });
+    const { grandTotal } = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+    await seedPaymentAttempt(prisma, {
+      orderId,
+      status: 'CAPTURED',
+      reference: `ref-${orderId}`,
+      amount: grandTotal.toNumber(),
+    });
     await prisma.order.update({ where: { id: orderId }, data: { status: 'COMPLETED' } });
+    // P6-R.1: a return names delivered units, so the order's goods are delivered first.
+    await prisma.shipment.update({
+      where: { id: await shipmentOf(prisma, orderId) },
+      data: { status: 'DELIVERED', dispatchedAt: new Date(), deliveredAt: new Date() },
+    });
+    const [item] = await prisma.orderItem.findMany({ where: { orderId } });
     const request = await run(
-      `mutation { createReturnRequest(input: { orderId: "${orderId}", reason: "Arrived damaged" }) { id } }`,
+      `mutation { requestReturn(input: { orderId: "${orderId}", lines: [{ orderItemId: "${item.id}", quantity: 1, reason: DAMAGED }] }) { id lines { id } } }`,
       userToken,
     );
-    const returnId = request.createReturnRequest.id;
+    const returnId = request.requestReturn.id;
+    const lineId = request.requestReturn.lines[0].id;
 
+    await run(`mutation { approveReturn(input: { returnRequestId: "${returnId}" }) { status } }`, adminToken);
     await run(
-      `mutation { approveReturn(input: { returnRequestId: "${returnId}", refundAmount: "40.00" }) { status } }`,
+      `mutation { receiveReturn(input: { returnRequestId: "${returnId}", lines: [{ returnLineId: "${lineId}", receivedQuantity: 1 }] }) { status } }`,
       adminToken,
     );
-    await run(`mutation { processRefund(returnRequestId: "${returnId}") { status } }`, adminToken);
+    await run(
+      `mutation { inspectReturn(input: { returnRequestId: "${returnId}", lines: [{ returnLineId: "${lineId}", restockQuantity: 0, writeOffQuantity: 1 }] }) { status } }`,
+      adminToken,
+    );
+    await run(`mutation { refundReturn(input: { returnRequestId: "${returnId}" }) { status } }`, adminToken);
 
     const refund = await prisma.refund.findUniqueOrThrow({ where: { returnRequestId: returnId } });
+    const amount = refund.amount.toString();
     const rows = await auditRows('ReturnRequest', returnId);
     expect(rows.map(({ action, userId: actor, details }) => ({ action, actor, details }))).toEqual([
+      { action: 'STATUS_CHANGE', actor: adminId, details: { orderId, from: 'REQUESTED', to: 'APPROVED' } },
       {
         action: 'STATUS_CHANGE',
         actor: adminId,
-        details: { orderId, from: 'PENDING', to: 'APPROVED', refundAmount: '40' },
+        details: { orderId, from: 'APPROVED', to: 'RECEIVED', lines: [{ returnLineId: lineId, receivedQuantity: 1 }] },
       },
       {
         action: 'STATUS_CHANGE',
         actor: adminId,
-        details: { orderId, from: 'APPROVED', to: 'REFUND_PENDING', refundId: refund.id, amount: '40' },
+        details: {
+          orderId,
+          from: 'RECEIVED',
+          to: 'INSPECTED',
+          lines: [{ returnLineId: lineId, restockQuantity: 0, writeOffQuantity: 1 }],
+          movements: [],
+        },
+      },
+      {
+        action: 'STATUS_CHANGE',
+        actor: adminId,
+        details: {
+          orderId,
+          from: 'INSPECTED',
+          to: 'REFUND_PENDING',
+          refundId: refund.id,
+          amount,
+          shippingAmount: '0',
+          method: 'PROVIDER',
+        },
       },
       {
         action: 'REFUND',
@@ -111,13 +151,14 @@ describe('Audit log for privileged mutations (e2e)', () => {
           orderId,
           from: 'REFUND_PENDING',
           to: 'REFUNDED',
-          amount: '40',
+          amount,
           providerReference: `ref-${orderId}`,
           providerRefundId: 'rf_audit',
         },
       },
     ]);
     expect((await auditRows('Refund', refund.id)).map(({ action, userId: actor }) => ({ action, actor }))).toEqual([
+      { action: 'CREATE', actor: adminId },
       { action: 'STATUS_CHANGE', actor: adminId },
       { action: 'REFUND', actor: adminId },
     ]);

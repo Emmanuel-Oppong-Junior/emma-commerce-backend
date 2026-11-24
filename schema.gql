@@ -2,6 +2,20 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
+input AcceptReturnOutsidePolicyInput {
+  lines: [ReturnLineInput!]!
+  orderId: ID!
+
+  """
+  Why the store takes the units back outside the return window or although their product type is not returnable
+  """
+  overrideReason: String!
+  resolution: ReturnResolution! = REFUND
+
+  """Internal note, never shown to the customer"""
+  staffNote: String
+}
+
 """Exactly one of phone, ghanaPostGps, or street with city, and why"""
 input AddCodBlacklistEntryInput {
   city: String
@@ -93,12 +107,6 @@ input AdjustVariantStockInput {
   """
   serials: [String!]
   variantId: ID!
-}
-
-input ApproveReturnInput {
-  adminNote: String
-  refundAmount: Decimal!
-  returnRequestId: ID!
 }
 
 input AssignShipmentRiderInput {
@@ -1237,11 +1245,6 @@ input CreateRateRuleInput {
   weightBands: [WeightBandInput!] = []
 }
 
-input CreateReturnRequestInput {
-  orderId: ID!
-  reason: String!
-}
-
 input CreateReviewInput {
   comment: String
   productId: String!
@@ -1455,6 +1458,30 @@ input CustomerGroupMembersInput {
 
   """1-500 user ids"""
   userIds: [ID!]!
+}
+
+"""A return of some delivered units of one of your orders"""
+type CustomerReturn {
+  createdAt: DateTime!
+  id: ID!
+  lines: [ReturnLine!]!
+  orderId: ID!
+
+  """Why staff refused it"""
+  rejectionReason: String
+
+  """The replacement order of an exchange"""
+  replacementOrderId: ID
+  resolution: ReturnResolution!
+  status: ReturnStatus!
+  updatedAt: DateTime!
+}
+
+type CustomerReturnPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [CustomerReturn!]!
+  totalCount: Int!
 }
 
 type DashboardSummary {
@@ -1817,6 +1844,34 @@ enum GhanaRegion {
   WESTERN_NORTH
 }
 
+input InspectReturnInput {
+  """Every line with units received, once"""
+  lines: [InspectedReturnLineInput!]!
+  returnRequestId: ID!
+
+  """Internal note, never shown to the customer"""
+  staffNote: String
+}
+
+input InspectedReturnLineInput {
+  """
+  Lot-tracked variants: the existing lot the restocked units go into; else the lots the order's sale drew from
+  """
+  lot: LotInput
+
+  """Units put back into sellable stock at the order's location"""
+  restockQuantity: Int!
+  returnLineId: ID!
+
+  """
+  Serial-tracked variants: one serial per restocked unit, each a unit sold on this order
+  """
+  serials: [String!]
+
+  """Units not resold (damaged, unsellable); no stock is added for them"""
+  writeOffQuantity: Int!
+}
+
 """
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
@@ -1911,6 +1966,11 @@ type Money {
 
 type Mutation {
   """
+  Create an APPROVED return for an order's customer outside the return window or for a non-returnable product, with a reason (staff, audited); the units must still have been delivered and not be refunded or returned
+  """
+  acceptReturnOutsidePolicy(input: AcceptReturnOutsidePolicyInput!): ReturnRequest!
+
+  """
   Adds an attribute definition; a type that products use only takes optional ones
   """
   addAttributeDefinition(input: AttributeDefinitionInput!, productTypeId: ID!): ProductType!
@@ -1950,8 +2010,8 @@ type Mutation {
   """Admin: permanently delete any review for moderation purposes"""
   adminDeleteReview(reviewId: String!): Review!
 
-  """Approve a return request (admin only)"""
-  approveReturn(input: ApproveReturnInput!): ReturnRequestEntity!
+  """Approve a requested return (staff)"""
+  approveReturn(input: ReturnStepInput!): ReturnRequest!
 
   """
   Approve a SUBMITTED stock-take: every non-zero variance becomes a STOCK_TAKE adjustment
@@ -1982,6 +2042,9 @@ type Mutation {
 
   """Cancel a DRAFT or SENT purchase order nothing was received on (staff)"""
   cancelPurchaseOrder(id: ID!, input: CancelPurchaseOrderInput): PurchaseOrder!
+
+  """Withdraw your own return before its goods arrive back"""
+  cancelReturn(returnRequestId: ID!): CustomerReturn!
 
   """
   Cancel a shipment that has not been dispatched (staff): its units can be shipped again and the serials picked for it go back on the shelf. CONFLICT once dispatched
@@ -2074,9 +2137,6 @@ type Mutation {
   Add a delivery fee for a service level to a zone. A price change: recent step-up; audited
   """
   createRateRule(input: CreateRateRuleInput!, zoneId: ID!): RateRuleEntity!
-
-  """Create a return request for a delivered order"""
-  createReturnRequest(input: CreateReturnRequestInput!): ReturnRequestEntity!
 
   """Creates a review for a product"""
   createReview(input: CreateReviewInput!): Review!
@@ -2201,12 +2261,22 @@ type Mutation {
   dispatchStockTransfer(id: ID!, input: DispatchStockTransferInput): StockTransfer!
 
   """
+  Settle an inspected exchange with a replacement order at no charge (staff). BAD_REQUEST with reason EXCHANGE_NOT_ALLOWED or EXCHANGE_OUT_OF_STOCK when it cannot be done: refund instead
+  """
+  exchangeReturn(input: ReturnStepInput!): ReturnRequest!
+
+  """
   Record that a delivery you took out failed, with what happened. NOT_FOUND when it is not yours
   """
   failMyDelivery(input: FailMyDeliveryInput!): RiderDelivery!
 
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
+
+  """
+  Decide per line how many received units go back into stock (at the order's location) and how many are written off (staff)
+  """
+  inspectReturn(input: InspectReturnInput!): ReturnRequest!
 
   """
   Open a stock count at a location for a category, a list of variants or everything (admin only)
@@ -2219,13 +2289,15 @@ type Mutation {
   """
   processPendingRefund(refundId: ID!): RefundEntity!
 
-  """Process a refund for an approved return (admin only)"""
-  processRefund(returnRequestId: ID!): ReturnRequestEntity!
-
   """
   Receive a delivery against a sent purchase order into its location; lot-tracked lines name their lot, serial-tracked lines their serials (staff)
   """
   receivePurchaseOrder(id: ID!, input: ReceivePurchaseOrderInput!): PurchaseOrder!
+
+  """
+  Record the goods of an approved return arriving back: units received per line (staff)
+  """
+  receiveReturn(input: ReceiveReturnInput!): ReturnRequest!
 
   """
   Receive a dispatched transfer at the destination, recording any shortfall per line (staff)
@@ -2258,8 +2330,15 @@ type Mutation {
   """
   refundOrder(input: RefundOrderInput!): RefundEntity!
 
-  """Reject a return request (admin only)"""
-  rejectReturn(input: RejectReturnInput!): ReturnRequestEntity!
+  """
+  Refund an inspected return: the units received, at what the order stored for them, through the payment's provider (cash-on-delivery: cash handed back); the delivery fee only with refundShipping. A legacy whole-order request refunds its approved amount. Sending again resends a refund that was refused (staff)
+  """
+  refundReturn(input: RefundReturnInput!): ReturnRequest!
+
+  """
+  Refuse a requested return, or an approved one whose goods never arrived, with a reason (staff)
+  """
+  rejectReturn(input: RejectReturnInput!): ReturnRequest!
 
   """Removes an attribute definition from a type no product uses"""
   removeAttributeDefinition(attributeId: ID!): ProductType!
@@ -2319,6 +2398,11 @@ type Mutation {
   requestPhoneVerification: PhoneVerificationRequest!
 
   """
+  Return delivered units of your own order: per line a quantity and reason, optional photos, and for an exchange the variant wanted. BAD_REQUEST (reason NOT_RETURNABLE, OUTSIDE_RETURN_WINDOW, NOT_DELIVERED, EXCHANGE_NOT_ALLOWED) or CONFLICT (RETURN_QUANTITY_EXCEEDED)
+  """
+  requestReturn(input: RequestReturnInput!): CustomerReturn!
+
+  """
   Send a new verification email to the signed-in user: to the pending new email if a change is in progress, otherwise to the unverified current email
   """
   resendVerificationEmail: Boolean!
@@ -2357,6 +2441,11 @@ type Mutation {
   Admin: set variants' prices in a price list; each entry replaces the variant's entry and tiers
   """
   setPriceListEntries(input: SetPriceListEntriesInput!): PriceList!
+
+  """
+  Sets whether a product type's products can be returned and its return window (system types too)
+  """
+  setProductTypeReturnPolicy(id: ID!, input: ProductTypeReturnPolicyInput!): ProductType!
 
   """
   Allow or refuse cash on delivery for deliveries to a shipping zone (pickup is not affected). Owner, recent step-up, audited
@@ -3440,7 +3529,32 @@ type ProductType {
   """
   key: String!
   name: String!
+
+  """
+  Days after delivery its products may be returned in; null takes the store's returnWindowDays
+  """
+  returnWindowDays: Int
+
+  """
+  Whether its products can be returned (false: perishables, hygiene, digital goods)
+  """
+  returnable: Boolean!
   updatedAt: DateTime!
+}
+
+"""
+The return policy of a product type (P6-R.1); system types may set it too
+"""
+input ProductTypeReturnPolicyInput {
+  """
+  Days after delivery its products may be returned in (0-365); null or omitted: the store's window
+  """
+  returnWindowDays: Int
+
+  """
+  false: its products are never taken back (perishables, hygiene, digital goods)
+  """
+  returnable: Boolean!
 }
 
 """
@@ -3954,8 +4068,14 @@ type Query {
   """
   myPhoneVerification: PhoneVerificationStatusEntity!
 
-  """Get return requests for the current user"""
-  myReturnRequests: [ReturnRequestEntity!]!
+  """Your returns, newest first"""
+  myReturns(
+    """Id of the last return of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 20
+  ): CustomerReturnPage!
 
   """Retrieves a specific order by ID for the current user"""
   order(orderId: String!): Order!
@@ -4072,8 +4192,25 @@ type Query {
   """List refunds, optionally by status, newest first (admin only)"""
   refunds(status: RefundStatusEnum): [RefundEntity!]!
 
-  """Get all return requests (admin only)"""
-  returnRequests: [ReturnRequestEntity!]!
+  """A return request with its lines and history (staff)"""
+  returnRequest(id: ID!): ReturnRequest!
+
+  """Return requests, newest first, by status, order or date (staff)"""
+  returns(
+    """Id of the last return of the previous page"""
+    after: ID
+
+    """Created at or after"""
+    createdFrom: DateTime
+
+    """Created before"""
+    createdTo: DateTime
+
+    """1-100"""
+    first: Int! = 20
+    orderId: ID
+    status: ReturnStatus
+  ): ReturnRequestPage!
 
   """Item sales of paid orders grouped by category, all time (admin only)"""
   revenueByCategory: [RevenueByCategoryEntity!]!
@@ -4473,9 +4610,24 @@ input ReceivePurchaseOrderLineInput {
   variantId: ID!
 }
 
+input ReceiveReturnInput {
+  """Every line of the return, once"""
+  lines: [ReceivedReturnLineInput!]!
+  returnRequestId: ID!
+
+  """Internal note, never shown to the customer"""
+  staffNote: String
+}
+
 input ReceiveStockTransferInput {
   """Only lines that arrived short; every other line is received in full"""
   lines: [ReceivedTransferLineInput!]
+}
+
+input ReceivedReturnLineInput {
+  """Units that arrived back (0 to the line quantity)"""
+  receivedQuantity: Int!
+  returnLineId: ID!
 }
 
 input ReceivedTransferLineInput {
@@ -4673,13 +4825,18 @@ input RefundOrderLineInput {
 }
 
 """
-Why money was refunded. Staff choose any but RETURN and PAYMENT_NOT_ACCEPTED, which the system sets
+Why money was refunded. Staff choose any but RETURN, PAYMENT_NOT_ACCEPTED and ORDER_CANCELLED, which the system sets
 """
 enum RefundReason {
   CUSTOMER_REQUEST
   DAMAGED
   DUPLICATE_CHARGE
   NOT_DELIVERED
+
+  """
+  Set by the system when a paid order is cancelled; staff send it with processPendingRefund
+  """
+  ORDER_CANCELLED
 
   """Anything else; a note is required"""
   OTHER
@@ -4690,9 +4847,20 @@ enum RefundReason {
   PAYMENT_NOT_ACCEPTED
   PRICE_ADJUSTMENT
 
-  """Set by the returns flow (processRefund)"""
+  """Set by the returns flow (refundReturn)"""
   RETURN
   WRONG_ITEM
+}
+
+input RefundReturnInput {
+  """
+  Also refund the delivery fee the order was charged (once per order); not refunded on returns by default
+  """
+  refundShipping: Boolean! = false
+  returnRequestId: ID!
+
+  """Internal note, never shown to the customer"""
+  staffNote: String
 }
 
 enum RefundStatusEnum {
@@ -4712,8 +4880,12 @@ enum RefundStatusEnum {
 }
 
 input RejectReturnInput {
-  adminNote: String
+  """Why it is refused; shown to the customer"""
+  reason: String!
   returnRequestId: ID!
+
+  """Internal note, never shown to the customer"""
+  staffNote: String
 }
 
 input RemovePriceListEntriesInput {
@@ -4726,6 +4898,12 @@ input RemovePriceListEntriesInput {
 input RemoveProductsFromTagDto {
   """List of product IDs to be added to tag"""
   productIds: [ID!] = []
+}
+
+input RequestReturnInput {
+  lines: [ReturnLineInput!]!
+  orderId: ID!
+  resolution: ReturnResolution! = REFUND
 }
 
 input ResetPasswordInput {
@@ -4765,24 +4943,177 @@ input RestockVariantInput {
   variantId: ID!
 }
 
-type ReturnRequestEntity {
-  adminNote: String
-  createdAt: DateTime!
+"""Units of one order line under a return, as the customer sees them"""
+type ReturnLine {
+  """The variant wanted instead (exchange)"""
+  exchangeVariantId: ID
   id: ID!
+
+  """The customer's note"""
+  note: String
+  orderItemId: ID!
+
+  """URLs of the customer's photos"""
+  photoUrls: [String!]!
+
+  """The product name when ordered"""
+  productName: String!
+  quantity: Int!
+  reason: ReturnReason!
+
+  """Units that arrived back; null until the return is received"""
+  receivedQuantity: Int
+
+  """The SKU when ordered"""
+  sku: String
+}
+
+input ReturnLineInput {
+  """
+  resolution EXCHANGE only: the variant wanted instead (same product, same unit price)
+  """
+  exchangeVariantId: ID
+
+  """Required when reason is OTHER"""
+  note: String
+  orderItemId: ID!
+
+  """Public ids from POST /returns/orders/:orderId/photos, at most 3"""
+  photoPublicIds: [String!]
+
+  """
+  Units to return: at most those delivered and not yet refunded or returned
+  """
+  quantity: Int!
+  reason: ReturnReason!
+}
+
+enum ReturnReason {
+  CHANGED_MIND
+  DAMAGED
+  DEFECTIVE
+  NOT_AS_DESCRIBED
+
+  """Anything else; a note is required"""
+  OTHER
+  SIZE_FIT
+  WRONG_ITEM
+}
+
+"""A return request with everything staff see"""
+type ReturnRequest {
+  createdAt: DateTime!
+
+  """The staff member who created it for the customer"""
+  createdById: ID
+
+  """Status history, oldest first"""
+  events: [ReturnStatusEvent!]!
+  id: ID!
+
+  """
+  A whole-order request from before item-level returns: no lines, a free-text reason
+  """
+  legacy: Boolean!
+  lines: [StaffReturnLine!]!
   orderId: ID!
-  reason: String!
+
+  """
+  Why staff accepted it outside the return window or for a non-returnable product
+  """
+  policyOverrideReason: String
+
+  """The free-text reason of a legacy request"""
+  reason: String
+
+  """The refund of this return, once recorded"""
+  refund: RefundEntity
+
+  """The amount approved for a legacy request"""
   refundAmount: Money
-  status: ReturnStatusEnum!
+
+  """Why it was refused; shown to the customer"""
+  rejectionReason: String
+
+  """The replacement order of an exchange"""
+  replacementOrderId: ID
+  resolution: ReturnResolution!
+
+  """Internal note (latest); never shown to the customer"""
+  staffNote: String
+  status: ReturnStatus!
   updatedAt: DateTime!
   userId: ID!
 }
 
-enum ReturnStatusEnum {
+type ReturnRequestPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [ReturnRequest!]!
+  totalCount: Int!
+}
+
+enum ReturnResolution {
+  """
+  Another variant of the same product at the same price for each unit received
+  """
+  EXCHANGE
+
+  """The money back for the units received"""
+  REFUND
+}
+
+enum ReturnStatus {
+  """Accepted: the customer sends the goods back"""
   APPROVED
-  PENDING
+
+  """Withdrawn by the customer before the goods arrived"""
+  CANCELLED
+
+  """Replaced by a replacement order (see replacementOrderId)"""
+  EXCHANGED
+
+  """
+  Staff decided what happens to each unit received (restock or write-off)
+  """
+  INSPECTED
+
+  """The goods arrived back (each line records how many units)"""
+  RECEIVED
+
+  """Refunded"""
   REFUNDED
+
+  """The refund is recorded and being sent through the payment provider"""
   REFUND_PENDING
+
+  """Refused by staff (see rejectionReason)"""
   REJECTED
+
+  """Asked for by the customer, waiting for staff"""
+  REQUESTED
+}
+
+"""A step of a return's history"""
+type ReturnStatusEvent {
+  """The customer or staff member; null for the system"""
+  actorId: ID
+  createdAt: DateTime!
+
+  """Null for the first step"""
+  from: ReturnStatus
+  id: ID!
+
+  """Staff note or reason given"""
+  note: String
+  to: ReturnStatus!
+}
+
+input ReturnStepInput {
+  returnRequestId: ID!
+
+  """Internal note, never shown to the customer"""
+  staffNote: String
 }
 
 type RevenueByCategoryEntity {
@@ -5156,6 +5487,40 @@ type StaffPermission {
 
   """Permission key, e.g. order.refund"""
   key: String!
+}
+
+"""A return line with what staff decided for its units"""
+type StaffReturnLine {
+  """The variant wanted instead (exchange)"""
+  exchangeVariantId: ID
+  id: ID!
+
+  """The customer's note"""
+  note: String
+  orderItemId: ID!
+
+  """Cloudinary public ids of the photos"""
+  photoPublicIds: [String!]!
+
+  """URLs of the customer's photos"""
+  photoUrls: [String!]!
+
+  """The product name when ordered"""
+  productName: String!
+  quantity: Int!
+  reason: ReturnReason!
+
+  """Units that arrived back; null until the return is received"""
+  receivedQuantity: Int
+
+  """Units put back into stock; null until inspected"""
+  restockQuantity: Int
+
+  """The SKU when ordered"""
+  sku: String
+
+  """Units written off; null until inspected"""
+  writeOffQuantity: Int
 }
 
 """A staff role: a named set of permissions (staff only)"""
@@ -5571,6 +5936,11 @@ type StoreSettings {
 
   """Whether product prices already include tax"""
   pricesIncludeTax: Boolean!
+
+  """
+  Days after delivery goods may be returned in, unless their product type sets its own
+  """
+  returnWindowDays: Int!
   supportEmail: String
   supportPhone: String
 
@@ -6109,6 +6479,11 @@ input UpdateStoreSettingsInput {
 
   """Whether product prices already include tax"""
   pricesIncludeTax: Boolean
+
+  """
+  Days after delivery goods may be returned in (0-365), unless their product type sets its own
+  """
+  returnWindowDays: Int
   supportEmail: String
   supportPhone: String
 

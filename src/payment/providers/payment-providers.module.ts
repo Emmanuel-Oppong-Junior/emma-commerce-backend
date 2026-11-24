@@ -10,8 +10,8 @@ import { CashOnDeliveryAdapter } from './cash-on-delivery.adapter';
 import { PaymentProviderRegistry } from './payment-provider.registry';
 
 /**
- * The providers and the store's payment settings. Its own module so OrderModule and ReturnsModule can use them:
- * PaymentModule imports OrderModule, which imports ReturnsModule.
+ * The providers and the store's payment settings. Its own module so OrderModule and RefundsModule can use them:
+ * PaymentModule imports OrderModule, which imports RefundsModule.
  */
 @Module({
   imports: [ConfigModule, CommonsModule],

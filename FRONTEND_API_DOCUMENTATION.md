@@ -2827,87 +2827,117 @@ CostChange { id; variantId; oldValue?: Decimal; newValue: Decimal; currency; sou
 
 ---
 
-#### `createReturnRequest`
-- **Type**: Mutation
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Args**: `input: CreateReturnRequestInput!`
-- **Description**: Submit a return request for one of the caller's own orders. Order must be `COMPLETED` (delivered or collected). A new request is allowed only if every earlier request for the order was rejected.
-- **Possible Errors**: `NOT_FOUND` (not the caller's order), `BAD_REQUEST` (not delivered, or an open request exists).
+> **Breaking changes (P6-R.1, item-level returns):** `createReturnRequest` → `requestReturn` (lines with quantities and reasons instead of one free-text reason); `myReturnRequests` → `myReturns` (paginated `CustomerReturnPage`); `returnRequests` → `returns` (paginated `ReturnRequestPage`, filters) plus `returnRequest(id)`; `processRefund(returnRequestId)` → `refundReturn(input)`; `approveReturn` no longer takes `refundAmount`/`adminNote` (input `ReturnStepInput { returnRequestId, staffNote? }`, permission `return.manage` only, no step-up); `rejectReturn` takes a customer-visible `reason` and an optional `staffNote` (was `adminNote`). Types: `ReturnRequestEntity` → `ReturnRequest` (staff) and `CustomerReturn` (customer); enum `ReturnStatusEnum` → `ReturnStatus` (`PENDING` renamed `REQUESTED`; new `RECEIVED`, `INSPECTED`, `EXCHANGED`, `CANCELLED`). Cancelling a paid online order no longer opens a return request: it records a `PENDING` refund (reason `ORDER_CANCELLED`) that staff send with `processPendingRefund`. `restockVariant` with `returnRequestId` is refused for item-level returns (their units are restocked by `inspectReturn`); it still works for legacy requests.
 
-**Input: `CreateReturnRequestInput`**
+**How a return works:** the customer returns some **delivered** units of an order's lines (`requestReturn`), each line with a quantity, a `ReturnReason` and optional photos; for an exchange (`resolution: EXCHANGE`) each line names the variant wanted. Staff approve or reject it, record the goods arriving (`receiveReturn`, per line how many came; a short receipt is final), inspect them (`inspectReturn`: per line how many go back into stock and how many are written off) and settle with `refundReturn` (money back for the units received) or `exchangeReturn` (a replacement order at no charge). Every step is a conditional transition with a history event (`ReturnRequest.events`); staff steps are audited.
+
+```
+REQUESTED ─approve→ APPROVED ─receive→ RECEIVED ─inspect→ INSPECTED ─refundReturn→ REFUND_PENDING → REFUNDED
+    │                  │                                       │       (cash on delivery: REFUNDED at once)
+    ├─reject→ REJECTED ←┤ (goods never arrived)                └─exchangeReturn→ EXCHANGED
+    └─cancelReturn→ CANCELLED ←┘ (customer, before RECEIVED)
+```
+
+**Return window and policy:** units can be returned within `StoreSettings.returnWindowDays` (default 14) days of the delivery of the shipment that carried them (a pickup: when collected), unless their product type sets `returnWindowDays`; a product type with `returnable: false` (perishables, hygiene, digital goods) is never returned (set with `setProductTypeReturnPolicy`). Staff with `return.override` can accept a return outside the window or of a non-returnable type with `acceptReturnOutsidePolicy`.
+
+**Units:** a line's units under returns (not rejected or cancelled; once received, the units that arrived) plus its units refunded outside returns never exceed its delivered units; concurrent requests are serialised (order row lock, plus a database trigger).
+
+#### `POST /returns/orders/:orderId/photos` (customer, REST)
+- Multipart field `file`: a JPEG, PNG or WebP of at most 5 MB, for the caller's own order (else `404`). Returns `{ publicId, url }`; put `publicId` in a line's `photoPublicIds` (at most 3 per line; only photos uploaded for that order are accepted). Throttled to 10 uploads a minute.
+
+#### `requestReturn` (customer)
+- **Type**: Mutation · **Auth**: signed-in customer (`@CustomerOnly`: staff accounts get `FORBIDDEN`)
+- **Args**: `input: RequestReturnInput!` · **Response**: `CustomerReturn!`
 
 ```typescript
-{
-  orderId: string; // Required.
-  reason: string;  // Required. Min 10 chars.
+interface RequestReturnInput {
+  orderId: string;                       // your own order (else NOT_FOUND)
+  resolution?: 'REFUND' | 'EXCHANGE';    // default REFUND
+  lines: {                               // 1-50 lines, each order line once
+    orderItemId: string;
+    quantity: number;                    // >= 1, at most the units delivered and not yet refunded or returned
+    reason: ReturnReason;                // DAMAGED | DEFECTIVE | WRONG_ITEM | NOT_AS_DESCRIBED | CHANGED_MIND | SIZE_FIT | OTHER
+    note?: string;                       // required for OTHER, max 1000
+    photoPublicIds?: string[];           // from the photo upload, at most 3
+    exchangeVariantId?: string;          // EXCHANGE only (required then): a variant of the same product at the line's unit price
+  }[];
 }
 ```
 
-**Response: `ReturnRequestEntity`** (status enum type: `ReturnStatusEnum`)
+**Errors**: `BAD_REQUEST` with `extensions.reason`: `NOT_RETURNABLE` (product type not returnable), `OUTSIDE_RETURN_WINDOW`, `NOT_DELIVERED` (nothing of that line delivered yet), `EXCHANGE_NOT_ALLOWED` (another product, another price, or not on sale); `BAD_REQUEST` for a malformed request (duplicate line, OTHER without note, foreign photo, exchange variant missing or given on a refund); `CONFLICT` + `reason: RETURN_QUANTITY_EXCEEDED` (more units than are left).
 
 ```typescript
-{
-  id: string;
-  orderId: string;
-  userId: string;
-  reason: string;
-  status: ReturnStatusEnum;  // PENDING | APPROVED | REJECTED | REFUND_PENDING | REFUNDED
-  refundAmount?: Money;
-  adminNote?: string;
-  createdAt: DateTime;
-  updatedAt: DateTime;
+interface CustomerReturn {             // no staff notes, override reason, history actors or dispositions
+  id: string; orderId: string;
+  status: ReturnStatus; resolution: ReturnResolution;
+  rejectionReason: string | null;      // why staff refused it
+  replacementOrderId: string | null;   // the replacement order of an exchange
+  lines: ReturnLine[];
+  createdAt: string; updatedAt: string;
+}
+interface ReturnLine {
+  id: string; orderItemId: string; productName: string; sku: string | null;
+  quantity: number; reason: ReturnReason; note: string | null;
+  photoUrls: string[]; exchangeVariantId: string | null;
+  receivedQuantity: number | null;     // null until received
 }
 ```
 
----
+#### `cancelReturn` (customer)
+- **Args**: `returnRequestId: ID!` · **Response**: `CustomerReturn!`
+- Withdraws your own return while `REQUESTED` or `APPROVED` (else `CONFLICT`; another customer's: `NOT_FOUND`). Its units become returnable again.
 
-#### `approveReturn` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `input: ApproveReturnInput!`
-- **Response**: `ReturnRequestEntity!`
+#### `myReturns` (customer)
+- **Type**: Query · **Args**: `first: Int = 20` (1-100), `after: ID` (last id of the previous page) · **Response**: `CustomerReturnPage { nodes: [CustomerReturn!]!, totalCount: Int!, hasNextPage: Boolean! }`, newest first.
 
-**Input: `ApproveReturnInput`**
+#### `returns` / `returnRequest` (`return.manage`)
+- `returns(status?, orderId?, createdFrom?, createdTo?, first = 20, after?)`: `ReturnRequestPage`, newest first. `returnRequest(id: ID!)`: one `ReturnRequest`.
 
 ```typescript
-{
-  returnRequestId: string; // Required.
-  refundAmount: Decimal;     // Required. Min 0.
-  adminNote?: string;      // Optional.
+interface ReturnRequest {
+  id: string; orderId: string; userId: string;
+  status: ReturnStatus; resolution: ReturnResolution;
+  legacy: boolean;                     // a whole-order request from before P6-R.1: no lines, free-text `reason`
+  reason: string | null;               // legacy only
+  refundAmount: Money | null;          // legacy only: the amount approved
+  staffNote: string | null;            // internal, latest
+  rejectionReason: string | null;
+  policyOverrideReason: string | null; // set by acceptReturnOutsidePolicy
+  createdById: string | null;          // staff member who created it
+  replacementOrderId: string | null;
+  lines: StaffReturnLine[];            // ReturnLine + photoPublicIds, restockQuantity, writeOffQuantity
+  events: { id: string; from: ReturnStatus | null; to: ReturnStatus; actorId: string | null; note: string | null; createdAt: string }[];
+  refund: RefundEntity | null;         // once recorded
+  createdAt: string; updatedAt: string;
 }
 ```
 
-**Side effects**: Sets `status = APPROVED` and the refund amount. Stock is not touched. Only a `PENDING` request can be approved (`BAD_REQUEST` otherwise); if another admin approves or rejects it at the same moment, one wins and the other gets `CONFLICT`. The same applies to `rejectReturn`.
+#### `acceptReturnOutsidePolicy` (`return.manage` + `return.override`)
+- **Args**: `input: AcceptReturnOutsidePolicyInput!` = `RequestReturnInput` + `overrideReason: String!` + `staffNote?` · **Response**: `ReturnRequest!`
+- Creates an `APPROVED` return for the order's customer, skipping the window and the product type's returnable flag (never the delivered-units cap). Audited (`CREATE` with the reason).
 
----
+#### `approveReturn` / `rejectReturn` (`return.manage`)
+- `approveReturn(input: { returnRequestId, staffNote? })`: `REQUESTED → APPROVED`. A legacy request cannot be approved (`BAD_REQUEST`: reject it, or refund with `refundOrder`).
+- `rejectReturn(input: { returnRequestId, reason, staffNote? })`: `REQUESTED` or `APPROVED` (goods never arrived) → `REJECTED`; `reason` is shown to the customer.
+- Two staff acting at once: one wins, the other gets `CONFLICT`. Wrong status: `CONFLICT`.
 
-#### `rejectReturn` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `input: RejectReturnInput!`
-- **Response**: `ReturnRequestEntity!`
+#### `receiveReturn` (`return.manage`)
+- `input: { returnRequestId, lines: [{ returnLineId, receivedQuantity }], staffNote? }`: `APPROVED → RECEIVED`. List every line once with 0 to its quantity; at least one unit must have arrived (else reject the return). Units that never arrived are not refunded and become returnable again.
 
-**Input: `RejectReturnInput`**
+#### `inspectReturn` (`return.manage` + `inventory.adjust`)
+- `input: { returnRequestId, lines: [{ returnLineId, restockQuantity, writeOffQuantity, lot?, serials? }], staffNote? }`: `RECEIVED → INSPECTED`. Every line with units received, once; `restockQuantity + writeOffQuantity = receivedQuantity`.
+- Restocked units go back into sellable stock at the location the order was fulfilled from (`RETURN_RESTOCK` movement referring to the return): a lot-tracked variant into the existing lot named in `lot` or, by default, the lots the order's sale drew from; a serial-tracked variant needs one serial per restocked unit, each a unit sold on this order (`CONFLICT` + `SERIAL_NOT_AVAILABLE` otherwise). Written-off units add no stock (they left stock when sold).
 
-```typescript
-{
-  returnRequestId: string; // Required.
-  adminNote?: string;      // Optional.
-}
-```
+#### `refundReturn` (`order.refund` + step-up)
+- `input: { returnRequestId, refundShipping = false, staffNote? }` · **Response**: `ReturnRequest!`
+- An `INSPECTED` return is refunded for the units received, at what the order stored for them (never re-priced), plus the delivery fee only with `refundShipping` (once per order). Online payments: a `Refund` (`RETURN`, one line per returned order line) is recorded (`REFUND_PENDING`) and sent through Paystack at once (`PROCESSED` → `REFUNDED`); refused → `BAD_REQUEST`, the refund `FAILED` and the return `REFUND_PENDING`: call `refundReturn` again to resend. Outcome unknown → the refund stays `SENDING` (`CONFLICT` on retries; check Paystack). Cash on delivery: recorded as cash handed back, `REFUNDED` at once. Caps (payment, line units, delivery fee) and disputes (`CONFLICT` + `PAYMENT_DISPUTED`) as for `refundOrder`. A return has at most one refund, so repeats never refund twice. Not yet inspected: `CONFLICT`. A return asking for an exchange can be refunded instead.
+- **Legacy** requests (no lines): an `APPROVED` one with its `refundAmount` refunds that amount through Paystack (`APPROVED → REFUND_PENDING → REFUNDED`), as `processRefund` did.
 
----
+#### `exchangeReturn` (`return.manage`)
+- `input: { returnRequestId, staffNote? }`: an `INSPECTED` return with `resolution: EXCHANGE` → `EXCHANGED`. Creates a replacement order (`replacementOrderId`) for the customer: one line per returned line with the wanted variant and the units received, priced 0, total 0, same address or pickup point, `CONFIRMED` at once (paid by the returned units; the customer gets the order confirmation email). Its stock is reserved and taken as sold at the first location serving the original order's zone or pickup point that holds every unit; then it is fulfilled like any order (`createShipment`...).
+- `BAD_REQUEST` + `reason`: `EXCHANGE_NOT_ALLOWED` (no longer the same price or not on sale), `EXCHANGE_OUT_OF_STOCK`: refund instead with `refundReturn`. A refund return: `BAD_REQUEST`.
 
-#### `processRefund` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `returnRequestId: ID!`
-- **Response**: `ReturnRequestEntity!`
-- **Description**: Refund the approved amount through Paystack and move the request from `APPROVED` to `REFUNDED`. **Moves money only, never stock:** a cancelled order already had its stock restored at cancellation, and physically returned goods are put back with `restockVariant` (the order line's `variantId`) once received and inspected.
-- **How it runs**: the request is first claimed (`APPROVED → REFUND_PENDING`) and a `Refund` record is created, then Paystack is called once. On success the refund becomes `PROCESSED` (with Paystack's refund id in `providerRef`) and the request `REFUNDED`.
-- **Limits**: the amount must be greater than 0, and all refunds on the payment (including an auto-refund queued for a flagged payment) cannot exceed what was captured; otherwise `BAD_REQUEST` and nothing changes. Only Paystack payments can be refunded here (cash-on-delivery: `BAD_REQUEST`; refund those with `refundOrder`, which records cash handed back).
-- **Errors and retries**:
-  - Double-click or a second admin: `CONFLICT`; Paystack is never called twice.
-  - Paystack refused the refund: `BAD_REQUEST` ("Nothing was refunded"). The request stays `REFUND_PENDING` and its refund is `FAILED`; call `processRefund` again to retry.
-  - Paystack timed out or answered unreadably: an error, and the refund stays `SENDING` because Paystack may have created it. Further calls get `CONFLICT`. Check the Paystack dashboard; there is no in-app way to resolve this yet.
-  - Already `REFUNDED`, or not approved: `BAD_REQUEST`.
+**Customer messages:** `APPROVED`, `REJECTED`, `RECEIVED` and `EXCHANGED` record a `return.status_changed.v1` event (the email follows with the notification templates; today the worker logs it). A refund emails the customer as every refund does.
 
 ---
 
@@ -2989,20 +3019,7 @@ CostChange { id; variantId; oldValue?: Decimal; newValue: Decimal; currency; sou
 - **Payment status:** each processed refund moves `Order.paymentStatus` to `PARTIALLY_REFUNDED`, or `REFUNDED` once the whole capture is back. The order status does not change.
 - **Customer email:** every processed refund (also return refunds and auto-refunds) emails the customer the amount, the reason label and the refunded lines. Failures are not emailed.
 
-**`RefundReason` Enum** (P3-C.1): `CUSTOMER_REQUEST`, `DAMAGED`, `WRONG_ITEM`, `NOT_DELIVERED`, `PRICE_ADJUSTMENT`, `DUPLICATE_CHARGE`, `OTHER` (staff choose these), `RETURN` (return refunds), `PAYMENT_NOT_ACCEPTED` (auto-refunds of charges that could not be accepted). **`RefundMethod` Enum**: `PROVIDER`, `CASH`.
-
----
-
-#### `myReturnRequests`
-- **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Response**: `[ReturnRequestEntity!]!`
-
----
-
-#### `returnRequests` (ADMIN, SUPER_ADMIN)
-- **Type**: Query
-- **Response**: `[ReturnRequestEntity!]!`
+**`RefundReason` Enum** (P3-C.1): `CUSTOMER_REQUEST`, `DAMAGED`, `WRONG_ITEM`, `NOT_DELIVERED`, `PRICE_ADJUSTMENT`, `DUPLICATE_CHARGE`, `OTHER` (staff choose these), `RETURN` (return refunds), `PAYMENT_NOT_ACCEPTED` (auto-refunds of charges that could not be accepted), `ORDER_CANCELLED` (P6-R.1: the `PENDING` refund recorded when a paid order is cancelled; send it with `processPendingRefund`). **`RefundMethod` Enum**: `PROVIDER`, `CASH`.
 
 ---
 
@@ -3577,6 +3594,7 @@ One deployment serves one store. Its settings hold the names and tax registratio
   currency: Currency;        // The store currency; every Money field is in it
   supportEmail?: string;
   supportPhone?: string;
+  returnWindowDays: number;  // P6-R.1: days after delivery goods may be returned in (default 14), unless their product type sets its own
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -3598,6 +3616,7 @@ One deployment serves one store. Its settings hold the names and tax registratio
   pricesIncludeTax?: boolean;
   supportEmail?: string | null; // Valid email; null clears it
   supportPhone?: string | null; // International format, e.g. +233244000000; null clears it
+  returnWindowDays?: number;  // P6-R.1: 0-365. Cannot be null.
 }
 ```
 
@@ -3687,8 +3706,9 @@ A Pharmacist role comes with its vertical. The Owner can create **custom roles**
 | `order.fulfil` | `createShipment`, `cancelShipment`, `updateShipmentStatus`, `updateShipping`, `assignShipmentItemSerials`, `unassignShipmentItemSerials`, `riders`, `assignShipmentRider`, `unassignShipmentRider` (P1-O.2, P5-B.1, P5-C.1; held by Owner, Manager, Inventory clerk and Cashier) |
 | `delivery.ride` | `myDeliveries`, `myDelivery`, `startMyDelivery`, `failMyDelivery`, `completeMyDelivery`, `POST /delivery/my-shipments/:shipmentId/photo` (P5-C.1/C.2; held by the Rider role; the Owner holds it but is never assigned deliveries) |
 | `delivery.override` | `completeDelivery` with `overrideReason` (P5-C.2; held by Owner and Manager). `completeDelivery` itself and `POST /delivery/shipments/:shipmentId/photo` need `order.fulfil` |
-| `order.refund` | `approveReturn` (with `return.manage`), `processRefund`, `processPendingRefund`, `refundOrder` |
-| `return.manage` | `returnRequests`, `rejectReturn`, `approveReturn` (with `order.refund`) |
+| `order.refund` | `refundReturn`, `processPendingRefund`, `refundOrder` |
+| `return.manage` | `returns`, `returnRequest`, `approveReturn`, `rejectReturn`, `receiveReturn`, `inspectReturn` (with `inventory.adjust`), `exchangeReturn`, `acceptReturnOutsidePolicy` (with `return.override`) (P6-R.1; held by Owner, Manager and Support) |
+| `return.override` | `acceptReturnOutsidePolicy` (P6-R.1; held by Owner and Manager) |
 | `payment.view` | `payments`, `getUserPayment`, `refunds`, any customer's `payment`, `disputes`, `dispute` (P3-E.2) |
 | `payment.record` | `recordCodPayment` |
 | `cod.cash.manage` | `unremittedCashCollections`, `recordCashRemittance`, `cashRemittances`, `codCashReport` (P3-B.3; held by Owner, Manager and Cashier) |
@@ -3790,7 +3810,7 @@ Time-based one-time passwords (RFC 6238: SHA1, 6 digits, 30-second steps, any au
 | Kind | Operations |
 |---|---|
 | Role and permission changes | `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, `createUser` with `role: ADMIN` |
-| Refunds | `approveReturn`, `processRefund`, `processPendingRefund`, `refundOrder` |
+| Refunds | `refundReturn`, `processPendingRefund`, `refundOrder` |
 | Price changes | `updateProduct` when `isTaxable` is sent (it reprices every variant), `updateVariant` when `basePrice` is sent, every discount and coupon mutation, `createTax` / `updateTax` / `deleteTax`, `createRateRule` / `updateRateRule` / `deleteRateRule` (P5-A.1) |
 | Data exports | `addresses` without `userId` |
 
@@ -3873,6 +3893,12 @@ Two **system types** exist and are read-only: **General** (`id: "product_type_ge
 - **Args**: `id: ID!`; update also `input: UpdateProductTypeInput!` = `{ name?; description? }` (the key never changes)
 - **Response**: `ProductType!` · **Side effects**: audit entry (`UPDATE` / `DELETE`).
 - **Possible Errors**: `CONFLICT` (system type; delete of a type any product uses), `NOT_FOUND`, `FORBIDDEN`.
+
+#### `setProductTypeReturnPolicy` (P6-R.1)
+- **Type**: Mutation · **Auth**: `catalog.taxonomy.write`
+- **Args**: `id: ID!`, `input: ProductTypeReturnPolicyInput!` = `{ returnable: Boolean!; returnWindowDays?: Int | null }` (0-365; null or omitted: the store's `returnWindowDays`). Allowed on system types too.
+- **Response**: `ProductType!` (new fields `returnable: Boolean!`, `returnWindowDays: Int`) · **Side effects**: audit entry (`UPDATE` with the changes).
+- `returnable: false` refuses every return of its products (`NOT_RETURNABLE`), e.g. perishables, hygiene and digital goods.
 
 #### `addAttributeDefinition` / `updateAttributeDefinition` / `removeAttributeDefinition`
 - **Type**: Mutation · **Auth**: `catalog.taxonomy.write`
@@ -4078,7 +4104,7 @@ type Money {
 | `OrderItem.unitListPrice`, `unitDiscount`, `unitNet`, `unitTax`, `lineTotal`; `OrderLineTax.base`, `amount` |
 | `CartItem.originalPrice` (`Cart.total`, `discountTotal`, `finalTotal` and `CartItem.discountedPrice` were also converted, then removed in P2-A.2) |
 | `Variant.price` (`Product.price`, `basePrice`, `currentPrice`, `discountedPrice` were also converted, then removed in P1-V.3) |
-| `Payment.amount`; `RefundEntity.amount`; `ReturnRequestEntity.refundAmount` |
+| `Payment.amount`; `RefundEntity.amount`; `ReturnRequest.refundAmount` (was `ReturnRequestEntity`) |
 | `Coupon.minimumOrderAmount`; `CouponValidation.discountAmount`; `Discount.minimumPurchase` |
 | `ShippingZoneEntity.fee`; query `getShippingFee` (`Float!` → `Money!`; both removed in P5-A.1, see `RateRule.baseFee`) |
 | `SalesReport.grossRevenue`, `refunds`, `netRevenue`, `totalRevenue`, `itemSales`, `averageOrderValue` |
@@ -4097,7 +4123,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `CreateDiscountInput.value`, `minimumPurchase`; `UpdateDiscountInput.value`, `minimumPurchase` (both must be greater than 0) |
 | `CreateShippingZoneInput.fee`, `UpdateShippingZoneInput.fee` (removed in P5-A.1: `CreateRateRuleInput.baseFee`, `freeAbove`, `weightBands.fee`) |
 | `CreateTaxInput.rate`, `UpdateTaxInput.rate` (0 to 1, at most 6 decimal places) |
-| `ApproveReturnInput.refundAmount` |
+| `ApproveReturnInput.refundAmount` (removed in P6-R.1) |
 | `ProductFilterArgs.priceMin`, `priceMax` |
 
 ### Enums
@@ -4113,7 +4139,9 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `GhanaRegion` | `AHAFO`, `ASHANTI`, `BONO`, `BONO_EAST`, `CENTRAL`, `EASTERN`, `GREATER_ACCRA`, `NORTH_EAST`, `NORTHERN`, `OTI`, `SAVANNAH`, `UPPER_EAST`, `UPPER_WEST`, `VOLTA`, `WESTERN`, `WESTERN_NORTH` | `Address.region`, address inputs |
 | `OrderPaymentMethod` | `ONLINE`, `CASH_ON_DELIVERY` | `Order`, `CreateOrderInput` |
 | `PaymentStatus` | `PENDING`, `CAPTURED`, `FAILED`, `CANCELLED` | `Payment.status` |
-| `ReturnStatusEnum` | `PENDING`, `APPROVED`, `REJECTED`, `REFUND_PENDING`, `REFUNDED` | `ReturnRequestEntity.status` |
+| `ReturnStatus` (was `ReturnStatusEnum`) | `REQUESTED` (was `PENDING`), `APPROVED`, `REJECTED`, `RECEIVED`, `INSPECTED`, `REFUND_PENDING`, `REFUNDED`, `EXCHANGED`, `CANCELLED` | `ReturnRequest.status`, `CustomerReturn.status`, `returns(status)` |
+| `ReturnReason` | `DAMAGED`, `DEFECTIVE`, `WRONG_ITEM`, `NOT_AS_DESCRIBED`, `CHANGED_MIND`, `SIZE_FIT`, `OTHER` | `ReturnLine.reason` |
+| `ReturnResolution` | `REFUND`, `EXCHANGE` | `ReturnRequest.resolution`, `RequestReturnInput.resolution` |
 | `RefundStatusEnum` | `PENDING` (recorded, not sent), `SENDING` (sent, outcome unknown if it stays), `PROCESSED` (accepted by Paystack), `FAILED` (refused, can be resent) | `RefundEntity.status`, `refunds(status)` |
 | `StockMovementReason` | `OPENING_BALANCE`, `RECEIPT`, `SALE`, `RETURN_RESTOCK`, `ADJUSTMENT`, `TRANSFER`, `RESERVE`, `RELEASE` | `StockMovement.reason`, `stockMovements(reason)` |
 | `DiscountType` | `PERCENTAGE`, `FLAT` | `Discount.type`, discount inputs |
@@ -4138,7 +4166,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `Payment` | [2.12](#212-payment) |
 | `Coupon`, `CouponValidation`, `Discount` | [2.13](#213-coupons), [2.14](#214-discounts) |
 | `StockMovement`, `StockMovementPage` | [2.15](#215-inventory) |
-| `ReturnRequestEntity`, `RefundEntity` | [2.16](#216-returns) |
+| `ReturnRequest`, `CustomerReturn`, `ReturnLine`, `RefundEntity` | [2.16](#216-returns) |
 | `Review` | [2.17](#217-reviews) |
 | `TaxEntity` | [2.18](#218-tax) |
 | `SalesReport`, `TopProduct`, `RevenueByCategoryEntity`, `DashboardSummary` | [2.19](#219-analytics), [16](#16-analytics-queries) |
@@ -4315,16 +4343,15 @@ See [Section 8](#8-payment-integration-paystack) for full details.
 - On `cancelOrder`, `adminCancelOrder` or expiry: each reservation is released once (`RELEASE`, or `RETURN_RESTOCK` for a paid order not yet dispatched). `deleteOrder` never moves stock.
 - Low stock: when a change takes a variant's available stock down to its `lowStockThreshold` (default 5), an `inventory.low_stock.v1` event is raised once; the worker logs it as a warning.
 
-### Return Request Flow
+### Return Flow (P6-R.1)
 
-1. User submits: `mutation createReturnRequest(input: { orderId, reason })`. Order must be `COMPLETED`.
-2. `ReturnRequest` created with `status = PENDING`.
-3. Admin reviews: `mutation approveReturn(input: { returnRequestId, refundAmount, adminNote? })` → status → `APPROVED`.
-4. Admin rejects: `mutation rejectReturn(input: { returnRequestId, adminNote? })` → status → `REJECTED`.
-5. Admin processes the refund through Paystack: `mutation processRefund(returnRequestId)` → status → `REFUND_PENDING` while it is sent, then `REFUNDED`. If Paystack refuses, it stays `REFUND_PENDING` and can be retried.
-6. Returned goods are put back in stock manually with `restockVariant` (the order line's `variantId`) once received.
+1. Customer (optional photos via `POST /returns/orders/:orderId/photos`): `requestReturn(input: { orderId, resolution, lines: [{ orderItemId, quantity, reason, note?, photoPublicIds?, exchangeVariantId? }] })` → `REQUESTED`. Only delivered units within the return window of their product type.
+2. Staff: `approveReturn` → `APPROVED` (or `rejectReturn` with a reason → `REJECTED`). The customer may `cancelReturn` until the goods arrive.
+3. Staff: `receiveReturn` (units that arrived per line) → `RECEIVED`.
+4. Staff: `inspectReturn` (restock / write off per line; restocked units go back at the order's location) → `INSPECTED`.
+5. Staff: `refundReturn` → `REFUND_PENDING` → `REFUNDED` (cash on delivery: `REFUNDED` at once), or `exchangeReturn` → `EXCHANGED` with a replacement order.
 
-Cancelling a paid online order creates a return request automatically ("Automatic refund request for cancelled paid order") for staff to approve and refund.
+Cancelling a paid online order records a `PENDING` refund (reason `ORDER_CANCELLED`) for staff to send with `processPendingRefund`.
 
 ### Review Submission Flow
 
@@ -4351,11 +4378,11 @@ Cancelling a paid online order creates a return request automatically ("Automati
                    ↓
                COMPLETED
                    |
-           createReturnRequest()
+           requestReturn() (delivered units, per line)
                    ↓
-    ReturnRequest: PENDING → APPROVED → REFUND_PENDING → REFUNDED
-                     |
-                  REJECTED
+    Return: REQUESTED → APPROVED → RECEIVED → INSPECTED → REFUND_PENDING → REFUNDED | EXCHANGED
+                |           |
+             REJECTED / CANCELLED
 
     CANCELLED / EXPIRED ── payment arrives anyway ──→ PAYMENT_REVIEW ── its refund processed ──→ CANCELLED
 ```

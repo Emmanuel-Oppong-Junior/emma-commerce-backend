@@ -234,6 +234,7 @@ model Variant {
   costPrice         Decimal?            @db.Decimal(14, 4)
   costChanges       CostChange[]
   purchaseLines     PurchaseOrderLine[]
+  returnExchanges   ReturnLine[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -254,6 +255,10 @@ model ProductType {
   updatedAt   DateTime              @updatedAt
   attributes  AttributeDefinition[]
   products    Product[]
+  /// Return policy (P6-R.1): false for goods that are never taken back (perishables, hygiene, digital), and the days
+  /// after delivery its products may be returned in; null takes the store's returnWindowDays (CHECK 0-365)
+  returnable       Boolean @default(true)
+  returnWindowDays Int?
 }
 
 model AttributeDefinition {
@@ -480,6 +485,8 @@ model Order {
   paymentIntent           PaymentIntent?
   cashCollections         CashCollection[]
   returnRequests          ReturnRequest[]
+  /// Set on a replacement order created by an exchange (P6-R.1)
+  replacementFor          ReturnRequest?     @relation("ReturnReplacement")
   stockReservations       StockReservation[]
   shipments               Shipment[]
   statusEvents            OrderStatusEvent[]
@@ -549,6 +556,7 @@ model OrderItem {
   refundLines          RefundLine[]
   serialUnits          SerialUnit[]
   shipmentItems        ShipmentItem[]
+  returnLines          ReturnLine[]
 
   @@index([orderId])
   @@index([productId, orderId])
@@ -669,7 +677,8 @@ model Refund {
   method          RefundMethod   @default(PROVIDER)
   /// The part of the amount that returns the order's delivery fee (refunded at most once)
   shippingAmount  Decimal        @default(0) @db.Decimal(14, 2)
-  /// The staff member who issued it through refundOrder; null for return refunds and auto-refunds (see the audit log)
+  /// The staff member who issued it (refundOrder, or a return's refund); null for legacy return refunds and
+  /// system refunds (see the audit log)
   createdById     String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -852,6 +861,8 @@ enum RefundReason {
   RETURN
   /// Set by the system for a charge it could not accept (late, wrong amount or duplicate payment)
   PAYMENT_NOT_ACCEPTED
+  /// Set by the system when a paid order is cancelled (P6-R.1): the refund waits PENDING for staff to send it
+  ORDER_CANCELLED
 }
 
 enum RefundMethod {
@@ -996,30 +1007,121 @@ enum FulfillmentType {
   PICKUP
 }
 
+/// The return machine (P6-R.1, src/returns/return-status.ts). REFUND_PENDING: the return's refund was recorded and is
+/// being sent through the provider.
 enum ReturnStatus {
-  PENDING
+  REQUESTED
   APPROVED
   REJECTED
+  RECEIVED
+  INSPECTED
   REFUND_PENDING
   REFUNDED
+  EXCHANGED
+  CANCELLED
 }
 
+/// Why the customer returns a line (P6-R.1); OTHER needs a note.
+enum ReturnReason {
+  DAMAGED
+  DEFECTIVE
+  WRONG_ITEM
+  NOT_AS_DESCRIBED
+  CHANGED_MIND
+  SIZE_FIT
+  OTHER
+}
+
+/// What the customer wants back: their money, or another variant of the same product for each line.
+enum ReturnResolution {
+  REFUND
+  EXCHANGE
+}
+
+/// A return of some units of an order's delivered lines (P6-R.1). Requests made before P6-R.1 were whole-order
+/// requests with a free-text reason and no lines ("legacy"); staff can still read, reject or refund them.
 model ReturnRequest {
-  id           String       @id @default(cuid())
-  orderId      String
-  userId       String
-  reason       String       @db.Text
-  status       ReturnStatus @default(PENDING)
-  refundAmount Decimal?     @db.Decimal(14, 2)
-  adminNote    String?      @db.Text
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  refund       Refund?
-  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
-  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  id                   String              @id @default(cuid())
+  orderId              String
+  userId               String
+  /// The free-text reason of a legacy whole-order request; null on item-level requests (reasons are per line)
+  reason               String?             @db.Text
+  status               ReturnStatus        @default(REQUESTED)
+  resolution           ReturnResolution    @default(REFUND)
+  /// Legacy requests only: the amount staff approved; item-level refunds are priced from the returned lines
+  refundAmount         Decimal?            @db.Decimal(14, 2)
+  /// Staff's internal note (latest); never shown to the customer
+  staffNote            String?             @db.Text
+  /// Why staff rejected it; shown to the customer
+  rejectionReason      String?             @db.Text
+  /// Why staff accepted it outside the return window or for a non-returnable product (set only when they did)
+  policyOverrideReason String?             @db.Text
+  /// The staff member who created it for the customer; null when the customer requested it
+  createdById          String?
+  /// The replacement order an exchange created
+  replacementOrderId   String?             @unique
+  replacementOrder     Order?              @relation("ReturnReplacement", fields: [replacementOrderId], references: [id], onDelete: Restrict)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  refund               Refund?
+  order                Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  lines                ReturnLine[]
+  events               ReturnStatusEvent[]
 
   @@index([orderId])
-  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([createdAt])
+}
+
+/// Units of one order line under a return (P6-R.1). A trigger (ReturnLine_within_delivered) keeps a line's units over
+/// its live returns (not rejected or cancelled; the units received once received) plus the units refunded outside
+/// returns within the units delivered.
+model ReturnLine {
+  id                String        @id @default(cuid())
+  returnRequestId   String
+  orderItemId       String
+  quantity          Int
+  reason            ReturnReason
+  /// The customer's note; required for OTHER (CHECK)
+  note              String?       @db.Text
+  /// Cloudinary public ids of the customer's photos (POST /returns/orders/:orderId/photos), at most 3
+  photoPublicIds    String[]      @default([])
+  /// The variant wanted instead (resolution EXCHANGE): same product, same unit price
+  exchangeVariantId String?
+  /// Units that arrived back; set when the return is received (0 to quantity)
+  receivedQuantity  Int?
+  /// The received units put back into sellable stock and those written off; set at inspection, adding up to
+  /// receivedQuantity
+  restockQuantity   Int?
+  writeOffQuantity  Int?
+  createdAt         DateTime      @default(now())
+  returnRequest     ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  orderItem         OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  exchangeVariant   Variant?      @relation(fields: [exchangeVariantId], references: [id], onDelete: Restrict)
+
+  @@unique([returnRequestId, orderItemId])
+  @@index([orderItemId])
+  @@index([exchangeVariantId])
+}
+
+/// The return's status history, written with every transition (append-only: a trigger refuses updates and direct
+/// deletes; deleting the request removes it).
+model ReturnStatusEvent {
+  id              String        @id @default(cuid())
+  returnRequestId String
+  /// Null for the first event (requested, or migrated)
+  from            ReturnStatus?
+  to              ReturnStatus
+  /// The customer or staff member who caused it; null for the system
+  actorId         String?
+  /// Staff's note or the reason given; never shown to the customer
+  note            String?       @db.Text
+  createdAt       DateTime      @default(now())
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+
+  @@index([returnRequestId, createdAt])
 }
 
 model PickupLocation {
@@ -1217,6 +1319,8 @@ model Store {
   /// Cash-on-delivery risk gates (P3-B.2): open COD orders allowed per verified phone, and the highest COD grand total.
   codMaxOpenOrdersPerPhone   Int                     @default(2)
   codMaxOrderTotal           Decimal                 @default(2000) @db.Decimal(14, 2)
+  /// Days after delivery goods may be returned in (P6-R.1), unless their product type sets its own (CHECK 0-365)
+  returnWindowDays           Int                     @default(14)
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
   memberships                StoreMembership[]

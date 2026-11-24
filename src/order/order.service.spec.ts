@@ -16,7 +16,7 @@ import { LoggerService } from '../commons/logger.service';
 import { DeliverySlotsService } from '../shipping-zones/slots/delivery-slots.service';
 import { PickupLocationsService } from '../pickup-locations/pickup-locations.service';
 import { FulfillmentType, PaymentMethod } from '../generated/prisma/client';
-import { ReturnsService } from '../returns/returns.service';
+import { RefundsService } from '../returns/refunds.service';
 import { PromotionsService } from '../promotions/promotions.service';
 import { PriceListsService } from '../price-lists/price-lists.service';
 import { PricingCouponCode, PricingPromotion } from '../pricing/price';
@@ -47,7 +47,7 @@ const zoneWithFee = (fee: string | number) => ({
 const mockShippingZonesService = { deliveryZoneFor: jest.fn().mockResolvedValue(zoneWithFee('5')) };
 const mockPickupLocationsService = { findActiveById: jest.fn() };
 const mockDeliverySlots = { calendar: jest.fn(), book: jest.fn(), releaseForOrder: jest.fn() };
-const mockReturnsService = { createSystemReturnRequest: jest.fn() };
+const mockRefundsService = { openCancellationRefund: jest.fn() };
 const mockPriceListsService = { findForPricing: jest.fn() };
 
 const mockPromotionsService = {
@@ -279,7 +279,7 @@ describe('OrdersService', () => {
         { provide: OutboxService, useValue: mockOutbox },
         { provide: ShippingZonesService, useValue: mockShippingZonesService },
         { provide: PickupLocationsService, useValue: mockPickupLocationsService },
-        { provide: ReturnsService, useValue: mockReturnsService },
+        { provide: RefundsService, useValue: mockRefundsService },
         { provide: PromotionsService, useValue: mockPromotionsService },
         { provide: PriceListsService, useValue: mockPriceListsService },
         { provide: StoreService, useValue: mockStoreService },

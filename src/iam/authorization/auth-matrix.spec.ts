@@ -107,7 +107,7 @@ describe('Authorization matrix', () => {
       expect.arrayContaining([
         'Mutation signIn',
         'Query products',
-        'Mutation processRefund',
+        'Mutation refundReturn',
         'REST POST /payment/webhook',
       ]),
     );

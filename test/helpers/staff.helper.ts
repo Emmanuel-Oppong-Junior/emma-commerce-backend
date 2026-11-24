@@ -23,6 +23,7 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'delivery.override',
   'order.refund',
   'return.manage',
+  'return.override',
   'payment.view',
   'payment.record',
   'payment.manage',

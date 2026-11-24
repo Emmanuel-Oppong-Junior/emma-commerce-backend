@@ -33,6 +33,8 @@ function productType(overrides: Partial<ProductTypeWithAttributes> = {}): Produc
     name: 'Phone',
     description: null,
     isSystem: false,
+    returnable: true,
+    returnWindowDays: null,
     createdAt: at,
     updatedAt: at,
     attributes: [attribute()],
@@ -234,7 +236,9 @@ describe('ProductTypesService', () => {
         expect.objectContaining({
           entity: 'ProductType',
           action: 'DELETE',
-          details: { before: { key: 'phone', name: 'Phone', description: null } },
+          details: {
+            before: { key: 'phone', name: 'Phone', description: null, returnable: true, returnWindowDays: null },
+          },
         }),
         AUDIT_TX,
       );

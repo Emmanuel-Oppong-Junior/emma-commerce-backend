@@ -608,6 +608,55 @@ describe('Serial units (P4-D.1, e2e)', () => {
       expect(await reconcile()).toEqual([]);
     });
 
+    it('restocks the units of an inspected item-level return by serial, each one sold on that order (P6-R.1)', async () => {
+      const { variantId, serials } = await stockedPhone(3);
+      const { orderId, orderItemId, grandTotal } = await placeOrder(variantId, 2, PaymentMethod.ONLINE);
+      await pay(orderId, Number(grandTotal));
+      await ship(orderId, 'PICKING');
+      await assign(orderItemId, [serials[0], serials[1]]);
+      await ship(orderId, 'OUT_FOR_DELIVERY');
+      await ship(orderId, 'DELIVERED');
+      const returned = await prisma.returnRequest.create({
+        data: {
+          orderId,
+          userId: BUYER,
+          status: 'RECEIVED',
+          lines: { create: { orderItemId, quantity: 2, receivedQuantity: 2, reason: 'DEFECTIVE' } },
+        },
+        include: { lines: true },
+      });
+      const inspect = (restockSerials: string[]) =>
+        gql('mutation($input: InspectReturnInput!) { inspectReturn(input: $input) { status } }', managerToken, {
+          input: {
+            returnRequestId: returned.id,
+            lines: [
+              { returnLineId: returned.lines[0].id, restockQuantity: 1, writeOffQuantity: 1, serials: restockSerials },
+            ],
+          },
+        });
+
+      const wrong = await inspect([serials[2]]);
+      expect(codeOf(wrong)).toBe('CONFLICT');
+      expect(wrong.errors![0].message).toContain('not sold on this order');
+
+      const inspected = await inspect([serials[0]]);
+      expect(inspected.errors).toBeUndefined();
+      expect(inspected.data!.inspectReturn.status).toBe('INSPECTED');
+      expect(await unit(variantId, serials[0])).toMatchObject({
+        status: 'IN_STOCK',
+        locationId: mainId,
+        orderItemId: null,
+      });
+      expect(await unit(variantId, serials[1])).toMatchObject({ status: 'SOLD' });
+      expect(
+        await prisma.stockMovement.findMany({
+          where: { variantId, reason: 'RETURN_RESTOCK' },
+          select: { onHandDelta: true, refType: true, refId: true, locationId: true },
+        }),
+      ).toEqual([{ onHandDelta: 1, refType: 'ReturnRequest', refId: returned.id, locationId: mainId }]);
+      expect(await reconcile()).toEqual([]);
+    });
+
     it('refuses to approve a stock-take variance on a serial-tracked variant, and approves an exact count', async () => {
       const { variantId } = await stockedPhone(2);
       const openCount = async (counted: number) => {

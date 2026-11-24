@@ -19,8 +19,9 @@ export const PERMISSION_CATALOGUE = {
   'delivery.ride':
     'Work as a rider: see the shipments assigned to you, take them out for delivery, record failed deliveries',
   'delivery.override': "Confirm a rider's delivery without the customer's delivery code, giving a reason",
-  'order.refund': 'Approve returns with a refund amount and send refunds',
-  'return.manage': 'Read and reject return requests',
+  'order.refund': 'Send refunds, including the refunds of returns',
+  'return.manage': 'Read, approve, reject, receive and exchange returns (inspecting them also needs inventory.adjust)',
+  'return.override': 'Accept a return outside its return window or of a non-returnable product type, with a reason',
   'payment.view': 'Read payments and refunds of every customer',
   'payment.record': 'Record cash collected for cash-on-delivery orders',
   'payment.manage': 'Soft-delete and restore payment records',

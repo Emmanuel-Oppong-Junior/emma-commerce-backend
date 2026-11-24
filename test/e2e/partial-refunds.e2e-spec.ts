@@ -318,7 +318,7 @@ describe('Partial refunds (e2e)', () => {
     const viaReturn = (
       await gqlRequest(
         app,
-        `mutation { processRefund(returnRequestId: "${returnRequest.id}") { id status } }`,
+        `mutation { refundReturn(input: { returnRequestId: "${returnRequest.id}" }) { id status } }`,
         undefined,
         adminToken,
       ).expect(200)

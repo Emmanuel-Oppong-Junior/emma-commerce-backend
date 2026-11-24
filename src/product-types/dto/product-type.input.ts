@@ -1,5 +1,16 @@
-import { Field, InputType } from '@nestjs/graphql';
-import { ArrayMaxSize, IsOptional, Length, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { Field, InputType, Int } from '@nestjs/graphql';
+import {
+  ArrayMaxSize,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  Length,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ATTRIBUTE_KEY_PATTERN, AttributeDefinitionInput } from './attribute-definition.input';
 
@@ -43,4 +54,21 @@ export class UpdateProductTypeInput {
   @IsOptional()
   @MaxLength(500)
   description?: string;
+}
+
+@InputType({ description: 'The return policy of a product type (P6-R.1); system types may set it too' })
+export class ProductTypeReturnPolicyInput {
+  @Field({ description: 'false: its products are never taken back (perishables, hygiene, digital goods)' })
+  @IsBoolean()
+  returnable: boolean;
+
+  @Field(() => Int, {
+    nullable: true,
+    description: "Days after delivery its products may be returned in (0-365); null or omitted: the store's window",
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  returnWindowDays?: number | null;
 }

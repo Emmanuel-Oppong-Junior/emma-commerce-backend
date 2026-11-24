@@ -3,12 +3,16 @@ import { RefundMethod, RefundReason } from '../../generated/prisma/client';
 
 registerEnumType(RefundReason, {
   name: 'RefundReason',
-  description: 'Why money was refunded. Staff choose any but RETURN and PAYMENT_NOT_ACCEPTED, which the system sets',
+  description:
+    'Why money was refunded. Staff choose any but RETURN, PAYMENT_NOT_ACCEPTED and ORDER_CANCELLED, which the system sets',
   valuesMap: {
     OTHER: { description: 'Anything else; a note is required' },
-    RETURN: { description: 'Set by the returns flow (processRefund)' },
+    RETURN: { description: 'Set by the returns flow (refundReturn)' },
     PAYMENT_NOT_ACCEPTED: {
       description: 'Set by the system for a charge it could not accept (late, wrong amount or duplicate payment)',
+    },
+    ORDER_CANCELLED: {
+      description: 'Set by the system when a paid order is cancelled; staff send it with processPendingRefund',
     },
   },
 });

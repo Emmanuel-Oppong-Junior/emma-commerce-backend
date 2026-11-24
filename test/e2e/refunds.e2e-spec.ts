@@ -7,6 +7,7 @@ import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInAdmin, signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, seedPaymentAttempt, takeOrderNumber } from '../helpers/db.helper';
+import { seedDeliveredOrder } from '../helpers/returns.helper';
 
 interface GqlResult {
   data?: Record<string, { id?: string; status: string } | null> | null;
@@ -40,7 +41,7 @@ describe('Refunds (e2e)', () => {
   const gql = async (query: string, token = adminToken): Promise<GqlResult> =>
     (await gqlRequest(app, query, undefined, token).expect(200)).body;
   const processRefund = (returnRequestId: string) =>
-    gql(`mutation { processRefund(returnRequestId: "${returnRequestId}") { id status } }`);
+    gql(`mutation { refundReturn(input: { returnRequestId: "${returnRequestId}" }) { id status } }`);
   const processPendingRefund = (refundId: string, token = adminToken) =>
     gql(`mutation { processPendingRefund(refundId: "${refundId}") { id status } }`, token);
   const codeOf = (result: GqlResult) => result.errors?.[0]?.extensions.code;
@@ -106,7 +107,7 @@ describe('Refunds (e2e)', () => {
 
     const succeeded = results.filter((r) => !r.errors);
     expect(succeeded).toHaveLength(1);
-    expect(succeeded[0].data?.processRefund?.status).toBe('REFUNDED');
+    expect(succeeded[0].data?.refundReturn?.status).toBe('REFUNDED');
     expect(codeOf(results.find((r) => r.errors)!)).toBe('CONFLICT');
     expect(paystack.createRefund).toHaveBeenCalledTimes(1);
     expect(paystack.createRefund).toHaveBeenCalledWith({ transaction: reference, amount: 10000 });
@@ -144,7 +145,7 @@ describe('Refunds (e2e)', () => {
     const retriedAgain = await processRefund(returnId);
 
     expect(retried.errors).toBeUndefined();
-    expect(retried.data?.processRefund?.status).toBe('REFUNDED');
+    expect(retried.data?.refundReturn?.status).toBe('REFUNDED');
     expect(codeOf(retriedAgain)).toBe('BAD_REQUEST');
     expect(paystack.createRefund).toHaveBeenCalledTimes(2);
     expect(paystack.createRefund).toHaveBeenLastCalledWith(expect.objectContaining({ amount: 4050 }));
@@ -229,11 +230,21 @@ describe('Refunds (e2e)', () => {
   });
 
   it('applies only one of a concurrent approve and reject', async () => {
-    const { returnId } = await paidReturn(ReturnStatus.PENDING, null);
+    const { orderId, itemIds } = await seedDeliveredOrder(prisma, {
+      lines: [{ productId: 'seed_prod1', variantId: 'seed_var1', quantity: 1, unitPrice: 100 }],
+    });
+    const { id: returnId } = await prisma.returnRequest.create({
+      data: {
+        orderId,
+        userId: 'seed_user',
+        status: ReturnStatus.REQUESTED,
+        lines: { create: { orderItemId: itemIds[0], quantity: 1, reason: 'DAMAGED' } },
+      },
+    });
 
     const [approve, reject] = await Promise.all([
-      gql(`mutation { approveReturn(input: { returnRequestId: "${returnId}", refundAmount: "10.00" }) { status } }`),
-      gql(`mutation { rejectReturn(input: { returnRequestId: "${returnId}", adminNote: "No" }) { status } }`),
+      gql(`mutation { approveReturn(input: { returnRequestId: "${returnId}" }) { status } }`),
+      gql(`mutation { rejectReturn(input: { returnRequestId: "${returnId}", reason: "No" }) { status } }`),
     ]);
 
     const winners = [approve, reject].filter((r) => !r.errors);
@@ -243,6 +254,6 @@ describe('Refunds (e2e)', () => {
     expect(final).toBe(approve.errors ? 'REJECTED' : 'APPROVED');
     const audit = await prisma.auditLog.findMany({ where: { entity: 'ReturnRequest', entityId: returnId } });
     expect(audit).toHaveLength(1);
-    expect(audit[0].details).toMatchObject({ from: 'PENDING', to: final });
+    expect(audit[0].details).toMatchObject({ from: 'REQUESTED', to: final });
   });
 });

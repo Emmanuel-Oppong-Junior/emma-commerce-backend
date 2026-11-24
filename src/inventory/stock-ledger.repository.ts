@@ -145,16 +145,25 @@ export class StockLedgerRepository {
     return db.variant.findUnique({ where: { id: variantId }, select: { lowStockThreshold: true } });
   }
 
-  /** The return request's order and the location it was fulfilled from; null when the request does not exist. */
+  /**
+   * The return request's order, the location it was fulfilled from and how many lines the request has (none: a legacy
+   * whole-order request); null when the request does not exist.
+   */
   async findReturnRequestLocation(
     db: Db,
     id: string,
-  ): Promise<{ orderId: string; stockLocationId: string | null } | null> {
+  ): Promise<{ orderId: string; stockLocationId: string | null; lineCount: number } | null> {
     const request = await db.returnRequest.findUnique({
       where: { id },
-      select: { order: { select: { id: true, stockLocationId: true } } },
+      select: { order: { select: { id: true, stockLocationId: true } }, _count: { select: { lines: true } } },
     });
-    return request && { orderId: request.order.id, stockLocationId: request.order.stockLocationId };
+    return (
+      request && {
+        orderId: request.order.id,
+        stockLocationId: request.order.stockLocationId,
+        lineCount: request._count.lines,
+      }
+    );
   }
 
   /** Movements newest first, a page of `take` after the `after` cursor (a movement id). */
