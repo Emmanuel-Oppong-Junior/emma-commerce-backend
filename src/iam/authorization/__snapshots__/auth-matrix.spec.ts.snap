@@ -98,6 +98,7 @@ Mutation receiveStockTransfer            permission: inventory.transfer
 Mutation recordCashRemittance            permission: cod.cash.manage
 Mutation recordCodPayment                permission: payment.record
 Mutation recordDispute                   permission: payment.dispute.manage
+Mutation recordProductView               authenticated
 Mutation recordStockTakeCounts           permission: inventory.adjust
 Mutation refreshToken                    public
 Mutation refundOrder                     permission: order.refund; step-up
@@ -238,6 +239,7 @@ Query promotion                          permission: promotion.manage
 Query promotions                         permission: promotion.manage
 Query purchaseOrder                      permission: purchasing.view
 Query purchaseOrders                     permission: purchasing.view
+Query recentlyViewed                     authenticated
 Query redemptions                        permission: promotion.manage
 Query refunds                            permission: payment.view
 Query reportedProductQuestions           permission: review.moderate

@@ -2319,6 +2319,11 @@ type Mutation {
   """
   recordDispute(input: RecordDisputeInput!): DisputeEntity!
 
+  """
+  Records that the caller viewed a public product; the latest 20 distinct products are kept
+  """
+  recordProductView(productId: ID!): Boolean!
+
   """Record counted quantities on an OPEN stock-take (admin only)"""
   recordStockTakeCounts(input: RecordStockTakeCountsInput!): [StockTakeLine!]!
 
@@ -4224,6 +4229,14 @@ type Query {
     """Orders with a line of this variant"""
     variantId: ID
   ): PurchaseOrderPage!
+
+  """
+  The caller's recently viewed products that are still on sale, latest first
+  """
+  recentlyViewed(
+    """1-20"""
+    limit: Int! = 20
+  ): [Product!]!
 
   """Admin: promotion uses by orders, newest first"""
   redemptions(

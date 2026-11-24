@@ -34,6 +34,7 @@ model User {
   reviewReports             ReviewReport[]
   productQuestions          ProductQuestion[]
   productQuestionReports    ProductQuestionReport[]
+  recentlyViewedProducts    RecentlyViewedProduct[]
   cart                      Cart?
   order                     Order[]
   authProvider              AuthProvider[]
@@ -377,6 +378,7 @@ model Product {
   orderItem        OrderItem[]
   wishlist         WishList[]
   questions        ProductQuestion[]
+  recentlyViewedBy RecentlyViewedProduct[]
   brand            Brand?       @relation(fields: [brandId], references: [id])
   brandId          String?
 
@@ -521,6 +523,19 @@ model ProductQuestionReport {
 
   @@unique([questionId, reporterId])
   @@index([reporterId])
+}
+
+/// The products a signed-in user viewed (P6-G.3): one row per product, the latest RECENTLY_VIEWED_LIMIT kept
+model RecentlyViewedProduct {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  viewedAt  DateTime
+
+  @@id([userId, productId])
+  @@index([userId, viewedAt])
+  @@index([productId])
 }
 
 model Cart {

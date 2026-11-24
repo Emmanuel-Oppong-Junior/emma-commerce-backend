@@ -25,6 +25,7 @@
    - [Returns](#216-returns)
    - [Reviews](#217-reviews)
    - [Product questions and answers](#217a-product-questions-and-answers)
+   - [Recently viewed products](#217b-recently-viewed-products)
    - [Tax](#218-tax)
    - [Analytics](#219-analytics)
    - [Addresses](#220-addresses)
@@ -3149,6 +3150,19 @@ Upload one image per request as multipart field `file` (JPEG, PNG or WebP, check
 - Staff (`review.moderate`): `unansweredProductQuestions(first, after)` (published, unanswered, oldest first); `reportedProductQuestions(first, after): [ReportedProductQuestion!]!` (`{ question, openReports: [ContentReport] }`); `answerProductQuestion(input: { questionId, answer })` (sets or replaces the answer, up to 2000 characters); `hideProductQuestion(input: { id, reason })` (closes open reports); `unhideProductQuestion(input: { id, reason })`; `dismissProductQuestionReports(input: { id, reason })`. All four mutations are audited; `CONFLICT` when hiding a hidden question or unhiding a visible one.
 
 New in P6-V.2 (additive, no breaking change).
+
+---
+
+### 2.17b Recently viewed products
+
+**Signed-in users (P6-G.3).** The server does not record views on its own: call `recordProductView` when a product page is shown.
+
+- `recordProductView(productId: ID!): Boolean!` (signed in, staff included): records the view of an active, `PUBLISHED` product (`NOT_FOUND` otherwise). One entry per product (viewing it again moves it to the top); only the latest 20 distinct products are kept. Rate-limited to 60 a minute.
+- `recentlyViewed(limit: Int = 20): [Product!]!` (signed in): latest first, 1–20 (`BAD_REQUEST` outside). Products no longer on sale (inactive, draft, archived) are left out.
+
+**Guests:** keep the list on the device (e.g. `localStorage`, latest 20 product ids) and read the products with the public `product` query. The server has no guest list and does not merge a guest list into the account at sign-in; a client may replay its ids through `recordProductView` after signing in (oldest first).
+
+New in P6-G.3 (additive, no breaking change).
 
 ---
 

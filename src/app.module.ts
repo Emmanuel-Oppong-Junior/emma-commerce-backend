@@ -29,6 +29,7 @@ import { TagModule } from './tag/tag.module';
 import { WishlistModule } from './wishlist/wishlist.module';
 import { ReviewModule } from './review/review.module';
 import { ProductQuestionsModule } from './product-questions/product-questions.module';
+import { RecentlyViewedModule } from './recently-viewed/recently-viewed.module';
 import { PaymentModule } from './payment/payment.module';
 import { LoggerMiddleware } from './commons/middlewares/logger.middleware';
 import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
@@ -108,6 +109,11 @@ const THROTTLERS: ThrottlerOptions[] = [
     ttl: 60000, // 1 minute
     limit: 10, // reviews, product questions and reports written per minute
   },
+  {
+    name: 'productView',
+    ttl: 60000, // 1 minute
+    limit: 60, // recordProductView calls per minute
+  },
 ];
 
 @Module({
@@ -158,6 +164,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     WishlistModule,
     ReviewModule,
     ProductQuestionsModule,
+    RecentlyViewedModule,
     PaymentModule,
     PromotionsModule,
     CustomerGroupsModule,
