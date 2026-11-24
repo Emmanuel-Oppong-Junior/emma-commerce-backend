@@ -28,6 +28,7 @@ import { ProductTypesModule } from './product-types/product-types.module';
 import { TagModule } from './tag/tag.module';
 import { WishlistModule } from './wishlist/wishlist.module';
 import { ReviewModule } from './review/review.module';
+import { ProductQuestionsModule } from './product-questions/product-questions.module';
 import { PaymentModule } from './payment/payment.module';
 import { LoggerMiddleware } from './commons/middlewares/logger.middleware';
 import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
@@ -156,6 +157,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     TagModule,
     WishlistModule,
     ReviewModule,
+    ProductQuestionsModule,
     PaymentModule,
     PromotionsModule,
     CustomerGroupsModule,

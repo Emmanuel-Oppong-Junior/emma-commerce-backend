@@ -24,6 +24,7 @@
    - [Inventory](#215-inventory)
    - [Returns](#216-returns)
    - [Reviews](#217-reviews)
+   - [Product questions and answers](#217a-product-questions-and-answers)
    - [Tax](#218-tax)
    - [Analytics](#219-analytics)
    - [Addresses](#220-addresses)
@@ -142,7 +143,7 @@ PostgreSQL via Prisma. Full-text search is enabled (`fullTextSearchPostgres` pre
 
 **Auth.** Every operation requires `Authorization: Bearer <accessToken>` unless marked **Auth Required: No** (public). A missing, invalid or expired token, or a deactivated account, gives `UNAUTHENTICATED`. The account (and its role) is re-read from the database on every request.
 
-**Permissions.** Staff operations need a permission (e.g. `order.refund`), granted by the user's staff role (see [2.24](#224-staff-roles-and-permissions)). Customers have no staff role and no permissions. The labels in this reference still say `ADMIN` and `SUPER_ADMIN`: `ADMIN` means the **Manager** role (every legacy ADMIN account became a Manager) and `SUPER_ADMIN` the **Owner** role; the exact permission of every operation is in the table in [2.24](#224-staff-roles-and-permissions). The Owner holds every permission, so nothing locks an Owner out any more (the former `ADMIN`-only operations `getUserPayment`, `softDeletePayment`, `restorePayment`, `updateSubCategory` and `removeSubCategory` now accept the Owner too). A few self-service operations (`cancelOrder`, `verifyPayment`, `getMyPayments`, `createReview`, `updateReview`, `deleteReview`, `reportReview`) are for customers only and refuse any staff account with `FORBIDDEN`. Permissions are re-read with the account on every request, so a role change applies on the caller's next request. A missing permission is `FORBIDDEN`.
+**Permissions.** Staff operations need a permission (e.g. `order.refund`), granted by the user's staff role (see [2.24](#224-staff-roles-and-permissions)). Customers have no staff role and no permissions. The labels in this reference still say `ADMIN` and `SUPER_ADMIN`: `ADMIN` means the **Manager** role (every legacy ADMIN account became a Manager) and `SUPER_ADMIN` the **Owner** role; the exact permission of every operation is in the table in [2.24](#224-staff-roles-and-permissions). The Owner holds every permission, so nothing locks an Owner out any more (the former `ADMIN`-only operations `getUserPayment`, `softDeletePayment`, `restorePayment`, `updateSubCategory` and `removeSubCategory` now accept the Owner too). A few self-service operations (`cancelOrder`, `verifyPayment`, `getMyPayments`, `createReview`, `updateReview`, `deleteReview`, `reportReview`, `askProductQuestion`, `reportProductQuestion`) are for customers only and refuse any staff account with `FORBIDDEN`. Permissions are re-read with the account on every request, so a role change applies on the caller's next request. A missing permission is `FORBIDDEN`.
 
 **Query limits** (checked before execution; a violation is a `GRAPHQL_VALIDATION_FAILED` error, HTTP 400):
 
@@ -3116,6 +3117,38 @@ Upload one image per request as multipart field `file` (JPEG, PNG or WebP, check
 - `replyToReview(input: { reviewId, body }): Review!`: sets (or replaces) the store's public reply, up to 2000 characters. Audited.
 
 **Breaking changes (P6-V.1)** `[breaking-api]`: `adminDeleteReview` removed (use `hideReview`); `Review.userId` removed; `productReviews` takes `productId: ID!`, pages (`first` default 20, `after`, `sort`) and is public; `review` is public (published reviews only); `userReviews` pages (`first`, `after`); `Product.reviews` returns only the latest published reviews (`first` default 5, max 20) instead of every review; `createReview` requires a verified purchase and answers a duplicate with `CONFLICT` (was `BAD_REQUEST`); `updateReview` no longer takes `productId`, a `null` comment now clears it, and another customer's review is `FORBIDDEN` (was `BAD_REQUEST`). New: `Product.rating`, `Review.title/verifiedPurchase/status/hiddenReason/reply/photos/editedAt`, `reportReview`, `removeReviewPhoto`, `POST /reviews/:reviewId/photos`, the moderation operations above.
+
+---
+
+### 2.17a Product questions and answers
+
+**Rules (P6-V.2).** A signed-in customer asks a question about an active, `PUBLISHED` product (5–1000 characters, trimmed). Staff with `review.moderate` (Owner, Manager, Support) answer it; customers do not answer. A question is **public once answered** and not hidden; until then only its asker (in `myProductQuestions`) and staff see it. The asker is shown only as `user: PublicProfile { displayName }`. Customers report public questions (once each); staff hide and unhide them like reviews. Asking and reporting are rate-limited (10 a minute).
+
+**`ProductQuestion` Object Type**:
+
+```typescript
+{
+  id: string;
+  productId: string;
+  body: string;
+  answer?: string;          // the store's answer; null until answered
+  answeredAt?: DateTime;
+  status: ModerationStatus; // PUBLISHED | HIDDEN
+  hiddenReason?: string;    // staff with review.moderate only
+  user: PublicProfile;      // { displayName } only
+  product: Product;
+  createdAt: DateTime;
+}
+```
+
+- `productQuestions(productId: ID!, first: Int = 20, after: ID): [ProductQuestion!]!` (public, optional sign-in): answered, published questions, latest answer first; `after` = last id of the previous page. `NOT_FOUND` for a product that is not public.
+- `productQuestion(questionId: String!): ProductQuestion!` (public, optional sign-in): an answered public question; its asker and moderators also get it unanswered or hidden; `NOT_FOUND` otherwise.
+- `myProductQuestions(first: Int = 20, after: ID): [ProductQuestion!]!` (signed in): the caller's questions, answered or not, newest first.
+- `askProductQuestion(input: { productId: ID!, body: String! }): ProductQuestion!` (customers only): `NOT_FOUND` (product not public), `BAD_USER_INPUT` (length).
+- `reportProductQuestion(input: ReportContentInput!): Boolean!` (customers only): same input and rules as `reportReview` (`ALREADY_REPORTED`, not your own, `OTHER` needs a note, non-public questions `NOT_FOUND`).
+- Staff (`review.moderate`): `unansweredProductQuestions(first, after)` (published, unanswered, oldest first); `reportedProductQuestions(first, after): [ReportedProductQuestion!]!` (`{ question, openReports: [ContentReport] }`); `answerProductQuestion(input: { questionId, answer })` (sets or replaces the answer, up to 2000 characters); `hideProductQuestion(input: { id, reason })` (closes open reports); `unhideProductQuestion(input: { id, reason })`; `dismissProductQuestionReports(input: { id, reason })`. All four mutations are audited; `CONFLICT` when hiding a hidden question or unhiding a visible one.
+
+New in P6-V.2 (additive, no breaking change).
 
 ---
 

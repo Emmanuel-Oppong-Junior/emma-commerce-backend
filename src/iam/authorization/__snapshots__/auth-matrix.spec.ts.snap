@@ -13,10 +13,12 @@ Mutation addToCart                       authenticated
 Mutation addToWishlist                   authenticated
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
+Mutation answerProductQuestion           permission: review.moderate
 Mutation approveReturn                   permission: return.manage + order.refund; step-up
 Mutation approveStockTake                permission: inventory.stocktake.approve
 Mutation archiveProduct                  permission: catalog.product.write
 Mutation archiveUser                     permission: user.manage
+Mutation askProductQuestion              customer only
 Mutation assignShipmentItemSerials       permission: order.fulfil
 Mutation assignShipmentRider             permission: order.fulfil
 Mutation assignStaffRole                 permission: staff.manage; step-up
@@ -80,10 +82,12 @@ Mutation deleteSupplier                  permission: purchasing.manage
 Mutation deleteTag                       permission: catalog.taxonomy.write
 Mutation deleteTax                       permission: tax.manage; step-up
 Mutation deleteVariant                   permission: catalog.product.write
+Mutation dismissProductQuestionReports   permission: review.moderate
 Mutation dismissReviewReports            permission: review.moderate
 Mutation dispatchStockTransfer           permission: inventory.transfer
 Mutation failMyDelivery                  permission: delivery.ride
 Mutation forgotPassword                  public
+Mutation hideProductQuestion             permission: review.moderate
 Mutation hideReview                      permission: review.moderate
 Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
@@ -114,6 +118,7 @@ Mutation removeSubCategory               permission: catalog.taxonomy.write
 Mutation removeTagFromProduct            permission: catalog.product.write
 Mutation removeUser                      permission: user.manage
 Mutation replyToReview                   permission: review.moderate
+Mutation reportProductQuestion           customer only
 Mutation reportReview                    customer only
 Mutation requestPhoneVerification        authenticated
 Mutation resendVerificationEmail         authenticated
@@ -141,6 +146,7 @@ Mutation stepUp                          authenticated
 Mutation submitStockTake                 permission: inventory.adjust
 Mutation unassignShipmentItemSerials     permission: order.fulfil
 Mutation unassignShipmentRider           permission: order.fulfil
+Mutation unhideProductQuestion           permission: review.moderate
 Mutation unhideReview                    permission: review.moderate
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
@@ -209,6 +215,7 @@ Query getUserPayment                     permission: payment.view
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
 Query myPhoneVerification                authenticated
+Query myProductQuestions                 authenticated
 Query myReturnRequests                   authenticated
 Query order                              authenticated
 Query orders                             permission: order.view
@@ -221,6 +228,8 @@ Query priceChanges                       permission: catalog.product.read
 Query priceList                          permission: pricelist.manage
 Query priceLists                         permission: pricelist.manage
 Query product                            public, optional sign-in
+Query productQuestion                    public, optional sign-in
+Query productQuestions                   public, optional sign-in
 Query productReviews                     public, optional sign-in
 Query products                           public, optional sign-in
 Query productType                        public
@@ -231,6 +240,7 @@ Query purchaseOrder                      permission: purchasing.view
 Query purchaseOrders                     permission: purchasing.view
 Query redemptions                        permission: promotion.manage
 Query refunds                            permission: payment.view
+Query reportedProductQuestions           permission: review.moderate
 Query reportedReviews                    permission: review.moderate
 Query returnRequests                     permission: return.manage
 Query revenueByCategory                  permission: report.view
@@ -263,6 +273,7 @@ Query tags                               authenticated
 Query tax                                permission: tax.manage
 Query taxes                              permission: tax.manage
 Query topProducts                        permission: report.view
+Query unansweredProductQuestions         permission: review.moderate
 Query unremittedCashCollections          permission: cod.cash.manage
 Query userAddresses                      authenticated
 Query userByEmail                        permission: user.view

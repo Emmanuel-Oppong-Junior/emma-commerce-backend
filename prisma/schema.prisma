@@ -32,6 +32,8 @@ model User {
   addresses                 Address[]
   reviews                   Review[]
   reviewReports             ReviewReport[]
+  productQuestions          ProductQuestion[]
+  productQuestionReports    ProductQuestionReport[]
   cart                      Cart?
   order                     Order[]
   authProvider              AuthProvider[]
@@ -374,6 +376,7 @@ model Product {
   cartItem         CartItem[]
   orderItem        OrderItem[]
   wishlist         WishList[]
+  questions        ProductQuestion[]
   brand            Brand?       @relation(fields: [brandId], references: [id])
   brandId          String?
 
@@ -478,6 +481,45 @@ model ReviewReport {
   createdAt  DateTime            @default(now())
 
   @@unique([reviewId, reporterId])
+  @@index([reporterId])
+}
+
+/// A customer's question on a product (P6-V.2): public once staff answer it; reportable and hideable like reviews
+model ProductQuestion {
+  id           String                  @id @default(cuid())
+  productId    String
+  product      Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body         String                  @db.VarChar(1000)
+  /// The store's answer (staff with review.moderate); the question is public once answered
+  answer       String?                 @db.VarChar(2000)
+  answeredAt   DateTime?
+  status       ModerationStatus        @default(PUBLISHED)
+  /// Why staff hid it (staff only); set while HIDDEN
+  hiddenReason String?
+  hiddenAt     DateTime?
+  reports      ProductQuestionReport[]
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  @@index([productId, status, answeredAt])
+  @@index([userId, createdAt])
+}
+
+/// A customer's report of a product question (one per customer and question); open until staff hide it or dismiss it
+model ProductQuestionReport {
+  id         String              @id @default(cuid())
+  questionId String
+  question   ProductQuestion     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter   User                @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  reason     ContentReportReason
+  note       String?             @db.VarChar(500)
+  resolvedAt DateTime?
+  createdAt  DateTime            @default(now())
+
+  @@unique([questionId, reporterId])
   @@index([reporterId])
 }
 

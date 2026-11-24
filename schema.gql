@@ -95,10 +95,22 @@ input AdjustVariantStockInput {
   variantId: ID!
 }
 
+input AnswerProductQuestionInput {
+  """Up to 2000 characters, trimmed; replaces an earlier answer"""
+  answer: String!
+  questionId: ID!
+}
+
 input ApproveReturnInput {
   adminNote: String
   refundAmount: Decimal!
   returnRequestId: ID!
+}
+
+input AskProductQuestionInput {
+  """5-1000 characters, trimmed"""
+  body: String!
+  productId: ID!
 }
 
 input AssignShipmentRiderInput {
@@ -1984,6 +1996,11 @@ type Mutation {
   """Admin: cancel any order by ID and restore its stock"""
   adminCancelOrder(orderId: String!, reason: String): Order!
 
+  """
+  Sets or replaces the store's answer, which makes the question public unless hidden (audited)
+  """
+  answerProductQuestion(input: AnswerProductQuestionInput!): ProductQuestion!
+
   """Approve a return request (admin only)"""
   approveReturn(input: ApproveReturnInput!): ReturnRequestEntity!
 
@@ -1995,6 +2012,11 @@ type Mutation {
 
   """Archive (soft delete) a user"""
   archiveUser(id: String!): User!
+
+  """
+  Asks a question about a public product; it shows publicly once the store answers it
+  """
+  askProductQuestion(input: AskProductQuestionInput!): ProductQuestion!
 
   """
   Assign picked units, by serial, to a serial-tracked shipment line while its shipment is PICKING or PACKED (staff); at most the line’s quantity. Each must be IN_STOCK at the order’s location: CONFLICT with reason SERIAL_NOT_AVAILABLE otherwise
@@ -2231,6 +2253,9 @@ type Mutation {
   """
   deleteVariant(variantId: String!): Variant!
 
+  """Closes a question's open reports and leaves it as it is (audited)"""
+  dismissProductQuestionReports(input: ModerateContentInput!): ProductQuestion!
+
   """Closes a review's open reports and leaves it published (audited)"""
   dismissReviewReports(input: ModerateContentInput!): Review!
 
@@ -2246,6 +2271,9 @@ type Mutation {
 
   """Request a password reset email"""
   forgotPassword(input: ForgotPasswordInput!): Boolean!
+
+  """Hides a question from public reads, closing its open reports (audited)"""
+  hideProductQuestion(input: ModerateContentInput!): ProductQuestion!
 
   """
   Hides a review from public reads and the rating, closing its open reports (audited)
@@ -2364,6 +2392,11 @@ type Mutation {
   replyToReview(input: ReplyToReviewInput!): Review!
 
   """
+  Reports a public question to staff; once per customer and question (ALREADY_REPORTED)
+  """
+  reportProductQuestion(input: ReportContentInput!): Boolean!
+
+  """
   Reports a published review to staff; once per customer and review (ALREADY_REPORTED)
   """
   reportReview(input: ReportContentInput!): Boolean!
@@ -2471,6 +2504,9 @@ type Mutation {
   Remove the rider of a delivery shipment (staff): before dispatch, or after a failed attempt with a reason. CONFLICT while it is out for delivery (reason RIDER_ON_THE_ROAD: reassign instead). Audited
   """
   unassignShipmentRider(input: UnassignShipmentRiderInput!): Shipment!
+
+  """Publishes a hidden question again (audited)"""
+  unhideProductQuestion(input: ModerateContentInput!): ProductQuestion!
 
   """Publishes a hidden review again (audited)"""
   unhideReview(input: ModerateContentInput!): Review!
@@ -3464,6 +3500,25 @@ input ProductFilterArgs {
   tagName: String
 }
 
+"""A customer's question on a product and the store's answer"""
+type ProductQuestion {
+  """The store's answer; null until answered"""
+  answer: String
+  answeredAt: DateTime
+  body: String!
+  createdAt: DateTime!
+
+  """Why staff hid it (staff with review.moderate only)"""
+  hiddenReason: String
+  id: ID!
+  product: Product!
+  productId: ID!
+  status: ModerationStatus!
+
+  """Public profile of the asker (never the full user)"""
+  user: PublicProfile!
+}
+
 """Rating over the published reviews"""
 type ProductRating {
   """Mean score to 2 decimals; null without reviews"""
@@ -4032,6 +4087,15 @@ type Query {
   """
   myPhoneVerification: PhoneVerificationStatusEntity!
 
+  """The caller's own questions, answered or not, newest first"""
+  myProductQuestions(
+    """The id of the last item of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+  ): [ProductQuestion!]!
+
   """Get return requests for the current user"""
   myReturnRequests: [ReturnRequestEntity!]!
 
@@ -4085,6 +4149,23 @@ type Query {
 
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
+
+  """
+  An answered question of a public product; its asker and moderators also see it unanswered or hidden
+  """
+  productQuestion(questionId: String!): ProductQuestion!
+
+  """
+  Answered questions of a public product, latest answer first, a page at a time
+  """
+  productQuestions(
+    """The id of the last item of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+    productId: ID!
+  ): [ProductQuestion!]!
 
   """
   Published reviews of a public product, a page at a time (pass the last id as after)
@@ -4159,6 +4240,15 @@ type Query {
 
   """List refunds, optionally by status, newest first (admin only)"""
   refunds(status: RefundStatusEnum): [RefundEntity!]!
+
+  """Moderation queue: questions with open reports, oldest question first"""
+  reportedProductQuestions(
+    """The id of the last item of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+  ): [ReportedProductQuestion!]!
 
   """Moderation queue: reviews with open reports, oldest review first"""
   reportedReviews(
@@ -4336,6 +4426,15 @@ type Query {
   Best-selling products of paid orders by quantity, all time (admin only)
   """
   topProducts(limit: Int! = 10): [TopProduct!]!
+
+  """Published questions waiting for an answer, oldest first"""
+  unansweredProductQuestions(
+    """The id of the last item of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+  ): [ProductQuestion!]!
 
   """
   A rider's cash collections not handed in yet, oldest first (staff: Owner, Manager, Cashier)
@@ -4853,6 +4952,12 @@ input ReportContentInput {
   """Up to 500 characters; required for OTHER"""
   note: String
   reason: ContentReportReason!
+}
+
+"""A product question with open reports, waiting for staff"""
+type ReportedProductQuestion {
+  openReports: [ContentReport!]!
+  question: ProductQuestion!
 }
 
 """A review with open reports, waiting for staff"""
