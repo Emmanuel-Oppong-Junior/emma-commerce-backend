@@ -7,7 +7,6 @@ import { CreateProductInput } from './dto/create-product.input';
 import { ProductSortField } from './enums/product-sort-field.enum';
 import { SortOrder } from '../commons/enums/sort-order.enum';
 import { UpdateProductInput } from './dto/update-product.input';
-import { ProductFilterArgs } from './dto/product-filter.args';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { ProductStatusEnum } from './enums/product.enum';
@@ -18,16 +17,16 @@ import { ProductTypesRepository } from '../product-types/product-types.repositor
 import { VariantService } from '../variant/variant.service';
 import { LotsService } from '../inventory/lots/lots.service';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
+import { ProductSearch } from './search/product-search.port';
 
-const AVAILABLE_STOCK = { stockLevels: { some: { onHand: { gt: 'reserved' } } } };
 const mockProductsRepository = {
-  hasAvailableStock: () => AVAILABLE_STOCK,
   create: jest.fn(),
   update: jest.fn(),
   delete: jest.fn(),
   findById: jest.fn(),
   findFirst: jest.fn(),
   findMany: jest.fn(),
+  findManyByIds: jest.fn(),
   count: jest.fn(),
   updateTags: jest.fn(),
   findCategoryById: jest.fn(),
@@ -47,6 +46,7 @@ const generalType = { id: 'product_type_general', key: 'general', attributes: []
 const mockProductTypesRepository = { findById: jest.fn() };
 const preparedDefault = [{ data: { optionsKey: '' }, quantity: 100 }];
 const mockVariantService = { prepare: jest.fn(), insertPrepared: jest.fn() };
+const mockProductSearch = { search: jest.fn() };
 
 describe('ProductsService', () => {
   const mockLotsService = { assertTrackingChange: jest.fn() };
@@ -64,6 +64,7 @@ describe('ProductsService', () => {
         { provide: VariantService, useValue: mockVariantService },
         { provide: LotsService, useValue: mockLotsService },
         { provide: SerialUnitsService, useValue: { assertTrackingChange: jest.fn() } },
+        { provide: ProductSearch, useValue: mockProductSearch },
       ],
     }).compile();
 
@@ -171,186 +172,127 @@ describe('ProductsService', () => {
 
   describe('findAll', () => {
     const paginate: PaginationArgs = { first: 2, after: undefined };
-    const filter: ProductFilterArgs = { categoryId: 'cat1', isActive: true };
     const products = [
-      {
-        id: 'prod1',
-        name: 'T-Shirt',
-        price: 19.99,
-        categoryId: 'cat1',
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        images: [],
-      },
-      {
-        id: 'prod2',
-        name: 'Jeans',
-        price: 49.99,
-        categoryId: 'cat1',
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        images: [],
-      },
+      { id: 'prod1', name: 'T-Shirt' },
+      { id: 'prod2', name: 'Jeans' },
     ];
+    const searchArg = () => mockProductSearch.search.mock.calls[0][0];
 
-    it('should return paginated products with filters', async () => {
-      const extraProduct = {
-        id: 'prod3',
-        name: 'Hoodie',
-        price: 59.99,
-        categoryId: 'cat1',
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        images: [],
-      };
-      // Return take+1 items to signal hasNextPage=true
-      mockProductsRepository.findMany.mockResolvedValue([...products, extraProduct]);
-      mockProductsRepository.count.mockResolvedValue(3);
+    beforeEach(() => {
+      mockProductSearch.search.mockResolvedValue({
+        items: [
+          { id: 'prod2', cursor: 'c2' },
+          { id: 'prod1', cursor: 'c1' },
+        ],
+        hasNextPage: true,
+        totalCount: 3,
+      });
+      mockProductsRepository.findManyByIds.mockResolvedValue(products);
+    });
 
-      const result = await service.findAll(paginate, filter);
+    it('returns the page in the order the search port chose, with its cursors and counts', async () => {
+      const result = await service.findAll(paginate, { categoryId: 'cat1' });
 
-      expect(productsRepository.findMany).toHaveBeenCalledWith(
-        { take: 3, skip: 0, cursor: undefined },
-        { categoryId: 'cat1', isActive: true },
-        { createdAt: 'desc' },
-        undefined,
-      );
-      expect(productsRepository.count).toHaveBeenCalledWith({ categoryId: 'cat1', isActive: true });
+      expect(productsRepository.findManyByIds).toHaveBeenCalledWith(['prod2', 'prod1'], undefined);
       expect(result).toEqual({
-        edges: products.map((p) => ({ cursor: p.id, node: p })),
+        edges: [
+          { cursor: 'c2', node: products[1] },
+          { cursor: 'c1', node: products[0] },
+        ],
         pageInfo: { pageSize: 2, hasPreviousPage: false, hasNextPage: true, totalCount: 3 },
       });
     });
 
-    it('should handle search filter across name and description', async () => {
-      const searchFilter: ProductFilterArgs = { search: 'shirt' };
-      mockProductsRepository.findMany.mockResolvedValue([products[0]]);
-      mockProductsRepository.count.mockResolvedValue(1);
+    it('drops a product deleted between the search and the load', async () => {
+      mockProductsRepository.findManyByIds.mockResolvedValue([products[0]]);
 
-      await service.findAll(paginate, searchFilter);
+      const result = await service.findAll(paginate, {});
 
-      expect(productsRepository.findMany).toHaveBeenCalledWith(
-        expect.any(Object),
-        {
-          OR: [
-            { name: { search: 'shirt' } },
-            { description: { search: 'shirt' } },
-            { tags: { some: { name: { contains: 'shirt', mode: 'insensitive' } } } },
-          ],
-        },
-        { createdAt: 'desc' },
-        undefined,
-      );
+      expect(result.edges).toEqual([{ cursor: 'c1', node: products[0] }]);
     });
 
-    it('should select only requested fields when requestedField is provided', async () => {
-      mockProductsRepository.findMany.mockResolvedValue(products);
+    it('loads only the requested fields', async () => {
+      await service.findAll(paginate, {}, {}, { id: true, name: true });
 
-      await service.findAll(paginate, filter, {}, { id: true, name: true });
-
-      expect(productsRepository.findMany).toHaveBeenCalledWith(
-        { take: 3, skip: 0, cursor: undefined },
-        { categoryId: 'cat1', isActive: true },
-        { createdAt: 'desc' },
-        { id: true, name: true },
-      );
+      expect(productsRepository.findManyByIds).toHaveBeenCalledWith(['prod2', 'prod1'], { id: true, name: true });
     });
 
-    it('should order by the requested sort field and direction', async () => {
-      mockProductsRepository.findMany.mockResolvedValue(products);
-
-      await service.findAll(paginate, filter, { sortBy: ProductSortField.NAME, sortOrder: SortOrder.ASC });
-
-      expect(productsRepository.findMany).toHaveBeenCalledWith(
-        expect.any(Object),
-        expect.any(Object),
-        { name: 'asc' },
-        undefined,
-      );
-    });
-
-    it('filters on price and stock through one active variant that matches them all', async () => {
-      mockProductsRepository.findMany.mockResolvedValue([]);
-      mockProductsRepository.count.mockResolvedValue(0);
-
-      await service.findAll(paginate, { priceMin: new Decimal(10), priceMax: new Decimal(50), inStock: true });
-
-      expect(productsRepository.count).toHaveBeenCalledWith({
-        variants: {
-          some: { isActive: true, price: { gte: new Decimal(10), lte: new Decimal(50) }, ...AVAILABLE_STOCK },
-        },
+    it('passes every filter to the search, none replacing another', async () => {
+      await service.findAll(paginate, {
+        search: '  shirt  ',
+        priceMin: new Decimal(10),
+        priceMax: new Decimal(50),
+        inStock: false,
+        tagId: 'tag1',
+        tagName: 'sale',
+        subcategoryId: 'sub1',
+        subCategoryName: 'Tees',
+        brand: 'Acme',
       });
-    });
 
-    it.each<[string, ProductFilterArgs, object]>([
-      ['a minimum price', { priceMin: new Decimal(10) }, { isActive: true, price: { gte: new Decimal(10) } }],
-      ['a maximum price', { priceMax: new Decimal(50) }, { isActive: true, price: { lte: new Decimal(50) } }],
-      ['in stock', { inStock: true }, { isActive: true, ...AVAILABLE_STOCK }],
-    ])('filters on %s alone through the variants', async (_case, variantFilter, some) => {
-      mockProductsRepository.findMany.mockResolvedValue([]);
-      mockProductsRepository.count.mockResolvedValue(0);
-
-      await service.findAll(paginate, variantFilter);
-
-      expect(productsRepository.count).toHaveBeenCalledWith({ variants: { some } });
-    });
-
-    it('adds no variant condition without a price or stock filter', async () => {
-      mockProductsRepository.findMany.mockResolvedValue([]);
-      mockProductsRepository.count.mockResolvedValue(0);
-
-      await service.findAll(paginate, { inStock: false });
-
-      expect(productsRepository.count).toHaveBeenCalledWith({});
-    });
-
-    it('should respect pagination with after cursor', async () => {
-      const paginateWithCursor: PaginationArgs = { first: 1, after: 'prod1' };
-      mockProductsRepository.findMany.mockResolvedValue([products[1]]);
-
-      await service.findAll(paginateWithCursor, {});
-
-      expect(productsRepository.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 2, skip: 1, cursor: { id: 'prod1' } }),
-        expect.any(Object),
-        expect.any(Object),
-        undefined,
+      expect(searchArg().filters).toEqual(
+        expect.objectContaining({
+          visibility: 'ADMIN',
+          text: 'shirt',
+          priceMin: new Decimal(10),
+          priceMax: new Decimal(50),
+          inStock: false,
+          tagId: 'tag1',
+          tagName: 'sale',
+          subcategoryId: 'sub1',
+          subCategoryName: 'Tees',
+          brandName: 'Acme',
+        }),
       );
+    });
+
+    it('orders by the requested sort field and direction', async () => {
+      await service.findAll(paginate, {}, { sortBy: ProductSortField.NAME, sortOrder: SortOrder.ASC });
+
+      expect(searchArg().sort).toEqual({ key: 'NAME', direction: 'ASC' });
+    });
+
+    it('passes the cursor on and reports a previous page', async () => {
+      const result = await service.findAll({ first: 1, after: 'cursor-1' }, {});
+
+      expect(searchArg()).toEqual(expect.objectContaining({ first: 1, after: 'cursor-1' }));
+      expect(result.pageInfo.hasPreviousPage).toBe(true);
+    });
+
+    it('rejects a priceMin above priceMax before searching', async () => {
+      await expect(service.findAll(paginate, { priceMin: new Decimal(60), priceMax: new Decimal(50) })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockProductSearch.search).not.toHaveBeenCalled();
     });
   });
 
   describe('public visibility', () => {
     const published = { isActive: true, status: 'PUBLISHED' };
+    const searchArg = () => mockProductSearch.search.mock.calls[0][0];
+
+    beforeEach(() => {
+      mockProductSearch.search.mockResolvedValue({ items: [], hasNextPage: false, totalCount: 0 });
+      mockProductsRepository.findManyByIds.mockResolvedValue([]);
+    });
 
     it('forces active and PUBLISHED on the public list, overriding the client filter', async () => {
-      mockProductsRepository.findMany.mockResolvedValue([]);
-      mockProductsRepository.count.mockResolvedValue(0);
-
       await service.findAllPublished(
         { first: 5 },
         { categoryId: 'cat1', isActive: false, status: ProductStatusEnum.DRAFT },
       );
 
-      const where = { categoryId: 'cat1', ...published };
-      expect(productsRepository.findMany).toHaveBeenCalledWith(
-        expect.any(Object),
-        where,
-        expect.any(Object),
-        undefined,
-      );
-      expect(productsRepository.count).toHaveBeenCalledWith(where);
+      expect(searchArg().filters).toEqual(expect.objectContaining({ visibility: 'PUBLIC', categoryId: 'cat1' }));
+      expect(searchArg().filters).not.toHaveProperty('isActive');
+      expect(searchArg().filters).not.toHaveProperty('status');
     });
 
     it('lets the admin list filter by any status and inactive products', async () => {
-      mockProductsRepository.findMany.mockResolvedValue([]);
-      mockProductsRepository.count.mockResolvedValue(0);
-
       await service.findAll({ first: 5 }, { isActive: false, status: ProductStatusEnum.ARCHIVED });
 
-      expect(productsRepository.count).toHaveBeenCalledWith({ isActive: false, status: 'ARCHIVED' });
+      expect(searchArg().filters).toEqual(
+        expect.objectContaining({ visibility: 'ADMIN', isActive: false, status: 'ARCHIVED' }),
+      );
     });
 
     it('looks up a single public product only among published ones', async () => {

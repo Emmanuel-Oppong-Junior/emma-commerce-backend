@@ -3349,8 +3349,11 @@ type ProductEdge {
 }
 
 input ProductFilterArgs {
-  """Filter by brand name (exact match)"""
+  """Filter by brand name (exact match, ignoring case)"""
   brand: String
+
+  """Filter by brand ID"""
+  brandId: String
 
   """Filter by category ID"""
   categoryId: String
@@ -3362,20 +3365,29 @@ input ProductFilterArgs {
   createdAfter: String
 
   """
-  true: only products with an active variant in stock; false or omitted: no stock filter
+  true: only products with an active variant a customer can buy now (its best serving location has unreserved, unexpired units, like Variant.available); false: only products with none; omitted: no stock filter. With priceMin/priceMax and true, the same variant must be in stock and in the price range.
   """
   inStock: Boolean
 
   """Filter by active status"""
   isActive: Boolean = true
 
-  """Filter by maximum price (inclusive)"""
+  """
+  Maximum price (inclusive) of an active variant, on its stored selling price (see priceMin)
+  """
   priceMax: Decimal
 
-  """Filter by minimum price (inclusive)"""
+  """
+  Minimum price (inclusive) of an active variant, on its stored selling price (tax included; promotions and price lists are not applied). With priceMax, one variant must be within both bounds; above priceMax: BAD_REQUEST.
+  """
   priceMin: Decimal
 
-  """Filter by name, description, or tags (partial match)"""
+  """Filter by product type ID"""
+  productTypeId: String
+
+  """
+  Full-text search (web-search syntax: "quoted phrase", OR, -exclude) over the name, the brand, category, sub-category and tag names and the descriptions; when nothing matches, names are matched allowing typos. Blank or punctuation-only text is ignored. At most 200 characters.
+  """
   search: String
 
   """
@@ -3389,16 +3401,18 @@ input ProductFilterArgs {
   """Filter by subcategory ID"""
   subcategoryId: String
 
-  """Filter by tag ID"""
+  """Filter by tag ID (with tagName, the product needs both)"""
   tagId: String
 
-  """Filter by tag name"""
+  """Filter by tag name (exact match, ignoring case)"""
   tagName: String
 }
 
 input ProductSortArgs {
-  """Field to sort products by"""
-  sortBy: ProductSortField = CREATED_AT
+  """
+  Field to sort products by; default RELEVANCE with search text, else CREATED_AT. Ties go by id.
+  """
+  sortBy: ProductSortField
 
   """Sort direction"""
   sortOrder: SortOrder = DESC
@@ -3411,6 +3425,11 @@ enum ProductSortField {
 
   """Sort by product name"""
   NAME
+
+  """
+  Best search match first (ignores sortOrder); without search text, newest first
+  """
+  RELEVANCE
 
   """Sort by last update date"""
   UPDATED_AT

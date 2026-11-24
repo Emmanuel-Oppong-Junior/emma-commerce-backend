@@ -23,6 +23,8 @@ import {
   CategoryProductsResolver,
   SubCategoryProductsResolver,
 } from './nested-products.resolver';
+import { ProductSearch } from './search/product-search.port';
+import { PostgresProductSearch } from './search/postgres/postgres-product-search';
 
 @Module({
   providers: [
@@ -38,6 +40,7 @@ import {
     VariantFieldsResolver,
     ReviewsLoader,
     ProductsLoader,
+    { provide: ProductSearch, useClass: PostgresProductSearch },
   ],
   imports: [
     TagModule,

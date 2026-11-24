@@ -157,6 +157,8 @@ model Category {
   updatedAt        DateTime      @updatedAt
   promotions       Promotion[]   @relation("CategoryToPromotion")
   rewardPromotions Promotion[]   @relation("PromotionRewardCategories")
+
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Category_name_trgm_idx")
 }
 
 model SubCategory {
@@ -183,6 +185,8 @@ model Brand {
   rewardPromotions Promotion[] @relation("PromotionRewardBrands")
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Brand_name_trgm_idx")
 }
 
 model Tag {
@@ -365,6 +369,9 @@ model Product {
   wishlist         WishList[]
   brand            Brand?       @relation(fields: [brandId], references: [id])
   brandId          String?
+  /// Full-text document (P6-S.1, simple config): name weight A; brand, category, sub-category and tag names B;
+  /// short description and description C. Kept up to date by database triggers, never written by the app.
+  searchVector     Unsupported("tsvector")?
 
   @@index([brandId])
   @@index([categoryId])
@@ -372,6 +379,8 @@ model Product {
   @@index([isActive, status])
   @@index([productTypeId])
   @@index([attributes(ops: JsonbPathOps)], type: Gin)
+  @@index([searchVector], type: Gin)
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Product_name_trgm_idx")
 }
 
 enum ProductStatus {

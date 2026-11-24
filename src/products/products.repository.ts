@@ -1,7 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Category, Prisma, Product, SubCategory, Tag } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { SERVING_LOCATION } from '../inventory/locations/serving-locations';
 import { PriceChangeOrigin } from '../price-history/price-change';
 import { insertRepricedChanges } from '../price-history/price-history.repository';
 
@@ -14,13 +13,6 @@ export interface VariantOptions {
 @Injectable()
 export class ProductsRepository {
   constructor(private readonly prisma: PrismaService) {}
-
-  /** Variant filter: some location serving customers has stock that is not reserved (onHand > reserved), in SQL. */
-  hasAvailableStock(): Prisma.VariantWhereInput {
-    return {
-      stockLevels: { some: { onHand: { gt: this.prisma.stockLevel.fields.reserved }, location: SERVING_LOCATION } },
-    };
-  }
 
   async create(
     data: Prisma.ProductCreateInput,
@@ -93,6 +85,14 @@ export class ProductsRepository {
 
   async count(where: Prisma.ProductWhereInput): Promise<number> {
     return this.prisma.product.count({ where });
+  }
+
+  /** The products with these ids, in no particular order. */
+  async findManyByIds(ids: string[], select?: Prisma.ProductSelect): Promise<Product[]> {
+    if (ids.length === 0) return [];
+    const queryOptions: Prisma.ProductFindManyArgs = { where: { id: { in: ids } } };
+    if (select && Object.keys(select).length) queryOptions.select = { ...select, id: true, productTypeId: true };
+    return this.prisma.product.findMany(queryOptions);
   }
 
   async updateTags(
