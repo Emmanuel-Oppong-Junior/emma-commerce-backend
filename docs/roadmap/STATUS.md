@@ -2,7 +2,7 @@
 
 > **This file is the live state of the work.** It is updated at every checkpoint while working, not at the end of a session, because a session can stop at any moment. To resume ("continue"), read **Active task → Next step**, check it against git (see `CLAUDE.md` → Working state), and carry on. Keep it to about one screen.
 
-**Last checkpoint:** 2026-11-23 · **Current phase:** Phase 5 — Delivery & fulfilment (started 2026-11-23, Emmanuel; done 2026-11-23 except P5-D, 7/8: P5-A, P5-B, P5-C, P5-E done; P5-D couriers deferred until a client needs one); Phase 4 — Inventory (started 2026-11-22, Emmanuel; done 2026-11-23, 7/7); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
+**Last checkpoint:** 2026-11-24 · **Current phase:** Phase 5 — Delivery & fulfilment (started 2026-11-23, Emmanuel; done 2026-11-23 except P5-D, 7/8: P5-A, P5-B, P5-C, P5-E done; P5-D couriers deferred until a client needs one); Phase 4 — Inventory (started 2026-11-22, Emmanuel; done 2026-11-23, 7/7); Phase 3 — Payments & Ghana methods (started 2026-11-21, Emmanuel; 8/11: P3-A, P3-B, P3-E, P3-C.1 done); Phase 2 — Pricing & tax engine (started 2026-11-21; 10/15: P2-A, P2-H, P2-B, P2-W done; P2-T blocked); Phase 1 — Foundations (30/33: P1-P, P1-U, P1-K.1, P1-S, P1-G, P1-J, P1-L, P1-R, P1-V, P1-N, P1-O done; only P1-K.2–K.4 left, blocked on hosting); Phase 0 done (46/46) · **Plan:** [`ROADMAP.md`](ROADMAP.md)
 
 ## Active task
 None. Phase 5 is done except P5-D couriers (deferred until a client needs one); the next phase needs Emmanuel's go-ahead.
@@ -247,6 +247,7 @@ Repro tests turned green: **21 / 21** (DISC-01 ×2, DISC-02 ×2, PAY-01, PAY-05,
 ## Decisions log
 | Date | Decision | Where recorded |
 |---|---|---|
+| 2026-11-24 | P5-C kept as built: the delivery code / proof of delivery applies only to shipments with a rider (riderless shipments keep the old path); `recordCodPayment` refuses rider shipments (cash recorded with the proof) and needs a rider collector for delivery orders (pickup counter: any active staff) | STATUS, CLAUDE.md |
 | 2026-11-20 | No frontend or client uses the API yet: breaking changes allowed without deprecation (still `[breaking-api]` + documented) until the first client integrates | CLAUDE.md, WORKING-AGREEMENT |
 | 2026-11-23 | Phase 5 started. Zones match region + towns/areas (most specific wins, overlaps rejected, no match = delivery refused, never free); rates: base per zone + optional weight bands + free-above threshold, standard/express as rate rules; POD: SMS delivery code at dispatch + optional photo, staff override with reason; build all of Phase 5 except couriers (P5-D deferred) | STATUS (Phase 5) |
 | 2026-11-23 | P4-E: `setVariantCost` may correct a cost purchase orders set (no `COST_FROM_PURCHASES` refusal); later receipts average from the corrected cost | STATUS (P4-E) |
