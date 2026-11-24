@@ -28,7 +28,7 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
 | 4 — Inventory | 7 / 7 | ✅ complete |
 | 5 — Delivery & fulfilment | 7 / 8 | 🔄 in progress (P5-D deferred) |
-| 6 — Customer engagement | 0 / 17 | ⬜ not started |
+| 6 — Customer engagement | 0 / 17 | 🔄 in progress |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
@@ -414,18 +414,18 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ### P6-N — Notifications (ADR-0015)
 > Run: N.1 → (N.2 ∥ N.3 ∥ N.4) · L · 🟥 N.1–N.2 / 🟧 N.3–N.4
-- [ ] **P6-N.1** Templates (escaped, versioned) + preferences + consent
+- [ ] 🔄 **P6-N.1** Templates (escaped, versioned) + preferences + consent
 - [ ] **P6-N.2** SMS adapter (Hubtel/mNotify) with sender ID
 - [ ] **P6-N.3** WhatsApp via BSP
 - [ ] **P6-N.4** In-app feed
 
 ### P6-R — Returns/RMA
 > Run: → · L · 🟥
-- [ ] **P6-R.1** Item-level returns (M11), reasons, windows per product type (Act 772 14-day rule + exemptions), inspection, restock/disposition, refund or exchange
+- [ ] 🔄 **P6-R.1** Item-level returns (M11), reasons, windows per product type (Act 772 14-day rule + exemptions), inspection, restock/disposition, refund or exchange
 
 ### P6-S — Search (ADR-0010)
 > Run: S.1 → S.2; S.3/S.4 later · L · 🟥 S.1 / 🟧 S.2–S.4
-- [ ] **P6-S.1** Fix filters (inStock, price range, subcategory) + `websearch_to_tsquery` + GIN + pg_trgm
+- [ ] 🔄 **P6-S.1** Fix filters (inStock, price range, subcategory) + `websearch_to_tsquery` + GIN + pg_trgm
 - [ ] **P6-S.2** Attribute facets
 - [ ] **P6-S.3** Meilisearch adapter (when triggered)
 - [ ] **P6-S.4** Autocomplete, synonyms
@@ -438,7 +438,7 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ### P6-V — Reviews
 > Run: ∥ · M · 🟧
-- [ ] **P6-V.1** Verified purchase, DB unique (user, product), moderation queue, media, rating aggregates
+- [ ] 🔄 **P6-V.1** Verified purchase, DB unique (user, product), moderation queue, media, rating aggregates
 - [ ] **P6-V.2** Product Q&A
 
 ### P6-L — Loyalty
