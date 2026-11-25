@@ -88,9 +88,11 @@ describe('Guest checkout with phone verification (P6-G.1, e2e)', () => {
     const before = sms.send.mock.calls.length;
     const res = await send();
     expect(res.errors).toBeUndefined();
-    await waitUntil(() => sms.send.mock.calls.slice(before).some(([to]) => to === phone));
-    const [, text] = sms.send.mock.calls.slice(before).find(([to]) => to === phone)!;
-    return /^(\d{6}) /.exec(text)![1];
+    // Order texts to the same phone from earlier orders may still be arriving; take the code text.
+    const codeText = () =>
+      sms.send.mock.calls.slice(before).find(([to, text]) => to === phone && /^\d{6} /.test(text))?.[1];
+    await waitUntil(() => codeText() !== undefined);
+    return /^(\d{6}) /.exec(codeText()!)![1];
   };
   const quote = (token: string, place = DELIVERY, paymentMethod = 'ONLINE') =>
     gql(
