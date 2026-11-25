@@ -712,6 +712,11 @@ model OrderItem {
   /// The price list unitListPrice came from (P2-W.1); null for the variant's normal price. A snapshot, not a foreign
   /// key: the list may change or be deleted later
   priceListId          String?
+  /// The variant's weighted-average unit cost when the sale's stock was consumed (P8-A: online payment captured or
+  /// cash-on-delivery dispatch), tax-exclusive, 4 dp; written once with costRecordedAt (CHECK), never changed after.
+  /// Null = cost unknown then, or not consumed yet (costRecordedAt null)
+  unitCost             Decimal?           @db.Decimal(14, 4)
+  costRecordedAt       DateTime?
   order                Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product              Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
   variant              Variant            @relation(fields: [variantId], references: [id], onDelete: Restrict)

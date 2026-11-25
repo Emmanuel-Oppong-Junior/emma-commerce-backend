@@ -1710,6 +1710,7 @@ All order operations require `Bearer` JWT.
   unitTax?: Money;            // Tax included in one discounted unit; null on pricingVersion 0
   lineTotal: Money;           // (unitListPrice - unitDiscount) × quantity = (unitNet + unitTax) × quantity
   taxLines: OrderLineTax[];   // One per tax included in the line; empty on pricingVersion 0 and untaxed lines
+  unitCost?: Decimal;         // P8-A, inventory.cost.view only (others get FORBIDDEN on the field): the variant's weighted-average cost (tax-exclusive, 4 dp) when the sale's stock was consumed (online payment captured, or cash-on-delivery dispatch). Written once, never changed by later cost changes; null when the cost was unknown then or the stock is not consumed yet
   createdAt: DateTime;
   updatedAt: DateTime;
   product: Product;

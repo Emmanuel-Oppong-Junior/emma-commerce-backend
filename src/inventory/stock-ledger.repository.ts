@@ -126,6 +126,18 @@ export class StockLedgerRepository {
     return count === 1;
   }
 
+  /**
+   * Snapshots the variant's current weighted-average cost on the sold order line (P8-A), once: a line already
+   * recorded keeps its cost, so later cost changes never alter a past sale's margin.
+   */
+  async recordSaleCost(db: Db, orderItemId: string): Promise<void> {
+    await db.$executeRaw`
+      UPDATE "OrderItem" oi SET "unitCost" = v."costPrice", "costRecordedAt" = now()
+      FROM "Variant" v
+      WHERE oi.id = ${orderItemId} AND v.id = oi."variantId" AND oi."costRecordedAt" IS NULL
+    `;
+  }
+
   /** The variant's available stock summed over active locations, and whether `locationId` is one of them. */
   async activeAvailable(
     db: Db,

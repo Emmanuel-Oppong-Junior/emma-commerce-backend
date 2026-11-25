@@ -5,6 +5,8 @@ import { Decimal } from '@prisma/client/runtime/client';
 import { MoneyObject } from '../../commons/money/money.object';
 import { Variant } from '../../variant/entities/variant.entity';
 import { GraphQLJSONObject } from 'graphql-type-json';
+import { GraphQLDecimal } from '../../commons/money/decimal.scalar';
+import { COST_VIEWERS_ONLY } from '../../purchasing/cost/cost-visibility';
 
 @ObjectType()
 export class OrderItem {
@@ -55,6 +57,14 @@ export class OrderItem {
 
   @Field(() => MoneyObject, { description: '(unitListPrice - unitDiscount) x quantity, tax included' })
   lineTotal: Decimal;
+
+  @Field(() => GraphQLDecimal, {
+    ...COST_VIEWERS_ONLY,
+    description:
+      "The variant's unit cost (tax-exclusive, 4 dp) when the sale's stock was consumed; null when unknown or not " +
+      'sold yet. Never changes afterwards (inventory.cost.view)',
+  })
+  unitCost?: Decimal | null;
 
   @Field(() => [OrderLineTax], { description: 'Taxes included in the line; empty on orders placed before' })
   taxLines: OrderLineTax[];

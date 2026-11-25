@@ -3583,6 +3583,11 @@ type OrderItem {
   """Taxes included in the line; empty on orders placed before"""
   taxLines: [OrderLineTax!]!
 
+  """
+  The variant's unit cost (tax-exclusive, 4 dp) when the sale's stock was consumed; null when unknown or not sold yet. Never changes afterwards (inventory.cost.view)
+  """
+  unitCost: Decimal
+
   """Product discount taken off one unit"""
   unitDiscount: Money!
 

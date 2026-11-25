@@ -5,7 +5,15 @@ const tx = { tx: true } as never;
 const LOCATION = 'store_main';
 
 function reservation(id: string, status: StockReservationStatus, quantity = 2) {
-  return { id, variantId: `var-${id}`, locationId: LOCATION, orderId: 'order1', quantity, status };
+  return {
+    id,
+    variantId: `var-${id}`,
+    locationId: LOCATION,
+    orderId: 'order1',
+    orderItemId: `oi-${id}`,
+    quantity,
+    status,
+  };
 }
 
 describe('StockLedgerService', () => {
@@ -24,6 +32,7 @@ describe('StockLedgerService', () => {
       createReservation: jest.fn(),
       findReservations: jest.fn().mockResolvedValue([]),
       claimReservation: jest.fn().mockResolvedValue(true),
+      recordSaleCost: jest.fn(),
       findVariantForAlert: jest.fn().mockResolvedValue({ lowStockThreshold: 5 }),
       // One active location: the variant's total available is what the level just changed to.
       activeAvailable: jest.fn(async () => {
@@ -85,6 +94,16 @@ describe('StockLedgerService', () => {
         reservedDelta: -2,
         reason: 'SALE',
       });
+    });
+
+    it('snapshots the unit cost of the lines it consumes only, not those another request consumed', async () => {
+      repository.findReservations.mockResolvedValue([reservation('a', 'ACTIVE'), reservation('b', 'ACTIVE')]);
+      repository.claimReservation.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+      await service.consumeOrder(tx, 'order1');
+
+      expect(repository.recordSaleCost).toHaveBeenCalledTimes(1);
+      expect(repository.recordSaleCost).toHaveBeenCalledWith(tx, 'oi-a');
     });
 
     it('fails loudly if the stock level refuses a consumption it must cover', async () => {
