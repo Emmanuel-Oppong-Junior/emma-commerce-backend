@@ -35,6 +35,11 @@ export class StoreSettings {
   })
   returnWindowDays: number;
 
+  @Field(() => Int, {
+    description: 'Hours a signed-in customer’s cart sits unchanged before the abandoned-cart reminder (P6-G.2)',
+  })
+  abandonedCartReminderDelayHours: number;
+
   @Field(() => GraphQLISODateTime)
   createdAt: Date;
 

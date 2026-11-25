@@ -78,7 +78,7 @@ describe('Low-stock staff digest (P4-B.2, e2e)', () => {
     ledger = app.get(StockLedgerService);
     sender = app.get(NotificationSender);
     task = new LowStockDigestTask(app.get(LowStockAlertsService), app.get(LoggerService));
-    sendEmail = jest.spyOn(app.get(EmailService), 'sendLowStockDigestEmail').mockResolvedValue(undefined);
+    sendEmail = jest.spyOn(app.get(EmailService), 'send').mockResolvedValue({ messageId: 'em-1' });
     await resetDb(prisma);
     await seedMinimal(prisma);
     await staff('alerts_clerk', 'INVENTORY_CLERK');
@@ -144,16 +144,13 @@ describe('Low-stock staff digest (P4-B.2, e2e)', () => {
     });
     expect(sendEmail).toHaveBeenCalledWith(
       recipient.email,
-      [
-        {
-          locationName: expect.any(String),
-          items: [
-            { locationName: expect.any(String), productName: 'Low item 2', sku: 'LOW-2', available: 2, threshold: 3 },
-          ],
-        },
-      ],
+      expect.objectContaining({
+        subject: 'Low stock: 1 variant',
+        html: expect.stringContaining('<tr><td>Low item 2</td><td>LOW-2</td><td>2</td></tr>') as unknown,
+      }),
       events[0].id,
     );
+    expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 
   it('sends nothing when nothing is pending, and nothing twice', async () => {

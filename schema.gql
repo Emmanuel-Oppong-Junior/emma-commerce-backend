@@ -789,6 +789,34 @@ input CompleteMyDeliveryInput {
   shipmentId: ID!
 }
 
+enum ConsentAction {
+  GRANTED
+  WITHDRAWN
+}
+
+"""One entry of the consent ledger (append-only)"""
+type ConsentEventEntity {
+  action: ConsentAction!
+
+  """The staff member who recorded it (STAFF_REQUEST)"""
+  actorId: ID
+  category: NotificationCategory!
+  channel: NotificationChannel!
+  createdAt: DateTime!
+  id: ID!
+  source: ConsentSource!
+}
+
+"""
+Where a consent change came from: CHECKOUT, ACCOUNT_SETTINGS, STAFF_REQUEST or EMAIL_LINK
+"""
+enum ConsentSource {
+  ACCOUNT_SETTINGS
+  CHECKOUT
+  EMAIL_LINK
+  STAFF_REQUEST
+}
+
 """A customer report, without the reporter"""
 type ContentReport {
   createdAt: DateTime!
@@ -1911,6 +1939,31 @@ enum GhanaRegion {
   WESTERN_NORTH
 }
 
+"""A message in your in-app notification feed"""
+type InAppNotification {
+  body: String!
+  createdAt: DateTime!
+  id: ID!
+
+  """Null while unread"""
+  readAt: DateTime
+  refId: ID
+
+  """What it is about: Order (refId = the order id)"""
+  refType: String
+
+  """The template it came from, e.g. order.placed, refund.processed"""
+  templateKey: String!
+  title: String!
+}
+
+type InAppNotificationPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [InAppNotification!]!
+  totalCount: Int!
+}
+
 input InspectReturnInput {
   """Every line with units received, once"""
   lines: [InspectedReturnLineInput!]!
@@ -2390,6 +2443,19 @@ type Mutation {
   """
   inspectReturn(input: InspectReturnInput!): ReturnRequest!
 
+  """Mark all your notifications read; returns how many changed"""
+  markAllNotificationsRead: Int!
+
+  """
+  Mark up to 100 of your notifications read; returns how many changed (ids not yours, or already read, are ignored)
+  """
+  markNotificationsRead(ids: [ID!]!): Int!
+
+  """
+  Move a saved item back to the cart with its quantity; returns the cart. BAD_REQUEST with reason SAVED_ITEM_UNAVAILABLE when it is no longer on sale (it stays saved), or the cart stock refusal
+  """
+  moveSavedItemToCart(savedItemId: ID!): Cart!
+
   """
   Open a stock count at a location for a category, a list of variants or everything (admin only)
   """
@@ -2425,6 +2491,11 @@ type Mutation {
   Record the order total as cash collected for a dispatched cash-on-delivery order (out for delivery or ready for pickup). The collector (riderId) is a rider (role with delivery.ride) for a delivery, any active staff member at the pickup counter. Captures the payment, delivers the shipment and completes the order. BAD_REQUEST for a non-COD order, a collector who is not active staff (reason RIDER_NOT_STAFF) or, for a delivery, not a rider (NOT_A_RIDER), an amount other than the grand total (COLLECTION_AMOUNT_MISMATCH) or a collectedAt in the future or before dispatch (INVALID_COLLECTION_TIME); CONFLICT for the wrong status or an already-recorded payment. Nothing changes when refused.
   """
   recordCodPayment(input: RecordCodPaymentInput!): Payment!
+
+  """
+  Record a customer's request (by phone, in store) to receive or stop marketing on a channel (staff, source STAFF_REQUEST); returns their preferences. Same refusals as updateNotificationPreference
+  """
+  recordCustomerConsent(input: RecordCustomerConsentInput!): [NotificationPreferenceEntity!]!
 
   """
   Record a dispute against a captured online payment by hand (e.g. a chargeback notice by email). Owner, Manager, audited
@@ -2497,6 +2568,9 @@ type Mutation {
   """Removes a photo from the caller's review"""
   removeReviewPhoto(photoId: String!): Boolean!
 
+  """Delete a saved item"""
+  removeSavedItem(savedItemId: ID!): Boolean!
+
   """
   Take away a user's staff role so they become a customer (staff.manage). Only an Owner removes an Owner; the last Owner cannot be removed. Audited.
   """
@@ -2554,6 +2628,11 @@ type Mutation {
   Send a failed job back to the queue with its attempts reset (super admin only; audited)
   """
   retryFailedJob(jobId: ID!, queue: JobQueue!): FailedJob!
+
+  """
+  Move a cart line to "saved for later" (its quantity adds to the variant if already saved); returns the cart. CONFLICT with reason SAVED_ITEMS_LIMIT_REACHED at 100 saved variants
+  """
+  saveCartItemForLater(cartItemId: ID!): Cart!
 
   """
   Mark a DRAFT as sent to the supplier (no email is sent); its lines are frozen (staff)
@@ -2645,6 +2724,11 @@ type Mutation {
   """Publishes a hidden review again (audited)"""
   unhideReview(input: ModerateContentInput!): Review!
 
+  """
+  One-click unsubscribe from marketing emails, with the token of the link in a marketing email (no sign-in). Recorded in the consent ledger (source EMAIL_LINK); repeating it changes nothing. BAD_REQUEST with reason INVALID_UNSUBSCRIBE_TOKEN
+  """
+  unsubscribeMarketingEmail(token: String!): Boolean!
+
   """Updates an existing address for the user"""
   updateAddress(addressId: String!, input: UpdateAddressInput!): Address!
 
@@ -2693,6 +2777,11 @@ type Mutation {
     currentPassword: String
     updateMyProfileInput: UpdateUserInput!
   ): User!
+
+  """
+  Opt in to or out of a category on a channel; returns every preference. Each marketing change is recorded in the consent ledger. BAD_REQUEST with reason TRANSACTIONAL_ALWAYS_ON (transactional messages cannot be switched off), CHANNEL_NOT_AVAILABLE (marketing is EMAIL and SMS only) or PHONE_NOT_VERIFIED (marketing SMS needs a verified phone)
+  """
+  updateNotificationPreference(input: UpdateNotificationPreferenceInput!): [NotificationPreferenceEntity!]!
 
   """
   Switch card, mobile money and cash on delivery on or off and choose the provider of each online method. Owner, recent step-up, audited
@@ -2795,6 +2884,30 @@ type Mutation {
   Confirm the phone number with the code from the SMS. BAD_REQUEST with reason OTP_INVALID (attemptsRemaining), OTP_ATTEMPTS_EXCEEDED (5 wrong codes: the code is dead) or OTP_EXPIRED (none live: request a new one)
   """
   verifyPhone(input: VerifyPhoneInput!): PhoneVerificationStatusEntity!
+}
+
+"""
+TRANSACTIONAL (codes, receipts, order updates: always on) or MARKETING (opt-in only)
+"""
+enum NotificationCategory {
+  MARKETING
+  TRANSACTIONAL
+}
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  SMS
+}
+
+"""Whether a category of messages reaches the customer on a channel"""
+type NotificationPreferenceEntity {
+  category: NotificationCategory!
+  channel: NotificationChannel!
+  enabled: Boolean!
+
+  """True when the customer cannot switch it off (transactional messages)"""
+  locked: Boolean!
 }
 
 """How an ONLINE order is paid; chosen per payment attempt"""
@@ -4212,6 +4325,9 @@ type Query {
   """
   codRiskSettings: CodRiskSettingsEntity!
 
+  """A customer's consent ledger, newest first (staff)"""
+  customerConsentHistory(userId: ID!): [ConsentEventEntity!]!
+
   """Admin: one customer group"""
   customerGroup(id: ID!): CustomerGroup!
 
@@ -4294,6 +4410,23 @@ type Query {
 
   """One shipment assigned to the signed-in rider; NOT_FOUND otherwise"""
   myDelivery(shipmentId: ID!): RiderDelivery!
+
+  """
+  Every category and channel with its current choice: transactional always on (locked), marketing off until you opt in
+  """
+  myNotificationPreferences: [NotificationPreferenceEntity!]!
+
+  """Your in-app notifications, newest first (poll it; kept 90 days)"""
+  myNotifications(
+    """Id of the last notification of the previous page"""
+    after: ID
+
+    """1-50"""
+    first: Int! = 20
+
+    """Only unread notifications"""
+    unreadOnly: Boolean! = false
+  ): InAppNotificationPage!
 
   """
   Whether the current user's phone number is verified (cash on delivery needs it)
@@ -4527,6 +4660,9 @@ type Query {
   """
   salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
 
+  """Your items saved for later, newest first (at most 100)"""
+  savedItems: [SavedCartItem!]!
+
   """
   Autocomplete: published products, brands and categories matching a typed prefix (typos allowed)
   """
@@ -4700,6 +4836,9 @@ type Query {
     """1-50"""
     first: Int! = 20
   ): [ProductQuestion!]!
+
+  """How many of your in-app notifications are unread"""
+  unreadNotificationCount: Int!
 
   """
   A rider's cash collections not handed in yet, oldest first (staff: Owner, Manager, Cashier)
@@ -5016,6 +5155,15 @@ input RecordCodPaymentInput {
   The staff member who took the cash (an active account with a store role)
   """
   riderId: ID!
+}
+
+input RecordCustomerConsentInput {
+  """EMAIL or SMS (marketing)"""
+  channel: NotificationChannel!
+
+  """true: the customer asked to receive marketing; false: to stop it"""
+  granted: Boolean!
+  userId: ID!
 }
 
 input RecordDisputeInput {
@@ -5623,6 +5771,20 @@ type SalesReport {
   """Refunds processed in the period against accepted payments"""
   refunds: Money!
   totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
+}
+
+"""A variant saved for later, out of the cart"""
+type SavedCartItem {
+  """Whether it can go back in the cart (on sale; stock is checked then)"""
+  available: Boolean!
+  createdAt: DateTime!
+  id: ID!
+  quantity: Int!
+
+  """Why it cannot go back in the cart"""
+  unavailableReason: String
+  variant: Variant!
+  variantId: ID!
 }
 
 """Autocomplete for a typed prefix (P6-S.4)"""
@@ -6376,6 +6538,10 @@ enum StockTransferStatus {
 
 """The settings of the store this deployment serves"""
 type StoreSettings {
+  """
+  Hours a signed-in customer’s cart sits unchanged before the abandoned-cart reminder (P6-G.2)
+  """
+  abandonedCartReminderDelayHours: Int!
   createdAt: DateTime!
 
   """Currency of every price, charge and refund"""
@@ -6655,6 +6821,15 @@ input UpdateDisputeStatusInput {
   status: DisputeStatus!
 }
 
+input UpdateNotificationPreferenceInput {
+  category: NotificationCategory!
+  channel: NotificationChannel!
+  enabled: Boolean!
+
+  """CHECKOUT (the opt-in box at checkout) or ACCOUNT_SETTINGS (default)"""
+  source: ConsentSource = ACCOUNT_SETTINGS
+}
+
 """Payment-method switches to change; omitted fields keep their value"""
 input UpdatePaymentMethodsInput {
   cardPaymentProvider: OnlinePaymentProvider
@@ -6929,6 +7104,11 @@ input UpdateStockLocationInput {
 Store settings to change; omitted fields keep their value, null clears an optional one
 """
 input UpdateStoreSettingsInput {
+  """
+  Hours a signed-in customer’s cart sits unchanged before the abandoned-cart reminder (1-72; default 4)
+  """
+  abandonedCartReminderDelayHours: Int
+
   """Registered legal name, as printed on receipts"""
   legalName: String
 

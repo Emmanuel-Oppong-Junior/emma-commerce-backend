@@ -44,6 +44,8 @@ const values = {
   REDIS_PORT: redis.port || '6379',
   REDIS_DB: redisDb,
   LOG_LEVEL: 'warn',
+  // Base of the links in emails (password reset, cart, unsubscribe).
+  FRONTEND_URL: 'http://localhost:3001',
   // Tests start their own metrics server on a free port where they need one (test/helpers/metrics.helper.ts).
   METRICS_ENABLED: 'false',
 };

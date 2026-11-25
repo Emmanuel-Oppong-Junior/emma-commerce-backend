@@ -26,6 +26,7 @@ const store: Store = {
   codMaxOpenOrdersPerPhone: 2,
   codMaxOrderTotal: new Prisma.Decimal(2000),
   returnWindowDays: 14,
+  abandonedCartReminderDelayHours: 4,
   createdAt: fixedDate,
   updatedAt: fixedDate,
 };

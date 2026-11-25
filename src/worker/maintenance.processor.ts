@@ -11,6 +11,8 @@ import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliati
 import { StockReconciliationTask } from '../inventory/tasks/stock-reconciliation.task';
 import { LowStockDigestTask } from '../inventory/tasks/low-stock-digest.task';
 import { LotExpiryTask } from '../inventory/tasks/lot-expiry.task';
+import { NotificationRetentionTask } from '../notifications/notification-retention.task';
+import { AbandonedCartTask } from '../cart/abandoned/abandoned-cart.task';
 import { MaintenanceJob } from './maintenance-jobs';
 
 const CONTEXT = 'MaintenanceProcessor';
@@ -29,6 +31,8 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly metrics: AppMetrics,
     private readonly lowStockDigest: LowStockDigestTask,
     private readonly lotExpiry: LotExpiryTask,
+    private readonly notificationRetention: NotificationRetentionTask,
+    private readonly abandonedCarts: AbandonedCartTask,
   ) {
     super();
   }
@@ -53,6 +57,12 @@ export class MaintenanceProcessor extends WorkerHost {
         return;
       case MaintenanceJob.WriteOffExpiredLots:
         await this.lotExpiry.writeOffExpired();
+        return;
+      case MaintenanceJob.PurgeNotifications:
+        await this.notificationRetention.purge();
+        return;
+      case MaintenanceJob.RemindAbandonedCarts:
+        await this.abandonedCarts.run();
         return;
       default:
         throw new Error(`Unknown maintenance job "${job.name}"`);

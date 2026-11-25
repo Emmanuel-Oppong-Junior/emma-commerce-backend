@@ -68,21 +68,39 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
   });
 
   it('sends the shipment email once, keyed by the outbox event id, after the update commits', async () => {
-    const sends = jest.spyOn(email, 'sendOrderStatusEmail').mockResolvedValue();
+    const sends = jest.spyOn(email, 'send').mockResolvedValue({ messageId: 'em-1' });
     const orderId = await createOrder();
+    const { orderNumber } = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
 
     await worker.get(ShipmentsService).updateShipping(await createShipment(orderId), 'TRK-1', 'DHL', 'seed_admin');
 
     const event = await shipmentEvent(orderId);
     await waitUntil(async () => sends.mock.calls.length > 0);
-    expect(sends).toHaveBeenCalledWith('user@example.com', orderId, 'SHIPPED', 'TRK-1', event.id);
+    expect(sends).toHaveBeenCalledWith(
+      'user@example.com',
+      expect.objectContaining({
+        subject: `Your order #${orderNumber} has shipped`,
+        text: expect.stringContaining('Tracking number: TRK-1') as unknown,
+      }),
+      event.id,
+    );
+    const row = await prisma.notification.findUniqueOrThrow({ where: { dedupeKey: `${event.id}:EMAIL` } });
+    expect(row).toMatchObject({
+      userId: 'seed_user',
+      templateKey: 'shipment.dispatched',
+      category: 'TRANSACTIONAL',
+      channel: 'EMAIL',
+      status: 'SENT',
+      providerMessageId: 'em-1',
+      attempts: 1,
+    });
     const job = await getQueue(worker, JobQueue.NOTIFICATIONS).getJob(event.id);
     await waitUntil(async () => (await job!.getState()) === 'completed');
     expect(sends).toHaveBeenCalledTimes(1);
   });
 
   it('does not email twice when the event is published again or its job runs again', async () => {
-    const sends = jest.spyOn(email, 'sendOrderStatusEmail').mockResolvedValue();
+    const sends = jest.spyOn(email, 'send').mockResolvedValue({ messageId: 'em-2' });
     const orderId = await createOrder();
     await worker.get(ShipmentsService).updateShipping(await createShipment(orderId), 'TRK-2', 'DHL', 'seed_admin');
     const event = await shipmentEvent(orderId);
@@ -100,7 +118,7 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
   });
 
   it('writes no event and sends nothing when the state change fails', async () => {
-    const sends = jest.spyOn(email, 'sendOrderStatusEmail').mockResolvedValue();
+    const sends = jest.spyOn(email, 'send').mockResolvedValue({ messageId: 'em-3' });
     const orderId = await createOrder(OrderStatus.CANCELLED);
     const shipmentId = await createShipment(orderId);
 
@@ -115,14 +133,23 @@ describe('Notification emails through the outbox and queue (e2e)', () => {
 
   it('retries a failed send with backoff until it is delivered', async () => {
     const sends = jest
-      .spyOn(email, 'sendWelcomeEmail')
+      .spyOn(email, 'send')
       .mockRejectedValueOnce(new Error('Email not delivered: Welcome | rate_limit_exceeded'))
-      .mockResolvedValue();
+      .mockResolvedValue({ messageId: 'em-4' });
 
-    worker.get(NotificationsService).sendWelcomeEmail('user@example.com', 'Regular User');
+    worker.get(NotificationsService).sendWelcomeEmail('seed_user', 'user@example.com', 'Regular User');
 
     await waitUntil(async () => sends.mock.calls.length >= 2);
     expect(sends).toHaveBeenCalledTimes(2);
     expect(sends.mock.calls[0][2]).toBe(sends.mock.calls[1][2]);
+    // One row for the message: FAILED after the first attempt, then SENT on the retry.
+    await waitUntil(async () =>
+      (await prisma.notification.findMany({ where: { templateKey: 'account.welcome' } })).some(
+        (n) => n.status === 'SENT',
+      ),
+    );
+    const rows = await prisma.notification.findMany({ where: { templateKey: 'account.welcome' } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'SENT', attempts: 2, errorCode: null, providerMessageId: 'em-4' });
   });
 });

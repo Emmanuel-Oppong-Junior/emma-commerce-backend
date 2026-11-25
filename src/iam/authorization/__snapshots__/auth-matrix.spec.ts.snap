@@ -94,6 +94,9 @@ Mutation forgotPassword                  public
 Mutation hideProductQuestion             permission: review.moderate
 Mutation hideReview                      permission: review.moderate
 Mutation inspectReturn                   permission: return.manage + inventory.adjust
+Mutation markAllNotificationsRead        authenticated
+Mutation markNotificationsRead           authenticated
+Mutation moveSavedItemToCart             authenticated
 Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
@@ -102,6 +105,7 @@ Mutation receiveReturn                   permission: return.manage
 Mutation receiveStockTransfer            permission: inventory.transfer
 Mutation recordCashRemittance            permission: cod.cash.manage
 Mutation recordCodPayment                permission: payment.record
+Mutation recordCustomerConsent           permission: user.manage
 Mutation recordDispute                   permission: payment.dispute.manage
 Mutation recordProductView               authenticated
 Mutation recordStockTakeCounts           permission: inventory.adjust
@@ -120,6 +124,7 @@ Mutation removePaystackConfig            permission: payment.settings.manage; st
 Mutation removePriceListEntries          permission: pricelist.manage; step-up
 Mutation removeProductsFromTag           permission: catalog.taxonomy.write
 Mutation removeReviewPhoto               customer only
+Mutation removeSavedItem                 authenticated
 Mutation removeStaffRole                 permission: staff.manage; step-up
 Mutation removeSubCategory               permission: catalog.taxonomy.write
 Mutation removeTagFromProduct            permission: catalog.product.write
@@ -135,6 +140,7 @@ Mutation restockVariant                  permission: inventory.adjust
 Mutation restorePayment                  permission: payment.manage
 Mutation restoreProduct                  permission: catalog.product.write
 Mutation retryFailedJob                  permission: jobs.manage
+Mutation saveCartItemForLater            authenticated
 Mutation sendPurchaseOrder               permission: purchasing.manage
 Mutation setPaystackConfig               permission: payment.settings.manage; step-up
 Mutation setPickupLocationFulfilmentLocations permission: inventory.location.manage
@@ -157,6 +163,7 @@ Mutation unassignShipmentItemSerials     permission: order.fulfil
 Mutation unassignShipmentRider           permission: order.fulfil
 Mutation unhideProductQuestion           permission: review.moderate
 Mutation unhideReview                    permission: review.moderate
+Mutation unsubscribeMarketingEmail       public
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
@@ -168,6 +175,7 @@ Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateDeliverySlot              permission: shipping.manage
 Mutation updateDisputeStatus             permission: payment.dispute.manage
 Mutation updateMyProfile                 authenticated
+Mutation updateNotificationPreference    authenticated
 Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
 Mutation updatePickupLocation            permission: shipping.manage
 Mutation updatePriceList                 permission: pricelist.manage; step-up
@@ -211,6 +219,7 @@ Query checkoutQuote                      authenticated
 Query codBlacklist                       permission: payment.settings.manage
 Query codCashReport                      permission: cod.cash.manage
 Query codRiskSettings                    permission: payment.settings.manage
+Query customerConsentHistory             permission: user.view
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query dashboardSummary                   permission: report.view
@@ -224,6 +233,8 @@ Query getMyPayments                      customer only
 Query getUserPayment                     permission: payment.view
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
+Query myNotificationPreferences          authenticated
+Query myNotifications                    authenticated
 Query myPhoneVerification                authenticated
 Query myProductQuestions                 authenticated
 Query myReturns                          customer only
@@ -260,6 +271,7 @@ Query revenueByCategory                  permission: report.view
 Query review                             public, optional sign-in
 Query riders                             permission: order.fulfil
 Query salesReport                        permission: report.view
+Query savedItems                         authenticated
 Query searchSuggestions                  public, optional sign-in
 Query searchSynonyms                     permission: catalog.product.read
 Query serialUnitLookup                   permission: order.view
@@ -289,6 +301,7 @@ Query tax                                permission: tax.manage
 Query taxes                              permission: tax.manage
 Query topProducts                        permission: report.view
 Query unansweredProductQuestions         permission: review.moderate
+Query unreadNotificationCount            authenticated
 Query unremittedCashCollections          permission: cod.cash.manage
 Query userAddresses                      authenticated
 Query userByEmail                        permission: user.view

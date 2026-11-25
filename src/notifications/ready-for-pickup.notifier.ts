@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../commons/logger.service';
-import { EmailService } from './email/email.service';
+import { NotificationChannel } from '../generated/prisma/client';
+import { NotificationDispatcher } from './notification-dispatcher';
 import { NotificationsService } from './notifications.service';
 import { formatOpeningHours } from '../pickup-locations/opening-hours';
 import { normaliseGhanaPhone } from '../commons/phone/ghana-phone';
-import { ReadyForPickupEmail } from './email/templates/email.templates';
+import { ReadyForPickupNotice } from './templates/templates';
 
 const CONTEXT = 'ReadyForPickupNotifier';
 
@@ -18,7 +19,7 @@ const CONTEXT = 'ReadyForPickupNotifier';
 export class ReadyForPickupNotifier {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly email: EmailService,
+    private readonly dispatcher: NotificationDispatcher,
     private readonly notifications: NotificationsService,
     private readonly logger: LoggerService,
   ) {}
@@ -28,6 +29,7 @@ export class ReadyForPickupNotifier {
       where: { id: orderId },
       select: {
         id: true,
+        userId: true,
         orderNumber: true,
         contactPhone: true,
         user: { select: { email: true } },
@@ -40,7 +42,7 @@ export class ReadyForPickupNotifier {
       return;
     }
     const location = order.pickupLocation;
-    const notice: ReadyForPickupEmail = {
+    const notice: ReadyForPickupNotice = {
       orderNumber: order.orderNumber,
       pickupName: location.name,
       address: `${location.address}, ${location.city}`,
@@ -48,12 +50,29 @@ export class ReadyForPickupNotifier {
       contactPhone: location.contactPhone,
       instructions: location.instructions,
     };
-    await this.email.sendReadyForPickupEmail(order.user.email, order.id, notice, idempotencyKey);
+    await this.dispatcher.deliver({
+      dedupeKey: `${idempotencyKey}:${NotificationChannel.EMAIL}`,
+      userId: order.userId,
+      template: 'shipment.ready_for_pickup',
+      data: notice,
+      channel: NotificationChannel.EMAIL,
+      to: order.user.email,
+      idempotencyKey,
+    });
+    await this.dispatcher.deliver({
+      dedupeKey: `${idempotencyKey}:${NotificationChannel.IN_APP}`,
+      userId: order.userId,
+      template: 'shipment.ready_for_pickup',
+      data: notice,
+      channel: NotificationChannel.IN_APP,
+      to: null,
+      ref: { type: 'Order', id: order.id },
+    });
     const to = normaliseGhanaPhone(order.contactPhone);
     if (!to) {
       this.logger.warn(`No pickup SMS sent: the contact phone is not a Ghana number | orderId: ${orderId}`, CONTEXT);
       return;
     }
-    await this.notifications.queueReadyForPickupSms(`${idempotencyKey}-sms`, { to, notice });
+    await this.notifications.queueReadyForPickupSms(`${idempotencyKey}-sms`, { to, notice, userId: order.userId });
   }
 }

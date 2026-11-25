@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../../commons/logger.service';
 import { HubtelSmsProvider } from './hubtel-sms.provider';
-import { maskPhone, SMS_PROVIDER, SmsProvider } from './sms-provider.port';
+import { maskPhone, SMS_PROVIDER, SmsProvider, SmsReceipt } from './sms-provider.port';
 
 const CONTEXT = 'SmsSender';
 
@@ -39,13 +39,15 @@ export class SmsSender {
     return this.provider !== null || !this.production;
   }
 
-  async send(to: string, text: string, purpose: string): Promise<void> {
+  /** Returns the provider's receipt, or null when the send was skipped for want of a provider (not production). */
+  async send(to: string, text: string, purpose: string): Promise<SmsReceipt | null> {
     if (!this.provider) {
       if (this.production) throw new Error(SMS_NOT_CONFIGURED);
       this.logger.warn(`SMS not sent (no provider configured) | purpose: ${purpose} | to: ${maskPhone(to)}`, CONTEXT);
-      return;
+      return null;
     }
-    const { messageId } = await this.provider.send(to, text);
-    this.logger.log(`SMS sent | purpose: ${purpose} | to: ${maskPhone(to)} | messageId: ${messageId}`, CONTEXT);
+    const receipt = await this.provider.send(to, text);
+    this.logger.log(`SMS sent | purpose: ${purpose} | to: ${maskPhone(to)} | messageId: ${receipt.messageId}`, CONTEXT);
+    return receipt;
   }
 }

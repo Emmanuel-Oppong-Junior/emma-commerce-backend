@@ -100,6 +100,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
       cardPaymentProvider: 'PAYSTACK',
       mobileMoneyPaymentProvider: 'PAYSTACK',
       returnWindowDays: 14,
+      abandonedCartReminderDelayHours: 4,
     },
   });
   await relaxVelocityLimits(prisma);

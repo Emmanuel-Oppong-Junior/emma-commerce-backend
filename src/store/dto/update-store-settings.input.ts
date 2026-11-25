@@ -76,4 +76,15 @@ export class UpdateStoreSettingsInput {
   @Min(0)
   @Max(365)
   returnWindowDays?: number;
+
+  @Field(() => Int, {
+    nullable: true,
+    description:
+      'Hours a signed-in customer’s cart sits unchanged before the abandoned-cart reminder (1-72; default 4)',
+  })
+  @unlessOmitted
+  @IsInt()
+  @Min(1)
+  @Max(72)
+  abandonedCartReminderDelayHours?: number;
 }

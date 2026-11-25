@@ -1500,6 +1500,31 @@ A quantity above 0 re-checks the line's variant exactly as `addToCart` does (sti
 
 ---
 
+#### Saved for later (P6-G.2)
+
+A customer can move a cart line out of the cart to buy later, and back. One saved row per variant (saving a variant already saved adds the quantities); at most 100 saved variants. Cart pricing and checkout ignore saved items.
+
+```graphql
+type SavedCartItem { id: ID!  variantId: ID!  variant: Variant!  quantity: Int!  available: Boolean!  unavailableReason: String  createdAt: DateTime! }
+
+query { savedItems { id quantity available unavailableReason variant { id sku price } } }   # newest first
+mutation { saveCartItemForLater(cartItemId: ID!) { ...Cart } }   # CONFLICT reason SAVED_ITEMS_LIMIT_REACHED at 100; NOT_FOUND if not your line
+mutation { moveSavedItemToCart(savedItemId: ID!) { ...Cart } }   # BAD_REQUEST reason SAVED_ITEM_UNAVAILABLE (not on sale: it stays saved), or the cart's stock refusal
+mutation { removeSavedItem(savedItemId: ID!) }                    # Boolean
+```
+
+`available` is false (with `unavailableReason`) when the variant or its product is no longer on sale; show it greyed out with a remove button. Stock is checked when it is moved back.
+
+#### Abandoned-cart reminders (P6-G.2)
+
+A signed-in customer who opted in to marketing (see [15](#15-notifications-system)) and left items in the cart unchanged for `storeSettings.abandonedCartReminderDelayHours` (default 4; carts older than 7 days are left alone) gets one reminder: an email listing the items with a link to `FRONTEND_URL/cart`, and an SMS when they also opted in to SMS marketing and have a verified phone. Nothing is sent if they placed an order since; the same cart contents are never reminded about twice; at most one reminder per customer in 7 days. The email carries a one-click unsubscribe link `FRONTEND_URL/unsubscribe?token=<token>`: that page calls
+
+```graphql
+mutation { unsubscribeMarketingEmail(token: String!) }   # no sign-in; Boolean; BAD_REQUEST reason INVALID_UNSUBSCRIBE_TOKEN
+```
+
+which withdraws email marketing consent (ledger source `EMAIL_LINK`); repeating it changes nothing.
+
 ### 2.10 Wishlist
 
 All wishlist operations require `Bearer` JWT (any role).
@@ -3742,6 +3767,7 @@ One deployment serves one store. Its settings hold the names and tax registratio
   supportEmail?: string;
   supportPhone?: string;
   returnWindowDays: number;  // P6-R.1: days after delivery goods may be returned in (default 14), unless their product type sets its own
+  abandonedCartReminderDelayHours: number; // P6-G.2: hours a cart sits unchanged before the abandoned-cart reminder (default 4)
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -3764,6 +3790,7 @@ One deployment serves one store. Its settings hold the names and tax registratio
   supportEmail?: string | null; // Valid email; null clears it
   supportPhone?: string | null; // International format, e.g. +233244000000; null clears it
   returnWindowDays?: number;  // P6-R.1: 0-365. Cannot be null.
+  abandonedCartReminderDelayHours?: number; // 1-72. Cannot be null.
 }
 ```
 
@@ -5000,31 +5027,74 @@ Use the returned `url` values in `images`, `logo` or `image` fields of the produ
 
 ## 15. Notifications System
 
-### Types of Notifications
+Messages go out by email (Resend) and SMS (Hubtel), rendered from versioned templates (P6-N.1). Every message is recorded as a `Notification` row (template key and version, category, channel, status `QUEUED` → `SENT` | `FAILED` | `SKIPPED`, provider message id); no rendered body is stored. Orders are named by their order number (`#10042`) and amounts are shown as `GHS 1,255.50`.
 
-All notifications are **email-only** via Resend. There are no in-app notifications, push notifications, or real-time subscriptions in this system.
+### Types of notifications
 
-| Trigger | Email | Recipient |
-|---|---|---|
-| `signUp`, `resendVerificationEmail` | Email verification token (valid 24 hours) | The address being verified |
-| First successful `verifyEmail` of an account | Welcome email | User |
-| Email change requested (`updateMyProfile` / `updateUser` with a new email) | Verification token to the new address, and a notice to the current address | Both addresses |
-| Order created | Order confirmation | Account email (not `contactEmail`) |
-| Shipment dispatched (`OUT_FOR_DELIVERY` / `READY_FOR_PICKUP`), order `COMPLETED` (`updateShipmentStatus(DELIVERED)` or `recordCodPayment`), or `updateShipping` with a tracking number | Status update (with tracking number when set) | Account email |
-| P5-B.2: a shipment goes `OUT_FOR_DELIVERY` (with carrier and tracking number when set), or is `DELIVERED` (also through `recordCodPayment`); one SMS per shipment and milestone, never repeated | SMS ("Your order #1042 is out for delivery with DHL. Tracking number: …" / "… has been delivered") | The account's verified phone, else the delivery address phone, else the checkout contact phone (Ghana numbers only; none usable: no SMS). `READY_FOR_PICKUP` gets no SMS here (pickup flow) |
-| Online payment confirmed (webhook, `verifyPayment` or sweep), once per order | Payment confirmation | Account email |
-| `forgotPassword` for an existing account | Password reset token | Requesting address |
-| A refund processed (`refundOrder`, `processRefund`, `processPendingRefund`; P3-C.1) | Refund: amount, reason label, refunded lines and delivery fee | Account email |
+| Trigger | Message | Channel | Recipient |
+|---|---|---|---|
+| `signUp`, `resendVerificationEmail` | Email verification token (valid 24 hours) | Email | The address being verified |
+| First successful `verifyEmail` of an account | Welcome | Email | User |
+| Email change requested (`updateMyProfile` / `updateUser` with a new email) | Verification token to the new address, and a notice (new address masked) to the current one | Email | Both addresses |
+| `forgotPassword` for an existing account | **A link** `FRONTEND_URL/reset-password#token=<token>` (valid 15 minutes; the token is in the URL fragment, so it never reaches a server log). The reset page reads the token from `location.hash` and calls `resetPassword(resetToken, newPassword)`. (P6-N.1: was the bare token in the body.) | Email | Requesting address |
+| `requestPhoneVerification` | 6-digit code | SMS | The profile phone |
+| Order created | Receipt: order number, lines, discount, delivery fee, total, how to pay | Email | Account email (not `contactEmail`) |
+| Online payment confirmed (webhook, `verifyPayment` or sweep), once per order | Payment received | Email | Account email |
+| Shipment `OUT_FOR_DELIVERY` | Out for delivery (carrier and tracking number when set) | Email | Account email |
+| `updateShipping` with a tracking number | Your order has shipped (tracking number) | Email | Account email |
+| Order `COMPLETED` | Order complete | Email | Account email |
+| Shipment `OUT_FOR_DELIVERY` (with the delivery code for a rider's shipment) or `DELIVERED`; one SMS per shipment and milestone | "Your order #1042 is out for delivery with DHL. Tracking number: …" / "… has been delivered" | SMS | The account's verified phone, else the delivery address phone, else the checkout contact phone (Ghana numbers only; none usable: the row is `SKIPPED`) |
+| Shipment `READY_FOR_PICKUP` | Ready for pickup: point, address, opening hours, contact | Email + SMS | Account email; the order's contact phone |
+| A refund processed | Refund: amount, reason label, refunded lines and delivery fee | Email | Account email |
 
-Not emailed: cancellations, expiries, refunds that failed or are still pending (staff see those in logs and `refunds`), other fulfilment steps.
+Not sent: cancellations, expiries, refunds that failed or are still pending, other fulfilment steps.
+
+### Categories, preferences and consent (P6-N.1)
+
+- `TRANSACTIONAL` (everything above): always sent; cannot be switched off.
+- `MARKETING` (promotions, abandoned-cart reminders): **opt-in only** per channel (`EMAIL`, `SMS`), as the Data Protection Act 843 requires. SMS marketing also needs a verified phone. Consent is checked again when each message is sent, so a withdrawal takes effect at once (the message is recorded `SKIPPED` with `NO_CONSENT`).
+
+```graphql
+type NotificationPreferenceEntity { category: NotificationCategory!  channel: NotificationChannel!  enabled: Boolean!  locked: Boolean! }
+enum NotificationCategory { TRANSACTIONAL MARKETING }
+enum NotificationChannel { EMAIL SMS IN_APP }
+enum ConsentSource { CHECKOUT ACCOUNT_SETTINGS STAFF_REQUEST EMAIL_LINK }
+
+query { myNotificationPreferences { category channel enabled locked } }          # any signed-in user
+mutation { updateNotificationPreference(input: {
+  category: MARKETING, channel: EMAIL, enabled: true,
+  source: CHECKOUT            # optional: CHECKOUT (the opt-in box at checkout) or ACCOUNT_SETTINGS (default)
+}) { category channel enabled locked } }                                         # returns every preference
+```
+
+`updateNotificationPreference` errors (`BAD_REQUEST` + `extensions.reason`): `TRANSACTIONAL_ALWAYS_ON` (switching a transactional channel off), `CHANNEL_NOT_AVAILABLE` (marketing on `IN_APP`), `PHONE_NOT_VERIFIED` (opting in to SMS marketing without a verified phone). Naming another `source` is `BAD_USER_INPUT`. Repeating the current choice changes nothing.
+
+Every marketing change is written to an append-only consent ledger (channel, granted/withdrawn, source, time). Staff:
+
+- `recordCustomerConsent(input: { userId, channel, granted }): [NotificationPreferenceEntity!]!`: a customer's request by phone or in store (`user.manage`; source `STAFF_REQUEST`, staff id kept). Same refusals.
+- `customerConsentHistory(userId: ID!): [ConsentEventEntity!]!`: the ledger, newest first (`user.view`). `ConsentEventEntity { id category channel action(GRANTED|WITHDRAWN) source actorId createdAt }`.
+
+### In-app feed (P6-N.4)
+
+Besides email/SMS, these events add an entry to the customer's feed: order placed, payment received, out for delivery, delivered, ready for pickup, refund sent. Poll it (no subscriptions); entries are kept 90 days. Every operation needs a signed-in user and sees only their own entries.
+
+```graphql
+type InAppNotification {
+  id: ID!  title: String!  body: String!
+  templateKey: String!            # e.g. order.placed, payment.received, shipment.delivered, refund.processed
+  refType: String  refId: ID      # "Order" + the order id: link to the order page
+  readAt: DateTime                # null while unread
+  createdAt: DateTime!
+}
+query { myNotifications(first: 20, after: ID, unreadOnly: false) { totalCount hasNextPage nodes { id title body templateKey refType refId readAt createdAt } } }   # newest first; first 1-50; after = last node id of the previous page (an unknown id: BAD_REQUEST)
+query { unreadNotificationCount }                       # Int
+mutation { markNotificationsRead(ids: ["..."]) }        # Int: how many changed; up to 100 ids; ids not yours or already read are ignored
+mutation { markAllNotificationsRead }                   # Int
+```
 
 ### Asynchronous, queued and retried
 
-Emails are sent by the background worker, never on the request path, so they do not block or fail the request and may arrive a few seconds later. Emails that follow an order or payment change are written to the outbox in the same database transaction as the change, so an email is queued exactly when the change commits. A failed send (including one the email provider rejects) is retried with exponential backoff, up to 6 attempts; after that the job is listed by `failedJobs` and can be retried with `retryFailedJob`. A job's email is sent at most once, even when it is retried. Without `RESEND_API_KEY` no email is sent (the worker logs a warning).
-
-### No GraphQL Mutations for Notifications
-
-There are no `markAsRead`, `getNotifications`, or notification subscription GraphQL operations. Notification state is purely email-based.
+Messages are sent by the background worker, never on the request path, so they do not block or fail the request and may arrive a few seconds later. Messages that follow an order or payment change are written to the outbox in the same database transaction as the change. A failed send (including one the provider rejects) is retried with exponential backoff, up to 6 attempts; after that the job is listed by `failedJobs` and can be retried with `retryFailedJob`. A message is sent at most once, even when its job runs again. Without an email provider (development and test only; production refuses to start without `RESEND_API_KEY` and `RESEND_FROM_EMAIL`) emails are recorded `SKIPPED` with `NOT_CONFIGURED`.
 
 ---
 

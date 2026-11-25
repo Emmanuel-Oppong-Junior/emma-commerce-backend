@@ -52,7 +52,7 @@ describe('Email verification (e2e)', () => {
   afterAll(() => app.close());
 
   const tokensSentTo = (email: string): string[] =>
-    verificationEmails.mock.calls.filter(([to]) => to === email).map(([, token]) => token as string);
+    verificationEmails.mock.calls.filter(([, to]) => to === email).map(([, , token]) => token as string);
 
   // Sign-up sends its verification email after responding.
   const waitForTokenSentTo = async (email: string, count = 1): Promise<string> => {
@@ -80,14 +80,14 @@ describe('Email verification (e2e)', () => {
     it('leaves a new account unverified until the emailed token is used, then sends the welcome email', async () => {
       const { accessToken, email, verificationToken } = await newAccount();
       expect(await profile(accessToken)).toMatchObject({ email, emailVerified: false, pendingEmail: null });
-      expect(welcomeEmails).not.toHaveBeenCalledWith(email, expect.anything());
+      expect(welcomeEmails).not.toHaveBeenCalledWith(expect.any(String), email, expect.anything());
 
       const res = await verify(verificationToken);
 
       expect(res.body.errors).toBeUndefined();
       expect(res.body.data.verifyEmail).toBe(true);
       expect(await profile(accessToken)).toMatchObject({ email, emailVerified: true });
-      expect(welcomeEmails).toHaveBeenCalledWith(email, 'verify user');
+      expect(welcomeEmails).toHaveBeenCalledWith(expect.any(String), email, 'verify user');
     });
 
     it('stores only a hash of the token', async () => {
@@ -199,7 +199,7 @@ describe('Email verification (e2e)', () => {
 
       expect(requested.body.errors).toBeUndefined();
       expect(requested.body.data.updateMyProfile).toMatchObject({ email, pendingEmail: newEmail });
-      expect(changeNotices).toHaveBeenCalledWith(email, newEmail);
+      expect(changeNotices).toHaveBeenCalledWith(expect.any(String), email, newEmail);
       const stillSignedIn = await gqlRequest(app, REFRESH, { input: { refreshToken } }).expect(200);
       expect(stillSignedIn.body.errors).toBeUndefined();
 
@@ -255,7 +255,7 @@ describe('Email verification (e2e)', () => {
 
       expect(res.body.errors).toBeUndefined();
       expect(res.body.data.updateUser).toEqual({ email, pendingEmail: newEmail });
-      expect(changeNotices).toHaveBeenCalledWith(email, newEmail);
+      expect(changeNotices).toHaveBeenCalledWith(expect.any(String), email, newEmail);
       expect((await verify(tokensSentTo(newEmail)[0])).body.errors).toBeUndefined();
       expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).email).toBe(newEmail);
     });

@@ -220,6 +220,18 @@ describe('AppMetrics', () => {
     ]);
     expect(samples.delivery_overrides).toEqual([{ value: 1, attributes: {} }]);
   });
+
+  it('counts SMS by template and outcome', () => {
+    const { metrics, samples } = build();
+
+    metrics.recordSms('account.phone_otp', 'sent');
+    metrics.recordSms('shipment.delivered', 'failed');
+
+    expect(samples.sms_messages).toEqual([
+      { value: 1, attributes: { template: 'account.phone_otp', outcome: 'sent' } },
+      { value: 1, attributes: { template: 'shipment.delivered', outcome: 'failed' } },
+    ]);
+  });
 });
 
 describe('routeTemplate', () => {

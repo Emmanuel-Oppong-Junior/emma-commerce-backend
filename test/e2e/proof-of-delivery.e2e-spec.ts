@@ -180,8 +180,8 @@ describe('Proof of delivery (P5-C.2, e2e)', () => {
 
   beforeEach(() => {
     jest.restoreAllMocks();
-    sms = jest.spyOn(worker.get(SmsSender), 'send').mockResolvedValue();
-    jest.spyOn(worker.get(EmailService), 'sendOrderStatusEmail').mockResolvedValue();
+    sms = jest.spyOn(worker.get(SmsSender), 'send').mockResolvedValue({ messageId: 'sms-1' });
+    jest.spyOn(worker.get(EmailService), 'send').mockResolvedValue({ messageId: 'em-1' });
   });
 
   afterAll(async () => {

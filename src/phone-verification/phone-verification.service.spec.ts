@@ -47,8 +47,13 @@ describe('PhoneVerificationService', () => {
         resendAfterSeconds: 60,
       });
 
-      const [to, code, minutes] = notifications.queuePhoneOtpSms.mock.calls[0] as [string, string, number];
-      expect([to, minutes]).toEqual([PHONE, 10]);
+      const [userId, to, code, minutes] = notifications.queuePhoneOtpSms.mock.calls[0] as [
+        string,
+        string,
+        string,
+        number,
+      ];
+      expect([userId, to, minutes]).toEqual(['u1', PHONE, 10]);
       expect(code).toMatch(/^\d{6}$/);
       expect(store.issue).toHaveBeenCalledWith(
         'u1',
@@ -60,7 +65,7 @@ describe('PhoneVerificationService', () => {
     it('never logs the code or the phone number', async () => {
       const { service, logger, notifications } = setup();
       await service.requestCode('u1');
-      const code = notifications.queuePhoneOtpSms.mock.calls[0][1] as string;
+      const code = notifications.queuePhoneOtpSms.mock.calls[0][2] as string;
       const logged = JSON.stringify(logger.log.mock.calls);
       expect(logged).not.toContain(code);
       expect(logged).not.toContain('244123456');

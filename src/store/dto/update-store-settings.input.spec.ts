@@ -20,6 +20,7 @@ describe('UpdateStoreSettingsInput', () => {
         pricesIncludeTax: false,
         supportEmail: 'help@example.com',
         supportPhone: '+233244000000',
+        abandonedCartReminderDelayHours: 6,
       }),
     ).resolves.toEqual([]);
   });
@@ -42,6 +43,15 @@ describe('UpdateStoreSettingsInput', () => {
   it.each(['P001 234', 'P0012345678901234567890', 'P001/2345', ''])('rejects the TIN %j', async (tin) => {
     await expect(invalidFields({ tin })).resolves.toEqual(['tin']);
   });
+
+  it.each([0, 73, 2.5, null])(
+    'rejects the abandoned-cart reminder delay %p',
+    async (abandonedCartReminderDelayHours) => {
+      await expect(invalidFields({ abandonedCartReminderDelayHours })).resolves.toEqual([
+        'abandonedCartReminderDelayHours',
+      ]);
+    },
+  );
 
   it('rejects an invalid support email and phone', async () => {
     await expect(invalidFields({ supportEmail: 'not-an-email', supportPhone: '12' })).resolves.toEqual([

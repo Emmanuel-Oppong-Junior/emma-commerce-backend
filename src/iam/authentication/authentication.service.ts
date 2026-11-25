@@ -190,7 +190,7 @@ export class AuthenticationService {
     const expiresAt = new Date(Date.now() + this.jwtConfiguration.resetTokenTtl * 1000);
 
     await this.usersRepository.savePasswordResetToken(user.id, tokenHash, expiresAt);
-    this.notificationsService.sendPasswordReset(email, resetToken);
+    this.notificationsService.sendPasswordReset(user.id, email, resetToken);
   }
 
   /**

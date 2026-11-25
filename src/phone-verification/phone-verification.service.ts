@@ -79,7 +79,7 @@ export class PhoneVerificationService {
         { limit: outcome.limit, retryAfterSeconds: outcome.retryAfterSeconds },
       );
     }
-    await this.notifications.queuePhoneOtpSms(phone, code, OTP_TTL_SECONDS / 60);
+    await this.notifications.queuePhoneOtpSms(userId, phone, code, OTP_TTL_SECONDS / 60);
     this.logger.log(`Phone verification code queued | userId: ${userId}`, CONTEXT);
     return {
       phoneLast3: phone.slice(-3),

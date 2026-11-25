@@ -107,9 +107,23 @@ export const envValidationSchema = Joi.object({
   // Logical database index, so test runs and local stacks sharing one Redis server stay apart.
   REDIS_DB: Joi.number().integer().min(0).max(15).default(0),
 
-  // Email (Resend)
-  RESEND_API_KEY: Joi.string().optional(),
-  RESEND_FROM_EMAIL: Joi.string().email().optional(),
+  // Email (Resend). Required in production, so it cannot boot without sending email; elsewhere emails are skipped
+  // (Notification rows SKIPPED with NOT_CONFIGURED). A key needs its sender address: there is no default sender.
+  RESEND_API_KEY: requiredInProduction(Joi.string()),
+  RESEND_FROM_EMAIL: requiredInProduction(Joi.string().email()),
+
+  // Where the customer-facing site lives: password-reset, cart and unsubscribe links in emails and SMS are built on it.
+  // Short, because SMS links count against the message length.
+  FRONTEND_URL: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .max(100)
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.string()
+        .uri({ scheme: ['https'] })
+        .required(),
+      otherwise: Joi.optional().default('http://localhost:3001'),
+    }),
 
   // Password reset JWT
   JWT_RESET_SECRET: Joi.string().min(32).required(),
@@ -161,4 +175,5 @@ export const envValidationSchema = Joi.object({
   SENTRY_TRACES_SAMPLE_RATE: Joi.number().min(0).max(1).default(0),
 })
   .and('HUBTEL_CLIENT_ID', 'HUBTEL_CLIENT_SECRET', 'HUBTEL_SENDER_ID')
+  .with('RESEND_API_KEY', 'RESEND_FROM_EMAIL')
   .custom(rejectUnsafeProductionSecrets);

@@ -13,6 +13,7 @@ const AUDITED_STORE_FIELDS = [
   'supportEmail',
   'supportPhone',
   'returnWindowDays',
+  'abandonedCartReminderDelayHours',
 ] as const satisfies readonly (keyof Store)[];
 
 @Injectable()

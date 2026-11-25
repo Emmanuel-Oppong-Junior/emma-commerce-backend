@@ -105,8 +105,8 @@ describe('Pickup points with hours and the ready-for-pickup notice (P5-E.1, e2e)
   it('emails and texts the customer once when the order is ready at the counter', async () => {
     const email = worker.get(EmailService);
     const sms = worker.get(SmsSender);
-    const emails = jest.spyOn(email, 'sendReadyForPickupEmail').mockResolvedValue();
-    const texts = jest.spyOn(sms, 'send').mockResolvedValue();
+    const emails = jest.spyOn(email, 'send').mockResolvedValue({ messageId: 'em-1' });
+    const texts = jest.spyOn(sms, 'send').mockResolvedValue({ messageId: 'sms-1' });
     const orderNumber = await takeOrderNumber(prisma);
     const order = await prisma.order.create({
       data: {
@@ -141,12 +141,11 @@ describe('Pickup points with hours and the ready-for-pickup notice (P5-E.1, e2e)
     expect(emails).toHaveBeenCalledTimes(1);
     expect(emails).toHaveBeenCalledWith(
       'user@example.com',
-      order.id,
       expect.objectContaining({
-        orderNumber,
-        pickupName: 'Osu Store',
-        hours: 'Mon-Fri 08:00-17:00, Sat 09:00-13:00, Sun closed',
-        contactPhone: '+233244123456',
+        subject: `Your order #${orderNumber} is ready for pickup`,
+        html: expect.stringMatching(
+          /Osu Store.*Opening hours: Mon-Fri 08:00-17:00, Sat 09:00-13:00, Sun closed.*Questions\? Call \+233244123456/,
+        ) as unknown,
       }),
       event.id,
     );
@@ -154,7 +153,17 @@ describe('Pickup points with hours and the ready-for-pickup notice (P5-E.1, e2e)
     expect(texts).toHaveBeenCalledWith(
       '+233244000111',
       `Order #${orderNumber} is ready for pickup at Osu Store, 12 Oxford St, Accra. Open: Mon-Fri 08:00-17:00, Sat 09:00-13:00, Sun closed.`,
-      'ready_for_pickup',
+      'shipment.ready_for_pickup',
     );
+    expect(
+      await prisma.notification.findMany({
+        where: { dedupeKey: { in: [`${event.id}:EMAIL`, `${event.id}-sms:SMS`] } },
+        select: { channel: true, status: true, providerMessageId: true },
+        orderBy: { channel: 'asc' },
+      }),
+    ).toEqual([
+      { channel: 'EMAIL', status: 'SENT', providerMessageId: 'em-1' },
+      { channel: 'SMS', status: 'SENT', providerMessageId: 'sms-1' },
+    ]);
   });
 });

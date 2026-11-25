@@ -43,6 +43,8 @@ export interface DomainEventPayloads {
    * is told by refund.succeeded.v1). The worker logs the ids until the customer email moves onto the template registry.
    */
   'return.status_changed.v1': { returnRequestId: string; orderId: string; status: ReturnStatus };
+  /** An abandoned-cart reminder was recorded (P6-G.2); the worker sends it (email, SMS) if consent still holds. */
+  'cart.abandoned_reminder.v1': { reminderId: string; userId: string };
 }
 
 export type DomainEventType = keyof DomainEventPayloads;
@@ -68,6 +70,7 @@ export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
   'inventory.low_stock.v1': JobQueue.NOTIFICATIONS,
   'inventory.low_stock_digest.v1': JobQueue.NOTIFICATIONS,
   'return.status_changed.v1': JobQueue.NOTIFICATIONS,
+  'cart.abandoned_reminder.v1': JobQueue.NOTIFICATIONS,
 };
 
 export function isDomainEventType(type: string): type is DomainEventType {

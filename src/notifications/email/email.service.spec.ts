@@ -1,4 +1,5 @@
 import { EmailDeliveryError, EmailService } from './email.service';
+import { renderEmail } from '../templates/templates';
 
 const mockSend = jest.fn();
 
@@ -8,6 +9,7 @@ jest.mock('resend', () => ({
 
 const RECIPIENT = 'kwame.asante@gmail.com';
 const MASKED_RECIPIENT = 'k***@gmail.com';
+const PAID = renderEmail('payment.received', { orderNumber: 10042, amount: '120', currency: 'GHS' });
 
 function buildEmailService(resendApiKey: string | undefined) {
   const config = {
@@ -23,12 +25,16 @@ const allLogLines = (logger: { log: jest.Mock; warn: jest.Mock; error: jest.Mock
 describe('EmailService', () => {
   beforeEach(() => mockSend.mockReset());
 
-  it('logs success with a masked recipient when Resend accepts the email', async () => {
+  it('sends subject, HTML and plain text, returns the message id and logs a masked recipient', async () => {
     mockSend.mockResolvedValue({ data: { id: 'email-1' }, error: null });
-    const { service, logger } = buildEmailService('re_test_key');
+    const { service, logger } = buildEmailService('re_unit_key');
 
-    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00');
+    await expect(service.send(RECIPIENT, PAID)).resolves.toEqual({ messageId: 'email-1' });
 
+    expect(mockSend).toHaveBeenCalledWith(
+      { from: 'orders@shop.test', to: RECIPIENT, subject: PAID.subject, html: PAID.html, text: PAID.text },
+      { idempotencyKey: undefined },
+    );
     expect(logger.log).toHaveBeenCalledWith(expect.stringContaining(`Email sent`), 'EmailService');
     expect(logger.error).not.toHaveBeenCalled();
     expect(allLogLines(logger)).toContain(MASKED_RECIPIENT);
@@ -37,9 +43,9 @@ describe('EmailService', () => {
 
   it('passes the idempotency key to Resend so a retried job cannot send the email twice', async () => {
     mockSend.mockResolvedValue({ data: { id: 'email-1' }, error: null });
-    const { service } = buildEmailService('re_test_key');
+    const { service } = buildEmailService('re_unit_key');
 
-    await service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00', 'evt_123');
+    await service.send(RECIPIENT, PAID, 'evt_123');
 
     expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ to: RECIPIENT }), { idempotencyKey: 'evt_123' });
   });
@@ -49,12 +55,12 @@ describe('EmailService', () => {
       data: null,
       error: { name: 'daily_quota_exceeded', message: `Quota reached while sending to ${RECIPIENT}.` },
     });
-    const { service, logger } = buildEmailService('re_test_key');
+    const { service, logger } = buildEmailService('re_unit_key');
 
-    const failure = service.sendOrderConfirmationEmail(RECIPIENT, 'order-1', '120.00');
+    const failure = service.send(RECIPIENT, PAID);
 
     await expect(failure).rejects.toThrow(EmailDeliveryError);
-    await expect(failure).rejects.toThrow(/Order Confirmed – #order-1 \| daily_quota_exceeded/);
+    await expect(failure).rejects.toThrow(/Payment received for order #10042 \| daily_quota_exceeded/);
     await expect(failure).rejects.not.toThrow(RECIPIENT);
     expect(logger.log).not.toHaveBeenCalled();
     expect(allLogLines(logger)).not.toContain(RECIPIENT);
@@ -62,18 +68,22 @@ describe('EmailService', () => {
 
   it('throws when the Resend call throws', async () => {
     mockSend.mockRejectedValue(new Error('socket hang up'));
-    const { service } = buildEmailService('re_test_key');
+    const { service } = buildEmailService('re_unit_key');
 
-    await expect(service.sendPaymentConfirmationEmail(RECIPIENT, 'order-1', '120.00')).rejects.toThrow(
-      'Email not delivered: Payment received for order #order-1 | socket hang up',
+    await expect(service.send(RECIPIENT, PAID)).rejects.toThrow(
+      'Email not delivered: Payment received for order #10042 | socket hang up',
     );
   });
 
-  it('never puts the password-reset token in logs or in the error', async () => {
+  it('never puts the password-reset link or token in logs or in the error', async () => {
     mockSend.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'Invalid `to` field.' } });
-    const { service, logger } = buildEmailService('re_test_key');
+    const { service, logger } = buildEmailService('re_unit_key');
+    const reset = renderEmail('account.password_reset', {
+      resetUrl: 'https://shop.example.com/reset-password#token=reset-token-abc123',
+      expiresInMinutes: 15,
+    });
 
-    const error = await service.sendPasswordResetEmail(RECIPIENT, 'reset-token-abc123').catch((e: Error) => e);
+    const error = await service.send(RECIPIENT, reset).catch((e: Error) => e);
 
     expect(error).toBeInstanceOf(EmailDeliveryError);
     expect((error as Error).message).not.toContain('reset-token-abc123');
@@ -82,9 +92,13 @@ describe('EmailService', () => {
 
   it('never logs the email verification token', async () => {
     mockSend.mockResolvedValue({ data: null, error: { name: 'validation_error', message: 'Invalid `to` field.' } });
-    const { service, logger } = buildEmailService('re_test_key');
+    const { service, logger } = buildEmailService('re_unit_key');
+    const verification = renderEmail('account.email_verification', {
+      verificationToken: 'verify-token-abc123',
+      expiresInHours: 24,
+    });
 
-    const error = await service.sendEmailVerificationEmail(RECIPIENT, 'verify-token-abc123', 24).catch((e: Error) => e);
+    const error = await service.send(RECIPIENT, verification).catch((e: Error) => e);
 
     expect(mockSend).toHaveBeenCalledWith(
       expect.objectContaining({ html: expect.stringContaining('verify-token-abc123') }),
@@ -94,22 +108,10 @@ describe('EmailService', () => {
     expect(allLogLines(logger)).not.toContain('verify-token-abc123');
   });
 
-  it('shows the old address only a masked form of the requested new address', async () => {
-    mockSend.mockResolvedValue({ data: { id: 'email-2' }, error: null });
-    const { service } = buildEmailService('re_test_key');
-
-    await service.sendEmailChangeRequestedEmail(RECIPIENT, 'attacker.mailbox@evil.example');
-
-    const { to, html } = mockSend.mock.calls[0][0];
-    expect(to).toBe(RECIPIENT);
-    expect(html).toContain('a***@evil.example');
-    expect(html).not.toContain('attacker.mailbox');
-  });
-
-  it('warns without calling Resend when RESEND_API_KEY is not configured', async () => {
+  it('warns and returns null without calling Resend when RESEND_API_KEY is not configured', async () => {
     const { service, logger } = buildEmailService(undefined);
 
-    await service.sendWelcomeEmail(RECIPIENT, 'Kwame');
+    await expect(service.send(RECIPIENT, PAID)).resolves.toBeNull();
 
     expect(mockSend).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(MASKED_RECIPIENT), 'EmailService');

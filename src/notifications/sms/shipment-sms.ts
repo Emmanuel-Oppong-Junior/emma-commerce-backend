@@ -31,20 +31,3 @@ export function shipmentSmsRecipient(facts: SmsRecipientFacts): string | null {
   }
   return null;
 }
-
-export interface ShipmentSmsFacts {
-  orderNumber: number;
-  status: ShipmentStatus;
-  carrier: string | null;
-  trackingNumber: string | null;
-}
-
-/** The milestone text, kept short (one or two GSM-7 segments); carrier and tracking number when staff set them. */
-export function shipmentSmsText({ orderNumber, status, carrier, trackingNumber }: ShipmentSmsFacts): string {
-  if (status === ShipmentStatus.DELIVERED) {
-    return `Your order #${orderNumber} has been delivered. Thank you for shopping with us.`;
-  }
-  const via = carrier ? ` with ${carrier}` : '';
-  const tracking = trackingNumber ? ` Tracking number: ${trackingNumber}.` : '';
-  return `Your order #${orderNumber} is out for delivery${via}.${tracking}`;
-}
