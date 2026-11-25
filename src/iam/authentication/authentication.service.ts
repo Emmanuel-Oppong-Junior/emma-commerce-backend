@@ -17,6 +17,7 @@ import { EmailVerificationService } from '../../users/email-verification.service
 import { MfaService } from '../mfa/mfa.service';
 import { StepUpStore } from '../mfa/step-up.store';
 import { mfaRequired } from '../authorization/policy-errors';
+import { GuestOrderClaims } from '../../guest-checkout/guest-order-claims.service';
 
 const MFA_CHALLENGE_TTL_SECONDS = 300;
 const MFA_CHALLENGE_PURPOSE = 'mfa-challenge';
@@ -33,28 +34,29 @@ export class AuthenticationService {
     private readonly emailVerificationService: EmailVerificationService,
     private readonly mfaService: MfaService,
     private readonly stepUpStore: StepUpStore,
+    private readonly guestOrderClaims: GuestOrderClaims,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
 
   /**
    * Registers a new user by creating an account with the provided sign-up details, and emails a token
-   * that verifies the address. The welcome email follows verification.
+   * that verifies the address. The welcome email follows verification. With a guest order token (P6-G.1) the guest's
+   * verified phone becomes the account's and the guest orders placed with it are attached to the account.
    *
    * @throws ConflictException - If a user with the provided email already exists.
    * @returns Access and refresh tokens for the newly created user.
    */
   async signUp(signUpInput: SignUpInput) {
-    const { email, password, name } = signUpInput;
+    const { email, password, name, guestOrderToken } = signUpInput;
     const findUser = await this.userService.findUserByEmail(email);
     if (findUser) throw new ConflictException('User already exist!');
-    const user = await this.userService.createUserByCredentials({
-      email,
-      password,
-      name,
-      role: Role.USER,
-      isActive: true,
-    });
+    const phoneClaim = guestOrderToken ? await this.guestOrderClaims.phoneClaimForSignUp(guestOrderToken) : null;
+    const user = await this.userService.createUserByCredentials(
+      { email, password, name, role: Role.USER, isActive: true },
+      phoneClaim ?? undefined,
+    );
+    if (phoneClaim) await this.guestOrderClaims.attachToAccount(user.id, phoneClaim.phone);
     this.emailVerificationService.sendSignUpVerification(user);
     return this.generateTokens(user);
   }

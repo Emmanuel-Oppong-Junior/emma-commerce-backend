@@ -13,7 +13,8 @@ const CONTEXT = 'ReadyForPickupNotifier';
 /**
  * Tells the customer their pickup order is ready (P5-E.1): an email to the account and an SMS to the order's contact
  * phone, with the pickup point, its opening hours and the order number. The SMS is its own job keyed by the event's
- * job id, so a retry of this job (after the email went out) queues it once; both sends are idempotent per job id.
+ * job id, so a retry of this job (after the email went out) queues it once; both sends are idempotent per job id. A
+ * guest order (P6-G.1) is emailed at its contact email, when it has one, and gets no in-app entry.
  */
 @Injectable()
 export class ReadyForPickupNotifier {
@@ -32,6 +33,7 @@ export class ReadyForPickupNotifier {
         userId: true,
         orderNumber: true,
         contactPhone: true,
+        contactEmail: true,
         user: { select: { email: true } },
         pickupLocation: { include: { openingHours: true } },
       },
@@ -50,29 +52,37 @@ export class ReadyForPickupNotifier {
       contactPhone: location.contactPhone,
       instructions: location.instructions,
     };
+    const ref = { type: 'Order' as const, id: order.id };
     await this.dispatcher.deliver({
       dedupeKey: `${idempotencyKey}:${NotificationChannel.EMAIL}`,
       userId: order.userId,
       template: 'shipment.ready_for_pickup',
       data: notice,
       channel: NotificationChannel.EMAIL,
-      to: order.user.email,
+      to: order.user?.email ?? order.contactEmail,
       idempotencyKey,
+      ...(order.userId === null && { ref }),
     });
-    await this.dispatcher.deliver({
-      dedupeKey: `${idempotencyKey}:${NotificationChannel.IN_APP}`,
-      userId: order.userId,
-      template: 'shipment.ready_for_pickup',
-      data: notice,
-      channel: NotificationChannel.IN_APP,
-      to: null,
-      ref: { type: 'Order', id: order.id },
-    });
+    if (order.userId !== null) {
+      await this.dispatcher.deliver({
+        dedupeKey: `${idempotencyKey}:${NotificationChannel.IN_APP}`,
+        userId: order.userId,
+        template: 'shipment.ready_for_pickup',
+        data: notice,
+        channel: NotificationChannel.IN_APP,
+        to: null,
+        ref,
+      });
+    }
     const to = normaliseGhanaPhone(order.contactPhone);
     if (!to) {
       this.logger.warn(`No pickup SMS sent: the contact phone is not a Ghana number | orderId: ${orderId}`, CONTEXT);
       return;
     }
-    await this.notifications.queueReadyForPickupSms(`${idempotencyKey}-sms`, { to, notice, userId: order.userId });
+    await this.notifications.queueReadyForPickupSms(`${idempotencyKey}-sms`, {
+      to,
+      notice,
+      ...(order.userId === null ? { guestOrderId: order.id } : { userId: order.userId }),
+    });
   }
 }

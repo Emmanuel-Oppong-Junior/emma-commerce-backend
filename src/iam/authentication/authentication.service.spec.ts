@@ -17,6 +17,7 @@ import { LoggerService } from '../../commons/logger.service';
 import { EmailVerificationService } from '../../users/email-verification.service';
 import { MfaService } from '../mfa/mfa.service';
 import { StepUpStore } from '../mfa/step-up.store';
+import { GuestOrderClaims } from '../../guest-checkout/guest-order-claims.service';
 
 const mockUsersService = {
   findUserByEmail: jest.fn(),
@@ -85,6 +86,11 @@ const mockStepUpStore = {
   markVerified: jest.fn(),
 };
 
+const mockGuestOrderClaims = {
+  phoneClaimForSignUp: jest.fn(),
+  attachToAccount: jest.fn().mockResolvedValue([]),
+};
+
 const flushBackgroundWork = () => new Promise((resolve) => setImmediate(resolve));
 
 const baseUser: Partial<User> = {
@@ -119,6 +125,7 @@ describe('AuthenticationService', () => {
         { provide: EmailVerificationService, useValue: mockEmailVerificationService },
         { provide: MfaService, useValue: mockMfaService },
         { provide: StepUpStore, useValue: mockStepUpStore },
+        { provide: GuestOrderClaims, useValue: mockGuestOrderClaims },
       ],
     }).compile();
 
@@ -167,6 +174,41 @@ describe('AuthenticationService', () => {
       await expect(service.signUp({ email: 'test@example.com', password: 'p', name: 'T' })).rejects.toThrow(
         'User already exist!',
       );
+    });
+
+    it("takes over a guest order's verified phone and attaches its guest orders (P6-G.1)", async () => {
+      const claim = { phone: '+233244123456', verifiedAt: new Date('2026-12-01T10:00:00Z') };
+      mockUsersService.findUserByEmail.mockResolvedValue(null);
+      mockGuestOrderClaims.phoneClaimForSignUp.mockResolvedValue(claim);
+      mockUsersService.createUserByCredentials.mockResolvedValue(baseUser);
+      mockJwtService.signAsync.mockResolvedValueOnce('access').mockResolvedValueOnce('refresh');
+
+      await service.signUp({ email: 'test@example.com', password: 'Password@1', name: 'T', guestOrderToken: 'tok' });
+
+      expect(mockGuestOrderClaims.phoneClaimForSignUp).toHaveBeenCalledWith('tok');
+      expect(mockUsersService.createUserByCredentials).toHaveBeenCalledWith(expect.any(Object), claim);
+      expect(mockGuestOrderClaims.attachToAccount).toHaveBeenCalledWith(baseUser.id, claim.phone);
+    });
+
+    it('creates no account when the guest order token is refused', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(null);
+      mockGuestOrderClaims.phoneClaimForSignUp.mockRejectedValue(new Error('refused'));
+
+      await expect(
+        service.signUp({ email: 'test@example.com', password: 'Password@1', name: 'T', guestOrderToken: 'tok' }),
+      ).rejects.toThrow('refused');
+      expect(mockUsersService.createUserByCredentials).not.toHaveBeenCalled();
+    });
+
+    it('claims nothing without a guest order token', async () => {
+      mockUsersService.findUserByEmail.mockResolvedValue(null);
+      mockUsersService.createUserByCredentials.mockResolvedValue(baseUser);
+      mockJwtService.signAsync.mockResolvedValueOnce('access').mockResolvedValueOnce('refresh');
+
+      await service.signUp({ email: 'test@example.com', password: 'Password@1', name: 'T' });
+
+      expect(mockGuestOrderClaims.phoneClaimForSignUp).not.toHaveBeenCalled();
+      expect(mockGuestOrderClaims.attachToAccount).not.toHaveBeenCalled();
     });
   });
 

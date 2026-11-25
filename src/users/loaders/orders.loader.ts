@@ -26,7 +26,7 @@ export class OrdersLoader {
       const ordersByUserId = new Map<string, OrderWithItems[]>();
       for (const id of ids) ordersByUserId.set(id, []);
       for (const order of orders) {
-        ordersByUserId.get(order.userId)?.push(order);
+        if (order.userId) ordersByUserId.get(order.userId)?.push(order);
       }
 
       return ids.map((id) => ordersByUserId.get(id) ?? []);

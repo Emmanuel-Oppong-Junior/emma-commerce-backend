@@ -32,6 +32,50 @@ export class CartRepository {
     return this.prisma.cart.create({ data: { userId } });
   }
 
+  /** A guest cart (P6-G.1) by id, with its lines. */
+  async findGuestById(cartId: string, db: Prisma.TransactionClient = this.prisma): Promise<CartWithItems | null> {
+    return db.cart.findFirst({
+      where: { id: cartId, userId: null },
+      include: { items: { include: { product: true, variant: true }, orderBy: { createdAt: 'asc' } } },
+    });
+  }
+
+  /** The live guest cart whose token hashes to `tokenHash`, its idle expiry moved to `expiresAt`; null if none. */
+  async touchGuest(tokenHash: string, now: Date, expiresAt: Date): Promise<Cart | null> {
+    const { count } = await this.prisma.cart.updateMany({
+      where: { guestTokenHash: tokenHash, guestExpiresAt: { gt: now } },
+      data: { guestExpiresAt: expiresAt },
+    });
+    return count === 0 ? null : this.prisma.cart.findUnique({ where: { guestTokenHash: tokenHash } });
+  }
+
+  async createGuest(tokenHash: string, expiresAt: Date): Promise<Cart> {
+    return this.prisma.cart.create({ data: { guestTokenHash: tokenHash, guestExpiresAt: expiresAt } });
+  }
+
+  /** The phone a guest is verifying: a different number than before is no longer verified. */
+  async setGuestPhone(cartId: string, phone: string): Promise<void> {
+    await this.prisma.cart.updateMany({
+      where: { id: cartId, userId: null, OR: [{ guestPhone: null }, { NOT: { guestPhone: phone } }] },
+      data: { guestPhone: phone, guestPhoneVerifiedAt: null },
+    });
+  }
+
+  /** Marks the guest's phone verified, conditional on it still being the number the code was sent to. */
+  async markGuestPhoneVerified(cartId: string, phone: string, at: Date): Promise<boolean> {
+    const { count } = await this.prisma.cart.updateMany({
+      where: { id: cartId, userId: null, guestPhone: phone },
+      data: { guestPhoneVerifiedAt: at },
+    });
+    return count === 1;
+  }
+
+  /** Deletes guest carts idle past their expiry (their lines go with them); returns how many. */
+  async deleteExpiredGuests(now: Date): Promise<number> {
+    const { count } = await this.prisma.cart.deleteMany({ where: { userId: null, guestExpiresAt: { lte: now } } });
+    return count;
+  }
+
   async findVariant(variantId: string): Promise<VariantForSale | null> {
     return this.prisma.variant.findUnique({ where: { id: variantId }, include: FOR_SALE });
   }

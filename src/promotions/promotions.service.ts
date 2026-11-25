@@ -491,13 +491,14 @@ export class PromotionsService {
    * promotions in the same order), takes a use if any is left (a conditional increment that row-locks the
    * promotion), counts the units the order bought at its price (`units`, by promotion id; 0 when absent) if its unit
    * cap leaves that many, checks the customer's own limit against their RESERVED redemptions, takes a use of the
-   * coupon code for the promotion it unlocked, and writes the RESERVED redemption with its units.
+   * coupon code for the promotion it unlocked, and writes the RESERVED redemption with its units. A guest order
+   * (customerId null, P6-G.1) has no identity to count a per-customer limit against, so such a promotion is refused.
    * @throws ConflictException (reason PROMOTION_LIMIT_REACHED, PROMOTION_UNITS_SOLD_OUT or
    * PROMOTION_CUSTOMER_LIMIT_REACHED); the caller's transaction then rolls back, so nothing is recorded.
    */
   async reserveRedemptions(
     tx: Prisma.TransactionClient,
-    order: { orderId: string; customerId: string },
+    order: { orderId: string; customerId: string | null },
     promotionIds: readonly string[],
     couponCode: { id: string; promotionId: string } | undefined,
     units: Readonly<Record<string, number>>,
@@ -519,7 +520,8 @@ export class PromotionsService {
       }
       if (
         taken.perCustomerLimit !== null &&
-        (await this.repository.countReserved(tx, promotionId, order.customerId)) >= taken.perCustomerLimit
+        (order.customerId === null ||
+          (await this.repository.countReserved(tx, promotionId, order.customerId)) >= taken.perCustomerLimit)
       ) {
         throw limitReached(
           `You have already used promotion "${promotionId}" as many times as it allows`,

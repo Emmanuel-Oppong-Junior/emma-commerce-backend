@@ -559,12 +559,21 @@ model RecentlyViewedProduct {
 }
 
 model Cart {
-  id        String     @id @default(cuid())
-  userId    String     @unique
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  items     CartItem[]
+  id                   String     @id @default(cuid())
+  /// Null for a guest cart (P6-G.1), which has a token instead (CHECK: exactly one of the two)
+  userId               String?    @unique
+  user                 User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+  items                CartItem[]
+  /// Guest carts (P6-G.1): SHA-256 of the cart token (the token itself is never stored), sliding idle expiry, and the
+  /// phone a code was sent to, verified when guestPhoneVerifiedAt is set
+  guestTokenHash       String?    @unique
+  guestExpiresAt       DateTime?
+  guestPhone           String?
+  guestPhoneVerifiedAt DateTime?
+
+  @@index([guestExpiresAt])
 }
 
 model CartItem {
@@ -588,8 +597,9 @@ model CartItem {
 model Order {
   id                      String             @id @default(cuid())
   orderNumber             Int                @unique
-  userId                  String
-  user                    User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  /// Null for a guest order (P6-G.1) until it is attached to the account that verifies its phone
+  userId                  String?
+  user                    User?              @relation(fields: [userId], references: [id], onDelete: Restrict)
   currency                Currency
   /// 1 for orders priced and snapshotted by createOrder since P1-O.1; 0 for older orders, whose totals are copied
   /// from what they stored (null where unknown) and which have no tax lines
@@ -615,7 +625,8 @@ model Order {
   couponCodeId            String?
   couponCode              CouponCode?        @relation(fields: [couponCodeId], references: [id])
   paymentMethod           PaymentMethod      @default(ONLINE)
-  contactEmail            String
+  /// Optional for guest orders only (CHECK)
+  contactEmail            String?
   contactPhone            String
   createdAt               DateTime           @default(now())
   updatedAt               DateTime           @updatedAt
@@ -654,8 +665,14 @@ model Order {
   deliveryWindowStart     Int?
   deliveryWindowEnd       Int?
   deliverySlotReleasedAt  DateTime?
+  /// Guest checkout (P6-G.1): the phone verified by SMS code (E.164) and when, and the buyer's name. Kept after the
+  /// order is attached to an account. CHECKs: a guest order has a verified phone and is paid online
+  guestPhone              String?
+  guestPhoneVerifiedAt    DateTime?
+  contactName             String?
 
   @@index([userId, status])
+  @@index([guestPhone])
   @@index([codPhone])
   @@index([createdAt])
   @@index([status, createdAt])
@@ -2189,7 +2206,8 @@ model Redemption {
   id           String           @id @default(cuid())
   promotionId  String
   couponCodeId String?
-  customerId   String
+  /// Null for a guest order's redemption (P6-G.1), until the order is attached to an account
+  customerId   String?
   orderId      String
   status       RedemptionStatus @default(RESERVED)
   /// Units the order bought at the promotional price (0 for a cart promotion); counted in Promotion.unitsUsed while RESERVED
@@ -2198,7 +2216,7 @@ model Redemption {
   releasedAt   DateTime?
   promotion    Promotion        @relation(fields: [promotionId], references: [id], onDelete: Restrict)
   couponCode   CouponCode?      @relation(fields: [couponCodeId], references: [id], onDelete: Restrict)
-  customer     User             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer     User?            @relation(fields: [customerId], references: [id], onDelete: Cascade)
   order        Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@unique([promotionId, customerId, orderId])
@@ -2561,7 +2579,8 @@ enum NotificationStatus {
 /// chosen when queued) makes a job that runs again find its row instead of sending twice.
 model Notification {
   id                String               @id @default(cuid())
-  userId            String
+  /// Null for a message to a guest (P6-G.1): refType/refId then name the guest order or cart (CHECK)
+  userId            String?
   templateKey       String
   templateVersion   Int
   locale            String               @default("en")
@@ -2583,9 +2602,10 @@ model Notification {
   readAt            DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
-  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User?                @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([refType, refId])
   @@index([createdAt])
   @@index([userId, channel, createdAt(sort: Desc), id(sort: Desc)])
 }

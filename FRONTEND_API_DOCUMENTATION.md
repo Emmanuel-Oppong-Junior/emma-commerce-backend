@@ -17,6 +17,7 @@
    - [Tags](#27-tags)
    - [Variants](#28-variants)
    - [Cart](#29-cart)
+   - [Guest checkout](#29a-guest-checkout-p6-g1)
    - [Wishlist](#210-wishlist)
    - [Orders](#211-orders)
    - [Payment](#212-payment)
@@ -1524,6 +1525,58 @@ mutation { unsubscribeMarketingEmail(token: String!) }   # no sign-in; Boolean; 
 ```
 
 which withdraws email marketing consent (ledger source `EMAIL_LINK`); repeating it changes nothing.
+
+### 2.9a Guest checkout (P6-G.1)
+
+Shoppers can buy **without an account**. Every operation below is public (no bearer token) and is authorised by a token instead: the **guest cart token** (`guestCartToken`) for the cart and checkout, the **order access token** (`orderAccessToken`) for the placed order. Keep both on the device; the server never stores them (only the cart token's hash) and cannot show them again.
+
+The flow:
+
+1. `createGuestCart` → `{ guestCartToken, cart }`. The cart expires 30 days after its last use (each call below extends it); an unknown or expired token is `NOT_FOUND` (start a new cart).
+2. `addToGuestCart` / `updateGuestCartItem` / `removeFromGuestCart` / `guestCart` work like the customer cart (same `AddToCartInput`, `UpdateCartItemInput`, stock checks and `CartItem` type).
+3. `requestGuestPhoneVerification(guestCartToken, input: { phone })` texts a 6-digit code (Ghana numbers, stored E.164); `verifyGuestPhone(guestCartToken, input: { code })`. Same codes and limits as `requestPhoneVerification`/`verifyPhone` (10-minute code, 5 wrong entries, 60 s resend cooldown, 5 codes a day per number, 10 per cart): `BAD_REQUEST` with `reason` `OTP_RATE_LIMITED` (`limit`, `retryAfterSeconds`), `OTP_INVALID` (`attemptsRemaining`), `OTP_ATTEMPTS_EXCEEDED`, `OTP_EXPIRED`, `PHONE_REQUIRED` (`verifyGuestPhone` before any code was requested), `PHONE_ALREADY_VERIFIED`. The code is bound to this cart: another cart cannot use it. Requesting a code for a **different** number makes the cart unverified until that number is confirmed.
+4. `guestCheckoutQuote(guestCartToken, input: GuestCheckoutQuoteInput)` prices the cart exactly as `checkoutQuote` does (same `CheckoutQuote` type and `quoteHash`), with the delivery **address itself** (`shippingAddress: CreateAddressInput`, required for `DELIVERY`) instead of `shippingAddressId`. Guests are priced as visitors: no customer-group, first-order or per-customer-limit promotions and no price lists. A coupon whose promotion is limited per customer, to a group or to a first order is `BAD_REQUEST` with `reason: "COUPON_NEEDS_ACCOUNT"`; public coupons work. `cashOnDelivery` is always `{ available: false, reason: GUEST_CHECKOUT, phoneVerified }`.
+5. `createGuestOrder(guestCartToken, input: CreateGuestOrderInput)` places the order (the cart is emptied) and returns `{ orderAccessToken, order: GuestOrder }`. Needs the phone verified (`BAD_REQUEST`, `reason: "GUEST_PHONE_NOT_VERIFIED"`); the verified phone is the order's contact phone. **Online payment only**: `paymentMethod: CASH_ON_DELIVERY` (on the quote or the order) is `BAD_REQUEST` with `reason: "COD_NOT_AVAILABLE"`, `codReason: "GUEST_CHECKOUT"`. Also `CONFLICT` `QUOTE_CHANGED`, the stock, delivery zone and slot errors of `createOrder`, and `FORBIDDEN` `VELOCITY_LIMIT` (counted per phone number and network).
+6. Pay with [`POST /payment/guest/initialize`](#post-paymentguestinitialize), then after Paystack's redirect call `verifyGuestPayment(orderAccessToken, reference)` (the `transactionId` of the attempt); a reference of another order is `FORBIDDEN`.
+7. `guestOrder(orderAccessToken)` reads the order with its `paymentStatus` and `trackingTimeline` (poll it). Any other token is `NOT_FOUND`.
+
+```graphql
+input GuestCheckoutQuoteInput {   # CheckoutQuoteInput without shippingAddressId
+  fulfillmentType: FulfillmentType!
+  shippingAddress: CreateAddressInput   # DELIVERY
+  pickupLocationId: ID                  # PICKUP
+  couponCode: String
+  paymentMethod: OrderPaymentMethod = ONLINE
+  serviceLevel: DeliveryServiceLevel = STANDARD
+  deliverySlot: DeliverySlotChoiceInput
+}
+input CreateGuestOrderInput {     # GuestCheckoutQuoteInput plus
+  contactName: String!            # 1-100 characters
+  contactEmail: String            # optional: receipts and updates are emailed only when given
+  quoteHash: String!
+}
+type GuestCart { id: ID! items: [CartItem!]! phoneLast3: String phoneVerified: Boolean! expiresAt: DateTime! createdAt: DateTime! updatedAt: DateTime! }
+type GuestCartSession { guestCartToken: String! cart: GuestCart! }
+type GuestOrderPlacement { orderAccessToken: String! order: GuestOrder! }
+type GuestOrder {                 # the guest's view: no account, staff or actor details
+  id: ID! orderNumber: Int! status: OrderStatus! paymentMethod: OrderPaymentMethod! fulfillmentType: FulfillmentType!
+  currency: Currency! subtotal: Money discountTotal: Money taxTotal: Money shippingTotal: Money grandTotal: Money!
+  shippingZoneName: String serviceLevel: DeliveryServiceLevel contactName: String contactEmail: String contactPhone: String!
+  shippingAddressSnapshot: JSON pickupLocationSnapshot: JSON items: [OrderItem!]! adjustments: [OrderAdjustment!]!
+  paymentStatus: OrderPaymentStatus trackingTimeline: [TrackingStep!]! createdAt: DateTime!
+}
+```
+
+**Messages to guests:** the order placed (with a link to `FRONTEND_URL/guest-order#token=<orderAccessToken>`: read the token from the URL fragment and call `guestOrder`), the payment received and the delivery milestones are texted to the verified phone, and emailed when `contactEmail` was given. Guests get no in-app feed and no marketing (no abandoned-cart reminders).
+
+**Attaching guest orders to an account:** guest orders move to the account that holds their verified phone, never by email and never across a different phone:
+
+- at `signUp` with `guestOrderToken` (an `orderAccessToken`): the guest's verified phone becomes the new account's verified phone (if verified in the last 30 days and no other account holds the number) and every guest order placed with it is attached. `BAD_REQUEST` `INVALID_GUEST_ORDER_TOKEN` / `GUEST_VERIFICATION_EXPIRED`, `CONFLICT` `PHONE_IN_USE`; no account is created then.
+- when a signed-in customer verifies that phone (`verifyPhone`).
+
+Attached orders appear in `userOrders`; returns and reviews of a guest order need it attached first (staff get `BAD_REQUEST` `GUEST_ORDER_NOT_ATTACHED` for an outside-policy return of an unattached guest order).
+
+**Breaking changes (P6-G.1)** `[breaking-api]`: `Order.userId` and `Order.contactEmail` are nullable (null on a guest order not yet attached / placed without an email); `FlaggedOrder.userId` and `Redemption.customerId` are nullable for the same reason. New: `Order.contactName`, `CodUnavailableReason.GUEST_CHECKOUT`, `SignUpInput.guestOrderToken`.
 
 ### 2.10 Wishlist
 
@@ -4141,6 +4194,27 @@ The amount is always the order total at the first initialization; any other fiel
 ```
 
 `transactionId` is the Paystack reference that `verifyPayment` takes. **Frontend must redirect** the user to `authorizationUrl` to complete payment on Paystack.
+
+---
+
+### `POST /payment/guest/initialize`
+
+**Auth Required**: No: the order access token from `createGuestOrder` authorises it (P6-G.1)
+**Rate Limit**: 5 requests/minute (`payment` throttler)
+**Content-Type**: `application/json`
+
+**Request Body**:
+
+```typescript
+{
+  orderAccessToken: string; // Required: createGuestOrder.orderAccessToken.
+  paymentMethod: "CARD" | "MOBILE_MONEY"; // Required.
+  currency?: "GHS";
+  idempotencyKey?: string;  // Optional, 1-255 chars.
+}
+```
+
+Same rules and response as [`POST /payment/initialize`](#post-paymentinitialize), with the guest order in place of the customer's: a token of no guest order is **404**; velocity checks count per verified phone and IP address. The checkout is opened with the order's `contactEmail`; a guest who gave none is sent to Paystack (which requires an email) as `guest-order-<orderId>@<FRONTEND_URL host>`. Confirm the payment after the redirect with `verifyGuestPayment`.
 
 ---
 

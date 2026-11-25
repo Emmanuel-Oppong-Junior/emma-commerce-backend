@@ -13,6 +13,7 @@ function buildProcessor() {
   const lotExpiry = { writeOffExpired: jest.fn().mockResolvedValue(null) };
   const notificationRetention = { purge: jest.fn().mockResolvedValue(null) };
   const abandonedCarts = { run: jest.fn().mockResolvedValue(null) };
+  const guestCarts = { purge: jest.fn().mockResolvedValue(0) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const processor = new MaintenanceProcessor(
     expiredOrders as never,
@@ -24,6 +25,7 @@ function buildProcessor() {
     lotExpiry as never,
     notificationRetention as never,
     abandonedCarts as never,
+    guestCarts as never,
   );
   return {
     processor,
@@ -34,6 +36,7 @@ function buildProcessor() {
     lotExpiry,
     notificationRetention,
     abandonedCarts,
+    guestCarts,
     logger,
   };
 }
@@ -50,6 +53,7 @@ describe('MaintenanceProcessor', () => {
     [MaintenanceJob.WriteOffExpiredLots, 'lotExpiry', 'writeOffExpired'],
     [MaintenanceJob.PurgeNotifications, 'notificationRetention', 'purge'],
     [MaintenanceJob.RemindAbandonedCarts, 'abandonedCarts', 'run'],
+    [MaintenanceJob.PurgeGuestCarts, 'guestCarts', 'purge'],
   ] as const)('runs %s through %s.%s exactly once', async (name, target, method) => {
     const built = buildProcessor();
 
@@ -66,6 +70,7 @@ describe('MaintenanceProcessor', () => {
       built.lotExpiry.writeOffExpired,
       built.notificationRetention.purge,
       built.abandonedCarts.run,
+      built.guestCarts.purge,
     ].reduce((total, mock) => total + mock.mock.calls.length, 0);
     expect(allCalls).toBe(1);
   });

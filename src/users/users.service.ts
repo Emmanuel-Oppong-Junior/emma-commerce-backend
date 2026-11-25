@@ -36,8 +36,19 @@ export class UsersService {
    * @param createUserInput - Registration data including email, name, and plaintext password.
    * @returns The created user record.
    */
-  async createUserByCredentials(createUserInput: CreateUserInput) {
-    return this.usersRepository.create(await this.withHashedPassword(createUserInput));
+  /** `verifiedPhone`: a phone already proven by SMS code (a guest checkout's, P6-G.1), stored as verified. */
+  async createUserByCredentials(createUserInput: CreateUserInput, verifiedPhone?: { phone: string; verifiedAt: Date }) {
+    const data = await this.withHashedPassword(createUserInput);
+    return this.usersRepository.create(
+      verifiedPhone
+        ? {
+            ...data,
+            phoneNumber: verifiedPhone.phone,
+            phoneVerifiedAt: verifiedPhone.verifiedAt,
+            phoneVerifiedNumber: verifiedPhone.phone,
+          }
+        : data,
+    );
   }
 
   /**

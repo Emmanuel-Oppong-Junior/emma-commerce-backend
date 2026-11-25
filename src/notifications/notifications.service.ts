@@ -8,7 +8,7 @@ import { withJobMeta } from '../jobs/job-context';
 import { NotificationChannel } from '../generated/prisma/client';
 import { EmailJobData, EmailJobName, TOKEN_EMAIL_JOB_OPTIONS } from './email-jobs';
 import { PHONE_OTP_JOB_OPTIONS, READY_FOR_PICKUP_SMS_JOB_OPTIONS, SmsJobData } from './sms/sms-jobs';
-import { NotificationsRepository } from './notifications.repository';
+import { NotificationRef, NotificationsRepository } from './notifications.repository';
 import { TemplateKey } from './templates/templates';
 
 const CONTEXT = 'NotificationsService';
@@ -68,6 +68,18 @@ export class NotificationsService {
     );
   }
 
+  /** Queues a guest checkout's phone code (P6-G.1); the Notification row names the guest cart instead of an account. */
+  async queueGuestPhoneOtpSms(cartId: string, to: string, code: string, expiresInMinutes: number): Promise<void> {
+    await this.queueDirect(
+      'sms.phone_otp.v1',
+      'account.phone_otp',
+      NotificationChannel.SMS,
+      { type: 'GuestCart', id: cartId },
+      { to, code, expiresInMinutes, guestCartId: cartId },
+      PHONE_OTP_JOB_OPTIONS,
+    );
+  }
+
   /**
    * Queues a shipment milestone SMS (with the queue's retry options) under `jobId`, derived from the outbox event, so
    * the event job running again queues it once; the processor's sent marker keeps it to one send.
@@ -97,18 +109,21 @@ export class NotificationsService {
     });
   }
 
+  /** `recipient` is the account id, or for a guest what the message is about. */
   private async queueDirect(
     name: string,
     template: TemplateKey,
     channel: NotificationChannel,
-    userId: string,
+    recipient: string | NotificationRef,
     data: object,
     opts?: JobsOptions,
   ): Promise<void> {
     const dedupeKey = `direct:${randomUUID()}`;
-    const row = await this.notifications.findOrCreate({ dedupeKey, userId, template, channel });
+    const userId = typeof recipient === 'string' ? recipient : null;
+    const ref = typeof recipient === 'string' ? undefined : recipient;
+    const row = await this.notifications.findOrCreate({ dedupeKey, userId, template, channel, ref });
     try {
-      await this.queue.add(name, withJobMeta({ ...data, userId, dedupeKey }), opts);
+      await this.queue.add(name, withJobMeta({ ...data, ...(userId && { userId }), dedupeKey }), opts);
     } catch (error) {
       await this.notifications.markFailed(row.id, 'QUEUE_ERROR', false);
       throw error;

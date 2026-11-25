@@ -12,11 +12,18 @@ import { DEFAULT_LOCALE, InAppContent, TemplateKey, templateDefinition } from '.
 /** Why a notification was skipped or failed; stored in Notification.errorCode. */
 export type NotificationErrorCode = 'NO_CONSENT' | 'NO_ADDRESS' | 'NOT_CONFIGURED' | 'PROVIDER_ERROR' | 'QUEUE_ERROR';
 
+/** What a notification is about: an order (the in-app feed links to it), or a guest cart (a guest's phone code). */
+export interface NotificationRef {
+  type: 'Order' | 'GuestCart';
+  id: string;
+}
+
 export interface NotificationKey {
   dedupeKey: string;
-  userId: string;
+  userId: string | null;
   template: TemplateKey;
   channel: NotificationChannel;
+  ref?: NotificationRef;
 }
 
 /** The Notification rows: one per message, written QUEUED and moved on by the channel sender. */
@@ -25,7 +32,7 @@ export class NotificationsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   /** The row for `dedupeKey`, created QUEUED (with the template's current version and category) when missing. */
-  findOrCreate({ dedupeKey, userId, template, channel }: NotificationKey): Promise<Notification> {
+  findOrCreate({ dedupeKey, userId, template, channel, ref }: NotificationKey): Promise<Notification> {
     const { version, category } = templateDefinition(template);
     return this.prisma.notification.upsert({
       where: { dedupeKey },
@@ -37,6 +44,8 @@ export class NotificationsRepository {
         templateKey: template,
         templateVersion: version,
         locale: DEFAULT_LOCALE,
+        refType: ref?.type ?? null,
+        refId: ref?.id ?? null,
       },
       update: {},
     });

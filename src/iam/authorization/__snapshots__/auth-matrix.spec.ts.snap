@@ -11,6 +11,7 @@ Mutation addDisputeNote                  permission: payment.dispute.manage
 Mutation addProductsToTag                permission: catalog.taxonomy.write
 Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
+Mutation addToGuestCart                  public
 Mutation addToWishlist                   authenticated
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
@@ -44,6 +45,8 @@ Mutation createCategory                  permission: catalog.taxonomy.write
 Mutation createCouponCode                permission: promotion.manage; step-up
 Mutation createCustomerGroup             permission: customer.group.manage
 Mutation createDeliverySlot              permission: shipping.manage
+Mutation createGuestCart                 public
+Mutation createGuestOrder                public
 Mutation createOrder                     authenticated
 Mutation createPickupLocation            permission: shipping.manage
 Mutation createPriceList                 permission: pricelist.manage; step-up
@@ -119,6 +122,7 @@ Mutation removeCodBlacklistEntry         permission: payment.settings.manage; st
 Mutation removeCustomerGroupMembers      permission: customer.group.manage
 Mutation removeDeliveryClosure           permission: shipping.manage
 Mutation removeFromCart                  authenticated
+Mutation removeFromGuestCart             public
 Mutation removeFromWishlist              authenticated
 Mutation removePaystackConfig            permission: payment.settings.manage; step-up
 Mutation removePriceListEntries          permission: pricelist.manage; step-up
@@ -132,6 +136,7 @@ Mutation removeUser                      permission: user.manage
 Mutation replyToReview                   permission: review.moderate
 Mutation reportProductQuestion           customer only
 Mutation reportReview                    customer only
+Mutation requestGuestPhoneVerification   public
 Mutation requestPhoneVerification        authenticated
 Mutation requestReturn                   customer only
 Mutation resendVerificationEmail         authenticated
@@ -174,6 +179,7 @@ Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateDeliverySlot              permission: shipping.manage
 Mutation updateDisputeStatus             permission: payment.dispute.manage
+Mutation updateGuestCartItem             public
 Mutation updateMyProfile                 authenticated
 Mutation updateNotificationPreference    authenticated
 Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
@@ -200,6 +206,8 @@ Mutation updateUser                      permission: user.manage
 Mutation updateVariant                   permission: catalog.product.write; step-up when input.basePrice is set
 Mutation updateVelocityLimits            permission: payment.settings.manage; step-up
 Mutation verifyEmail                     public
+Mutation verifyGuestPayment              public
+Mutation verifyGuestPhone                public
 Mutation verifyPayment                   customer only
 Mutation verifyPhone                     authenticated
 Query activePickupLocations              public
@@ -231,6 +239,9 @@ Query failedJobs                         permission: jobs.manage
 Query flaggedOrders                      permission: order.view
 Query getMyPayments                      customer only
 Query getUserPayment                     permission: payment.view
+Query guestCart                          public
+Query guestCheckoutQuote                 public
+Query guestOrder                         public
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
 Query myNotificationPreferences          authenticated
@@ -325,6 +336,7 @@ REST GET /health/live                    public
 REST GET /health/ready                   public
 REST POST /delivery/my-shipments/:shipmentId/photo permission: delivery.ride
 REST POST /delivery/shipments/:shipmentId/photo permission: order.fulfil
+REST POST /payment/guest/initialize      public
 REST POST /payment/initialize            authenticated
 REST POST /payment/webhook               public
 REST POST /returns/orders/:orderId/photos customer only

@@ -8,7 +8,7 @@ import { PAID_INTENT_STATUSES } from './payment-intent-status';
  */
 export interface PayableOrder {
   id: string;
-  userId: string;
+  userId: string | null;
   status: OrderStatus;
   deleted: boolean;
   paymentMethod: PaymentMethod;
@@ -21,13 +21,17 @@ export interface KeyedAttempt {
   authorizationUrl: string | null;
 }
 
+/**
+ * Refuses an order that cannot be paid now. `userId` is the paying customer, whose order it must be; null for a guest
+ * (P6-G.1), whose order access token already named the order.
+ */
 export function assertOrderPayable<T extends PayableOrder>(
   order: T | null,
   orderId: string,
-  userId: string,
+  userId: string | null,
 ): asserts order is T {
   if (!order || order.deleted) throw new NotFoundException(`Order "${orderId}" not found`);
-  if (order.userId !== userId) throw new ForbiddenException('Order does not belong to you');
+  if (userId !== null && order.userId !== userId) throw new ForbiddenException('Order does not belong to you');
   if (order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY) {
     throw new BadRequestException('This order uses cash on delivery. Online payment is not available.');
   }

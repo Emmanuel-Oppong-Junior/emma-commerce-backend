@@ -10,7 +10,7 @@ import { EmailService } from './email/email.service';
 import { SmsSender } from './sms/sms-sender';
 import { SmsReceipt } from './sms/sms-provider.port';
 import { AppMetrics, SmsOutcome } from '../observability/metrics';
-import { NotificationErrorCode, NotificationsRepository } from './notifications.repository';
+import { NotificationErrorCode, NotificationRef, NotificationsRepository } from './notifications.repository';
 import { mayDeliver } from './preferences/notification-preferences';
 import { renderEmail, renderInApp, renderSms, TemplateData, TemplateKey } from './templates/templates';
 
@@ -19,7 +19,8 @@ const CONTEXT = 'NotificationDispatcher';
 export interface Delivery<K extends TemplateKey = TemplateKey> {
   /** Unique per message: a job that runs again finds the row and sends nothing more once it is SENT or SKIPPED. */
   dedupeKey: string;
-  userId: string;
+  /** Null for a guest (P6-G.1): `ref` then names the guest order or cart the message is about. */
+  userId: string | null;
   template: K;
   data: TemplateData[K];
   channel: NotificationChannel;
@@ -27,8 +28,8 @@ export interface Delivery<K extends TemplateKey = TemplateKey> {
   to: string | null;
   /** Passed to the provider so it drops a repeat of a message it already accepted (the job id). */
   idempotencyKey?: string;
-  /** What an in-app notification is about, for the feed to link to. */
-  ref?: { type: 'Order'; id: string };
+  /** What the notification is about: stored on the row; the in-app feed links to it. Required without a user. */
+  ref?: NotificationRef;
 }
 
 /**
@@ -47,11 +48,15 @@ export class NotificationDispatcher {
   ) {}
 
   async deliver<K extends TemplateKey>(delivery: Delivery<K>): Promise<NotificationStatus> {
+    if (delivery.userId === null && !delivery.ref) {
+      throw new Error(`A notification without a user needs a ref | template: ${delivery.template}`);
+    }
     const row = await this.notifications.findOrCreate(delivery);
     if (row.status === NotificationStatus.SENT || row.status === NotificationStatus.SKIPPED) return row.status;
 
+    // Guests have no consent ledger, so they get transactional messages only.
     const { marketingConsent, phoneVerified } =
-      row.category === NotificationCategory.TRANSACTIONAL
+      row.category === NotificationCategory.TRANSACTIONAL || delivery.userId === null
         ? { marketingConsent: false, phoneVerified: false }
         : await this.notifications.consentFacts(delivery.userId, delivery.channel);
     if (!mayDeliver(row.category, delivery.channel, marketingConsent, phoneVerified)) {

@@ -173,4 +173,34 @@ describe('NotificationDispatcher', () => {
     expect(notifications.markFailed).toHaveBeenCalledWith('n1', 'PROVIDER_ERROR', true);
     expect(notifications.markSent).not.toHaveBeenCalled();
   });
+
+  describe('guests (P6-G.1)', () => {
+    const GUEST_PAID = { ...PAID, userId: null, ref: { type: 'Order' as const, id: 'order1' } };
+
+    it('sends a transactional message to a guest, its row naming the order instead of an account', async () => {
+      const { dispatcher, notifications, email } = build();
+
+      await expect(dispatcher.deliver(GUEST_PAID)).resolves.toBe('SENT');
+
+      expect(notifications.findOrCreate).toHaveBeenCalledWith(GUEST_PAID);
+      expect(email.send).toHaveBeenCalled();
+    });
+
+    it('never sends marketing to a guest: there is no consent to read', async () => {
+      const { dispatcher, notifications, email } = build({ category: 'MARKETING' });
+
+      await expect(dispatcher.deliver(GUEST_PAID)).resolves.toBe('SKIPPED');
+
+      expect(notifications.consentFacts).not.toHaveBeenCalled();
+      expect(notifications.markSkipped).toHaveBeenCalledWith('n1', 'NO_CONSENT');
+      expect(email.send).not.toHaveBeenCalled();
+    });
+
+    it('refuses a message with neither a user nor what it is about', async () => {
+      const { dispatcher, notifications } = build();
+
+      await expect(dispatcher.deliver({ ...PAID, userId: null })).rejects.toThrow('needs a ref');
+      expect(notifications.findOrCreate).not.toHaveBeenCalled();
+    });
+  });
 });

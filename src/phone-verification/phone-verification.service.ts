@@ -6,6 +6,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { SmsSender } from '../notifications/sms/sms-sender';
 import { parseMfaKey } from '../iam/mfa/mfa-crypto';
 import { PhoneOtpStore } from './phone-otp.store';
+import { GuestOrderClaims } from '../guest-checkout/guest-order-claims.service';
+import { guestOtpSubject } from '../guest-checkout/guest-cart-token';
 import {
   generateOtpCode,
   hashOtp,
@@ -37,9 +39,10 @@ function refusal(reason: Reason, message: string, extra: Record<string, unknown>
 }
 
 /**
- * Verifies the account's phone number with a one-time SMS code (P3-B.1, ADR-0015), which cash on delivery requires.
+ * Verifies the account's phone number with a one-time SMS code (P3-B.1, ADR-0015), which cash on delivery requires,
+ * and a guest checkout's phone (P6-G.1) with the same codes, limits and storage, the code bound to the guest cart.
  * Codes live hashed in Redis (PhoneOtpStore) and the SMS goes out from the worker; the code and the full number are
- * never logged.
+ * never logged. An account that verifies its phone takes over the guest orders placed with it (GuestOrderClaims).
  */
 @Injectable()
 export class PhoneVerificationService {
@@ -51,6 +54,7 @@ export class PhoneVerificationService {
     private readonly notifications: NotificationsService,
     private readonly sms: SmsSender,
     private readonly logger: LoggerService,
+    private readonly guestOrderClaims: GuestOrderClaims,
     config: ConfigService,
   ) {
     this.hashKey = otpHashKey(parseMfaKey(config.getOrThrow<string>('MFA_ENCRYPTION_KEY')));
@@ -64,6 +68,56 @@ export class PhoneVerificationService {
   async requestCode(userId: string): Promise<PhoneVerificationRequestResult> {
     const user = await this.findUser(userId);
     const phone = this.phoneToVerify(user);
+    const result = await this.issue(userId, phone, (code) =>
+      this.notifications.queuePhoneOtpSms(userId, phone, code, OTP_TTL_SECONDS / 60),
+    );
+    this.logger.log(`Phone verification code queued | userId: ${userId}`, CONTEXT);
+    return result;
+  }
+
+  /** Texts a code for a guest checkout's phone, bound to the guest cart and that phone (same limits as accounts). */
+  async requestGuestCode(cartId: string, phone: string): Promise<PhoneVerificationRequestResult> {
+    const result = await this.issue(guestOtpSubject(cartId), phone, (code) =>
+      this.notifications.queueGuestPhoneOtpSms(cartId, phone, code, OTP_TTL_SECONDS / 60),
+    );
+    this.logger.log(`Guest phone verification code queued | cartId: ${cartId}`, CONTEXT);
+    return result;
+  }
+
+  /** Refuses unless `code` is the live code sent for the guest cart and phone (it is used up when it matches). */
+  async checkGuestCode(cartId: string, phone: string, code: string): Promise<void> {
+    await this.check(guestOtpSubject(cartId), phone, code);
+  }
+
+  /**
+   * Marks the account's phone verified when `code` is the live code sent to it, and attaches the guest orders placed
+   * with that phone, in one transaction.
+   */
+  async verifyCode(userId: string, code: string): Promise<PhoneVerificationStatus> {
+    const user = await this.findUser(userId);
+    const phone = this.phoneToVerify(user);
+    await this.check(userId, phone, code);
+    const verifiedAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      // Conditional on the number, so a phone changed since the code was sent is not marked verified.
+      const { count } = await tx.user.updateMany({
+        where: { id: userId, phoneNumber: phone },
+        data: { phoneVerifiedAt: verifiedAt, phoneVerifiedNumber: phone },
+      });
+      if (count === 0) {
+        throw refusal(Reason.OTP_EXPIRED, 'The phone number changed since the code was sent; request a new one');
+      }
+      await this.guestOrderClaims.attachToAccount(userId, phone, tx);
+    });
+    this.logger.log(`Phone verified | userId: ${userId}`, CONTEXT);
+    return { phoneVerified: true, phoneVerifiedAt: verifiedAt };
+  }
+
+  private async issue(
+    subject: string,
+    phone: string,
+    queue: (code: string) => Promise<void>,
+  ): Promise<PhoneVerificationRequestResult> {
     if (!this.sms.canSend) {
       throw new ServiceUnavailableException({
         message: 'Phone verification is unavailable: SMS is not configured',
@@ -71,7 +125,7 @@ export class PhoneVerificationService {
       });
     }
     const code = generateOtpCode();
-    const outcome = await this.store.issue(userId, phone, hashOtp(this.hashKey, userId, phone, code));
+    const outcome = await this.store.issue(subject, phone, hashOtp(this.hashKey, subject, phone, code));
     if (!outcome.issued) {
       throw refusal(
         Reason.OTP_RATE_LIMITED,
@@ -79,8 +133,7 @@ export class PhoneVerificationService {
         { limit: outcome.limit, retryAfterSeconds: outcome.retryAfterSeconds },
       );
     }
-    await this.notifications.queuePhoneOtpSms(userId, phone, code, OTP_TTL_SECONDS / 60);
-    this.logger.log(`Phone verification code queued | userId: ${userId}`, CONTEXT);
+    await queue(code);
     return {
       phoneLast3: phone.slice(-3),
       expiresInSeconds: OTP_TTL_SECONDS,
@@ -88,11 +141,8 @@ export class PhoneVerificationService {
     };
   }
 
-  /** Marks the account's phone verified when `code` is the live code sent to it. */
-  async verifyCode(userId: string, code: string): Promise<PhoneVerificationStatus> {
-    const user = await this.findUser(userId);
-    const phone = this.phoneToVerify(user);
-    const outcome = await this.store.verify(userId, phone, hashOtp(this.hashKey, userId, phone, code));
+  private async check(subject: string, phone: string, code: string): Promise<void> {
+    const outcome = await this.store.verify(subject, phone, hashOtp(this.hashKey, subject, phone, code));
     switch (outcome.result) {
       case 'NO_CODE':
         throw refusal(Reason.OTP_EXPIRED, 'No valid verification code for this phone number; request a new one');
@@ -101,19 +151,8 @@ export class PhoneVerificationService {
       case 'MISMATCH':
         throw refusal(Reason.OTP_INVALID, 'Wrong verification code', { attemptsRemaining: outcome.attemptsLeft });
       case 'MATCH':
-        break;
+        return;
     }
-    const verifiedAt = new Date();
-    // Conditional on the number, so a phone changed since the code was sent is not marked verified.
-    const { count } = await this.prisma.user.updateMany({
-      where: { id: userId, phoneNumber: phone },
-      data: { phoneVerifiedAt: verifiedAt, phoneVerifiedNumber: phone },
-    });
-    if (count === 0) {
-      throw refusal(Reason.OTP_EXPIRED, 'The phone number changed since the code was sent; request a new one');
-    }
-    this.logger.log(`Phone verified | userId: ${userId}`, CONTEXT);
-    return { phoneVerified: true, phoneVerifiedAt: verifiedAt };
   }
 
   private phoneToVerify(user: PhoneVerificationFields): string {

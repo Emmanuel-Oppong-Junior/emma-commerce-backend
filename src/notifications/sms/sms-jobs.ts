@@ -5,11 +5,20 @@ import { ReadyForPickupNotice } from '../templates/templates';
 
 /** SMS jobs on the notifications queue. */
 export interface SmsJobData {
-  'sms.phone_otp.v1': DirectNotificationRef & { to: string; code: string; expiresInMinutes: number };
+  /** `guestCartId` instead of `userId`: a guest checkout's code (P6-G.1). */
+  'sms.phone_otp.v1': DirectNotificationRef & {
+    to: string;
+    code: string;
+    expiresInMinutes: number;
+    guestCartId?: string;
+  };
   /** A shipment milestone (P5-B.2); ids only, the recipient and text are read when sending. */
   'sms.shipment_milestone.v1': { orderId: string; shipmentId: string; status: ShipmentStatus };
-  /** `userId` (the order's customer) was added in P6-N.1; absent on older jobs. */
-  'sms.ready_for_pickup.v1': { to: string; notice: ReadyForPickupNotice; userId?: string };
+  /**
+   * `userId` (the order's customer) was added in P6-N.1; absent on older jobs. `guestOrderId` instead: a guest order
+   * (P6-G.1).
+   */
+  'sms.ready_for_pickup.v1': { to: string; notice: ReadyForPickupNotice; userId?: string; guestOrderId?: string };
 }
 
 export type SmsJobName = keyof SmsJobData;

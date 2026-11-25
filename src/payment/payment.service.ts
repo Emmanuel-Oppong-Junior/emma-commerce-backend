@@ -54,12 +54,43 @@ export class PaymentService {
     createPaymentDto: CreatePaymentDto,
     clientIp?: string,
   ): Promise<PaymentRecord & { authorizationUrl: string }> {
+    const order = await this.paymentRepository.findOrderWithUser(createPaymentDto.orderId);
+    return this.openPayment(order, userId, createPaymentDto, velocitySubjects({ customerId: userId, ip: clientIp }));
+  }
+
+  /**
+   * initiatePayment for a guest order (P6-G.1), named by its access token: screened per verified phone and network,
+   * and sent to the provider with the order's contact email, else `payerEmailFallback` (the provider needs one).
+   */
+  async initiateGuestPayment(
+    orderId: string,
+    createPaymentDto: Omit<CreatePaymentDto, 'orderId'>,
+    payerEmailFallback: string,
+    clientIp?: string,
+  ): Promise<PaymentRecord & { authorizationUrl: string }> {
+    const order = await this.paymentRepository.findOrderWithUser(orderId);
+    const subjects = velocitySubjects({ phone: order?.guestPhone ?? undefined, ip: clientIp });
+    return this.openPayment(order, null, { ...createPaymentDto, orderId }, subjects, payerEmailFallback);
+  }
+
+  /** A guest's verify (P6-G.1): the reference must be one of the order its access token named. */
+  async verifyGuestPayment(reference: string, orderId: string): Promise<PaymentRecord> {
+    const payment = await this.fetchPaymentByReference(reference);
+    if (payment.orderId !== orderId) throw new ForbiddenException('You do not have access to this payment');
+    return this.settleWithProvider(payment, reference);
+  }
+
+  private async openPayment(
+    order: Awaited<ReturnType<PaymentRepository['findOrderWithUser']>>,
+    userId: string | null,
+    createPaymentDto: CreatePaymentDto,
+    subjects: ReturnType<typeof velocitySubjects>,
+    payerEmailFallback?: string,
+  ): Promise<PaymentRecord & { authorizationUrl: string }> {
     const { orderId, idempotencyKey, paymentMethod } = createPaymentDto;
     await this.assertStoreCurrency(createPaymentDto.currency);
-    const order = await this.paymentRepository.findOrderWithUser(orderId);
     assertOrderPayable(order, orderId, userId);
     const provider = await this.paymentSettings.onlineProviderFor(paymentMethod);
-    const subjects = velocitySubjects({ customerId: userId, ip: clientIp });
     const softHits = await this.velocity.screenOrRefuse(VelocityCheckpoint.PAYMENT_INITIATION, subjects);
 
     const reference = this.generateReference(orderId);
@@ -83,13 +114,9 @@ export class PaymentService {
     await this.velocity.flagOrder(orderId, softHits);
     await this.velocity.record(VelocityEvent.PAYMENT_STARTED, subjects);
 
-    const authorizationUrl = await this.openCheckout(
-      provider,
-      paymentMethod,
-      opened.attempt,
-      reference,
-      order.user.email,
-    );
+    const email = order.user?.email ?? order.contactEmail ?? payerEmailFallback;
+    if (!email) throw new Error(`Order "${orderId}" has no email to open a checkout with`);
+    const authorizationUrl = await this.openCheckout(provider, paymentMethod, opened.attempt, reference, email);
     return { ...opened.attempt, authorizationUrl };
   }
 
@@ -293,7 +320,10 @@ export class PaymentService {
     verified: ProviderVerification,
   ): Promise<void> {
     if (!failed && !verified.cardFingerprint) return;
-    const subjects = velocitySubjects({ customerId: attempt.order?.userId, card: verified.cardFingerprint });
+    const subjects = velocitySubjects({
+      customerId: attempt.order?.userId ?? undefined,
+      card: verified.cardFingerprint,
+    });
     if (failed) await this.velocity.record(VelocityEvent.PAYMENT_FAILED, subjects);
     const hits = await this.velocity.screen(VelocityCheckpoint.PAYMENT_SETTLEMENT, subjects);
     await this.velocity.flagOrder(attempt.orderId, hits);

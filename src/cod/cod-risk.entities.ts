@@ -23,7 +23,11 @@ export class CashOnDeliveryAvailability {
   @Field(() => CodUnavailableReason, { nullable: true, description: 'The first gate refusing it, when not available' })
   reason: CodUnavailableReason | null;
 
-  @Field({ description: "Whether the account's phone number is verified (required once for cash on delivery)" })
+  @Field({
+    description:
+      "Whether the account's phone number is verified (required once for cash on delivery); for a guest checkout, " +
+      "whether the guest's phone is verified (guests pay online only: reason GUEST_CHECKOUT)",
+  })
   phoneVerified: boolean;
 }
 

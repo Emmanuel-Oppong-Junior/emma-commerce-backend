@@ -19,6 +19,7 @@ import { MfaService } from './mfa/mfa.service';
 import { MfaRepository } from './mfa/mfa.repository';
 import { MfaResolver } from './mfa/mfa.resolver';
 import { StepUpStore } from './mfa/step-up.store';
+import { GuestOrderClaimsModule } from '../guest-checkout/guest-order-claims.service';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { StepUpStore } from './mfa/step-up.store';
     ConfigModule.forFeature(jwtConfig),
     NotificationsModule,
     CommonsModule,
+    GuestOrderClaimsModule,
   ],
   providers: [
     AuthenticationService,
