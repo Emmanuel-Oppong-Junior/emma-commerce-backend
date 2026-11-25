@@ -31,6 +31,7 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'cod.cash.manage',
   'promotion.manage',
   'customer.group.manage',
+  'loyalty.manage',
   'pricelist.manage',
   'tax.manage',
   'shipping.manage',

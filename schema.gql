@@ -126,6 +126,11 @@ input AnswerProductQuestionInput {
   questionId: ID!
 }
 
+input ApplyReferralCodeInput {
+  """A friend's referral code (case, spaces and hyphens ignored)"""
+  code: String!
+}
+
 input AskProductQuestionInput {
   """5-1000 characters, trimmed"""
   body: String!
@@ -1632,6 +1637,18 @@ input CustomerGroupMembersInput {
   userIds: [ID!]!
 }
 
+"""A customer's referrals (staff)"""
+type CustomerReferrals {
+  """Null until the customer first asks for it"""
+  code: String
+
+  """Customers this one referred, newest first"""
+  referrals: [StaffReferral!]!
+
+  """The referral that brought this customer, if any"""
+  referredBy: StaffReferral
+}
+
 """A return of some delivered units of one of your orders"""
 type CustomerReturn {
   createdAt: DateTime!
@@ -2289,11 +2306,19 @@ type LoyaltySettingsEntity {
   """The fewest points one checkout may redeem"""
   minimumRedeemPoints: Int!
 
+  """Points for the new customer when their first order completes (P6-L.2)"""
+  newCustomerRewardPoints: Int!
+
   """Credited points expire after this many months"""
   pointsExpiryMonths: Int!
 
   """Points worth GHS 1 at checkout"""
   redeemPointsPerCedi: Int!
+
+  """
+  Points for the referrer when a new customer's first order completes (P6-L.2)
+  """
+  referrerRewardPoints: Int!
 }
 
 """A customer’s loyalty points"""
@@ -2473,6 +2498,11 @@ type Mutation {
   Sets or replaces the store's answer, which makes the question public unless hidden (audited)
   """
   answerProductQuestion(input: AnswerProductQuestionInput!): ProductQuestion!
+
+  """
+  Enter a friend's referral code, once and before your first order. BAD_REQUEST with reason INVALID_REFERRAL_CODE, SELF_REFERRAL, ALREADY_REFERRED, HAS_ORDERS or MUTUAL_REFERRAL; FORBIDDEN with reason VELOCITY_LIMIT when the code was used too often today
+  """
+  applyReferralCode(input: ApplyReferralCodeInput!): MyReferrals!
 
   """Approve a requested return (staff)"""
   approveReturn(input: ReturnStepInput!): ReturnRequest!
@@ -3271,6 +3301,29 @@ type Mutation {
   Confirm the phone number with the code from the SMS. BAD_REQUEST with reason OTP_INVALID (attemptsRemaining), OTP_ATTEMPTS_EXCEEDED (5 wrong codes: the code is dead) or OTP_EXPIRED (none live: request a new one)
   """
   verifyPhone(input: VerifyPhoneInput!): PhoneVerificationStatusEntity!
+}
+
+"""Your referral code and the friends who used it"""
+type MyReferrals {
+  """
+  Share it: a new customer enters it at sign-up or before their first order
+  """
+  code: String!
+
+  """Friends whose first order has not completed yet"""
+  pendingCount: Int!
+
+  """Referral points you earned (rewards later taken back excluded)"""
+  pointsEarned: Int!
+
+  """Newest first"""
+  referrals: [ReferredFriend!]!
+
+  """Who referred you (first name), if anyone"""
+  referredBy: String
+
+  """Friends whose first order completed and earned you both points"""
+  rewardedCount: Int!
 }
 
 """
@@ -4750,6 +4803,9 @@ type Query {
     userId: ID!
   ): LoyaltySummary!
 
+  """A customer's referral code and referrals (staff)"""
+  customerReferrals(userId: ID!): CustomerReferrals!
+
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
 
@@ -4892,6 +4948,11 @@ type Query {
     """1-50"""
     first: Int! = 20
   ): [ProductQuestion!]!
+
+  """
+  Your referral code (created on first use), who referred you, and the friends who used your code
+  """
+  myReferrals: MyReferrals!
 
   """Your returns, newest first"""
   myReturns(
@@ -5672,6 +5733,31 @@ enum RedemptionStatus {
 
   """Counted against the limits since the order was placed"""
   RESERVED
+}
+
+"""Where a referral stands"""
+enum ReferralStatus {
+  """The first order completed without qualifying (e.g. no verified phone)"""
+  DISQUALIFIED
+
+  """Waiting for the new customer's first order to complete"""
+  PENDING
+
+  """
+  The rewards were taken back: that order was refunded in full within the return window
+  """
+  REVERSED
+
+  """Both were rewarded when that order completed"""
+  REWARDED
+}
+
+"""A friend you referred, as you may see them: a first name only"""
+type ReferredFriend {
+  createdAt: DateTime!
+  displayName: String!
+  rewardedAt: DateTime
+  status: ReferralStatus!
 }
 
 input RefreshTokenInput {
@@ -6528,6 +6614,11 @@ input SignUpInput {
   Password: 8-128 characters, with at least one uppercase letter, one lowercase letter, one number and one special character (@$!%*?&_-#); no other characters
   """
   password: String!
+
+  """
+  A friend's referral code (P6-L.2; case, spaces and hyphens ignored): both get loyalty points when your first order completes. BAD_REQUEST with reason INVALID_REFERRAL_CODE, FORBIDDEN with reason VELOCITY_LIMIT; no account is created then
+  """
+  referralCode: String
 }
 
 input SocialLoginInput {
@@ -6556,6 +6647,33 @@ type StaffPermission {
 
   """Permission key, e.g. order.refund"""
   key: String!
+}
+
+"""A referral as staff see it"""
+type StaffReferral {
+  createdAt: DateTime!
+
+  """DISQUALIFIED: PHONE_NOT_VERIFIED, SAME_PHONE or LOYALTY_DISABLED"""
+  disqualifiedReason: String
+  id: ID!
+
+  """The new customer's first completed order"""
+  orderId: ID
+
+  """The new customer's first name"""
+  refereeDisplayName: String!
+  refereeId: ID!
+  refereePoints: Int!
+  referrerId: ID!
+  referrerPoints: Int!
+  reversedAt: DateTime
+  rewardedAt: DateTime
+  status: ReferralStatus!
+
+  """
+  The referrer's sign-ups were over the soft velocity limit when this one was entered
+  """
+  velocityFlagged: Boolean!
 }
 
 """A return line with what staff decided for its units"""
@@ -7290,11 +7408,17 @@ input UpdateLoyaltySettingsInput {
   """1-1000000"""
   minimumRedeemPoints: Int
 
+  """0-100000 (0: no reward for the new customer)"""
+  newCustomerRewardPoints: Int
+
   """1-120; applies to points credited from now on"""
   pointsExpiryMonths: Int
 
   """1-10000"""
   redeemPointsPerCedi: Int
+
+  """0-100000 (0: no reward for the referrer)"""
+  referrerRewardPoints: Int
 }
 
 input UpdateNotificationPreferenceInput {
@@ -7985,6 +8109,7 @@ enum VelocityEvent {
   ORDER_PLACED
   PAYMENT_FAILED
   PAYMENT_STARTED
+  REFERRAL_SIGNUP
 }
 
 """
@@ -8036,6 +8161,7 @@ enum VelocityRule {
   ORDERS_PER_PHONE_24H
   PAYMENT_ATTEMPTS_PER_CUSTOMER_1H
   PAYMENT_ATTEMPTS_PER_IP_1H
+  REFERRALS_PER_REFERRER_24H
 }
 
 """Who or what a velocity rule counts per"""
@@ -8044,6 +8170,7 @@ enum VelocitySubject {
   CUSTOMER
   IP
   PHONE
+  REFERRER
 }
 
 input VerifyEmailInput {

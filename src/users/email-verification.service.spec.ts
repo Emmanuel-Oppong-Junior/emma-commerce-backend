@@ -31,6 +31,7 @@ const user: User = {
   mfaLastUsedStep: null,
   phoneVerifiedAt: null,
   phoneVerifiedNumber: null,
+  referralCode: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

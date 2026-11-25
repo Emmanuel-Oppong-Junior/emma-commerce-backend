@@ -33,6 +33,8 @@ const store: Store = {
   loyaltyMinRedeemPoints: 500,
   loyaltyMaxRedeemPercent: 50,
   loyaltyPointsExpiryMonths: 12,
+  referralReferrerPoints: 500,
+  referralNewCustomerPoints: 500,
   createdAt: fixedDate,
   updatedAt: fixedDate,
 };

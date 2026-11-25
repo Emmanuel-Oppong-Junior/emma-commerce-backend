@@ -18,6 +18,7 @@ import { MfaService } from '../mfa/mfa.service';
 import { StepUpStore } from '../mfa/step-up.store';
 import { mfaRequired } from '../authorization/policy-errors';
 import { GuestOrderClaims } from '../../guest-checkout/guest-order-claims.service';
+import { ReferralsService } from '../../referrals/referrals.service';
 
 const MFA_CHALLENGE_TTL_SECONDS = 300;
 const MFA_CHALLENGE_PURPOSE = 'mfa-challenge';
@@ -35,6 +36,7 @@ export class AuthenticationService {
     private readonly mfaService: MfaService,
     private readonly stepUpStore: StepUpStore,
     private readonly guestOrderClaims: GuestOrderClaims,
+    private readonly referrals: ReferralsService,
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration: ConfigType<typeof jwtConfig>,
   ) {}
@@ -48,15 +50,17 @@ export class AuthenticationService {
    * @returns Access and refresh tokens for the newly created user.
    */
   async signUp(signUpInput: SignUpInput) {
-    const { email, password, name, guestOrderToken } = signUpInput;
+    const { email, password, name, guestOrderToken, referralCode } = signUpInput;
     const findUser = await this.userService.findUserByEmail(email);
     if (findUser) throw new ConflictException('User already exist!');
     const phoneClaim = guestOrderToken ? await this.guestOrderClaims.phoneClaimForSignUp(guestOrderToken) : null;
+    const referral = referralCode ? await this.referrals.check(referralCode) : null;
     const user = await this.userService.createUserByCredentials(
       { email, password, name, role: Role.USER, isActive: true },
       phoneClaim ?? undefined,
     );
     if (phoneClaim) await this.guestOrderClaims.attachToAccount(user.id, phoneClaim.phone);
+    if (referral) await this.referrals.enter(user.id, referral, true);
     this.emailVerificationService.sendSignUpVerification(user);
     return this.generateTokens(user);
   }

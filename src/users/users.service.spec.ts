@@ -80,6 +80,7 @@ const mockUser: User = {
   mfaLastUsedStep: null,
   phoneVerifiedAt: null,
   phoneVerifiedNumber: null,
+  referralCode: null,
 };
 
 describe('UsersService', () => {

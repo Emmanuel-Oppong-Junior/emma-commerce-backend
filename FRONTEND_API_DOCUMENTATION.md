@@ -23,6 +23,7 @@
    - [Payment](#212-payment)
    - [Promotions and coupon codes](#213-promotions-and-coupon-codes)
    - [Loyalty points](#213a-loyalty-points-p6-l1)
+   - [Referrals](#213b-referrals-p6-l2)
    - [Inventory](#215-inventory)
    - [Returns](#216-returns)
    - [Reviews](#217-reviews)
@@ -2628,10 +2629,10 @@ Every signed-in customer collects points automatically; guests never do (not eve
 | Operation | Who | Notes |
 |---|---|---|
 | `myLoyalty(first = 20, after)` | signed in | `LoyaltySummary`: `balance`, `pointsOwed`, `nextExpiry { points expiresAt }` (null when nothing expires), `history { nodes totalCount hasNextPage }` newest first; pass the last node `id` as `after` |
-| `loyaltySettings` | public | `{ enabled earnPointsPerCedi redeemPointsPerCedi minimumRedeemPoints maxRedeemPercent pointsExpiryMonths }` |
+| `loyaltySettings` | public | `{ enabled earnPointsPerCedi redeemPointsPerCedi minimumRedeemPoints maxRedeemPercent pointsExpiryMonths referrerRewardPoints newCustomerRewardPoints }` (the last two: P6-L.2) |
 | `customerLoyalty(userId, first, after)` | `user.view` | the customer's `LoyaltySummary`; `NOT_FOUND` for an unknown user |
 | `adjustLoyaltyPoints(input: { userId, points, reason })` | `loyalty.manage` (Owner, Manager) + step-up | `points` non-zero, -1000000..1000000; `reason` 3-500 chars, **shown to the customer**. Added points expire like earned ones (and pay off points owed first); taking more than the balance is `CONFLICT` `INSUFFICIENT_POINTS`; staff accounts are `BAD_REQUEST`. Audited |
-| `updateLoyaltySettings(input)` | `loyalty.manage` + step-up | any of `enabled` (off: nothing earned or redeemed; balances kept and still expire), `earnPointsPerCedi` 0-100, `redeemPointsPerCedi` 1-10000, `minimumRedeemPoints` 1-1000000, `maxRedeemPercent` 1-100, `pointsExpiryMonths` 1-120 (for points credited from then on). Audited |
+| `updateLoyaltySettings(input)` | `loyalty.manage` + step-up | any of `enabled` (off: nothing earned or redeemed; balances kept and still expire), `earnPointsPerCedi` 0-100, `redeemPointsPerCedi` 1-10000, `minimumRedeemPoints` 1-1000000, `maxRedeemPercent` 1-100, `pointsExpiryMonths` 1-120 (for points credited from then on), `referrerRewardPoints` / `newCustomerRewardPoints` 0-100000. Audited |
 
 ```graphql
 type LoyaltyTransactionEntity {
@@ -2641,6 +2642,21 @@ type LoyaltyTransactionEntity {
   orderId: ID reason: String expiresAt: DateTime createdAt: DateTime!
 }
 ```
+
+---
+
+### 2.13b Referrals (P6-L.2)
+
+Every customer has a **referral code** (8 characters, no look-alike letters or digits; created the first time `myReferrals` is read). A new customer enters a friend's code **once**: at sign-up (`SignUpInput.referralCode`) or later with `applyReferralCode`, as long as they have placed no order. When the new customer's **first signed-in order completes**, both get loyalty points (defaults: **500 each**, store settings `referrerRewardPoints` / `newCustomerRewardPoints` in `loyaltySettings`), as `REFERRAL` entries in their loyalty history; the points expire like other points. Later orders never reward again. The new customer needs a **verified phone** by then (not the referrer's number), otherwise the referral is `DISQUALIFIED` for good. If that first order is **refunded in full within the return window**, both rewards are taken back (`REVERSED`). Codes are case-insensitive; spaces and hyphens are ignored.
+
+| Operation | Who | Notes |
+|---|---|---|
+| `myReferrals` | signed in | `{ code referredBy pendingCount rewardedCount pointsEarned referrals { displayName status createdAt rewardedAt } }`; friends appear by first name only |
+| `applyReferralCode(input: { code })` | customers | returns `MyReferrals`. `BAD_REQUEST` with `reason` `INVALID_REFERRAL_CODE`, `SELF_REFERRAL`, `ALREADY_REFERRED`, `HAS_ORDERS` (an order was already placed), `MUTUAL_REFERRAL` (the code's owner was referred by you); `FORBIDDEN` `VELOCITY_LIMIT` when the code was used too often in 24 hours |
+| `signUp(input: { ..., referralCode })` | public | `BAD_REQUEST` `INVALID_REFERRAL_CODE` or `FORBIDDEN` `VELOCITY_LIMIT` before the account is created |
+| `customerReferrals(userId)` | `user.view` | `{ code referredBy referrals }` with ids, status, `disqualifiedReason`, `velocityFlagged`, the qualifying `orderId` and the points given |
+
+`ReferralStatus`: `PENDING` → `REWARDED` → `REVERSED`, or `PENDING` → `DISQUALIFIED`. A new velocity rule `REFERRALS_PER_REFERRER_24H` (defaults: flag above 5, refuse above 20 sign-ups per referrer in 24 hours) appears in `velocityLimits`.
 
 ---
 

@@ -133,7 +133,7 @@ describe('Velocity checks (P3-E.1, e2e)', () => {
 
       const limits = (await gql(`{ velocityLimits ${LIMIT_FIELDS} }`, ownerToken)).body.data.velocityLimits;
 
-      expect(limits).toHaveLength(9);
+      expect(limits).toHaveLength(10);
       expect(limits).toContainEqual({
         rule: 'ORDERS_PER_CUSTOMER_1H',
         event: 'ORDER_PLACED',

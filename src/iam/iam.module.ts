@@ -20,6 +20,7 @@ import { MfaRepository } from './mfa/mfa.repository';
 import { MfaResolver } from './mfa/mfa.resolver';
 import { StepUpStore } from './mfa/step-up.store';
 import { GuestOrderClaimsModule } from '../guest-checkout/guest-order-claims.service';
+import { ReferralsModule } from '../referrals/referrals.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { GuestOrderClaimsModule } from '../guest-checkout/guest-order-claims.ser
     NotificationsModule,
     CommonsModule,
     GuestOrderClaimsModule,
+    ReferralsModule,
   ],
   providers: [
     AuthenticationService,

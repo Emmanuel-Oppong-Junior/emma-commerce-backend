@@ -18,6 +18,7 @@ import { EmailVerificationService } from '../../users/email-verification.service
 import { MfaService } from '../mfa/mfa.service';
 import { StepUpStore } from '../mfa/step-up.store';
 import { GuestOrderClaims } from '../../guest-checkout/guest-order-claims.service';
+import { ReferralsService } from '../../referrals/referrals.service';
 
 const mockUsersService = {
   findUserByEmail: jest.fn(),
@@ -86,6 +87,8 @@ const mockStepUpStore = {
   markVerified: jest.fn(),
 };
 
+const mockReferrals = { check: jest.fn(), enter: jest.fn() };
+
 const mockGuestOrderClaims = {
   phoneClaimForSignUp: jest.fn(),
   attachToAccount: jest.fn().mockResolvedValue([]),
@@ -126,6 +129,7 @@ describe('AuthenticationService', () => {
         { provide: MfaService, useValue: mockMfaService },
         { provide: StepUpStore, useValue: mockStepUpStore },
         { provide: GuestOrderClaims, useValue: mockGuestOrderClaims },
+        { provide: ReferralsService, useValue: mockReferrals },
       ],
     }).compile();
 

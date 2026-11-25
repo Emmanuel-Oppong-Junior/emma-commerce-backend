@@ -107,6 +107,8 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
       loyaltyMinRedeemPoints: 500,
       loyaltyMaxRedeemPercent: 50,
       loyaltyPointsExpiryMonths: 12,
+      referralReferrerPoints: 500,
+      referralNewCustomerPoints: 500,
     },
   });
   await relaxVelocityLimits(prisma);

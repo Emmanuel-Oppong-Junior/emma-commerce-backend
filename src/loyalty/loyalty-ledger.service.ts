@@ -1,8 +1,17 @@
 import { ConflictException, Injectable } from '@nestjs/common';
-import { LoyaltyTransactionType, OrderStatus, Prisma, RefundStatus, Store } from '../generated/prisma/client';
+import {
+  LoyaltyTransactionType,
+  OrderStatus,
+  Prisma,
+  ReferralStatus,
+  RefundStatus,
+  Store,
+} from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../commons/logger.service';
 import { PricingLoyalty } from '../pricing/points-redemption';
+import { verifiedPhoneOf } from '../phone-verification/phone-otp';
+import { referralDisqualification, shouldReverseReferral } from '../referrals/referral-rules';
 import {
   addMonths,
   drawPoints,
@@ -30,6 +39,8 @@ export type LoyaltySettings = Pick<
   | 'loyaltyMinRedeemPoints'
   | 'loyaltyMaxRedeemPercent'
   | 'loyaltyPointsExpiryMonths'
+  | 'referralReferrerPoints'
+  | 'referralNewCustomerPoints'
 >;
 
 export const LOYALTY_SETTINGS = {
@@ -39,6 +50,8 @@ export const LOYALTY_SETTINGS = {
   loyaltyMinRedeemPoints: true,
   loyaltyMaxRedeemPercent: true,
   loyaltyPointsExpiryMonths: true,
+  referralReferrerPoints: true,
+  referralNewCustomerPoints: true,
 } satisfies Prisma.StoreSelect;
 
 const CONTEXT = 'LoyaltyLedger';
@@ -48,6 +61,7 @@ interface Credit {
     typeof LoyaltyTransactionType.EARN | typeof LoyaltyTransactionType.ADJUST | typeof LoyaltyTransactionType.REFERRAL;
   points: number;
   orderId?: string;
+  referralId?: string;
   reason?: string;
   actorId?: string;
 }
@@ -56,6 +70,7 @@ interface Debit {
   type: typeof LoyaltyTransactionType.REVERSE | typeof LoyaltyTransactionType.ADJUST;
   points: number;
   orderId?: string;
+  referralId?: string;
   reason?: string;
   actorId?: string;
   /** Draw this lot first (a reversal takes back the order's own points first). */
@@ -127,7 +142,9 @@ export class LoyaltyLedger {
    * Brings the order's points up to date, on the caller's transaction: on completion (`completing`) the EARN, once
    * per order, unless earnRefusal says no; then earned points taken back and redeemed points given back for the goods
    * refunded so far, and every redeemed point given back once the order is cancelled or expired (orderSettlement).
-   * Repeating it changes nothing. Guest orders have no account and are skipped.
+   * The new customer's referral (P6-L.2) is rewarded on their first completed signed-in order and reversed when that
+   * order is refunded in full within the return window. Repeating it changes nothing. Guest orders have no account and
+   * are skipped.
    */
   async settleOrder(tx: Tx, orderId: string, now: Date, completing = false): Promise<void> {
     const order = await tx.order.findUniqueOrThrow({
@@ -157,11 +174,8 @@ export class LoyaltyLedger {
       where: { orderItem: { orderId }, refund: { status: RefundStatus.PROCESSED } },
       _sum: { amount: true },
     });
-    const { reverse, giveBack } = orderSettlement(ledger, {
-      status: order.status,
-      paid,
-      refunded: _sum.amount ?? new Prisma.Decimal(0),
-    });
+    const refunded = _sum.amount ?? new Prisma.Decimal(0);
+    const { reverse, giveBack } = orderSettlement(ledger, { status: order.status, paid, refunded });
     if (reverse > 0) {
       const earnLot = await tx.loyaltyLot.findFirst({
         where: { transaction: { orderId, type: LoyaltyTransactionType.EARN } },
@@ -176,6 +190,12 @@ export class LoyaltyLedger {
       });
     }
     if (giveBack > 0) await this.giveBack(tx, userId, orderId, ledger.returned, giveBack, now);
+
+    if (completing && order.status === OrderStatus.COMPLETED && order.guestPhone === null) {
+      await this.rewardReferral(tx, userId, orderId, now);
+    } else if (refunded.gt(0) && paid.gt(0)) {
+      await this.reverseReferral(tx, orderId, refunded.gte(paid), now);
+    }
   }
 
   /** A staff correction: positive adds a lot, negative takes points (CONFLICT when the balance cannot cover them). */
@@ -207,6 +227,7 @@ export class LoyaltyLedger {
         points: kept,
         debtChange: -repaid,
         orderId: credit.orderId,
+        referralId: credit.referralId,
         reason: credit.reason,
         actorId: credit.actorId,
       },
@@ -297,6 +318,7 @@ export class LoyaltyLedger {
         points: -fromBalance,
         debtChange: shortfall,
         orderId: debit.orderId,
+        referralId: debit.referralId,
         reason: debit.reason,
         actorId: debit.actorId,
       },
@@ -330,7 +352,7 @@ export class LoyaltyLedger {
   private async orderLedger(tx: Tx, orderId: string): Promise<OrderLedger> {
     const rows = await tx.loyaltyTransaction.groupBy({
       by: ['type'],
-      where: { orderId },
+      where: { orderId, referralId: null },
       _sum: { points: true, debtChange: true },
     });
     const sum = (type: LoyaltyTransactionType) => rows.find((row) => row.type === type)?._sum;
@@ -341,6 +363,75 @@ export class LoyaltyLedger {
       redeemed: -(sum(LoyaltyTransactionType.REDEEM)?.points ?? 0),
       returned: sum(LoyaltyTransactionType.REDEEM_RETURN)?.points ?? 0,
     };
+  }
+
+  /**
+   * The first signed-in order of a referred customer completed: their PENDING referral is rewarded (both accounts get
+   * REFERRAL points; a staff referrer gets none) or disqualified (referralDisqualification). The conditional status
+   * update makes it happen once; later orders find the referral settled.
+   */
+  private async rewardReferral(tx: Tx, refereeId: string, orderId: string, now: Date): Promise<void> {
+    const referral = await tx.referral.findUnique({ where: { refereeId } });
+    if (referral?.status !== ReferralStatus.PENDING) return;
+    const settings = await this.settings(tx);
+    const phones = { phoneNumber: true, phoneVerifiedAt: true, phoneVerifiedNumber: true } as const;
+    const referee = await tx.user.findUniqueOrThrow({ where: { id: refereeId }, select: phones });
+    const referrer = await tx.user.findUniqueOrThrow({
+      where: { id: referral.referrerId },
+      select: { ...phones, storeMemberships: { select: { id: true } } },
+    });
+    const disqualified = referralDisqualification({
+      refereeVerifiedPhone: verifiedPhoneOf(referee),
+      referrerPhones: [referrer.phoneNumber, referrer.phoneVerifiedNumber],
+      loyaltyEnabled: settings.loyaltyEnabled,
+    });
+    if (disqualified) {
+      await tx.referral.updateMany({
+        where: { id: referral.id, status: ReferralStatus.PENDING },
+        data: { status: ReferralStatus.DISQUALIFIED, orderId, disqualifiedReason: disqualified },
+      });
+      this.logger.log(`Referral not rewarded | referralId: ${referral.id} | reason: ${disqualified}`, CONTEXT);
+      return;
+    }
+    const referrerPoints = referrer.storeMemberships.length > 0 ? 0 : settings.referralReferrerPoints;
+    const refereePoints = settings.referralNewCustomerPoints;
+    const { count } = await tx.referral.updateMany({
+      where: { id: referral.id, status: ReferralStatus.PENDING },
+      data: { status: ReferralStatus.REWARDED, orderId, rewardedAt: now, referrerPoints, refereePoints },
+    });
+    if (count === 0) return;
+    const reward = { type: LoyaltyTransactionType.REFERRAL, orderId, referralId: referral.id } as const;
+    if (refereePoints > 0) await this.credit(tx, refereeId, now, { ...reward, points: refereePoints });
+    if (referrerPoints > 0) await this.credit(tx, referral.referrerId, now, { ...reward, points: referrerPoints });
+  }
+
+  /** A rewarded referral whose qualifying order was refunded in full within the return window loses its rewards. */
+  private async reverseReferral(tx: Tx, orderId: string, fullyRefunded: boolean, now: Date): Promise<void> {
+    const referral = await tx.referral.findFirst({ where: { orderId, status: ReferralStatus.REWARDED } });
+    if (!referral?.rewardedAt) return;
+    const { returnWindowDays } = await tx.store.findFirstOrThrow({
+      where: { singleton: true },
+      select: { returnWindowDays: true },
+    });
+    if (!shouldReverseReferral({ fullyRefunded, rewardedAt: referral.rewardedAt, now, returnWindowDays })) return;
+    const { count } = await tx.referral.updateMany({
+      where: { id: referral.id, status: ReferralStatus.REWARDED },
+      data: { status: ReferralStatus.REVERSED, reversedAt: now },
+    });
+    if (count === 0) return;
+    const reversal = {
+      type: LoyaltyTransactionType.REVERSE,
+      orderId,
+      referralId: referral.id,
+      allowDebt: true,
+    } as const;
+    if (referral.refereePoints > 0) {
+      await this.debit(tx, referral.refereeId, now, { ...reversal, points: referral.refereePoints });
+    }
+    if (referral.referrerPoints > 0) {
+      await this.lockAccount(tx, referral.referrerId);
+      await this.debit(tx, referral.referrerId, now, { ...reversal, points: referral.referrerPoints });
+    }
   }
 
   /** The user's unexpired lots with points left, locked. */

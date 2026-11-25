@@ -7,6 +7,8 @@ export enum VelocityEvent {
   ORDER_PLACED = 'ORDER_PLACED',
   PAYMENT_STARTED = 'PAYMENT_STARTED',
   PAYMENT_FAILED = 'PAYMENT_FAILED',
+  /** A new customer entered a referral code (P6-L.2). */
+  REFERRAL_SIGNUP = 'REFERRAL_SIGNUP',
 }
 
 export enum VelocitySubject {
@@ -15,6 +17,8 @@ export enum VelocitySubject {
   IP = 'IP',
   /** The provider's card fingerprint (Paystack authorization signature), known only once a charge is verified. */
   CARD = 'CARD',
+  /** The owner of a referral code (P6-L.2). */
+  REFERRER = 'REFERRER',
 }
 
 /** Where a velocity check runs. Placement and initiation can refuse; settlement can only flag. */
@@ -22,6 +26,8 @@ export enum VelocityCheckpoint {
   ORDER_PLACEMENT = 'ORDER_PLACEMENT',
   PAYMENT_INITIATION = 'PAYMENT_INITIATION',
   PAYMENT_SETTLEMENT = 'PAYMENT_SETTLEMENT',
+  /** A referral code entered: refused above the hard limit, flagged above the soft one (P6-L.2). */
+  REFERRAL_SIGNUP = 'REFERRAL_SIGNUP',
 }
 
 export interface VelocityRuleDefinition {
@@ -64,6 +70,8 @@ export const VELOCITY_RULES: Record<VelocityRule, VelocityRuleDefinition> = {
   PAYMENT_ATTEMPTS_PER_IP_1H: rule(VelocityEvent.PAYMENT_STARTED, VelocitySubject.IP, HOUR, 20, 60),
   FAILED_PAYMENTS_PER_CUSTOMER_24H: rule(VelocityEvent.PAYMENT_FAILED, VelocitySubject.CUSTOMER, DAY, 4, 10),
   FAILED_PAYMENTS_PER_CARD_24H: rule(VelocityEvent.PAYMENT_FAILED, VelocitySubject.CARD, DAY, 3, 6),
+  // A shared code brings a few friends a day; dozens look like a farm of throwaway accounts.
+  REFERRALS_PER_REFERRER_24H: rule(VelocityEvent.REFERRAL_SIGNUP, VelocitySubject.REFERRER, DAY, 5, 20),
 };
 
 export const ALL_VELOCITY_RULES = Object.keys(VELOCITY_RULES) as VelocityRule[];
@@ -106,6 +114,8 @@ export function rulesAt(checkpoint: VelocityCheckpoint, subjects: VelocitySubjec
           : [];
       case VelocityCheckpoint.PAYMENT_SETTLEMENT:
         return event === VelocityEvent.PAYMENT_FAILED ? [{ rule: name, includesPendingEvent: false }] : [];
+      case VelocityCheckpoint.REFERRAL_SIGNUP:
+        return event === VelocityEvent.REFERRAL_SIGNUP ? [{ rule: name, includesPendingEvent: true }] : [];
     }
   });
 }
@@ -182,6 +192,7 @@ export function velocitySubjects(raw: {
   phone?: string;
   ip?: string;
   card?: string;
+  referrerId?: string;
 }): VelocitySubjects {
   const subjects: VelocitySubjects = {};
   if (raw.customerId) subjects[VelocitySubject.CUSTOMER] = raw.customerId;
@@ -190,6 +201,7 @@ export function velocitySubjects(raw: {
   const ip = raw.ip ? normaliseIpSubject(raw.ip) : '';
   if (ip) subjects[VelocitySubject.IP] = ip;
   if (raw.card) subjects[VelocitySubject.CARD] = raw.card;
+  if (raw.referrerId) subjects[VelocitySubject.REFERRER] = raw.referrerId;
   return subjects;
 }
 

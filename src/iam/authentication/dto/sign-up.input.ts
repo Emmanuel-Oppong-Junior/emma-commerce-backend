@@ -32,4 +32,16 @@ export class SignUpInput {
   @IsString()
   @MaxLength(200)
   guestOrderToken?: string;
+
+  @Field(() => String, {
+    nullable: true,
+    description:
+      "A friend's referral code (P6-L.2; case, spaces and hyphens ignored): both get loyalty points when your first " +
+      'order completes. BAD_REQUEST with reason INVALID_REFERRAL_CODE, FORBIDDEN with reason VELOCITY_LIMIT; no account ' +
+      'is created then',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  referralCode?: string;
 }

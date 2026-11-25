@@ -21,6 +21,8 @@ function toSettings(settings: LoyaltySettings): LoyaltySettingsEntity {
     minimumRedeemPoints: settings.loyaltyMinRedeemPoints,
     maxRedeemPercent: settings.loyaltyMaxRedeemPercent,
     pointsExpiryMonths: settings.loyaltyPointsExpiryMonths,
+    referrerRewardPoints: settings.referralReferrerPoints,
+    newCustomerRewardPoints: settings.referralNewCustomerPoints,
   };
 }
 
@@ -96,6 +98,8 @@ export class LoyaltyService {
       loyaltyMinRedeemPoints: input.minimumRedeemPoints,
       loyaltyMaxRedeemPercent: input.maxRedeemPercent,
       loyaltyPointsExpiryMonths: input.pointsExpiryMonths,
+      referralReferrerPoints: input.referrerRewardPoints,
+      referralNewCustomerPoints: input.newCustomerRewardPoints,
     };
     const { after } = await this.audit.record(
       async (tx) => {

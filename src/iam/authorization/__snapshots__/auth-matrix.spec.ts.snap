@@ -17,6 +17,7 @@ Mutation adjustLoyaltyPoints             permission: loyalty.manage; step-up
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
 Mutation answerProductQuestion           permission: review.moderate
+Mutation applyReferralCode               customer only
 Mutation approveReturn                   permission: return.manage
 Mutation approveStockTake                permission: inventory.stocktake.approve
 Mutation archiveProduct                  permission: catalog.product.write
@@ -233,6 +234,7 @@ Query customerConsentHistory             permission: user.view
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
 Query customerLoyalty                    permission: user.view
+Query customerReferrals                  permission: user.view
 Query dashboardSummary                   permission: report.view
 Query deliveryBookings                   permission: order.view
 Query dispute                            permission: payment.view
@@ -253,6 +255,7 @@ Query myNotificationPreferences          authenticated
 Query myNotifications                    authenticated
 Query myPhoneVerification                authenticated
 Query myProductQuestions                 authenticated
+Query myReferrals                        authenticated
 Query myReturns                          customer only
 Query order                              authenticated
 Query orders                             permission: order.view

@@ -33,6 +33,8 @@ const REFUSALS: Record<VelocityCheckpoint, string> = {
   [VelocityCheckpoint.PAYMENT_INITIATION]:
     'Too many payment attempts in a short time from this account or network. Try again later or contact the store.',
   [VelocityCheckpoint.PAYMENT_SETTLEMENT]: 'Payment settlement is never refused',
+  [VelocityCheckpoint.REFERRAL_SIGNUP]:
+    'This referral code has been used too many times today. Try again tomorrow or contact the store.',
 };
 
 export interface VelocityLimitView extends VelocityRuleDefinition, VelocityLimits {

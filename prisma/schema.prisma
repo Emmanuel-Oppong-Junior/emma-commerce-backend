@@ -63,6 +63,10 @@ model User {
   savedCartItems            SavedCartItem[]
   abandonedCartReminders    AbandonedCartReminder[]
   loyaltyAccount            LoyaltyAccount?
+  /// The customer's referral code (P6-L.2), created when first asked for
+  referralCode              String?                  @unique @db.VarChar(16)
+  referralsMade             Referral[]               @relation("ReferralReferrer")
+  referredBy                Referral?                @relation("ReferralReferee")
   /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
   mfaSecret                 String?
   /// Set once the first code confirmed enrolment; MFA is active only from then
@@ -1496,6 +1500,9 @@ model Store {
   loyaltyMinRedeemPoints     Int                     @default(500)
   loyaltyMaxRedeemPercent    Int                     @default(50)
   loyaltyPointsExpiryMonths  Int                     @default(12)
+  /// Referral rewards (P6-L.2): points for the referrer and for the new customer; CHECKs 0-100000
+  referralReferrerPoints     Int                     @default(500)
+  referralNewCustomerPoints  Int                     @default(500)
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
   memberships                StoreMembership[]
@@ -1543,6 +1550,7 @@ enum VelocityRule {
   PAYMENT_ATTEMPTS_PER_IP_1H
   FAILED_PAYMENTS_PER_CUSTOMER_24H
   FAILED_PAYMENTS_PER_CARD_24H
+  REFERRALS_PER_REFERRER_24H
 }
 
 /// SOFT lets the action through and flags the order for review; HARD refuses it (or, where nothing is left to refuse,
@@ -2756,6 +2764,8 @@ model LoyaltyTransaction {
   lotId      String?
   /// REDEEM: [{ lotId, points, expiresAt }]
   draws      Json?
+  /// REFERRAL and its REVERSE: the referral (P6-L.2); one REFERRAL per referral and account
+  referralId String?
   reason     String?                @db.VarChar(500)
   actorId    String?
   createdAt  DateTime               @default(now())
@@ -2764,6 +2774,43 @@ model LoyaltyTransaction {
 
   @@unique([orderId], map: "LoyaltyTransaction_earn_per_order_key", where: raw("type = 'EARN'::\"LoyaltyTransactionType\""))
   @@unique([orderId], map: "LoyaltyTransaction_redeem_per_order_key", where: raw("type = 'REDEEM'::\"LoyaltyTransactionType\""))
+  @@unique([referralId, userId], map: "LoyaltyTransaction_referral_per_account_key", where: raw("type = 'REFERRAL'::\"LoyaltyTransactionType\""))
   @@index([userId, createdAt])
   @@index([orderId])
+}
+
+enum ReferralStatus {
+  /// Waiting for the new customer's first order to complete
+  PENDING
+  /// Both were rewarded when that order completed
+  REWARDED
+  /// The rewards were taken back: the order was refunded in full within the return window
+  REVERSED
+  /// The first order completed without qualifying (see disqualifiedReason)
+  DISQUALIFIED
+}
+
+/// A new customer referred by an existing one (P6-L.2): one referrer per customer (refereeId unique), never themselves
+/// (CHECK). Rewards are credited as REFERRAL loyalty transactions when the new customer's first signed-in order
+/// completes; the points given are kept here so a reversal takes back exactly them.
+model Referral {
+  id                 String         @id @default(cuid())
+  referrerId         String
+  refereeId          String         @unique
+  status             ReferralStatus @default(PENDING)
+  /// The new customer's first completed order (no foreign key)
+  orderId            String?
+  disqualifiedReason String?        @db.VarChar(40)
+  /// The referrer's sign-ups went over the soft velocity limit when this one was entered
+  velocityFlagged    Boolean        @default(false)
+  referrerPoints     Int            @default(0)
+  refereePoints      Int            @default(0)
+  rewardedAt         DateTime?
+  reversedAt         DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  referrer           User           @relation("ReferralReferrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referee            User           @relation("ReferralReferee", fields: [refereeId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId, createdAt])
 }

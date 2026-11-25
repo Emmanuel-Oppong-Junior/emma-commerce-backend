@@ -105,6 +105,12 @@ export class LoyaltySettingsEntity {
 
   @Field(() => Int, { description: 'Credited points expire after this many months' })
   pointsExpiryMonths: number;
+
+  @Field(() => Int, { description: "Points for the referrer when a new customer's first order completes (P6-L.2)" })
+  referrerRewardPoints: number;
+
+  @Field(() => Int, { description: 'Points for the new customer when their first order completes (P6-L.2)' })
+  newCustomerRewardPoints: number;
 }
 
 @ArgsType()
@@ -188,4 +194,18 @@ export class UpdateLoyaltySettingsInput {
   @Min(1)
   @Max(120)
   pointsExpiryMonths?: number;
+
+  @Field(() => Int, { nullable: true, description: '0-100000 (0: no reward for the referrer)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100_000)
+  referrerRewardPoints?: number;
+
+  @Field(() => Int, { nullable: true, description: '0-100000 (0: no reward for the new customer)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100_000)
+  newCustomerRewardPoints?: number;
 }

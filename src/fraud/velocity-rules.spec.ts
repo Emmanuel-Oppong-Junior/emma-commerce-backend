@@ -21,11 +21,18 @@ describe('velocity rules', () => {
     phone: '024 412 3456',
     ip: '::ffff:41.66.1.2',
     card: 'SIG_abc',
+    referrerId: 'referrer-1',
   });
 
   describe('subjects', () => {
     it('normalises the phone to E.164 and an IPv4-mapped address to IPv4', () => {
-      expect(all).toEqual({ CUSTOMER: 'user-1', PHONE: '+233244123456', IP: '41.66.1.2', CARD: 'SIG_abc' });
+      expect(all).toEqual({
+        CUSTOMER: 'user-1',
+        PHONE: '+233244123456',
+        IP: '41.66.1.2',
+        CARD: 'SIG_abc',
+        REFERRER: 'referrer-1',
+      });
     });
 
     it('leaves out blank subjects and keeps a real IPv6 address as it is', () => {
@@ -40,7 +47,7 @@ describe('velocity rules', () => {
 
       for (const key of keys) {
         expect(key).toMatch(/^velocity:[A-Z0-9_]+:[0-9a-f]{64}$/);
-        for (const raw of ['233244123456', '0244123456', '41.66.1.2', 'SIG_abc', 'user-1']) {
+        for (const raw of ['233244123456', '0244123456', '41.66.1.2', 'SIG_abc', 'user-1', 'referrer-1']) {
           expect(key).not.toContain(raw);
         }
       }
@@ -108,6 +115,16 @@ describe('velocity rules', () => {
         'ORDERS_PER_CUSTOMER_1H',
         'ORDERS_PER_CUSTOMER_24H',
       ]);
+    });
+
+    it('checks referral sign-ups per referrer, counting the one being entered (P6-L.2)', () => {
+      expect(rulesAt(VelocityCheckpoint.REFERRAL_SIGNUP, all)).toEqual([
+        { rule: 'REFERRALS_PER_REFERRER_24H', includesPendingEvent: true },
+      ]);
+      expect(rulesCounting(VelocityEvent.REFERRAL_SIGNUP, all)).toEqual(['REFERRALS_PER_REFERRER_24H']);
+      expect(rulesAt(VelocityCheckpoint.ORDER_PLACEMENT, all).map(({ rule }) => rule)).not.toContain(
+        'REFERRALS_PER_REFERRER_24H',
+      );
     });
 
     it('increments the counters of the event for the subjects given', () => {
