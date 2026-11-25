@@ -1,8 +1,21 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { IsBoolean, IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { AttributeFilterInput, MAX_ATTRIBUTE_FILTERS } from './attribute-filter.input';
 import { ProductStatusEnum } from '../enums/product.enum';
 import { DecimalInputField, IsMoneyAmount } from '../../commons/money/decimal.scalar';
 import { Decimal } from '@prisma/client/runtime/client';
+
+export const SEARCH_TEXT_MAX_LENGTH = 200;
 
 @InputType()
 export class ProductFilterArgs {
@@ -48,10 +61,14 @@ export class ProductFilterArgs {
 
   @Field(() => String, {
     nullable: true,
-    description: 'Filter by name, description, or tags (partial match)',
+    description:
+      'Full-text search (web-search syntax: "quoted phrase", OR, -exclude) over the name, the brand, category, ' +
+      'sub-category and tag names and the descriptions; when nothing matches, names are matched allowing typos. ' +
+      'Blank or punctuation-only text is ignored. At most 200 characters.',
   })
   @IsOptional()
   @IsString()
+  @MaxLength(SEARCH_TEXT_MAX_LENGTH)
   search?: string;
 
   @Field(() => String, {
@@ -64,7 +81,9 @@ export class ProductFilterArgs {
 
   @DecimalInputField({
     nullable: true,
-    description: 'Filter by minimum price (inclusive)',
+    description:
+      'Minimum price (inclusive) of an active variant, on its stored selling price (tax included; promotions and ' +
+      'price lists are not applied). With priceMax, one variant must be within both bounds; above priceMax: BAD_REQUEST.',
   })
   @IsOptional()
   @IsMoneyAmount()
@@ -72,7 +91,7 @@ export class ProductFilterArgs {
 
   @DecimalInputField({
     nullable: true,
-    description: 'Filter by maximum price (inclusive)',
+    description: 'Maximum price (inclusive) of an active variant, on its stored selling price (see priceMin)',
   })
   @IsOptional()
   @IsMoneyAmount()
@@ -80,26 +99,52 @@ export class ProductFilterArgs {
 
   @Field(() => String, {
     nullable: true,
-    description: 'Filter by brand name (exact match)',
+    description: 'Filter by brand name (exact match, ignoring case)',
   })
   @IsOptional()
   @IsString()
   brand?: string;
 
+  @Field(() => String, { nullable: true, description: 'Filter by brand ID' })
+  @IsOptional()
+  @IsString()
+  brandId?: string;
+
+  @Field(() => String, { nullable: true, description: 'Filter by product type ID' })
+  @IsOptional()
+  @IsString()
+  productTypeId?: string;
+
   @Field(() => Boolean, {
     nullable: true,
-    description: 'true: only products with an active variant in stock; false or omitted: no stock filter',
+    description:
+      'true: only products with an active variant a customer can buy now (its best serving location has unreserved, ' +
+      'unexpired units, like Variant.available); false: only products with none; omitted: no stock filter. With ' +
+      'priceMin/priceMax and true, the same variant must be in stock and in the price range.',
   })
   @IsOptional()
+  @IsBoolean()
   inStock?: boolean;
 
-  @Field(() => String, { nullable: true, description: 'Filter by tag ID' })
+  @Field(() => String, { nullable: true, description: 'Filter by tag ID (with tagName, the product needs both)' })
   @IsOptional()
   @IsString()
   tagId?: string;
 
-  @Field(() => String, { nullable: true, description: 'Filter by tag name' })
+  @Field(() => String, { nullable: true, description: 'Filter by tag name (exact match, ignoring case)' })
   @IsOptional()
   @IsString()
   tagName?: string;
+
+  @Field(() => [AttributeFilterInput], {
+    nullable: true,
+    description:
+      'Attribute filters (P6-S.2): a product matches every attribute given (AND) and any of the values of each ' +
+      '(OR), on its own attributes or on an active variant. At most 10, one per key.',
+  })
+  @IsOptional()
+  @ArrayMaxSize(MAX_ATTRIBUTE_FILTERS)
+  @ValidateNested({ each: true })
+  @Type(() => AttributeFilterInput)
+  attributes?: AttributeFilterInput[];
 }

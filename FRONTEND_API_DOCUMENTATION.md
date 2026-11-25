@@ -130,7 +130,7 @@ Images are uploaded via REST endpoints for staff holding `catalog.media.upload` 
 
 ### Database
 
-PostgreSQL via Prisma. Full-text search is enabled (`fullTextSearchPostgres` preview feature).
+PostgreSQL via Prisma. Product search (P6-S.1, ADR-0010) runs on Postgres full-text search (a weighted `tsvector` per product, GIN index) with `pg_trgm` trigram matching for typos, behind a search port.
 
 ---
 
@@ -658,6 +658,8 @@ query {
 
 > **Price and stock live on the variant (P1-V.3, ADR-0003).** A product is sold only through its variants (SKUs, see [2.8](#28-variants)): each variant has its own `basePrice`, `price`, `discountedPrice`, `sku`, `barcode` and `quantity`. A variant's `price` (what customers pay and checkout charges) is `basePrice × (1 + sum of active tax rates)` when the product `isTaxable`, otherwise `basePrice`. The product shows summaries: `priceRange`, `totalStock` and `inStock`. Customers pick a variant from `Product.variants` and put that in the cart.
 
+> **Breaking changes (P6-S.1)** `[breaking-api]`: product cursors (`ProductEdge.cursor`, `paginationArgs.after` on `products`/`adminProducts`) are opaque keyset cursors instead of product ids, valid only with the `sortArgs` they were made with (a product id as `after` is now `BAD_REQUEST`). `ProductSortArgs.sortBy` has no schema default (default: `RELEVANCE` with search text, else `CREATED_AT`). `inStock: false` now keeps only products nobody can buy (it was ignored). `inStock: true` now also leaves out units of expired lots. `priceMin` above `priceMax` is `BAD_REQUEST`. `search` is limited to 200 characters, no longer matches part of a tag name (whole tag words are matched), and matches the brand, category and sub-category names and the short description too. New: `ProductSortField.RELEVANCE`, `ProductFilterArgs.brandId` and `productTypeId`.
+
 > **Breaking change (P1-V.3):** `Product.price`, `basePrice`, `currentPrice`, `quantity`, `sku`, `barcode`, `stockStatus`, `lowStockAlert`, `discountedPrice` and `appliedDiscount` → removed; read `priceRange` / `totalStock` / `inStock` on the product and `price` / `discountedPrice` / `appliedDiscount` / `sku` / `barcode` / `quantity` on each of its `variants`. The `StockStatus` enum is removed. `ProductSortField` loses `PRICE` and `QUANTITY`. `CreateProductInput` loses `basePrice`, `quantity`, `sku`, `barcode`, `stockStatus` and `lowStockAlert` and requires `variants`; `UpdateProductInput` loses `basePrice`, `sku`, `barcode`, `stockStatus` and `lowStockAlert`. `Product.variants` is now non-null and returns only active variants.
 
 ---
@@ -673,7 +675,7 @@ query {
 // PaginationArgs (when the argument is omitted entirely, the page size is 10)
 {
   first: number;        // Default 12, 1–100
-  after?: string;       // Cursor (product ID from previous page)
+  after?: string;       // The cursor of the last edge of the previous page (opaque; only valid with the same sortArgs)
   orderBy?: string;     // Ignored for products; use sortArgs
   orderInAsc?: boolean; // Ignored for products; use sortArgs
 }
@@ -682,28 +684,35 @@ query {
 {
   categoryId?: string;
   categoryName?: string;      // Exact, case-insensitive
-  subCategoryName?: string;   // See note below
+  subCategoryName?: string;   // The sub-category's name, exact, case-insensitive
   subcategoryId?: string;
   isActive?: boolean;         // Default true; ignored by public queries
   status?: ProductStatus;     // DRAFT | PUBLISHED | ARCHIVED; ignored by public queries
-  search?: string;            // Full-text match on name/description, or partial tag name
+  search?: string;            // Full-text search, max 200 characters: see "Search" below
   createdAfter?: string;      // ISO date string
   priceMin?: Decimal;         // Inclusive, compared with an active variant's price
-  priceMax?: Decimal;         // Inclusive, compared with an active variant's price
+  priceMax?: Decimal;         // Inclusive, compared with an active variant's price; priceMin > priceMax is BAD_REQUEST
   brand?: string;             // Brand name, exact, case-insensitive
-  inStock?: boolean;          // true = an active variant has available stock (on hand, not reserved); false or omitted = no filter
-  tagId?: string;
+  brandId?: string;           // P6-S.1
+  productTypeId?: string;     // P6-S.1
+  inStock?: boolean;          // true = a customer can buy an active variant now; false = of none; omitted = no filter
+  tagId?: string;             // With tagName, the product needs both
   tagName?: string;           // Exact, case-insensitive
+  attributes?: { key: string; values: string[] }[];  // P6-S.2: see "Facets" below; at most 10 keys, 1-20 values each
 }
 
 // ProductSortArgs
 {
-  sortBy: ProductSortField;   // CREATED_AT (default) | NAME | UPDATED_AT
-  sortOrder: SortOrder;       // DESC (default) | ASC
+  sortBy?: ProductSortField;  // RELEVANCE | CREATED_AT | NAME | UPDATED_AT; default RELEVANCE with search text, else CREATED_AT
+  sortOrder: SortOrder;       // DESC (default) | ASC; RELEVANCE is always best first
 }
 ```
 
-`priceMin`, `priceMax` and `inStock` match a product when **one** active variant satisfies every condition given (e.g. `priceMax: "50", inStock: true` needs a variant that costs at most 50 and is in stock). There is no price or stock sort.
+**Filters (P6-S.1).** Every filter given applies (they combine with AND; none replaces another). `priceMin`/`priceMax` compare with an active variant's stored selling `price` (tax included, before promotions and B2B price lists: a list price or promotion can make the price the customer pays lower than the filter suggests; filter on the shelf price). With both bounds, one variant must be inside both. `inStock: true` keeps a product when one of its active variants has units a customer can buy now, exactly like `Variant.available > 0` and `Product.inStock`: unreserved units at its best location serving customers, units of expired lots left out; `inStock: false` keeps the products none of whose variants can be bought. With `inStock: true` and a price bound the **same** variant must be in stock and in range (`priceMax: "50", inStock: true` needs a variant that costs at most 50 and is in stock). There is no price or stock sort.
+
+**Search (P6-S.1).** `search` uses web-search syntax: words must all match (`kente scarf`), `"quoted phrase"`, `OR`, `-exclude`; any other punctuation (`' : & | ! ( ) < *`) is accepted and never fails. It matches the product name (weight highest), its brand, category, sub-category and tag names, then its short description and description, as whole words without stemming (`shoe` does not find `shoes`; text in Twi, Ga or Ewe and brand names are matched as written). When the words match nothing under the other filters, names similar to each word are matched instead, so typos and partial words still find products (`samsnug` → "Samsung Galaxy S24", `galx` → "Galaxy ..."). Text that is blank or only punctuation is no search. Results come best match first unless `sortBy` says otherwise.
+
+**Pagination.** Every sort breaks ties by product id, so walking pages with `after` never repeats or skips a product, also among products with the same name, date or relevance. `after` takes an edge's `cursor`; a cursor that is not one, or that was made for another `sortBy`/`sortOrder`, is `BAD_REQUEST` (start again from the first page). `totalCount` counts every match.
 
 **Response: `ProductConnection`**
 
@@ -777,6 +786,59 @@ query {
   }
 }
 ```
+
+---
+
+#### `productFacets` (P6-S.2)
+- **Type**: Query
+- **Auth Required**: No (optional sign-in, like `products`)
+- **Args**: `filterArgs: ProductFilterArgs` (optional; the same filters as `products`)
+- **Response**: `ProductFacets!`
+- **Description**: Counts for building a filter sidebar next to `products`. Send the same `filterArgs` as the list. Each facet is counted **without its own filter** (brands without `brand`/`brandId`, categories without `categoryId`/`categoryName`, an attribute without its own `attributes` entry, the price range without `priceMin`/`priceMax`, `inStockCount` without `inStock`) and with every other filter, so the other choices stay visible; when that facet has no filter of its own, its counts are exactly what the list returns for that value. `totalCount` equals the list's `totalCount`.
+
+```typescript
+// ProductFacets
+{
+  totalCount: number;                 // Products matching every filter
+  inStockCount: number;               // Products that would match with inStock: true
+  price?: { min: Money; max: Money }; // Active variant prices (sellable ones only when inStock: true); null if none is priced
+  brands: { id: string; name: string; count: number }[];      // Up to 20, most products first
+  categories: { id: string; name: string; count: number }[];  // Up to 20, most products first
+  attributes: {                       // Up to 10 filterable attributes, in definition position order
+    key: string; label: string;
+    values: { value: string; count: number }[];  // Up to 20, most products first
+  }[];
+}
+```
+
+**Attributes.** Only attributes marked `isFilterable` on a product type ([2.26](#226-product-types-and-attributes)) are counted, both product attributes and variant axes (a product counts once per value whatever number of active variants carry it). The same key on several product types is one facet. Values that differ only in case are one value. Filter with `filterArgs.attributes: [{ key: "colour", values: ["Red", "Blue"] }, { key: "material", values: ["Cotton"] }]`: every key must match (AND), any of its values (OR), ignoring case, on the product's attributes or on one of its active variants. The same key twice is `BAD_REQUEST`; a malformed key or an empty `values` is `BAD_USER_INPUT`. Any attribute key can be filtered, filterable or not.
+
+**Example**:
+```graphql
+query {
+  productFacets(filterArgs: { categoryId: "clx_cat", attributes: [{ key: "colour", values: ["Red"] }] }) {
+    totalCount inStockCount
+    price { min { amount } max { amount } }
+    brands { id name count }
+    attributes { key label values { value count } }
+  }
+}
+```
+
+---
+
+#### `searchSuggestions` (P6-S.4)
+- **Type**: Query
+- **Auth Required**: No (optional sign-in); rate-limited like every public query (global throttler, 120 requests a minute per client)
+- **Args**: `prefix: String!` (at most 50 characters), `first: Int = 5` (1-10, per kind; anything else is `BAD_USER_INPUT`)
+- **Response**: `SearchSuggestions! { products: [Suggestion!]!; brands: [Suggestion!]!; categories: [Suggestion!]! }`, `Suggestion { id: ID!; name: String! }`
+- **Description**: Autocomplete while the customer types. Returns up to `first` published products, brands with a published product and categories with a published product whose name contains the prefix (ignoring case; `%` and `_` are literal) or resembles it allowing typos (`samsnug` → Samsung). Names starting with the prefix come first, then the most similar. A prefix with fewer than two letters or digits returns empty lists (no error). Synonyms are not applied here; they apply to `products(filterArgs: { search })`. Debounce keystrokes on the client (~200 ms).
+
+```graphql
+query { searchSuggestions(prefix: "gal", first: 5) { products { id name } brands { id name } categories { id name } } }
+```
+
+**Synonyms (P6-S.4).** Staff manage synonym groups that the product `search` expands at query time (see [2.7](#27-tags), "Search synonyms"). A search for a term of a `TWO_WAY` group also matches the other terms of the group; a `ONE_WAY` group's `term` also matches its `synonyms`, not the reverse. Terms are matched as whole words (or phrases); excluded words (`-phone`) and the `OR` keyword are left as they are. Synonyms apply to full-text matching, not to the typo fallback.
 
 ---
 
@@ -1169,6 +1231,38 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user.
   productIds?: string[]; // Default []
 }
 ```
+
+---
+
+#### Search synonyms (P6-S.4)
+
+Staff-managed groups the product `search` expands with (see [2.3](#23-products), "Synonyms"). Reads need `catalog.product.read`; changes need `catalog.taxonomy.write` (the taxonomy permission, like tags) and are audited (`AuditLog` entity `SearchSynonym`). Changes apply to the next search on every server (not cached).
+
+- `searchSynonyms: [SearchSynonym!]!` (oldest first)
+- `createSearchSynonym(input: SearchSynonymInput!): SearchSynonym!` (at most 500 groups)
+- `updateSearchSynonym(id: ID!, input: SearchSynonymInput!): SearchSynonym!` (replaces the group)
+- `deleteSearchSynonym(id: ID!): SearchSynonym!`
+
+```typescript
+// SearchSynonym
+{
+  id: string;
+  kind: SearchSynonymKind;  // TWO_WAY: every term finds the others; ONE_WAY: term also finds synonyms, not the reverse
+  term?: string;            // ONE_WAY only
+  synonyms: string[];
+  createdAt: DateTime; updatedAt: DateTime;
+}
+// SearchSynonymInput
+{
+  kind: SearchSynonymKind;
+  term?: string;            // Required for ONE_WAY, refused for TWO_WAY
+  synonyms: string[];       // TWO_WAY: 2-20 terms; ONE_WAY: 1-20
+}
+```
+
+Terms are stored lower case, trimmed and single-spaced; each is 1-100 characters of letters, digits, single spaces and hyphens (no quotes or other search syntax), and appears once per group. **Possible Errors**: `BAD_REQUEST` (a rule above, with the reason; more than 500 groups), `NOT_FOUND` (unknown id), `FORBIDDEN`.
+
+**Example**: `createSearchSynonym(input: { kind: TWO_WAY, synonyms: ["phone", "mobile", "cellphone"] })`, `createSearchSynonym(input: { kind: ONE_WAY, term: "tv", synonyms: ["television"] })`.
 
 ---
 
@@ -2443,7 +2537,7 @@ Inventory writes need `inventory.adjust` and the ledger query `inventory.view`; 
 
 **Locations and fulfilment (P4-A.1).** Each store has stock locations (`WAREHOUSE`, `BRANCH`, `PICKUP_POINT`); exactly one is the **default**, which is always active. Each shipping zone and each pickup point has an ordered list of fulfilling locations (`setShippingZoneFulfilmentLocations`, `setPickupLocationFulfilmentLocations`); an empty list (the state after migration) means the default location. When an order is placed, **all of its lines are reserved at one location**: the first active location of the zone's or pickup point's list that has every line available (on hand minus reserved); when every listed location is inactive, the default. That location is stored on the order (`Order.stockLocationId`, staff with `order.view`) and on its reservations; payment, cash-on-delivery dispatch, cancellation, expiry and returned-goods restock all act on it. If no single location can fill the whole order, checkout fails with `BAD_REQUEST` (see the createOrder errors in [2.11](#211-orders)). An inactive location is never chosen for new orders and its stock is not shown to customers; orders already reserved there carry on as usual.
 
-**What customers see.** `Variant.available` is what **one order can take**: on hand minus reserved at the best single location that serves customers, never the sum over locations (an order comes from one location). Without a delivery target (product pages, cart) the serving locations are the active ones that appear in any shipping zone's or pickup point's list, plus the default. `addToCart`/`updateCartItem` allow up to that quantity; `checkoutQuote` and `createOrder` check each line against the locations of the chosen zone or pickup point only. `Product.totalStock` adds each active variant's `available`; `products(inStock: true)` keeps products with an active variant in stock at a serving location.
+**What customers see.** `Variant.available` is what **one order can take**: on hand minus reserved at the best single location that serves customers, never the sum over locations (an order comes from one location). Without a delivery target (product pages, cart) the serving locations are the active ones that appear in any shipping zone's or pickup point's list, plus the default. `addToCart`/`updateCartItem` allow up to that quantity; `checkoutQuote` and `createOrder` check each line against the locations of the chosen zone or pickup point only. `Product.totalStock` adds each active variant's `available`; `products(inStock: true)` keeps products with an active variant in stock at a serving location (units of expired lots left out), `inStock: false` those with none.
 
 **Behaviour change (P4-A.1, not a schema break):** `Variant.available` was the sum over locations and is now the best single serving location (identical while all stock is at the default location). The `inventory.low_stock.v1` event is now measured on the variant's available stock summed over active locations (`available` in the payload is that total; `locationId` is where the movement happened). Every stock change writes one entry to the append-only stock ledger (`StockMovement`); manual changes also write an audit entry (entity `Variant`, action `STOCK_ADJUSTMENT`). On-hand stock can never go below zero, and reserved stock never above on-hand stock.
 
@@ -2708,7 +2802,7 @@ Opt-in per product with `Product.trackLots` (default `false`; set on `createProd
 - **Lots.** A `Lot` belongs to one variant: `lotNumber` (unique per variant), `expiresAt`, optional `manufacturedAt`. Its units are held per location; for a tracked variant the lots at a location always add up to that location's on-hand stock. Every on-hand change of a tracked variant records its lot (`StockMovement.lotId`), one movement per lot touched.
 - **Receiving** (`restockVariant` with `lot`, `adjustVariantStock` adding with `lot`): lot number plus expiry, in the future. `createProduct` / `createVariant` refuse opening stock (`quantity` > 0) for a tracked product (`BAD_REQUEST`): receive it with `restockVariant`.
 - **First expiry, first out.** Units leaving a location are drawn from the unexpired lots with the earliest expiry (ties: the oldest lot): sales (online payment captured, cash-on-delivery dispatch), transfer dispatch, removals without a lot and stock-take shortages. Reservations stay per variant and location; lots are drawn when the sale is consumed. A paid order cancelled before dispatch puts its units back into the lots it drew from.
-- **Expired lots are not sold.** From `expiresAt` on, a lot's units are left out of `Variant.available`, `Product.totalStock`/`inStock`, the cart and checkout checks and placement (`createOrder` refuses them like any missing stock). An hourly job writes them off: one `ADJUSTMENT` with `adjustmentReason: EXPIRED`, `refType: "Lot"`, `refId`: the lot id, per lot. Units held for open orders are not written off: the reservation is kept and, if no unexpired units are left when the sale is consumed, the expired lot supplies it (a warning is logged with ids). The `products(inStock: true)` filter alone still counts expired units until the job has run (at most an hour).
+- **Expired lots are not sold.** From `expiresAt` on, a lot's units are left out of `Variant.available`, `Product.totalStock`/`inStock`, the cart and checkout checks and placement (`createOrder` refuses them like any missing stock). An hourly job writes them off: one `ADJUSTMENT` with `adjustmentReason: EXPIRED`, `refType: "Lot"`, `refId`: the lot id, per lot. Units held for open orders are not written off: the reservation is kept and, if no unexpired units are left when the sale is consumed, the expired lot supplies it (a warning is logged with ids). The `products(inStock: ...)` filter leaves them out too (P6-S.1).
 - **Transfers** ship unexpired lots only (`dispatchStockTransfer` refuses with `only N available at the source` otherwise, also keeping what the source's reservations need) and the same lots arrive at the destination; a shortfall falls on the lots that expire last.
 - **Stock-takes** count per variant: a shortage is drawn first expiry first, a surplus goes into the variant's latest-expiring lot; a tracked variant that never had a lot refuses the approval with `CONFLICT` + `reason: STOCK_TAKE_NO_LOT`.
 - **Switching tracking** (`updateProduct` with `trackLots`) is allowed only while the product holds no stock: nothing on hand, in transit or sold awaiting dispatch (`BAD_REQUEST` naming the counts). To start tracking a stocked product, adjust its stock out (`CORRECTION`) and receive it again with lot numbers.
@@ -4147,9 +4241,10 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `DiscountType` | `PERCENTAGE`, `FLAT` | `Discount.type`, discount inputs |
 | `DiscountTypeEnum` | `PERCENTAGE`, `FLAT` | `Coupon.discountType`, coupon inputs (a separate enum with the same values) |
 | `ProductStatus` | `DRAFT`, `PUBLISHED`, `ARCHIVED` | `Product.status`, product inputs, `ProductFilterArgs.status` |
+| `SearchSynonymKind` | `TWO_WAY`, `ONE_WAY` (P6-S.4) | `SearchSynonym.kind`, `SearchSynonymInput.kind` |
 | `Currency` | `GHS`, `USD`, `EUR`, `GBP`, `NGN` | `Product.currency` (only products in the store currency, GHS, can be checked out) |
 | `DeliveryOptions` | `LOCAL_DELIVERY`, `INTERNATIONAL_DELIVERY`, `SELECTED_REGIONS` | `Product.deliveryOptions` (informational; not enforced at checkout) |
-| `ProductSortField` | `CREATED_AT`, `NAME`, `UPDATED_AT` (`PRICE` and `QUANTITY` removed in P1-V.3) | `ProductSortArgs.sortBy` |
+| `ProductSortField` | `RELEVANCE` (P6-S.1), `CREATED_AT`, `NAME`, `UPDATED_AT` (`PRICE` and `QUANTITY` removed in P1-V.3) | `ProductSortArgs.sortBy` |
 | `SortOrder` | `ASC`, `DESC` | `ProductSortArgs.sortOrder` |
 
 ### Where each object type is described
@@ -4158,7 +4253,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 |---|---|
 | `AuthEntity` | [2.1](#21-authentication-iam) |
 | `User`, `UserConnection`, `UserEdge`, `PublicProfile` | [2.2](#22-users), [2.17](#217-reviews) |
-| `Product`, `PriceRange`, `ProductConnection`, `ProductEdge` | [2.3](#23-products) |
+| `Product`, `PriceRange`, `ProductConnection`, `ProductEdge`, `ProductFacets`, `FacetCount`, `AttributeFacet`, `AttributeFacetValue`, `AttributeFilterInput`, `SearchSuggestions`, `Suggestion` | [2.3](#23-products) |
 | `ProductType`, `AttributeDefinition` | [2.26](#226-product-types-and-attributes) |
 | `Category`, `SubCategory`, `Brand`, `Tag`, `Variant` | [2.4](#24-categories)–[2.8](#28-variants) |
 | `Cart`, `CartItem`, `Wishlist` | [2.9](#29-cart), [2.10](#210-wishlist) |
@@ -4491,7 +4586,7 @@ Stock is held per **variant and location** (ADR-0008) as `onHand` (units in the 
 - On-hand stock never goes negative and reserved never exceeds on hand (conditional updates plus database checks).
 - Adding to cart and creating an order check the variant's available stock (`BAD_REQUEST` if insufficient). Adding to cart does not reserve.
 - Show availability per variant from `Variant.available`, and on product cards from `Product.inStock` / `totalStock`.
-- `ProductFilterArgs.inStock: true` returns only products with an active variant that has available stock.
+- `ProductFilterArgs.inStock: true` returns only products with an active variant that has available stock; `false` those with none.
 
 ### Low Stock Logic
 
@@ -4724,14 +4819,14 @@ When `class-validator` fails, the error has code `BAD_USER_INPUT`:
 
 ### Strategy: Cursor-Based Pagination
 
-Only `products`, `adminProducts` and `users` are paginated (relay-style). The cursor is the record's `id`.
+Only `products`, `adminProducts` and `users` are paginated (relay-style). A user cursor is the record's `id`; a product cursor is an opaque keyset cursor (P6-S.1) valid only with the same `sortArgs`.
 
 **`PaginationArgs`** (products; `UserPaginateArgs` has the same fields plus filters):
 
 ```typescript
 {
   first: number;       // Page size. Default 12. Min 1. Max 100. (Omitting paginationArgs entirely on products gives 10.)
-  after?: string;      // Cursor: the ID of the last item from the previous page.
+  after?: string;      // Cursor of the last edge of the previous page (users: its id).
   orderBy?: string;    // Users only (whitelisted field name). Ignored for products.
   orderInAsc?: boolean;// Users only. Default true.
 }
@@ -4770,12 +4865,12 @@ query {
 
 ### Sorting
 
-- **Products**: `sortArgs: ProductSortArgs { sortBy: CREATED_AT | NAME | UPDATED_AT, sortOrder: ASC | DESC }`, default `CREATED_AT DESC` (price and stock sorts were removed in P1-V.3). `paginationArgs.orderBy`/`orderInAsc` are ignored.
+- **Products**: `sortArgs: ProductSortArgs { sortBy: RELEVANCE | CREATED_AT | NAME | UPDATED_AT, sortOrder: ASC | DESC }`, default `RELEVANCE` with search text, else `CREATED_AT DESC`; ties always go by id (price and stock sorts were removed in P1-V.3). `paginationArgs.orderBy`/`orderInAsc` are ignored.
 - **Users**: `filter.orderBy` (one of `id`, `name`, `email`, `phoneNumber`, `role`, `isActive`, `createdAt`, `updatedAt`, `lastLoginAt`, `profilePicture`) and `filter.orderInAsc`.
 
 ### Filtering Options per Resource
 
-**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName`, `subcategoryId`, `isActive` (default `true`, admin only), `status` (admin only), `search`, `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `inStock` (`true` = an active variant in stock), `tagId`, `tagName`. `priceMin`/`priceMax`/`inStock` must all hold for the same active variant.
+**Products** (`ProductFilterArgs`): `categoryId`, `categoryName`, `subCategoryName`, `subcategoryId`, `isActive` (default `true`, admin only), `status` (admin only), `search`, `createdAfter` (ISO date), `priceMin`, `priceMax`, `brand` (exact name), `brandId`, `productTypeId`, `inStock` (`true` = an active variant a customer can buy now, `false` = none), `tagId`, `tagName`, `attributes` (P6-S.2, AND across keys, OR within one). All filters combine; with `inStock: true` the price bounds and the stock must hold for the same active variant. See [2.3](#23-products).
 
 **Users** (`UserPaginateArgs`): `email` (partial), `phoneNumber` (exact), `role`, `isActive`, `name` (partial), `createdAfter`.
 
@@ -5283,7 +5378,7 @@ export type StockMovementReason =
 export type Currency = 'GHS' | 'USD' | 'EUR' | 'GBP' | 'NGN';
 export type ProductStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 export type DeliveryOptions = 'LOCAL_DELIVERY' | 'INTERNATIONAL_DELIVERY' | 'SELECTED_REGIONS';
-export type ProductSortField = 'CREATED_AT' | 'NAME' | 'UPDATED_AT';
+export type ProductSortField = 'RELEVANCE' | 'CREATED_AT' | 'NAME' | 'UPDATED_AT';
 export type SortOrder = 'ASC' | 'DESC';
 
 // Auth

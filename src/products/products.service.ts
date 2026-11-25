@@ -3,8 +3,6 @@ import { CreateProductInput } from './dto/create-product.input';
 import { UpdateProductInput } from './dto/update-product.input';
 import { ProductFilterArgs } from './dto/product-filter.args';
 import { ProductSortArgs } from './dto/product-sort.args';
-import { ProductSortField } from './enums/product-sort-field.enum';
-import { SortOrder } from '../commons/enums/sort-order.enum';
 import { PriceChangeSource, Prisma, Product } from '../generated/prisma/client';
 import { PaginationArgs } from '../commons/dto/paginate.args';
 import { ProductConnection } from './entities/product-connection.entity';
@@ -22,6 +20,8 @@ import { VariantService } from '../variant/variant.service';
 import { LotsService } from '../inventory/lots/lots.service';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { assertNoSerialisedOpeningStock } from '../inventory/serials/serial-rules';
+import { ProductFacets, ProductSearch, SearchSuggestions, SearchVisibility } from './search/product-search.port';
+import { searchFiltersProblem, toSearchFilters, toSearchRequest } from './search/product-search-request';
 
 export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
 
@@ -58,6 +58,7 @@ export class ProductsService {
     private readonly variantService: VariantService,
     private readonly lots: LotsService,
     private readonly serialUnits: SerialUnitsService,
+    private readonly productSearch: ProductSearch,
   ) {}
 
   /**
@@ -164,16 +165,17 @@ export class ProductsService {
     sort: ProductSortArgs = {},
     requestedData?: Prisma.ProductSelect,
   ): Promise<ProductConnection> {
-    return this.findPage(paginate, this.buildWhereClause(filter), sort, requestedData);
+    return this.searchPage('ADMIN', paginate, filter, sort, requestedData);
   }
 
+  /** Public list: only active, PUBLISHED products, whatever isActive/status the filter carries. */
   async findAllPublished(
     paginate: PaginationArgs,
     filter: ProductFilterArgs = {},
     sort: ProductSortArgs = {},
     requestedData?: Prisma.ProductSelect,
   ): Promise<ProductConnection> {
-    return this.findPage(paginate, { ...this.buildWhereClause(filter), ...PUBLIC_PRODUCT_WHERE }, sort, requestedData);
+    return this.searchPage('PUBLIC', paginate, filter, sort, requestedData);
   }
 
   async findPublishedById(id: string, requestedFields: Prisma.ProductSelect = {}): Promise<Product | null> {
@@ -194,25 +196,52 @@ export class ProductsService {
     );
   }
 
-  private async findPage(
+  /** Facet counts for the public list with these filters. */
+  async findPublishedFacets(filter: ProductFilterArgs = {}): Promise<ProductFacets> {
+    const filters = toSearchFilters(filter, 'PUBLIC');
+    const problem = searchFiltersProblem(filters);
+    if (problem) throw new BadRequestException(problem);
+    return this.productSearch.facets(filters);
+  }
+
+  /** Autocomplete; a prefix with fewer than two letters or digits suggests nothing. */
+  async suggest(prefix: string, first: number): Promise<SearchSuggestions> {
+    const text = prefix.trim();
+    if ((text.match(/[\p{L}\p{N}]/gu) ?? []).length < 2) return { products: [], brands: [], categories: [] };
+    return this.productSearch.suggest(text, first);
+  }
+
+  /** The search port picks and orders the page; the products are then loaded with the requested fields. */
+  private async searchPage(
+    visibility: SearchVisibility,
     paginate: PaginationArgs,
-    whereClause: Prisma.ProductWhereInput,
+    filter: ProductFilterArgs,
     sort: ProductSortArgs,
     requestedData?: Prisma.ProductSelect,
   ): Promise<ProductConnection> {
-    const paginationOptions = this.buildPaginationOptions(paginate);
-    const orderBy = this.buildOrderByClause(sort);
-
-    const [products, totalCount] = await Promise.all([
-      this.productsRepository.findMany(
-        { ...paginationOptions, take: (paginationOptions.take ?? 10) + 1 },
-        whereClause,
-        orderBy,
-        requestedData,
-      ),
-      this.productsRepository.count(whereClause),
-    ]);
-    return this.formatPaginatedResponse(products, paginationOptions, totalCount);
+    const request = toSearchRequest(visibility, paginate, filter, sort);
+    const problem = searchFiltersProblem(request.filters);
+    if (problem) throw new BadRequestException(problem);
+    const page = await this.productSearch.search(request);
+    const products = await this.productsRepository.findManyByIds(
+      page.items.map((item) => item.id),
+      requestedData,
+    );
+    const byId = new Map(products.map((product) => [product.id, product]));
+    // A product deleted between the two reads drops out of the page.
+    const edges = page.items.flatMap((item) => {
+      const node = byId.get(item.id);
+      return node ? [{ cursor: item.cursor, node }] : [];
+    });
+    return {
+      edges: edges as ProductConnection['edges'],
+      pageInfo: {
+        pageSize: request.first,
+        hasPreviousPage: request.after !== undefined,
+        hasNextPage: page.hasNextPage,
+        totalCount: page.totalCount,
+      },
+    };
   }
 
   async findOne(id: string, requestedFields: Prisma.ProductSelect = {}): Promise<Product | null> {
@@ -285,17 +314,6 @@ export class ProductsService {
     return checked.value;
   }
 
-  private buildPaginationOptions({ first, after }: PaginationArgs) {
-    if (!first && !after) return {};
-    const pageSize = Math.min(first, 100);
-    const hasCursor = !!after;
-    return {
-      take: pageSize,
-      skip: hasCursor ? 1 : 0,
-      cursor: hasCursor ? { id: after } : undefined,
-    };
-  }
-
   private async validateProductInput(input: CreateProductInput | (UpdateProductInput & { id: string })) {
     await this.validateCategoryAndSubcategory(input.categoryId ?? '', input.subcategoryId);
   }
@@ -326,83 +344,6 @@ export class ProductsService {
     if (cartItemCount > 0 || orderItemCount > 0) {
       throw new ConflictException('Cannot delete product referenced in active carts or orders');
     }
-  }
-
-  private buildWhereClause(filter: ProductFilterArgs): Prisma.ProductWhereInput {
-    const {
-      categoryId,
-      subcategoryId,
-      isActive,
-      status,
-      search,
-      createdAfter,
-      brand,
-      categoryName,
-      subCategoryName,
-      tagId,
-      tagName,
-    } = filter;
-    return {
-      ...(categoryName && { category: { name: { equals: categoryName, mode: 'insensitive' } } }),
-      ...(subCategoryName && { subcategory: { name: { equals: subCategoryName, mode: 'insensitive' } } }),
-      ...(categoryId && { categoryId }),
-      ...(subcategoryId && { subcategoryId }),
-      ...(isActive !== undefined && { isActive }),
-      ...(status && { status }),
-      ...(search && {
-        OR: [
-          { name: { search: search.trim().split(/\s+/).join(' & ') } },
-          { description: { search: search.trim().split(/\s+/).join(' & ') } },
-          { tags: { some: { name: { contains: search, mode: 'insensitive' } } } },
-        ],
-      }),
-      ...(createdAfter && { createdAt: { gte: new Date(createdAfter) } }),
-      ...(this.variantFilter(filter) && { variants: { some: this.variantFilter(filter) } }),
-      ...(brand && { brand: { name: { equals: brand, mode: 'insensitive' } } }),
-      ...(tagId && { tags: { some: { id: { equals: tagId } } } }),
-      ...(tagName && { tags: { some: { name: { equals: tagName, mode: 'insensitive' } } } }),
-    };
-  }
-
-  /** One active variant must match every price/stock condition, so the filters run on variants in SQL. */
-  private variantFilter({ priceMin, priceMax, inStock }: ProductFilterArgs): Prisma.VariantWhereInput | undefined {
-    if (priceMin === undefined && priceMax === undefined && inStock !== true) return undefined;
-    return {
-      isActive: true,
-      ...((priceMin !== undefined || priceMax !== undefined) && {
-        price: { ...(priceMin !== undefined && { gte: priceMin }), ...(priceMax !== undefined && { lte: priceMax }) },
-      }),
-      ...(inStock === true && this.productsRepository.hasAvailableStock()),
-    };
-  }
-
-  private buildOrderByClause({
-    sortBy = ProductSortField.CREATED_AT,
-    sortOrder = SortOrder.DESC,
-  }: ProductSortArgs): Prisma.ProductOrderByWithRelationInput {
-    return { [sortBy]: sortOrder };
-  }
-
-  private formatPaginatedResponse(
-    products: Product[],
-    { skip, take }: { take?: number; skip?: number },
-    totalCount: number,
-  ): ProductConnection {
-    const pageSize = take ?? 10;
-    const hasNextPage = products.length > pageSize;
-    const items = hasNextPage ? products.slice(0, pageSize) : products;
-    return {
-      edges: items.map((product) => ({
-        cursor: product.id,
-        node: product,
-      })) as ProductConnection['edges'],
-      pageInfo: {
-        pageSize,
-        hasPreviousPage: (skip ?? 0) > 0,
-        hasNextPage,
-        totalCount,
-      },
-    };
   }
 
   private async ensureTagExists(tagId: string): Promise<void> {

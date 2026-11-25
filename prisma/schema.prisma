@@ -157,6 +157,8 @@ model Category {
   updatedAt        DateTime      @updatedAt
   promotions       Promotion[]   @relation("CategoryToPromotion")
   rewardPromotions Promotion[]   @relation("PromotionRewardCategories")
+
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Category_name_trgm_idx")
 }
 
 model SubCategory {
@@ -183,6 +185,8 @@ model Brand {
   rewardPromotions Promotion[] @relation("PromotionRewardBrands")
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
+
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Brand_name_trgm_idx")
 }
 
 model Tag {
@@ -370,6 +374,9 @@ model Product {
   wishlist         WishList[]
   brand            Brand?       @relation(fields: [brandId], references: [id])
   brandId          String?
+  /// Full-text document (P6-S.1, simple config): name weight A; brand, category, sub-category and tag names B;
+  /// short description and description C. Kept up to date by database triggers, never written by the app.
+  searchVector     Unsupported("tsvector")?
 
   @@index([brandId])
   @@index([categoryId])
@@ -377,6 +384,8 @@ model Product {
   @@index([isActive, status])
   @@index([productTypeId])
   @@index([attributes(ops: JsonbPathOps)], type: Gin)
+  @@index([searchVector], type: Gin)
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Product_name_trgm_idx")
 }
 
 enum ProductStatus {
@@ -2370,4 +2379,22 @@ model CostChange {
   variant   Variant          @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([variantId, createdAt])
+}
+
+/// TWO_WAY: every term finds the others. ONE_WAY: term also finds synonyms, not the reverse (P6-S.4).
+enum SearchSynonymKind {
+  TWO_WAY
+  ONE_WAY
+}
+
+/// Staff-managed search synonyms, applied at query time by expanding the search text (P6-S.4).
+model SearchSynonym {
+  id        String            @id @default(cuid())
+  kind      SearchSynonymKind
+  /// ONE_WAY: the term searched for; null for TWO_WAY (CHECK)
+  term      String?           @db.VarChar(100)
+  /// TWO_WAY: 2-20 interchangeable terms; ONE_WAY: 1-20 terms the term also finds. Lower case, single-spaced.
+  synonyms  String[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
 }

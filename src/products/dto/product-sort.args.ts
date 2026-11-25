@@ -7,12 +7,11 @@ import { SortOrder } from '../../commons/enums/sort-order.enum';
 export class ProductSortArgs {
   @Field(() => ProductSortField, {
     nullable: true,
-    defaultValue: ProductSortField.CREATED_AT,
-    description: 'Field to sort products by',
+    description: 'Field to sort products by; default RELEVANCE with search text, else CREATED_AT. Ties go by id.',
   })
   @IsOptional()
   @IsEnum(ProductSortField)
-  sortBy?: ProductSortField = ProductSortField.CREATED_AT;
+  sortBy?: ProductSortField;
 
   @Field(() => SortOrder, {
     nullable: true,

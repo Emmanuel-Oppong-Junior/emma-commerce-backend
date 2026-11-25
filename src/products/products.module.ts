@@ -23,6 +23,11 @@ import {
   CategoryProductsResolver,
   SubCategoryProductsResolver,
 } from './nested-products.resolver';
+import { ProductSearch } from './search/product-search.port';
+import { PostgresProductSearch } from './search/postgres/postgres-product-search';
+import { SearchSynonymsRepository } from './search/synonyms/search-synonyms.repository';
+import { SearchSynonymsService } from './search/synonyms/search-synonyms.service';
+import { SearchSynonymsResolver } from './search/synonyms/search-synonyms.resolver';
 
 @Module({
   providers: [
@@ -38,6 +43,10 @@ import {
     VariantFieldsResolver,
     ReviewsLoader,
     ProductsLoader,
+    { provide: ProductSearch, useClass: PostgresProductSearch },
+    SearchSynonymsRepository,
+    SearchSynonymsService,
+    SearchSynonymsResolver,
   ],
   imports: [
     TagModule,

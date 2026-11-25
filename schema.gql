@@ -188,6 +188,33 @@ input AttributeDefinitionInput {
   unit: String
 }
 
+"""A filterable attribute and its most common values"""
+type AttributeFacet {
+  key: String!
+  label: String!
+
+  """Up to 20 values, most products first"""
+  values: [AttributeFacetValue!]!
+}
+
+type AttributeFacetValue {
+  count: Int!
+
+  """The value as stored (send it back in AttributeFilterInput.values)"""
+  value: String!
+}
+
+"""Products whose attribute is one of the values (P6-S.2)"""
+input AttributeFilterInput {
+  """Attribute key, e.g. "colour" (a product attribute or a variant axis)"""
+  key: String!
+
+  """
+  Values to match, ignoring case (any of them; 1-20), as productFacets lists them
+  """
+  values: [String!]!
+}
+
 type AuthEntity {
   """authentication access token"""
   accessToken: String!
@@ -1758,6 +1785,13 @@ type ExpiringStockLine {
   variantId: ID!
 }
 
+"""A brand or category with the number of matching products"""
+type FacetCount {
+  count: Int!
+  id: ID!
+  name: String!
+}
+
 input FailMyDeliveryInput {
   """
   What happened (customer not reachable, wrong address, refused...); shown to staff
@@ -2141,6 +2175,9 @@ type Mutation {
   """Creates a review for a product"""
   createReview(input: CreateReviewInput!): Review!
 
+  """Adds a search synonym group (at most 500); audited"""
+  createSearchSynonym(input: SearchSynonymInput!): SearchSynonym!
+
   """
   Create a PENDING shipment of a confirmed or in-fulfilment order with the given lines and units, or every unit not yet in a shipment (staff). BAD_REQUEST for a line not on the order or named twice, and for a cash-on-delivery order not shipped whole (reason COD_ORDER_NOT_SPLIT); CONFLICT for more units than are unshipped (SHIPMENT_QUANTITY_EXCEEDED) or nothing left to ship (NOTHING_TO_SHIP)
   """
@@ -2225,6 +2262,9 @@ type Mutation {
 
   """Deletes the authenticated user's own review"""
   deleteReview(reviewId: String!): Review!
+
+  """Removes a search synonym group; audited"""
+  deleteSearchSynonym(id: ID!): SearchSynonym!
 
   """Delete a shipping zone with its areas and rate rules. Audited"""
   deleteShippingZone(id: ID!): ShippingZoneEntity!
@@ -2585,6 +2625,9 @@ type Mutation {
 
   """Updates a user's review"""
   updateReview(input: UpdateReviewInput!): Review!
+
+  """Replaces a search synonym group; audited"""
+  updateSearchSynonym(id: ID!, input: SearchSynonymInput!): SearchSynonym!
 
   """
   Move a shipment to its next fulfilment step (staff); the order follows: IN_FULFILMENT on the first step of any shipment, COMPLETED once every unit is delivered (online orders). Dispatch needs a serial on every serialised unit of the shipment (BAD_REQUEST, reason SERIALS_NOT_ASSIGNED)
@@ -3437,9 +3480,44 @@ type ProductEdge {
   node: Product!
 }
 
+"""
+Facet counts for a product search (P6-S.2). Each facet ignores its own filter, so the other choices stay visible
+"""
+type ProductFacets {
+  """
+  Up to 10 filterable attributes (AttributeDefinition.isFilterable) of the matching products
+  """
+  attributes: [AttributeFacet!]!
+
+  """Up to 20 brands, most products first"""
+  brands: [FacetCount!]!
+
+  """Up to 20 categories, most products first"""
+  categories: [FacetCount!]!
+
+  """Products that would match with inStock: true"""
+  inStockCount: Int!
+
+  """
+  Lowest and highest active variant price, without the price bounds; null when none is priced
+  """
+  price: PriceRange
+
+  """Products matching every filter (the products totalCount)"""
+  totalCount: Int!
+}
+
 input ProductFilterArgs {
-  """Filter by brand name (exact match)"""
+  """
+  Attribute filters (P6-S.2): a product matches every attribute given (AND) and any of the values of each (OR), on its own attributes or on an active variant. At most 10, one per key.
+  """
+  attributes: [AttributeFilterInput!]
+
+  """Filter by brand name (exact match, ignoring case)"""
   brand: String
+
+  """Filter by brand ID"""
+  brandId: String
 
   """Filter by category ID"""
   categoryId: String
@@ -3451,20 +3529,29 @@ input ProductFilterArgs {
   createdAfter: String
 
   """
-  true: only products with an active variant in stock; false or omitted: no stock filter
+  true: only products with an active variant a customer can buy now (its best serving location has unreserved, unexpired units, like Variant.available); false: only products with none; omitted: no stock filter. With priceMin/priceMax and true, the same variant must be in stock and in the price range.
   """
   inStock: Boolean
 
   """Filter by active status"""
   isActive: Boolean = true
 
-  """Filter by maximum price (inclusive)"""
+  """
+  Maximum price (inclusive) of an active variant, on its stored selling price (see priceMin)
+  """
   priceMax: Decimal
 
-  """Filter by minimum price (inclusive)"""
+  """
+  Minimum price (inclusive) of an active variant, on its stored selling price (tax included; promotions and price lists are not applied). With priceMax, one variant must be within both bounds; above priceMax: BAD_REQUEST.
+  """
   priceMin: Decimal
 
-  """Filter by name, description, or tags (partial match)"""
+  """Filter by product type ID"""
+  productTypeId: String
+
+  """
+  Full-text search (web-search syntax: "quoted phrase", OR, -exclude) over the name, the brand, category, sub-category and tag names and the descriptions; when nothing matches, names are matched allowing typos. Blank or punctuation-only text is ignored. At most 200 characters.
+  """
   search: String
 
   """
@@ -3478,16 +3565,18 @@ input ProductFilterArgs {
   """Filter by subcategory ID"""
   subcategoryId: String
 
-  """Filter by tag ID"""
+  """Filter by tag ID (with tagName, the product needs both)"""
   tagId: String
 
-  """Filter by tag name"""
+  """Filter by tag name (exact match, ignoring case)"""
   tagName: String
 }
 
 input ProductSortArgs {
-  """Field to sort products by"""
-  sortBy: ProductSortField = CREATED_AT
+  """
+  Field to sort products by; default RELEVANCE with search text, else CREATED_AT. Ties go by id.
+  """
+  sortBy: ProductSortField
 
   """Sort direction"""
   sortOrder: SortOrder = DESC
@@ -3500,6 +3589,11 @@ enum ProductSortField {
 
   """Sort by product name"""
   NAME
+
+  """
+  Best search match first (ignores sortOrder); without search text, newest first
+  """
+  RELEVANCE
 
   """Sort by last update date"""
   UPDATED_AT
@@ -4128,6 +4222,11 @@ type Query {
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
 
+  """
+  Facet counts (brands, categories, filterable attributes, price range, in stock) for products
+  """
+  productFacets(filterArgs: ProductFilterArgs): ProductFacets!
+
   """Retrieves all reviews for a product"""
   productReviews(productId: String!): [Review!]!
 
@@ -4225,6 +4324,22 @@ type Query {
   Gross revenue, refunds and net revenue recognised in a date range (admin only)
   """
   salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
+
+  """
+  Autocomplete: published products, brands and categories matching a typed prefix (typos allowed)
+  """
+  searchSuggestions(
+    """Suggestions of each kind, 1-10"""
+    first: Int! = 5
+
+    """
+    What the customer typed (at most 50 characters); under two letters or digits gives no suggestions
+    """
+    prefix: String!
+  ): SearchSuggestions!
+
+  """Every search synonym group, oldest first (P6-S.4)"""
+  searchSynonyms: [SearchSynonym!]!
 
   """
   Find serialised units by serial (any variant): status, order, customer id, sale date and warranty (staff)
@@ -5225,6 +5340,55 @@ type SalesReport {
   totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
 }
 
+"""Autocomplete for a typed prefix (P6-S.4)"""
+type SearchSuggestions {
+  """Brands with a published product"""
+  brands: [Suggestion!]!
+
+  """Categories with a published product"""
+  categories: [Suggestion!]!
+
+  """Published products"""
+  products: [Suggestion!]!
+}
+
+"""A staff-managed search synonym group (P6-S.4)"""
+type SearchSynonym {
+  createdAt: DateTime!
+  id: ID!
+  kind: SearchSynonymKind!
+
+  """Lower case, single-spaced"""
+  synonyms: [String!]!
+
+  """ONE_WAY: the term searched for; null for TWO_WAY"""
+  term: String
+  updatedAt: DateTime!
+}
+
+input SearchSynonymInput {
+  kind: SearchSynonymKind!
+
+  """
+  TWO_WAY: 2-20 interchangeable terms; ONE_WAY: 1-20 terms. Letters, digits, single spaces and hyphens; stored lower case
+  """
+  synonyms: [String!]!
+
+  """ONE_WAY only: the term that also finds the synonyms"""
+  term: String
+}
+
+"""How a synonym group expands searches (P6-S.4)"""
+enum SearchSynonymKind {
+  """
+  term also finds the synonyms, not the reverse ("tv" finds "television")
+  """
+  ONE_WAY
+
+  """Every term finds the others ("phone, mobile, cellphone")"""
+  TWO_WAY
+}
+
 """
 How serial numbers are checked: FREE_TEXT (1-64 letters, digits, - _ . /) or IMEI (15 digits, Luhn)
 """
@@ -5980,6 +6144,11 @@ type SubCategory {
 
   """Timestamp when the sub category was last updated"""
   updatedAt: DateTime!
+}
+
+type Suggestion {
+  id: ID!
+  name: String!
 }
 
 """Someone the store buys from (staff with purchasing.view)"""

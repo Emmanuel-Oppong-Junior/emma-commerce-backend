@@ -14,6 +14,8 @@ import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { VariantSummaryLoader } from './loaders/variant-summary.loader';
 import { PriceRange } from './entities/price-range.entity';
+import { ProductFacets } from './entities/product-facets.entity';
+import { SearchSuggestions, SearchSuggestionsArgs } from './entities/search-suggestions.entity';
 import { VariantsLoader } from './loaders/variants.loader';
 import { ReviewsLoader } from './loaders/reviews.loader';
 import { Variant } from '../variant/entities/variant.entity';
@@ -128,6 +130,27 @@ export class ProductsResolver {
     @Info() requestInfo?: GraphQLResolveInfo,
   ) {
     return this.productsService.findAllPublished(paginationArgs, filterArgs, sortArgs, connectionSelect(requestInfo));
+  }
+
+  @Auth(AuthType.Optional)
+  @Query(() => ProductFacets, {
+    name: 'productFacets',
+    description: 'Facet counts (brands, categories, filterable attributes, price range, in stock) for products',
+  })
+  productFacets(
+    @Args('filterArgs', { type: () => ProductFilterArgs, nullable: true })
+    filterArgs: ProductFilterArgs = {},
+  ) {
+    return this.productsService.findPublishedFacets(filterArgs);
+  }
+
+  @Auth(AuthType.Optional)
+  @Query(() => SearchSuggestions, {
+    name: 'searchSuggestions',
+    description: 'Autocomplete: published products, brands and categories matching a typed prefix (typos allowed)',
+  })
+  searchSuggestions(@Args() { prefix, first }: SearchSuggestionsArgs) {
+    return this.productsService.suggest(prefix, first);
   }
 
   @Auth(AuthType.Optional)

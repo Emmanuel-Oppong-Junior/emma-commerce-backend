@@ -52,6 +52,7 @@ Mutation createPromotion                 permission: promotion.manage; step-up
 Mutation createPurchaseOrder             permission: purchasing.manage
 Mutation createRateRule                  permission: shipping.manage; step-up
 Mutation createReview                    customer only
+Mutation createSearchSynonym             permission: catalog.taxonomy.write
 Mutation createShipment                  permission: order.fulfil
 Mutation createShippingZone              permission: shipping.manage
 Mutation createStaffRole                 permission: staff.manage; step-up
@@ -76,6 +77,7 @@ Mutation deleteProductType               permission: catalog.taxonomy.write
 Mutation deletePromotion                 permission: promotion.manage; step-up
 Mutation deleteRateRule                  permission: shipping.manage; step-up
 Mutation deleteReview                    customer only
+Mutation deleteSearchSynonym             permission: catalog.taxonomy.write
 Mutation deleteShippingZone              permission: shipping.manage
 Mutation deleteStockLocation             permission: inventory.location.manage
 Mutation deleteSupplier                  permission: purchasing.manage
@@ -163,6 +165,7 @@ Mutation updatePromotion                 permission: promotion.manage; step-up
 Mutation updatePurchaseOrder             permission: purchasing.manage
 Mutation updateRateRule                  permission: shipping.manage; step-up
 Mutation updateReview                    customer only
+Mutation updateSearchSynonym             permission: catalog.taxonomy.write
 Mutation updateShipmentStatus            permission: order.fulfil
 Mutation updateShipping                  permission: order.fulfil
 Mutation updateShippingZone              permission: shipping.manage
@@ -222,6 +225,7 @@ Query priceChanges                       permission: catalog.product.read
 Query priceList                          permission: pricelist.manage
 Query priceLists                         permission: pricelist.manage
 Query product                            public, optional sign-in
+Query productFacets                      public, optional sign-in
 Query productReviews                     authenticated
 Query products                           public, optional sign-in
 Query productType                        public
@@ -238,6 +242,8 @@ Query revenueByCategory                  permission: report.view
 Query review                             authenticated
 Query riders                             permission: order.fulfil
 Query salesReport                        permission: report.view
+Query searchSuggestions                  public, optional sign-in
+Query searchSynonyms                     permission: catalog.product.read
 Query serialUnitLookup                   permission: order.view
 Query shippingZone                       permission: shipping.manage
 Query shippingZones                      permission: shipping.manage
