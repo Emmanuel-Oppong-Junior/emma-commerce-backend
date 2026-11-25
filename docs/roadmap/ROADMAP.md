@@ -28,11 +28,11 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
 | 4 — Inventory | 7 / 7 | ✅ complete |
 | 5 — Delivery & fulfilment | 7 / 8 | 🔄 in progress (P5-D deferred) |
-| 6 — Customer engagement | 11 / 17 | 🔄 in progress |
+| 6 — Customer engagement | 12 / 17 | 🔄 in progress |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **119 / 154** | |
+| **All** | **120 / 154** | |
 
 ---
 
@@ -430,9 +430,9 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P6-S.3** Meilisearch adapter (when triggered)
 - [x] **P6-S.4** Autocomplete, synonyms [c1f97d8]
 
-### P6-G — Guest & carts
+### P6-G — Guest & carts ✅ complete
 > Run: ∥ · M · 🟧
-- [ ] 🔄 **P6-G.1** Guest checkout with phone/email verification
+- [x] **P6-G.1** Guest checkout with phone/email verification [bcd6881]
 - [x] **P6-G.2** Saved carts, abandoned-cart recovery (SMS/WhatsApp) [62ba1be]
 - [x] **P6-G.3** Recently viewed [3211b97]
 
@@ -443,7 +443,7 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ### P6-L — Loyalty
 > Run: ∥ · L · ⬜
-- [ ] **P6-L.1** Loyalty points
+- [ ] 🔄 **P6-L.1** Loyalty points
 - [ ] **P6-L.2** Referrals
 - [ ] **P6-L.3** Store credit / wallet / gift cards (**legal sign-off first — BoG e-money**)
 
