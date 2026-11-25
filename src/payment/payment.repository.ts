@@ -382,11 +382,9 @@ export class PaymentRepository {
     }
   }
 
-  async findOrderWithUser(orderId: string): Promise<(Order & { user: { email: string } }) | null> {
-    return this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: { user: true },
-    }) as Promise<(Order & { user: { email: string } }) | null>;
+  /** The order with its customer's email; `user` is null for a guest order (P6-G.1). */
+  async findOrderWithUser(orderId: string): Promise<(Order & { user: { email: string } | null }) | null> {
+    return this.prisma.order.findUnique({ where: { id: orderId }, include: { user: true } });
   }
 
   async findOrderById(orderId: string): Promise<Order | null> {

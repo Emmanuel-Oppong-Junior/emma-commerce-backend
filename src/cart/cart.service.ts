@@ -7,14 +7,17 @@ import { notSellableReason } from '../variant/sellable';
 import { sellableQuantity } from '../inventory/fulfilment-location';
 import { sellableLevels } from '../inventory/lots/lots';
 
+type CartWithItems = Cart & { items: CartItem[] };
+
 /**
- * Service for managing user carts. A cart line is one variant (SKU) and is priced and stocked from it.
+ * Service for managing carts: a signed-in user's, found by user, and a guest's (P6-G.1), found by cart id once its
+ * token was checked. A cart line is one variant (SKU) and is priced and stocked from it.
  */
 @Injectable()
 export class CartService {
   constructor(private readonly cartRepository: CartRepository) {}
 
-  async getCart(userId: string): Promise<(Cart & { items: CartItem[] }) | null> {
+  async getCart(userId: string): Promise<CartWithItems | null> {
     return this.cartRepository.findByUser(userId);
   }
 
@@ -23,14 +26,11 @@ export class CartService {
    * @throws {NotFoundException} If the variant does not exist.
    * @throws {BadRequestException} If it is not on sale or the total quantity exceeds its stock.
    */
-  async addToCart(userId: string, input: AddToCartInput): Promise<Cart & { items: CartItem[] }> {
+  async addToCart(userId: string, input: AddToCartInput): Promise<CartWithItems> {
     const variant = await this.findSellableVariant(input.variantId);
     const cart = await this.cartRepository.findOrCreate(userId);
-    const existingItem = await this.cartRepository.findCartItem(cart.id, variant.id);
-    const newQuantity = (existingItem?.quantity ?? 0) + input.quantity;
-    await this.ensureInStock(variant, newQuantity);
-    await this.cartRepository.upsertCartItem(existingItem?.id, cart.id, variant, variant.price!, newQuantity);
-    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
+    await this.addVariant(cart.id, variant, input.quantity);
+    return this.getCart(userId) as Promise<CartWithItems>;
   }
 
   /**
@@ -38,9 +38,58 @@ export class CartService {
    * @throws {NotFoundException} If the cart or item does not exist.
    * @throws {BadRequestException} If the variant is no longer on sale or the quantity exceeds its stock.
    */
-  async updateCartItem(userId: string, input: UpdateCartItemInput): Promise<Cart & { items: CartItem[] }> {
-    const { cartItemId, quantity } = input;
+  async updateCartItem(userId: string, input: UpdateCartItemInput): Promise<CartWithItems> {
+    await this.setQuantity(await this.getCartOrThrow(userId), input);
+    return this.getCart(userId) as Promise<CartWithItems>;
+  }
+
+  async removeFromCart(userId: string, cartItemId: string): Promise<CartWithItems> {
+    await this.removeItem(await this.getCartOrThrow(userId), cartItemId);
+    return this.getCart(userId) as Promise<CartWithItems>;
+  }
+
+  async clearCart(userId: string): Promise<CartWithItems> {
     const cart = await this.getCartOrThrow(userId);
+    await this.cartRepository.deleteAllCartItems(cart.id);
+    return this.getCart(userId) as Promise<CartWithItems>;
+  }
+
+  async getCartOrThrow(userId: string, db?: Prisma.TransactionClient): Promise<CartWithItems> {
+    const cart = await this.cartRepository.findByUser(userId, db);
+    if (!cart) throw new NotFoundException(`Cart for user "${userId}" not found`);
+    return cart;
+  }
+
+  /** A guest cart by id (its token already checked), with its lines. */
+  async getGuestCartOrThrow(cartId: string, db?: Prisma.TransactionClient): Promise<CartWithItems> {
+    const cart = await this.cartRepository.findGuestById(cartId, db);
+    if (!cart) throw new NotFoundException('Guest cart not found or expired');
+    return cart;
+  }
+
+  async addToGuestCart(cartId: string, input: AddToCartInput): Promise<CartWithItems> {
+    await this.addVariant(cartId, await this.findSellableVariant(input.variantId), input.quantity);
+    return this.getGuestCartOrThrow(cartId);
+  }
+
+  async updateGuestCartItem(cartId: string, input: UpdateCartItemInput): Promise<CartWithItems> {
+    await this.setQuantity(await this.getGuestCartOrThrow(cartId), input);
+    return this.getGuestCartOrThrow(cartId);
+  }
+
+  async removeFromGuestCart(cartId: string, cartItemId: string): Promise<CartWithItems> {
+    await this.removeItem(await this.getGuestCartOrThrow(cartId), cartItemId);
+    return this.getGuestCartOrThrow(cartId);
+  }
+
+  private async addVariant(cartId: string, variant: VariantForSale, quantity: number): Promise<void> {
+    const existingItem = await this.cartRepository.findCartItem(cartId, variant.id);
+    const newQuantity = (existingItem?.quantity ?? 0) + quantity;
+    await this.ensureInStock(variant, newQuantity);
+    await this.cartRepository.upsertCartItem(existingItem?.id, cartId, variant, variant.price!, newQuantity);
+  }
+
+  private async setQuantity(cart: CartWithItems, { cartItemId, quantity }: UpdateCartItemInput): Promise<void> {
     const item = cart.items.find((i) => i.id === cartItemId);
     if (!item) throw new NotFoundException(`Cart item "${cartItemId}" not found in user's cart`);
 
@@ -50,27 +99,12 @@ export class CartService {
       await this.ensureInStock(await this.findSellableVariant(item.variantId), quantity);
       await this.cartRepository.updateCartItem(item.id, { quantity });
     }
-    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
   }
 
-  async removeFromCart(userId: string, cartItemId: string): Promise<Cart & { items: CartItem[] }> {
-    const cart = await this.getCartOrThrow(userId);
+  private async removeItem(cart: CartWithItems, cartItemId: string): Promise<void> {
     const cartHasItem = cart.items.some((i) => i.id === cartItemId);
     if (!cartHasItem) throw new NotFoundException(`Cart item "${cartItemId}" not found in user's cart`);
     await this.cartRepository.deleteCartItem(cartItemId);
-    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
-  }
-
-  async clearCart(userId: string): Promise<Cart & { items: CartItem[] }> {
-    const cart = await this.getCartOrThrow(userId);
-    await this.cartRepository.deleteAllCartItems(cart.id);
-    return this.getCart(userId) as Promise<Cart & { items: CartItem[] }>;
-  }
-
-  async getCartOrThrow(userId: string, db?: Prisma.TransactionClient): Promise<Cart & { items: CartItem[] }> {
-    const cart = await this.cartRepository.findByUser(userId, db);
-    if (!cart) throw new NotFoundException(`Cart for user "${userId}" not found`);
-    return cart;
   }
 
   private async findSellableVariant(variantId: string): Promise<VariantForSale> {

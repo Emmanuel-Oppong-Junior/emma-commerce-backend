@@ -44,11 +44,17 @@ import { CouponNotApplicableError, price, Quote, QuoteAdjustment } from '../pric
 import { StoreService } from '../store/store.service';
 import { TaxService } from '../tax/tax.service';
 import { assertDeliverableAddress } from '../addresses/deliverable-address';
-import { toAddressSnapshot } from '../addresses/address-snapshot';
+import { EnteredAddress, toAddressSnapshot, toEnteredAddressSnapshot } from '../addresses/address-snapshot';
 import { PaymentSettingsService } from '../payment/settings/payment-settings.service';
 import { VelocityService } from '../fraud/velocity.service';
 import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
 import { CodAvailability, CodRiskService } from '../cod/cod-risk.service';
+import { CodUnavailableReason } from '../cod/cod-risk';
+import {
+  assertGuestPaymentMethod,
+  assertGuestPhoneVerified,
+  guestPricingFacts,
+} from '../guest-checkout/guest-checkout-rules';
 import { DeliveryAddressFacts } from '../cod/cod-blacklist';
 import { ExpiredLotUnits, sellableLevels } from '../inventory/lots/lots';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
@@ -61,9 +67,15 @@ const ORDER_EXPIRY_MAX_RUN_MS = 10 * 60 * 1000;
 /** `extensions.reason` of the CONFLICT createOrder fails with when the cart no longer prices to the client's quote. */
 export const QUOTE_CHANGED = 'QUOTE_CHANGED';
 
+/** Who checks out: a signed-in customer, or a guest cart (P6-G.1) whose verified phone places the order. */
+export type Buyer = { userId: string } | { guestCartId: string };
+
 export interface CheckoutParams {
   fulfillmentType: FulfillmentType;
+  /** A customer's DELIVERY: one of their saved addresses. */
   shippingAddressId?: string;
+  /** A guest's DELIVERY: the address itself, copied onto the order. */
+  shippingAddress?: EnteredAddress;
   pickupLocationId?: string;
   couponCode?: string;
   /** Defaults to ONLINE; refused when the store does not offer it. */
@@ -75,8 +87,12 @@ export interface CheckoutParams {
 }
 
 export interface CreateOrderParams extends CheckoutParams {
-  contactEmail: string;
+  /** Required for customers; optional for guests (receipts by email only when given). */
+  contactEmail: string | null;
+  /** A guest's: the verified phone of the cart, checked again in the order transaction. */
   contactPhone: string;
+  /** Guests only: who the order is for. */
+  contactName?: string;
   /** quoteHash of the checkoutQuote the customer confirmed. */
   quoteHash: string;
   /** The client's IP address, for velocity checks. */
@@ -125,6 +141,7 @@ interface Fulfilment {
 
 interface PricedCheckout {
   cart: Cart & { items: CartItem[] };
+  buyer: Buyer;
   snapshot: OrderSnapshot;
   delivery: { quote: DeliveryQuote; options: DeliveryFee[]; slots: AvailableSlot[]; slotRequired: boolean } | null;
   /** The coupon code entered, when its promotion applied. */
@@ -211,13 +228,34 @@ export class OrdersService {
    * Reports whether the checkout could be paid on delivery (`cashOnDelivery`) without refusing it.
    */
   async checkoutQuote(userId: string, params: CheckoutParams): Promise<CheckoutQuote> {
+    return this.quoteFor({ userId }, params);
+  }
+
+  /**
+   * checkoutQuote for a guest cart (P6-G.1): the same engine and quoteHash, priced as a visitor (no customer-group,
+   * first-order or per-customer-limit promotions, no price lists). Cash on delivery is refused (BAD_REQUEST, reason
+   * COD_NOT_AVAILABLE with codReason GUEST_CHECKOUT).
+   */
+  async guestCheckoutQuote(guestCartId: string, params: CheckoutParams): Promise<CheckoutQuote> {
+    return this.quoteFor({ guestCartId }, params);
+  }
+
+  private async quoteFor(buyer: Buyer, params: CheckoutParams): Promise<CheckoutQuote> {
+    if ('guestCartId' in buyer) assertGuestPaymentMethod(params.paymentMethod);
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
-    const { cart, snapshot, fulfilment, delivery } = await this.priceCheckout(userId, params);
-    const cashOnDelivery = await this.codRisk.availability(userId, {
-      grandTotal: snapshot.grandTotal,
-      shippingZoneId: fulfilment.shippingZoneId,
-      address: fulfilment.deliveryAddress,
-    });
+    const { cart, snapshot, fulfilment, delivery } = await this.priceCheckout(buyer, params);
+    const cashOnDelivery: CodAvailability =
+      'userId' in buyer
+        ? await this.codRisk.availability(buyer.userId, {
+            grandTotal: snapshot.grandTotal,
+            shippingZoneId: fulfilment.shippingZoneId,
+            address: fulfilment.deliveryAddress,
+          })
+        : {
+            available: false,
+            reason: CodUnavailableReason.GUEST_CHECKOUT,
+            phoneVerified: cart.guestPhoneVerifiedAt !== null,
+          };
     const cartItemIds = snapshot.lines.map((line) => cart.items[line.cartLineIndex].id);
     return {
       ...snapshot,
@@ -249,11 +287,32 @@ export class OrdersService {
    * delivery also has to pass the risk gates (CodRiskService.assertCodAllowed: PHONE_NOT_VERIFIED, COD_NOT_AVAILABLE).
    */
   async createOrderFromCart(userId: string, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
+    return this.placeFor({ userId }, params);
+  }
+
+  /**
+   * createOrder for a guest cart (P6-G.1): the cart's phone must be verified and still be `contactPhone` when the
+   * cart is locked in the order transaction (BAD_REQUEST, reason GUEST_PHONE_NOT_VERIFIED); paid online only. The
+   * order has no account: it keeps the verified phone, the name and the optional email, and attaches to the account
+   * that later verifies that phone. Velocity is screened per phone and network.
+   */
+  async createGuestOrder(guestCartId: string, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
+    return this.placeFor({ guestCartId }, params);
+  }
+
+  private async placeFor(buyer: Buyer, params: CreateOrderParams): Promise<Order & { items: OrderItem[] }> {
+    if ('guestCartId' in buyer) assertGuestPaymentMethod(params.paymentMethod);
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
-    const subjects = velocitySubjects({ customerId: userId, phone: params.contactPhone, ip: params.clientIp });
+    const userId = 'userId' in buyer ? buyer.userId : null;
+    const subjects = velocitySubjects({
+      customerId: userId ?? undefined,
+      phone: params.contactPhone,
+      ip: params.clientIp,
+    });
     const softHits = await this.velocity.screenOrRefuse(VelocityCheckpoint.ORDER_PLACEMENT, subjects);
     const order = await this.ordersRepository.runTransaction(async (tx) => {
-      const checkout = await this.priceCheckout(userId, params, tx);
+      const checkout = await this.priceCheckout(buyer, params, tx);
+      if ('guestCartId' in buyer) assertGuestPhoneVerified(checkout.cart, params.contactPhone);
       if (checkout.delivery?.slotRequired && !checkout.delivery.quote.slot) {
         throw new BadRequestException({
           message: 'Choose a delivery slot (checkoutQuote.deliverySlots) for STANDARD delivery to this address',
@@ -262,7 +321,7 @@ export class OrdersService {
       }
       if (checkout.snapshot.quoteHash !== params.quoteHash) throw quoteChanged();
       const codPhone =
-        params.paymentMethod === PaymentMethod.CASH_ON_DELIVERY
+        userId && params.paymentMethod === PaymentMethod.CASH_ON_DELIVERY
           ? await this.codRisk.assertCodAllowed(tx, userId, {
               grandTotal: checkout.snapshot.grandTotal,
               shippingZoneId: checkout.fulfilment.shippingZoneId,
@@ -270,7 +329,7 @@ export class OrdersService {
               contactPhone: params.contactPhone,
             })
           : undefined;
-      const placed = await this.placeOrder(tx, userId, checkout, params, codPhone);
+      const placed = await this.placeOrder(tx, checkout, params, codPhone);
       await this.velocity.flagOrder(placed.id, softHits, tx);
       return placed;
     });
@@ -284,29 +343,50 @@ export class OrdersService {
    * and the cart's variants are share-locked before their prices are read, so they cannot change until it commits.
    */
   private async priceCheckout(
-    userId: string,
+    buyer: Buyer,
     params: CheckoutParams,
     tx?: Prisma.TransactionClient,
   ): Promise<PricedCheckout> {
-    if (tx) await this.ordersRepository.lockCart(tx, userId);
-    const cart = await this.ensureValidCart(userId, tx);
-    await this.ensureUserCanOrder(userId, cart, tx);
+    if (tx) {
+      await ('userId' in buyer
+        ? this.ordersRepository.lockCart(tx, buyer.userId)
+        : this.ordersRepository.lockGuestCart(tx, buyer.guestCartId));
+    }
+    const cart = await this.ensureValidCart(buyer, tx);
+    if ('userId' in buyer) await this.ensureUserCanOrder(buyer.userId, tx);
+    if (cart.items.length > 50) throw new BadRequestException('Order exceeds maximum item limit of 50');
     const fulfilment =
       params.fulfillmentType === FulfillmentType.DELIVERY
-        ? await this.deliveryTo(userId, params.shippingAddressId, tx)
+        ? await this.deliveryTo(buyer, params, tx)
         : await this.pickupAt(params.pickupLocationId, tx);
     if (tx) await this.ordersRepository.lockVariants(tx, [...new Set(cart.items.map((item) => item.variantId))]);
-    const { snapshot, couponCode, delivery } = await this.buildOrderDetails(cart.items, userId, fulfilment, params, tx);
-    return { cart, snapshot, couponCode, fulfilment, delivery };
+    const { snapshot, couponCode, delivery } = await this.buildOrderDetails(cart.items, buyer, fulfilment, params, tx);
+    return { cart, buyer, snapshot, couponCode, fulfilment, delivery };
   }
 
   private async deliveryTo(
-    userId: string,
-    shippingAddressId: string | undefined,
+    buyer: Buyer,
+    params: Pick<CheckoutParams, 'shippingAddressId' | 'shippingAddress'>,
     tx?: Prisma.TransactionClient,
   ): Promise<Fulfilment> {
+    if ('guestCartId' in buyer) {
+      const entered = params.shippingAddress;
+      if (!entered) throw new BadRequestException('shippingAddress is required for DELIVERY orders');
+      const zone = await this.shippingZonesService.deliveryZoneFor(
+        { country: entered.country, region: entered.region, city: entered.city, area: entered.area ?? null },
+        tx,
+      );
+      return {
+        zone,
+        shippingZoneId: zone.id,
+        fulfilmentLocationIds: await this.stockLocations.candidatesFor({ shippingZoneId: zone.id }, tx),
+        deliveryAddress: entered,
+        shippingAddressSnapshot: toEnteredAddressSnapshot(entered),
+      };
+    }
+    const { shippingAddressId } = params;
     if (!shippingAddressId) throw new BadRequestException('shippingAddressId is required for DELIVERY orders');
-    const address = await this.ensureValidShippingAddress(userId, shippingAddressId, tx);
+    const address = await this.ensureValidShippingAddress(buyer.userId, shippingAddressId, tx);
     assertDeliverableAddress(address);
     const zone = await this.shippingZonesService.deliveryZoneFor(address, tx);
     return {
@@ -486,9 +566,14 @@ export class OrdersService {
     });
   }
 
-  private async ensureValidCart(userId: string, tx?: Prisma.TransactionClient): Promise<Cart & { items: CartItem[] }> {
-    const cart = await this.cartService.getCartOrThrow(userId, tx);
-    if (cart.items.length === 0) throw new NotFoundException(`Cart for user "${userId}" is empty`);
+  private async ensureValidCart(buyer: Buyer, tx?: Prisma.TransactionClient): Promise<Cart & { items: CartItem[] }> {
+    if ('guestCartId' in buyer) {
+      const cart = await this.cartService.getGuestCartOrThrow(buyer.guestCartId, tx);
+      if (cart.items.length === 0) throw new NotFoundException('The guest cart is empty');
+      return cart;
+    }
+    const cart = await this.cartService.getCartOrThrow(buyer.userId, tx);
+    if (cart.items.length === 0) throw new NotFoundException(`Cart for user "${buyer.userId}" is empty`);
     return cart;
   }
 
@@ -500,14 +585,9 @@ export class OrdersService {
     return address;
   }
 
-  private async ensureUserCanOrder(
-    userId: string,
-    cart: Cart & { items: CartItem[] },
-    tx?: Prisma.TransactionClient,
-  ): Promise<void> {
+  private async ensureUserCanOrder(userId: string, tx?: Prisma.TransactionClient): Promise<void> {
     const user = await this.ordersRepository.findUserById(userId, tx);
     if (!user || !user.isActive) throw new BadRequestException(`User "${userId}" is not eligible to place an order`);
-    if (cart.items.length > 50) throw new BadRequestException('Order exceeds maximum item limit of 50');
   }
 
   /**
@@ -519,7 +599,7 @@ export class OrdersService {
    */
   private async buildOrderDetails(
     cartItems: CartItem[],
-    userId: string,
+    buyer: Buyer,
     shipping: Pick<Fulfilment, 'zone' | 'shippingZoneId' | 'fulfilmentLocationIds'>,
     params: Pick<CheckoutParams, 'couponCode' | 'serviceLevel' | 'deliverySlot'>,
     tx: Prisma.TransactionClient | undefined,
@@ -540,18 +620,19 @@ export class OrdersService {
     }
     this.assertOneLocationFills(cartItems, variants, shipping.fulfilmentLocationIds, expired);
     const unique = (ids: (string | null)[]) => [...new Set(ids.filter((id): id is string => id !== null))];
-    const promotions = await this.promotionsService.findForPricing(
+    const facts = await this.promotionsService.findForPricing(
       {
         variantIds: unique(variants.map((variant) => variant.id)),
         productIds: unique(variants.map((variant) => variant.productId)),
         categoryIds: unique(variants.map((variant) => variant.product.categoryId)),
         brandIds: unique(variants.map((variant) => variant.product.brandId)),
       },
-      userId,
+      'userId' in buyer ? buyer.userId : null,
       couponCode,
       now,
       tx,
     );
+    const promotions = 'userId' in buyer ? facts : guestPricingFacts(facts);
     const priceLists = await this.priceListsService.findForPricing(
       unique(variants.map((variant) => variant.id)),
       promotions.customer.groupIds,
@@ -747,12 +828,13 @@ export class OrdersService {
    */
   private async placeOrder(
     tx: Prisma.TransactionClient,
-    userId: string,
     checkout: PricedCheckout,
     params: CreateOrderParams,
     codPhone: string | undefined,
   ): Promise<Order & { items: OrderItem[] }> {
-    const { fulfilment } = checkout;
+    const { fulfilment, buyer } = checkout;
+    const userId = 'userId' in buyer ? buyer.userId : null;
+    const actorId = userId ?? undefined;
     const orderDetails = {
       snapshot: checkout.snapshot,
       couponCodeId: checkout.couponCode?.id,
@@ -766,6 +848,11 @@ export class OrdersService {
       pickupLocationId: fulfilment.pickupLocationId,
       pickupLocationSnapshot: fulfilment.pickupLocationSnapshot,
       shippingZoneName: fulfilment.zone?.name,
+      ...(userId === null && {
+        guestPhone: params.contactPhone,
+        guestPhoneVerifiedAt: checkout.cart.guestPhoneVerifiedAt,
+        contactName: params.contactName,
+      }),
     };
     const cartId = checkout.cart.id;
     const isCod = orderDetails.paymentMethod === PaymentMethod.CASH_ON_DELIVERY;
@@ -799,7 +886,7 @@ export class OrdersService {
             expiresAt,
             locationId: stockLocationId,
           },
-          userId,
+          actorId,
         ));
       if (!reserved) throw outOfStock(item.sku);
     }
@@ -825,7 +912,7 @@ export class OrdersService {
       newOrder.id,
       OrderStatus.CONFIRMED,
       [OrderStatus.PLACED],
-      { actorId: userId, reason: 'Cash on delivery accepted' },
+      { actorId, reason: 'Cash on delivery accepted' },
     );
     if (!confirmed) throw this.changedMeanwhile(newOrder.id);
     return confirmed;

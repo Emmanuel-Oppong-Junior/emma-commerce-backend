@@ -386,7 +386,7 @@ type CashOnDeliveryAvailability {
   available: Boolean!
 
   """
-  Whether the account's phone number is verified (required once for cash on delivery)
+  Whether the account's phone number is verified (required once for cash on delivery); for a guest checkout, whether the guest's phone is verified (guests pay online only: reason GUEST_CHECKOUT)
   """
   phoneVerified: Boolean!
 
@@ -700,6 +700,7 @@ Why cash on delivery is not available for a checkout (the customer can still pay
 """
 enum CodUnavailableReason {
   BLOCKED
+  GUEST_CHECKOUT
   NOT_OFFERED
   OPEN_ORDER_LIMIT
   ORDER_TOTAL_ABOVE_CAP
@@ -1000,6 +1001,48 @@ input CreateDeliverySlotInput {
   isActive: Boolean = true
   startTime: String!
   weekday: Weekday!
+}
+
+input CreateGuestOrderInput {
+  """Optional: receipts and updates are emailed only when given"""
+  contactEmail: String
+
+  """Who the order is for (1-100 characters)"""
+  contactName: String!
+
+  """Optional coupon code to apply to the order"""
+  couponCode: String
+
+  """
+  STANDARD delivery to a zone with slots (deliverySlotRequired): one of deliverySlots. BAD_REQUEST with reason DELIVERY_SLOT_UNAVAILABLE when it cannot be booked, CONFLICT with reason SLOT_FULL when it has no place left
+  """
+  deliverySlot: DeliverySlotChoiceInput
+
+  """
+  Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
+  """
+  fulfillmentType: FulfillmentType!
+
+  """
+  ONLINE (pay now by card or mobile money, see availablePaymentMethods) or CASH_ON_DELIVERY. BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer it
+  """
+  paymentMethod: OrderPaymentMethod = ONLINE
+
+  """
+  Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
+  """
+  pickupLocationId: ID
+
+  """quoteHash from guestCheckoutQuote for the same fulfilment and coupon"""
+  quoteHash: String!
+
+  """
+  DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
+  """
+  serviceLevel: DeliveryServiceLevel = STANDARD
+
+  """Required when fulfillmentType is DELIVERY"""
+  shippingAddress: CreateAddressInput
 }
 
 input CreateOrderInput {
@@ -1891,7 +1934,9 @@ type FlaggedOrder {
   """The open flags, oldest first"""
   reviewFlags: [OrderReviewFlagEntity!]!
   status: OrderStatus!
-  userId: ID!
+
+  """The customer; null for a guest order (P6-G.1) not yet attached"""
+  userId: ID
 }
 
 input ForgotPasswordInput {
@@ -1937,6 +1982,129 @@ enum GhanaRegion {
   VOLTA
   WESTERN
   WESTERN_NORTH
+}
+
+"""
+A guest cart (P6-G.1): shopping and checkout without an account, by its token
+"""
+type GuestCart {
+  createdAt: DateTime!
+
+  """
+  When the cart and its token expire unless used again (each guest cart call extends it)
+  """
+  expiresAt: DateTime!
+  id: ID!
+  items: [CartItem!]!
+
+  """Last 3 digits of the phone a code was sent to, if any"""
+  phoneLast3: String
+
+  """
+  Whether that phone was verified with the SMS code (createGuestOrder needs it)
+  """
+  phoneVerified: Boolean!
+  updatedAt: DateTime!
+}
+
+"""A new guest cart and the token every guest cart call takes"""
+type GuestCartSession {
+  cart: GuestCart!
+
+  """
+  Keep it on the device (it is shown only now and never stored by the server); it expires after 30 days unused
+  """
+  guestCartToken: String!
+}
+
+"""
+checkoutQuote for a guest cart: like CheckoutQuoteInput, with the delivery address itself instead of a saved one
+"""
+input GuestCheckoutQuoteInput {
+  """Optional coupon code to apply to the order"""
+  couponCode: String
+
+  """
+  STANDARD delivery to a zone with slots (deliverySlotRequired): one of deliverySlots. BAD_REQUEST with reason DELIVERY_SLOT_UNAVAILABLE when it cannot be booked, CONFLICT with reason SLOT_FULL when it has no place left
+  """
+  deliverySlot: DeliverySlotChoiceInput
+
+  """
+  Choose DELIVERY (requires a shipping address) or PICKUP (requires a pickup location)
+  """
+  fulfillmentType: FulfillmentType!
+
+  """
+  ONLINE (pay now by card or mobile money, see availablePaymentMethods) or CASH_ON_DELIVERY. BAD_REQUEST with reason PAYMENT_METHOD_UNAVAILABLE when the store does not offer it
+  """
+  paymentMethod: OrderPaymentMethod = ONLINE
+
+  """
+  Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
+  """
+  pickupLocationId: ID
+
+  """
+  DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
+  """
+  serviceLevel: DeliveryServiceLevel = STANDARD
+
+  """Required when fulfillmentType is DELIVERY"""
+  shippingAddress: CreateAddressInput
+}
+
+"""
+A guest order as its guest sees it (P6-G.1), read with its order access token: no account, staff or actor details
+"""
+type GuestOrder {
+  adjustments: [OrderAdjustment!]!
+  contactEmail: String
+  contactName: String
+  contactPhone: String!
+  createdAt: DateTime!
+  currency: Currency!
+  discountTotal: Money
+  fulfillmentType: FulfillmentType!
+  grandTotal: Money!
+  id: ID!
+  items: [OrderItem!]!
+  orderNumber: Int!
+  paymentMethod: OrderPaymentMethod!
+
+  """The order payment's status"""
+  paymentStatus: OrderPaymentStatus
+
+  """The pickup point as ordered"""
+  pickupLocationSnapshot: JSON
+  serviceLevel: DeliveryServiceLevel
+
+  """The delivery address as ordered"""
+  shippingAddressSnapshot: JSON
+  shippingTotal: Money
+  shippingZoneName: String
+  status: OrderStatus!
+  subtotal: Money
+  taxTotal: Money
+
+  """Order and shipment status changes, oldest first"""
+  trackingTimeline: [TrackingStep!]!
+}
+
+"""The placed guest order and the token to read, pay and track it"""
+type GuestOrderPlacement {
+  order: GuestOrder!
+
+  """
+  Gives access to this order only (guestOrder, POST /payment/guest/initialize, verifyGuestPayment) and claims its verified phone at signUp; it is also in the order SMS and email link
+  """
+  orderAccessToken: String!
+}
+
+input GuestPhoneInput {
+  """
+  The phone to verify and place the order with: Ghana number as 0XXXXXXXXX, 233XXXXXXXXX, +233XXXXXXXXX or 00233XXXXXXXXX (spaces, dashes, dots and parentheses are ignored); stored as +233XXXXXXXXX
+  """
+  phone: String!
 }
 
 """A message in your in-app notification feed"""
@@ -2132,6 +2300,13 @@ type Mutation {
   """Adds a product to the user’s cart"""
   addToCart(input: AddToCartInput!): Cart!
 
+  """Add a variant to the guest cart (as addToCart)"""
+  addToGuestCart(
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+    input: AddToCartInput!
+  ): GuestCart!
+
   """Adds a product to the user’s wishlist"""
   addToWishlist(productId: String!): Wishlist!
 
@@ -2254,6 +2429,18 @@ type Mutation {
 
   """Add a weekly delivery window to a zone (STANDARD delivery). Audited"""
   createDeliverySlot(input: CreateDeliverySlotInput!, zoneId: ID!): DeliverySlotEntity!
+
+  """Start a guest cart; every guest cart call takes its token"""
+  createGuestCart: GuestCartSession!
+
+  """
+  Place the guest order at the guestCheckoutQuote price, paid online (then POST /payment/guest/initialize). BAD_REQUEST with reason GUEST_PHONE_NOT_VERIFIED before verifyGuestPhone; CONFLICT with reason QUOTE_CHANGED; FORBIDDEN with reason VELOCITY_LIMIT when too many orders came from the phone or network
+  """
+  createGuestOrder(
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+    input: CreateGuestOrderInput!
+  ): GuestOrderPlacement!
 
   """
   Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it; FORBIDDEN with reason VELOCITY_LIMIT when too many orders came from the same account, phone number or network in a short time
@@ -2551,6 +2738,14 @@ type Mutation {
   """Removes a specific item from the user’s cart"""
   removeFromCart(cartItemId: String!): Cart!
 
+  """Remove a line from the guest cart"""
+  removeFromGuestCart(
+    cartItemId: String!
+
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+  ): GuestCart!
+
   """Removes a product from the user’s wishlist"""
   removeFromWishlist(productId: String!): Wishlist!
 
@@ -2598,6 +2793,15 @@ type Mutation {
   Reports a published review to staff; once per customer and review (ALREADY_REPORTED)
   """
   reportReview(input: ReportContentInput!): Boolean!
+
+  """
+  Text a 6-digit code to the phone the guest orders with (valid 10 minutes; same limits as requestPhoneVerification: BAD_REQUEST with reason OTP_RATE_LIMITED, PHONE_ALREADY_VERIFIED). A new number replaces a verified one
+  """
+  requestGuestPhoneVerification(
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+    input: GuestPhoneInput!
+  ): PhoneVerificationRequest!
 
   """
   Text a 6-digit code to the current user's phone number (valid 10 minutes, replacing an earlier one). BAD_REQUEST with reason PHONE_REQUIRED (no number on the profile), PHONE_ALREADY_VERIFIED, or OTP_RATE_LIMITED (limit: COOLDOWN 60 s between codes, PHONE_DAILY 5 per number or ACCOUNT_DAILY 10 per account a day; retryAfterSeconds)
@@ -2770,6 +2974,15 @@ type Mutation {
   updateDisputeStatus(input: UpdateDisputeStatusInput!): DisputeEntity!
 
   """
+  Set the quantity of a guest cart line, 0 removes it (as updateCartItem)
+  """
+  updateGuestCartItem(
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+    input: UpdateCartItemInput!
+  ): GuestCart!
+
+  """
   Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.
   """
   updateMyProfile(
@@ -2878,6 +3091,24 @@ type Mutation {
   Verify an email address with the token from the verification email. Completes a pending email change (signing the user out everywhere) if one is in progress.
   """
   verifyEmail(input: VerifyEmailInput!): Boolean!
+
+  """
+  Check a payment of the guest order with the provider after its redirect (as verifyPayment); FORBIDDEN for a reference of another order
+  """
+  verifyGuestPayment(
+    """The token createGuestOrder returned"""
+    orderAccessToken: String!
+    reference: String!
+  ): GuestOrder!
+
+  """
+  Confirm the guest phone with the code from the SMS. BAD_REQUEST with reason OTP_INVALID (attemptsRemaining), OTP_ATTEMPTS_EXCEEDED, OTP_EXPIRED or PHONE_REQUIRED (no code requested)
+  """
+  verifyGuestPhone(
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+    input: VerifyPhoneInput!
+  ): GuestCart!
   verifyPayment(verifyPaymentInput: VerifyPaymentInput!): Payment!
 
   """
@@ -2954,8 +3185,13 @@ type Order {
   """Product discounts (per line) and the coupon, as placed"""
   adjustments: [OrderAdjustment!]!
 
-  """Contact email for order notifications"""
-  contactEmail: String!
+  """
+  Contact email for order notifications; null only on a guest order placed without one
+  """
+  contactEmail: String
+
+  """Guest orders (P6-G.1): the name the guest gave; null otherwise"""
+  contactName: String
 
   """Contact phone number for delivery coordination"""
   contactPhone: String!
@@ -3053,7 +3289,11 @@ type Order {
   trackingTimeline: [TrackingStep!]!
   updatedAt: DateTime!
   user: User
-  userId: ID!
+
+  """
+  The customer; null for a guest order (P6-G.1) until an account verifies its phone and takes it over
+  """
+  userId: ID
 }
 
 """A discount or coupon taken off the order when it was placed"""
@@ -4390,6 +4630,27 @@ type Query {
   getMyPayments: [Payment!]!
   getUserPayment(userId: String!): [Payment!]!
 
+  """The guest cart; NOT_FOUND for an unknown or expired token"""
+  guestCart(
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+  ): GuestCart!
+
+  """
+  checkoutQuote for the guest cart: the same breakdown and quoteHash, priced as a visitor (no customer-group, first-order or per-customer-limit promotions: BAD_REQUEST with reason COUPON_NEEDS_ACCOUNT for such a coupon). CASH_ON_DELIVERY: BAD_REQUEST with reason COD_NOT_AVAILABLE and codReason GUEST_CHECKOUT
+  """
+  guestCheckoutQuote(
+    """The token createGuestCart returned"""
+    guestCartToken: String!
+    input: GuestCheckoutQuoteInput!
+  ): CheckoutQuote!
+
+  """The guest order of the access token; NOT_FOUND for any other token"""
+  guestOrder(
+    """The token createGuestOrder returned"""
+    orderAccessToken: String!
+  ): GuestOrder!
+
   """
   Shipments assigned to the signed-in rider: open ones by default, oldest assignment first
   """
@@ -5193,7 +5454,9 @@ input RecordStockTakeCountsInput {
 type Redemption {
   couponCodeId: ID
   createdAt: DateTime!
-  customerId: ID!
+
+  """The customer; null for a guest order (P6-G.1) not yet attached"""
+  customerId: ID
   id: ID!
   orderId: ID!
   promotionId: ID!
@@ -6062,6 +6325,11 @@ input SignOutInput {
 input SignUpInput {
   """Email address"""
   email: String!
+
+  """
+  A guest order access token (createGuestOrder.orderAccessToken, P6-G.1): the phone the guest verified becomes the account's verified phone and the guest orders placed with it move to the account. BAD_REQUEST with reason INVALID_GUEST_ORDER_TOKEN or GUEST_VERIFICATION_EXPIRED (verified over 30 days ago), CONFLICT with reason PHONE_IN_USE (another account holds the number)
+  """
+  guestOrderToken: String
 
   """User's name"""
   name: String!

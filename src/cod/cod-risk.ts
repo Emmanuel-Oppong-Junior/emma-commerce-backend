@@ -19,6 +19,8 @@ export enum CodUnavailableReason {
   OPEN_ORDER_LIMIT = 'OPEN_ORDER_LIMIT',
   /** The grand total is above the cash-on-delivery cap. */
   ORDER_TOTAL_ABOVE_CAP = 'ORDER_TOTAL_ABOVE_CAP',
+  /** A guest checkout (P6-G.1): cash on delivery needs an account with a verified phone. */
+  GUEST_CHECKOUT = 'GUEST_CHECKOUT',
 }
 
 export interface CodRiskSettings {
@@ -59,6 +61,7 @@ const REFUSAL_MESSAGES: Record<CodUnavailableReason, string> = {
   SHIPPING_ZONE_EXCLUDED: 'Cash on delivery is not available in this delivery area; pay online instead',
   OPEN_ORDER_LIMIT: 'You have the most open cash-on-delivery orders allowed; pay online or wait for them to arrive',
   ORDER_TOTAL_ABOVE_CAP: 'This order is above the cash-on-delivery limit; pay online instead',
+  GUEST_CHECKOUT: 'Cash on delivery needs an account with a verified phone; sign in or pay online',
 };
 
 /**

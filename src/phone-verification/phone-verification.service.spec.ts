@@ -8,9 +8,15 @@ const PHONE = '+233244123456';
 function setup(user: object | null = { phoneNumber: PHONE, phoneVerifiedAt: null, phoneVerifiedNumber: null }) {
   const prisma = {
     user: { findUnique: jest.fn().mockResolvedValue(user), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    $transaction: jest.fn(),
   };
+  prisma.$transaction.mockImplementation((work: (tx: unknown) => Promise<unknown>) => work(prisma));
+  const guestOrderClaims = { attachToAccount: jest.fn().mockResolvedValue([]) };
   const store = { issue: jest.fn().mockResolvedValue({ issued: true }), verify: jest.fn() };
-  const notifications = { queuePhoneOtpSms: jest.fn().mockResolvedValue(undefined) };
+  const notifications = {
+    queuePhoneOtpSms: jest.fn().mockResolvedValue(undefined),
+    queueGuestPhoneOtpSms: jest.fn().mockResolvedValue(undefined),
+  };
   const sms = { canSend: true };
   const logger = { log: jest.fn(), warn: jest.fn() };
   const config = { getOrThrow: () => MFA_KEY };
@@ -20,9 +26,10 @@ function setup(user: object | null = { phoneNumber: PHONE, phoneVerifiedAt: null
     notifications as never,
     sms as never,
     logger as never,
+    guestOrderClaims as never,
     config as never,
   );
-  return { service, prisma, store, notifications, sms, logger };
+  return { service, prisma, store, notifications, sms, logger, guestOrderClaims };
 }
 
 async function reasonOf(promise: Promise<unknown>): Promise<unknown> {
@@ -153,6 +160,56 @@ describe('PhoneVerificationService', () => {
       store.verify.mockResolvedValue(outcome);
       await expect(reasonOf(service.verifyCode('u1', '000000'))).resolves.toEqual(extensions);
       expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('attaches the guest orders placed with the phone it verifies, in the same transaction (P6-G.1)', async () => {
+      const { service, store, prisma, guestOrderClaims } = setup();
+      store.verify.mockResolvedValue({ result: 'MATCH' });
+
+      await service.verifyCode('u1', '123456');
+
+      expect(guestOrderClaims.attachToAccount).toHaveBeenCalledWith('u1', PHONE, prisma);
+    });
+
+    it('attaches nothing on a wrong code', async () => {
+      const { service, store, guestOrderClaims } = setup();
+      store.verify.mockResolvedValue({ result: 'MISMATCH', attemptsLeft: 4 });
+      await expect(reasonOf(service.verifyCode('u1', '000000'))).resolves.toEqual({
+        reason: 'OTP_INVALID',
+        attemptsRemaining: 4,
+      });
+      expect(guestOrderClaims.attachToAccount).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('guest codes (P6-G.1)', () => {
+    it('binds the code to the guest cart and the phone, and queues it with the cart as the recipient', async () => {
+      const { service, store, notifications } = setup();
+
+      await expect(service.requestGuestCode('cart1', PHONE)).resolves.toMatchObject({ phoneLast3: '456' });
+
+      const [cartId, to, code] = notifications.queueGuestPhoneOtpSms.mock.calls[0] as [string, string, string];
+      expect([cartId, to]).toEqual(['cart1', PHONE]);
+      const hashKey = otpHashKey(Buffer.from(MFA_KEY, 'hex'));
+      expect(store.issue).toHaveBeenCalledWith('guest:cart1', PHONE, hashOtp(hashKey, 'guest:cart1', PHONE, code));
+    });
+
+    it("checks a guest's code against the cart it was sent for", async () => {
+      const { service, store } = setup();
+      store.verify.mockResolvedValue({ result: 'MATCH' });
+
+      await service.checkGuestCode('cart1', PHONE, '123456');
+
+      const hashKey = otpHashKey(Buffer.from(MFA_KEY, 'hex'));
+      expect(store.verify).toHaveBeenCalledWith('guest:cart1', PHONE, hashOtp(hashKey, 'guest:cart1', PHONE, '123456'));
+    });
+
+    it('refuses a wrong guest code', async () => {
+      const { service, store } = setup();
+      store.verify.mockResolvedValue({ result: 'NO_CODE' });
+      await expect(reasonOf(service.checkGuestCode('cart1', PHONE, '123456'))).resolves.toEqual({
+        reason: 'OTP_EXPIRED',
+      });
     });
   });
 

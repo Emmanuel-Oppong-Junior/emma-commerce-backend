@@ -212,8 +212,8 @@ export class Redemption {
   @Field(() => ID, { nullable: true })
   couponCodeId: string | null;
 
-  @Field(() => ID)
-  customerId: string;
+  @Field(() => ID, { nullable: true, description: 'The customer; null for a guest order (P6-G.1) not yet attached' })
+  customerId: string | null;
 
   @Field(() => ID)
   orderId: string;

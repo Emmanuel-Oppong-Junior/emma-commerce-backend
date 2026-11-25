@@ -6,7 +6,7 @@ import { VelocityHit, VelocityLimits } from './velocity-rules';
 export interface FlaggedOrderRecord {
   id: string;
   orderNumber: number;
-  userId: string;
+  userId: string | null;
   status: OrderStatus;
   grandTotal: Prisma.Decimal;
   currency: string;

@@ -48,7 +48,7 @@ export interface ShipmentLineFacts {
 
 export interface SerialLookup extends SerialUnit {
   variant: { id: string; sku: string; product: { id: string; name: string } };
-  orderItem: { id: string; order: { id: string; orderNumber: number; userId: string } } | null;
+  orderItem: { id: string; order: { id: string; orderNumber: number; userId: string | null } } | null;
 }
 
 /** Per (variant, location) of a tracked product: units on the shelf against what the stock ledger expects there. */

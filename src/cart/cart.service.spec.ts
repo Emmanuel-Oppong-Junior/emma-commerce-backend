@@ -58,6 +58,10 @@ describe('CartService', () => {
     items: [{ ...mockCartItem, product: mockProduct }] as unknown as CartItem[],
     createdAt: fixedDate,
     updatedAt: fixedDate,
+    guestTokenHash: null,
+    guestExpiresAt: null,
+    guestPhone: null,
+    guestPhoneVerifiedAt: null,
   };
   const emptyCart: Cart & { items: CartItem[] } = { ...mockCart, items: [] };
 

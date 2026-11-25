@@ -12,9 +12,10 @@ import { DeliveryCodeModule } from '../delivery/code/delivery-code.module';
 import { NotificationsRepository } from './notifications.repository';
 import { NotificationDispatcher } from './notification-dispatcher';
 import { MarketingLinks } from './marketing-links';
+import { GuestOrderAccessModule } from '../guest-checkout/guest-order-access';
 
 @Module({
-  imports: [CommonsModule, InventoryModule, DeliveryCodeModule],
+  imports: [CommonsModule, InventoryModule, DeliveryCodeModule, GuestOrderAccessModule],
   providers: [
     NotificationsService,
     NotificationSender,

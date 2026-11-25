@@ -26,8 +26,11 @@ export class Order {
   @Field(() => Int, { description: 'Auto-generated sequential order reference number' })
   orderNumber: number;
 
-  @Field(() => ID)
-  userId: string;
+  @Field(() => ID, {
+    nullable: true,
+    description: 'The customer; null for a guest order (P6-G.1) until an account verifies its phone and takes it over',
+  })
+  userId: string | null;
 
   @Field(() => CurrencyEnum)
   currency: Currency;
@@ -99,8 +102,17 @@ export class Order {
   @Field(() => FulfillmentTypeEnum, { description: 'Whether the order is for delivery or pickup' })
   fulfillmentType: FulfillmentType;
 
-  @Field({ description: 'Contact email for order notifications' })
-  contactEmail: string;
+  @Field(() => String, {
+    nullable: true,
+    description: 'Contact email for order notifications; null only on a guest order placed without one',
+  })
+  contactEmail: string | null;
+
+  @Field(() => String, {
+    nullable: true,
+    description: 'Guest orders (P6-G.1): the name the guest gave; null otherwise',
+  })
+  contactName?: string | null;
 
   @Field({ description: 'Contact phone number for delivery coordination' })
   contactPhone: string;

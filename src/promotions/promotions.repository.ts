@@ -331,7 +331,13 @@ export class PromotionsRepository {
 
   async createRedemption(
     tx: Prisma.TransactionClient,
-    data: { promotionId: string; couponCodeId: string | null; customerId: string; orderId: string; units: number },
+    data: {
+      promotionId: string;
+      couponCodeId: string | null;
+      customerId: string | null;
+      orderId: string;
+      units: number;
+    },
   ): Promise<void> {
     await tx.redemption.create({ data });
   }

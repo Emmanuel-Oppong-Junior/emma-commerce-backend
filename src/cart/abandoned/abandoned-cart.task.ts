@@ -85,12 +85,16 @@ export class AbandonedCartTask {
     return run;
   }
 
-  /** Active customers' carts with a line changed in the reminder window, and what the decision needs about them. */
-  private candidates(tx: Prisma.TransactionClient, now: Date, delayHours: number) {
+  /**
+   * Active customers' carts with a line changed in the reminder window, and what the decision needs about them. Guest
+   * carts (P6-G.1) have no account, so no consent, and are never reminded.
+   */
+  private async candidates(tx: Prisma.TransactionClient, now: Date, delayHours: number) {
     const changedBefore = new Date(now.getTime() - delayHours * HOUR_MS);
     const changedAfter = new Date(now.getTime() - ABANDONED_CART_MAX_AGE_HOURS * HOUR_MS);
-    return tx.cart.findMany({
+    const carts = await tx.cart.findMany({
       where: {
+        userId: { not: null },
         user: {
           isActive: true,
           notificationPreferences: { some: { category: NotificationCategory.MARKETING, enabled: true } },
@@ -120,6 +124,7 @@ export class AbandonedCartTask {
       orderBy: { userId: 'asc' },
       take: ABANDONED_CART_BATCH,
     });
+    return carts.flatMap(({ userId, user, items }) => (userId && user ? [{ userId, user, items }] : []));
   }
 }
 

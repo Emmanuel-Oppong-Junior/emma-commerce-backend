@@ -123,8 +123,8 @@ export class FlaggedOrder {
   @Field(() => Int)
   orderNumber: number;
 
-  @Field(() => ID)
-  userId: string;
+  @Field(() => ID, { nullable: true, description: 'The customer; null for a guest order (P6-G.1) not yet attached' })
+  userId: string | null;
 
   @Field(() => OrderStatusEnum)
   status: OrderStatus;

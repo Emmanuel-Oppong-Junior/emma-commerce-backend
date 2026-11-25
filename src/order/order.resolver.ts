@@ -160,6 +160,6 @@ export class OrdersResolver {
 
   @ResolveField(() => User, { nullable: true, middleware: [ownerOrAdmin<Order>((order) => order.userId)] })
   async user(@Parent() order: Order) {
-    return this.usersLoader.loader.load(order.userId);
+    return order.userId === null ? null : this.usersLoader.loader.load(order.userId);
   }
 }

@@ -24,6 +24,7 @@ import { RefundsService } from './refunds.service';
 import { RefundRepository } from './refund.repository';
 import { ReturnFilter, ReturnsRepository, ReturnWithLines } from './returns.repository';
 import { transitionReturn } from './return-transition';
+import { GUEST_ORDER_NOT_ATTACHED } from '../guest-checkout/guest-order-claims';
 import { assertReturnTransition, CUSTOMER_CANCELLABLE_RETURN, REJECTABLE_RETURN } from './return-status';
 import {
   checkReturnLines,
@@ -126,6 +127,13 @@ export class ReturnsService {
       async (tx) => {
         const order = await this.repository.lockOrder(tx, params.orderId);
         if (!order || order.deleted) throw new NotFoundException(`Order "${params.orderId}" not found`);
+        // Returns belong to an account (P6-G.1): a guest order is returned once its phone is claimed by an account.
+        if (order.userId === null) {
+          throw new BadRequestException({
+            message: 'This guest order has no account yet: the customer signs up or verifies the phone it used first',
+            extensions: { reason: GUEST_ORDER_NOT_ATTACHED },
+          });
+        }
         const lines = await this.checkRequest(tx, params, true);
         const request = await this.repository.create(tx, {
           orderId: order.id,

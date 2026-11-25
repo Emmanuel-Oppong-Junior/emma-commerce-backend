@@ -65,6 +65,7 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
     cartUrl: () => 'https://shop.example.com/cart',
     unsubscribeUrl: (userId: string) => `https://shop.example.com/unsubscribe?token=t-${userId}`,
   };
+  const guestOrderAccess = { urlFor: (orderId: string) => `https://shop.example.com/guest-order#token=${orderId}.sig` };
   return {
     lowStockAlerts,
     notifications,
@@ -79,6 +80,7 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
       readyForPickup as never,
       deliveryCodes as never,
       marketingLinks as never,
+      guestOrderAccess as never,
       config as never,
     ),
     prisma,

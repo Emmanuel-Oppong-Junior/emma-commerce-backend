@@ -53,6 +53,8 @@ export interface TemplateData {
     grandTotal: string;
     cashOnDelivery: boolean;
   };
+  /** A guest order (P6-G.1): the receipt plus the link to view, pay and track it without an account. */
+  'order.guest_placed': TemplateData['order.placed'] & { orderUrl: string };
   /** Events recorded before P1-O.2 (order.status_changed.v1), with the old status names. */
   'order.updated': { orderNumber: number; status: string; trackingNumber: string | null };
   'order.completed': { orderNumber: number };
@@ -118,7 +120,7 @@ function outForDeliveryText({ orderNumber, carrier, trackingNumber }: TemplateDa
   return `Your order ${order(orderNumber)} is out for delivery${via}.${tracking}`;
 }
 
-function placedEmail(data: TemplateData['order.placed']): EmailContent {
+function placedEmail(data: TemplateData['order.placed'], orderUrl: string | null = null): EmailContent {
   const money = (amount: string) => formatMoney(amount, data.currency);
   const discount = data.discountTotal && data.discountTotal !== '0.00' ? money(data.discountTotal) : null;
   const shipping = data.shippingTotal !== null ? money(data.shippingTotal) : null;
@@ -132,10 +134,11 @@ function placedEmail(data: TemplateData['order.placed']): EmailContent {
   const discountRow = discount && markup`<tr><td>Discount</td><td>-${discount}</td></tr>`;
   const shippingRow = shipping && markup`<tr><td>Delivery</td><td>${shipping}</td></tr>`;
   const totalRow = markup`<tr><td><strong>Total</strong></td><td><strong>${total}</strong></td></tr>`;
+  const link = orderUrl && markup`<p><a href="${orderUrl}">View, pay and track your order</a></p>`;
   return email(
     `Order ${order(data.orderNumber)} received`,
     'Thank you for your order',
-    markup`<p>Your order <strong>${order(data.orderNumber)}</strong> has been placed.</p><table>${rows}${discountRow}${shippingRow}${totalRow}</table><p>${payment}</p>`,
+    markup`<p>Your order <strong>${order(data.orderNumber)}</strong> has been placed.</p><table>${rows}${discountRow}${shippingRow}${totalRow}</table><p>${payment}</p>${link}`,
     [
       `Your order ${order(data.orderNumber)} has been placed.`,
       ...data.lines.map((line) => `${line.quantity} x ${line.productName}: ${money(line.lineTotal)}`),
@@ -143,6 +146,7 @@ function placedEmail(data: TemplateData['order.placed']): EmailContent {
       ...(shipping ? [`Delivery: ${shipping}`] : []),
       `Total: ${total}`,
       payment,
+      ...(orderUrl ? [`View, pay and track your order: ${orderUrl}`] : []),
     ],
   );
 }
@@ -318,6 +322,17 @@ const NOTIFICATION_TEMPLATES: { [K in TemplateKey]: TemplateDefinition<TemplateD
       },
     },
   },
+  'order.guest_placed': {
+    version: 1,
+    category: NotificationCategory.TRANSACTIONAL,
+    locales: {
+      en: {
+        email: (data) => placedEmail(data, data.orderUrl),
+        sms: ({ orderNumber, grandTotal, currency, orderUrl }) =>
+          `Order ${order(orderNumber)} placed: ${formatMoney(grandTotal, currency)}. Pay and track it at ${orderUrl}`,
+      },
+    },
+  },
   'order.updated': {
     version: 1,
     category: NotificationCategory.TRANSACTIONAL,
@@ -428,7 +443,7 @@ const NOTIFICATION_TEMPLATES: { [K in TemplateKey]: TemplateDefinition<TemplateD
     },
   },
   'payment.received': {
-    version: 2,
+    version: 3,
     category: NotificationCategory.TRANSACTIONAL,
     locales: {
       en: {
@@ -441,6 +456,8 @@ const NOTIFICATION_TEMPLATES: { [K in TemplateKey]: TemplateDefinition<TemplateD
             [`We received your payment of ${paid} for order ${order(orderNumber)}.`],
           );
         },
+        sms: ({ orderNumber, amount, currency }) =>
+          `We received your payment of ${formatMoney(amount, currency)} for order ${order(orderNumber)}. Thank you.`,
         inApp: ({ orderNumber, amount, currency }) => ({
           title: 'Payment received',
           body: `We received your payment of ${formatMoney(amount, currency)} for order ${order(orderNumber)}.`,

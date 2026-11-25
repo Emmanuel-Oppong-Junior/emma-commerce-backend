@@ -19,6 +19,16 @@ import { TemplateData, TemplateKey } from './templates/templates';
 import { maskEmail } from './email/email.service';
 import { MarketingLinks } from './marketing-links';
 import { variantLabel } from '../cart/abandoned/abandoned-cart';
+import { GuestOrderAccess } from '../guest-checkout/guest-order-access';
+
+/** The order fields a customer message needs: who it goes to (account, or guest contact) and what it says. */
+interface OrderRecipient {
+  id: string;
+  userId: string | null;
+  contactEmail: string | null;
+  guestPhone: string | null;
+  user: { email: string } | null;
+}
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -39,7 +49,9 @@ export function passwordResetUrl(frontendUrl: string, resetToken: string): strin
 /**
  * Turns one notifications-queue job into the messages it stands for, each rendered from the template registry and
  * recorded as a Notification row by the dispatcher. Outbox events carry ids only, so the recipient is read when
- * sending; direct jobs carry their recipient. Throws on a failed send so the queue retries.
+ * sending; direct jobs carry their recipient. Throws on a failed send so the queue retries. A guest order (P6-G.1) is
+ * emailed at its contact email when it has one and texted at its verified phone (placed, with its access link, and
+ * paid); it has no in-app feed, and its rows name the order instead of an account.
  */
 @Injectable()
 export class NotificationSender {
@@ -55,6 +67,7 @@ export class NotificationSender {
     private readonly readyForPickup: ReadyForPickupNotifier,
     private readonly deliveryCodes: DeliveryCodes,
     private readonly marketingLinks: MarketingLinks,
+    private readonly guestOrderAccess: GuestOrderAccess,
     config: ConfigService,
   ) {
     this.frontendUrl = config.getOrThrow<string>('FRONTEND_URL');
@@ -80,6 +93,12 @@ export class NotificationSender {
           grandTotal: order.grandTotal.toFixed(2),
           cashOnDelivery: order.paymentMethod === PaymentMethod.CASH_ON_DELIVERY,
         };
+        if (order.userId === null) {
+          const guestPlaced = { ...placed, orderUrl: this.guestOrderAccess.urlFor(order.id) };
+          await this.emailOrder(order, jobId, 'order.guest_placed', guestPlaced);
+          await this.smsGuestOrder(order, jobId, 'order.guest_placed', guestPlaced);
+          return;
+        }
         await this.emailOrder(order, jobId, 'order.placed', placed);
         await this.inAppOrder(order, jobId, 'order.placed', placed);
         return;
@@ -148,6 +167,7 @@ export class NotificationSender {
         const received = { orderNumber: order.orderNumber, amount: payload.amount, currency: order.currency };
         await this.emailOrder(order, jobId, 'payment.received', received);
         await this.inAppOrder(order, jobId, 'payment.received', received);
+        await this.smsGuestOrder(order, jobId, 'payment.received', received);
         return;
       }
       case 'refund.succeeded.v1': {
@@ -255,6 +275,18 @@ export class NotificationSender {
       }
       case 'sms.phone_otp.v1': {
         const job = data as SmsJobData['sms.phone_otp.v1'];
+        if (job.guestCartId) {
+          await this.dispatcher.deliver({
+            dedupeKey: job.dedupeKey ?? `${jobId}:${NotificationChannel.SMS}`,
+            userId: null,
+            template: 'account.phone_otp',
+            data: { code: job.code, expiresInMinutes: job.expiresInMinutes },
+            channel: NotificationChannel.SMS,
+            to: job.to,
+            ref: { type: 'GuestCart', id: job.guestCartId },
+          });
+          return;
+        }
         const userId = job.userId ?? (await this.userIdByPhone(job.to));
         if (!userId) {
           this.logger.warn(`No SMS sent: no account for the phone | job: ${jobName} | jobId: ${jobId}`, CONTEXT);
@@ -273,7 +305,19 @@ export class NotificationSender {
       case 'sms.shipment_milestone.v1':
         return this.sendShipmentSms(data as SmsJobData['sms.shipment_milestone.v1'], jobId);
       case 'sms.ready_for_pickup.v1': {
-        const { to, notice, userId } = data as SmsJobData['sms.ready_for_pickup.v1'];
+        const { to, notice, userId, guestOrderId } = data as SmsJobData['sms.ready_for_pickup.v1'];
+        if (guestOrderId) {
+          await this.dispatcher.deliver({
+            dedupeKey: `${jobId}:${NotificationChannel.SMS}`,
+            userId: null,
+            template: 'shipment.ready_for_pickup',
+            data: notice,
+            channel: NotificationChannel.SMS,
+            to,
+            ref: { type: 'Order', id: guestOrderId },
+          });
+          return;
+        }
         const recipientId = userId ?? (await this.userIdByOrderNumber(notice.orderNumber));
         if (!recipientId) {
           this.logger.warn(`No SMS sent: pickup order not found | orderNumber: ${notice.orderNumber}`, CONTEXT);
@@ -311,6 +355,7 @@ export class NotificationSender {
             orderNumber: true,
             userId: true,
             contactPhone: true,
+            guestPhone: true,
             shippingAddressSnapshot: true,
             user: { select: { phoneNumber: true, phoneVerifiedAt: true, phoneVerifiedNumber: true } },
           },
@@ -324,7 +369,7 @@ export class NotificationSender {
     const { order } = shipment;
     const addressPhone = (order.shippingAddressSnapshot as { phone?: unknown } | null)?.phone;
     const to = shipmentSmsRecipient({
-      verifiedPhone: verifiedPhoneOf(order.user),
+      verifiedPhone: order.user ? verifiedPhoneOf(order.user) : order.guestPhone,
       addressPhone: typeof addressPhone === 'string' ? addressPhone : null,
       contactPhone: order.contactPhone,
     });
@@ -334,6 +379,7 @@ export class NotificationSender {
       userId: order.userId,
       channel: NotificationChannel.SMS,
       to,
+      ...(order.userId === null && { ref: { type: 'Order' as const, id: orderId } }),
     };
     if (status === ShipmentStatus.DELIVERED) {
       await this.dispatcher.deliver({
@@ -416,9 +462,12 @@ export class NotificationSender {
     });
   }
 
-  /** Emails the order's customer; the row is keyed on the job, so the event running again sends nothing more. */
+  /**
+   * Emails the order's customer (a guest at the contact email, if given); the row is keyed on the job, so the event
+   * running again sends nothing more.
+   */
   private async emailOrder<K extends TemplateKey>(
-    order: { userId: string; user: { email: string } },
+    order: OrderRecipient,
     jobId: string,
     template: K,
     data: TemplateData[K],
@@ -429,18 +478,39 @@ export class NotificationSender {
       template,
       data,
       channel: NotificationChannel.EMAIL,
-      to: order.user.email,
+      to: order.user?.email ?? order.contactEmail,
       idempotencyKey: jobId,
+      ...(order.userId === null && { ref: { type: 'Order' as const, id: order.id } }),
     });
   }
 
-  /** The customer's in-app feed entry for the same event (P6-N.4), linking to the order. */
-  private async inAppOrder<K extends TemplateKey>(
-    order: { id: string; userId: string },
+  /** Texts a guest order's verified phone (accounts get the in-app entry instead); nothing for an account's order. */
+  private async smsGuestOrder<K extends TemplateKey>(
+    order: OrderRecipient,
     jobId: string,
     template: K,
     data: TemplateData[K],
   ): Promise<void> {
+    if (order.userId !== null) return;
+    await this.dispatcher.deliver({
+      dedupeKey: `${jobId}:${NotificationChannel.SMS}`,
+      userId: null,
+      template,
+      data,
+      channel: NotificationChannel.SMS,
+      to: order.guestPhone,
+      ref: { type: 'Order', id: order.id },
+    });
+  }
+
+  /** The customer's in-app feed entry for the same event (P6-N.4), linking to the order; guests have no feed. */
+  private async inAppOrder<K extends TemplateKey>(
+    order: { id: string; userId: string | null },
+    jobId: string,
+    template: K,
+    data: TemplateData[K],
+  ): Promise<void> {
+    if (order.userId === null) return;
     await this.dispatcher.deliver({
       dedupeKey: `${jobId}:${NotificationChannel.IN_APP}`,
       userId: order.userId,
@@ -507,6 +577,8 @@ export class NotificationSender {
         shippingTotal: true,
         discountTotal: true,
         paymentMethod: true,
+        contactEmail: true,
+        guestPhone: true,
         user: { select: { email: true } },
         items: { select: { productName: true, quantity: true, lineTotal: true }, orderBy: { createdAt: 'asc' } },
       },

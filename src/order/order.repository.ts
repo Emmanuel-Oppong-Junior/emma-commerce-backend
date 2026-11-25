@@ -114,9 +114,10 @@ export class OrdersRepository {
   }
 
   /** Writes the PLACED order with its line, tax and adjustment snapshot (the quote) and first history event. */
+  /** `userId` is null for a guest order (P6-G.1), which then carries the guest's verified phone and name. */
   async create(
     tx: Prisma.TransactionClient,
-    userId: string,
+    userId: string | null,
     orderDetails: {
       snapshot: OrderSnapshot;
       fulfillmentType: FulfillmentType;
@@ -126,11 +127,14 @@ export class OrdersRepository {
       pickupLocationSnapshot?: Record<string, unknown>;
       couponCodeId?: string;
       paymentMethod?: PaymentMethod;
-      contactEmail: string;
+      contactEmail: string | null;
       contactPhone: string;
       codPhone?: string;
       stockLocationId?: string;
       shippingZoneName?: string;
+      guestPhone?: string;
+      guestPhoneVerifiedAt?: Date | null;
+      contactName?: string;
     },
   ): Promise<OrderWithItems> {
     const { snapshot } = orderDetails;
@@ -157,6 +161,9 @@ export class OrdersRepository {
         contactEmail: orderDetails.contactEmail,
         contactPhone: orderDetails.contactPhone,
         codPhone: orderDetails.codPhone,
+        guestPhone: orderDetails.guestPhone,
+        guestPhoneVerifiedAt: orderDetails.guestPhoneVerifiedAt,
+        contactName: orderDetails.contactName,
         stockLocationId: orderDetails.stockLocationId,
         shippingZoneId: snapshot.shippingZoneId,
         shippingZoneName: orderDetails.shippingZoneName ?? null,
@@ -455,6 +462,11 @@ export class OrdersRepository {
    */
   async lockCart(tx: Prisma.TransactionClient, userId: string): Promise<void> {
     await tx.$queryRaw`SELECT 1 FROM "Cart" WHERE "userId" = ${userId} FOR NO KEY UPDATE`;
+  }
+
+  /** lockCart for a guest cart (P6-G.1), by its id. */
+  async lockGuestCart(tx: Prisma.TransactionClient, cartId: string): Promise<void> {
+    await tx.$queryRaw`SELECT 1 FROM "Cart" WHERE "id" = ${cartId} FOR NO KEY UPDATE`;
   }
 
   /**
