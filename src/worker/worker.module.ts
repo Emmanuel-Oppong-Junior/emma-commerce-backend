@@ -5,6 +5,7 @@ import { OrderModule } from '../order/order.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { PaymentModule } from '../payment/payment.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { CartModule } from '../cart/cart.module';
 import { OutboxRelay } from '../outbox/outbox.relay';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
@@ -25,7 +26,15 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
  * API never consumes jobs.
  */
 @Module({
-  imports: [PlatformModule, CommonsModule, OrderModule, InventoryModule, PaymentModule, NotificationsModule],
+  imports: [
+    PlatformModule,
+    CommonsModule,
+    OrderModule,
+    InventoryModule,
+    PaymentModule,
+    NotificationsModule,
+    CartModule,
+  ],
   providers: [
     OutboxRelay,
     WorkerHealthServer,

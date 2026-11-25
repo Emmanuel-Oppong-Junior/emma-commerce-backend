@@ -17,6 +17,8 @@ import { deliveryCodeDispatch } from '../delivery/code/delivery-code';
 import { NotificationDispatcher } from './notification-dispatcher';
 import { TemplateData, TemplateKey } from './templates/templates';
 import { maskEmail } from './email/email.service';
+import { MarketingLinks } from './marketing-links';
+import { variantLabel } from '../cart/abandoned/abandoned-cart';
 
 const CONTEXT = 'NotificationSender';
 /** The order and shipment statuses a customer is emailed about: dispatch and completion, as before P1-O.2. */
@@ -52,6 +54,7 @@ export class NotificationSender {
     private readonly notifications: NotificationsService,
     private readonly readyForPickup: ReadyForPickupNotifier,
     private readonly deliveryCodes: DeliveryCodes,
+    private readonly marketingLinks: MarketingLinks,
     config: ConfigService,
   ) {
     this.frontendUrl = config.getOrThrow<string>('FRONTEND_URL');
@@ -213,6 +216,10 @@ export class NotificationSender {
         });
         return;
       }
+      case 'cart.abandoned_reminder.v1': {
+        const { payload } = data as DomainEventJobData<'cart.abandoned_reminder.v1'>;
+        return this.sendAbandonedCartReminder(payload.userId, jobId);
+      }
       case 'email.welcome.v1': {
         const job = data as EmailJobData['email.welcome.v1'];
         return this.emailDirect(job, jobId, 'account.welcome', { name: job.name || null });
@@ -338,6 +345,65 @@ export class NotificationSender {
         trackingNumber: shipment.trackingNumber,
         deliveryCode: codeFor ? await this.deliveryCodes.issue(shipmentId, codeFor) : null,
       },
+    });
+  }
+
+  /**
+   * The abandoned-cart reminder (marketing, P6-G.2): the cart as it is now, by email and to a verified phone by SMS.
+   * The dispatcher checks consent for each channel when sending, so a withdrawal since the reminder was recorded wins.
+   */
+  private async sendAbandonedCartReminder(userId: string, jobId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        email: true,
+        isActive: true,
+        phoneNumber: true,
+        phoneVerifiedAt: true,
+        phoneVerifiedNumber: true,
+        cart: {
+          select: {
+            items: {
+              select: {
+                quantity: true,
+                variant: { select: { optionValues: true, product: { select: { name: true } } } },
+              },
+              orderBy: { createdAt: 'asc' },
+            },
+          },
+        },
+      },
+    });
+    const items = user?.cart?.items ?? [];
+    if (!user?.isActive || items.length === 0) {
+      this.logger.log(`No abandoned-cart reminder sent: account inactive or cart emptied | userId: ${userId}`, CONTEXT);
+      return;
+    }
+    const data: TemplateData['cart.abandoned'] = {
+      items: items.map((item) => ({
+        productName: item.variant.product.name,
+        variantLabel: variantLabel(item.variant.optionValues),
+        quantity: item.quantity,
+      })),
+      cartUrl: this.marketingLinks.cartUrl(),
+      unsubscribeUrl: this.marketingLinks.unsubscribeUrl(userId),
+    };
+    await this.dispatcher.deliver({
+      dedupeKey: `${jobId}:${NotificationChannel.EMAIL}`,
+      userId,
+      template: 'cart.abandoned',
+      data,
+      channel: NotificationChannel.EMAIL,
+      to: user.email,
+      idempotencyKey: jobId,
+    });
+    await this.dispatcher.deliver({
+      dedupeKey: `${jobId}:${NotificationChannel.SMS}`,
+      userId,
+      template: 'cart.abandoned',
+      data,
+      channel: NotificationChannel.SMS,
+      to: verifiedPhoneOf(user),
     });
   }
 

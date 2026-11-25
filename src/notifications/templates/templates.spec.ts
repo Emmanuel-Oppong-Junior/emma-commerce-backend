@@ -272,6 +272,43 @@ describe('in-app templates', () => {
   });
 });
 
+describe('abandoned-cart reminder (marketing)', () => {
+  const longUrl = `https://${'a'.repeat(80)}.example.com`;
+  const reminder = {
+    items: [
+      { productName: 'Kente scarf', variantLabel: 'M, Red', quantity: 2 },
+      { productName: SCRIPT, variantLabel: '', quantity: 1 },
+    ],
+    cartUrl: 'https://shop.example.com/cart',
+    unsubscribeUrl: 'https://shop.example.com/unsubscribe?token=abc.def',
+  };
+
+  it('is marketing, by email and SMS', () => {
+    expect(templateDefinition('cart.abandoned').category).toBe(NotificationCategory.MARKETING);
+    expect(templateChannels('cart.abandoned')).toEqual([NotificationChannel.EMAIL, NotificationChannel.SMS]);
+  });
+
+  it('lists the items by name and variant, links the cart and carries the one-click unsubscribe link', () => {
+    const { subject, html: body, text } = renderEmail('cart.abandoned', reminder);
+    expect(subject).toBe('You left something in your cart');
+    expect(body).toContain('<li>2 × Kente scarf (M, Red)</li>');
+    expect(body).toContain(ESCAPED_SCRIPT);
+    expect(body).not.toContain('<script>');
+    expect(body).toContain('<a href="https://shop.example.com/cart">');
+    expect(body).toContain('<a href="https://shop.example.com/unsubscribe?token=abc.def">Unsubscribe</a>');
+    expect(text).toContain('Unsubscribe: https://shop.example.com/unsubscribe?token=abc.def');
+  });
+
+  it('keeps the SMS within two segments even with the longest frontend URL', () => {
+    expect(renderSms('cart.abandoned', reminder)).toBe(
+      'Emma Commerce: you left 3 items in your cart. Complete your order: https://shop.example.com/cart (stop these in your account settings)',
+    );
+    expect(renderSms('cart.abandoned', { ...reminder, cartUrl: `${longUrl}/cart` }).length).toBeLessThanOrEqual(
+      SMS_MAX_LENGTH,
+    );
+  });
+});
+
 describe('registry', () => {
   it('versions every template, gives it a category and at least one channel in English', () => {
     for (const key of templateKeys()) {

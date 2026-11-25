@@ -1,5 +1,8 @@
+import { BadRequestException } from '@nestjs/common';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
-import { ConsentSource, NotificationCategory } from '../../generated/prisma/client';
+import { Throttle } from '@nestjs/throttler';
+import { MarketingLinks } from '../marketing-links';
+import { ConsentSource, NotificationCategory, NotificationChannel } from '../../generated/prisma/client';
 import { Auth } from '../../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../../iam/authentication/enums/auth-type.enum';
 import { ActiveUser } from '../../iam/authentication/decorators/active-user.decorator';
@@ -14,7 +17,10 @@ import {
 
 @Resolver()
 export class NotificationPreferencesResolver {
-  constructor(private readonly preferences: NotificationPreferencesService) {}
+  constructor(
+    private readonly preferences: NotificationPreferencesService,
+    private readonly marketingLinks: MarketingLinks,
+  ) {}
 
   @Auth(AuthType.Bearer)
   @Query(() => [NotificationPreferenceEntity], {
@@ -64,5 +70,30 @@ export class NotificationPreferencesResolver {
   @Query(() => [ConsentEventEntity], { description: "A customer's consent ledger, newest first (staff)" })
   customerConsentHistory(@Args('userId', { type: () => ID }) userId: string) {
     return this.preferences.consentHistory(userId);
+  }
+
+  @Auth(AuthType.None)
+  @Throttle({ auth: { ttl: 60000, limit: 5 } })
+  @Mutation(() => Boolean, {
+    description:
+      'One-click unsubscribe from marketing emails, with the token of the link in a marketing email (no sign-in). ' +
+      'Recorded in the consent ledger (source EMAIL_LINK); repeating it changes nothing. BAD_REQUEST with reason ' +
+      'INVALID_UNSUBSCRIBE_TOKEN',
+  })
+  async unsubscribeMarketingEmail(@Args('token') token: string): Promise<boolean> {
+    const userId = this.marketingLinks.userIdOf(token);
+    if (!userId) {
+      throw new BadRequestException({
+        message: 'This unsubscribe link is not valid',
+        extensions: { reason: 'INVALID_UNSUBSCRIBE_TOKEN' },
+      });
+    }
+    await this.preferences.update(userId, {
+      category: NotificationCategory.MARKETING,
+      channel: NotificationChannel.EMAIL,
+      enabled: false,
+      source: ConsentSource.EMAIL_LINK,
+    });
+    return true;
   }
 }

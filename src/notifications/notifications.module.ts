@@ -11,6 +11,7 @@ import { ReadyForPickupNotifier } from './ready-for-pickup.notifier';
 import { DeliveryCodeModule } from '../delivery/code/delivery-code.module';
 import { NotificationsRepository } from './notifications.repository';
 import { NotificationDispatcher } from './notification-dispatcher';
+import { MarketingLinks } from './marketing-links';
 
 @Module({
   imports: [CommonsModule, InventoryModule, DeliveryCodeModule],
@@ -22,8 +23,9 @@ import { NotificationDispatcher } from './notification-dispatcher';
     ReadyForPickupNotifier,
     NotificationsRepository,
     NotificationDispatcher,
+    MarketingLinks,
     { provide: SMS_PROVIDER, inject: [ConfigService], useFactory: smsProviderFrom },
   ],
-  exports: [NotificationsService, NotificationSender, SmsSender],
+  exports: [NotificationsService, NotificationSender, SmsSender, MarketingLinks],
 })
 export class NotificationsModule {}

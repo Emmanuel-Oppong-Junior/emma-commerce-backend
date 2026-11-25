@@ -76,6 +76,13 @@ export interface TemplateData {
     includesShipping: boolean;
   };
   'inventory.low_stock_digest': { sections: LowStockDigestSection[] };
+  /** Marketing (P6-G.2): only with the customer's consent for the channel. */
+  'cart.abandoned': {
+    items: { productName: string; variantLabel: string; quantity: number }[];
+    cartUrl: string;
+    /** One-click withdrawal of email marketing consent (email only). */
+    unsubscribeUrl: string;
+  };
 }
 
 export type TemplateKey = keyof TemplateData;
@@ -174,6 +181,27 @@ function refundEmail(refund: TemplateData['refund.processed']): EmailContent {
       `We refunded ${amount} for order ${number}.`,
       `Reason: ${refund.reasonLabel}`,
       ...items.map((item) => `- ${item}`),
+    ],
+  );
+}
+
+function abandonedCartEmail({ items, cartUrl, unsubscribeUrl }: TemplateData['cart.abandoned']): EmailContent {
+  const lines = items.map(
+    (item) => `${item.quantity} × ${item.productName}${item.variantLabel ? ` (${item.variantLabel})` : ''}`,
+  );
+  const intro = 'You left these in your cart. They are waiting for you:';
+  const why = 'You get this email because you agreed to marketing emails from us.';
+  return email(
+    'You left something in your cart',
+    'Still thinking it over?',
+    markup`<p>${intro}</p><ul>${lines.map((line) => markup`<li>${line}</li>`)}</ul><p><a href="${cartUrl}">Go to your cart</a></p><p style="color:#666;font-size:12px">${why} <a href="${unsubscribeUrl}">Unsubscribe</a></p>`,
+    [
+      intro,
+      ...lines.map((line) => `- ${line}`),
+      '',
+      `Go to your cart: ${cartUrl}`,
+      '',
+      `${why} Unsubscribe: ${unsubscribeUrl}`,
     ],
   );
 }
@@ -437,6 +465,19 @@ const NOTIFICATION_TEMPLATES: { [K in TemplateKey]: TemplateDefinition<TemplateD
     version: 2,
     category: NotificationCategory.TRANSACTIONAL,
     locales: { en: { email: lowStockDigestEmail } },
+  },
+  'cart.abandoned': {
+    version: 1,
+    category: NotificationCategory.MARKETING,
+    locales: {
+      en: {
+        email: abandonedCartEmail,
+        sms: ({ items, cartUrl }) => {
+          const units = items.reduce((total, item) => total + item.quantity, 0);
+          return `${BRAND}: you left ${units} item${units === 1 ? '' : 's'} in your cart. Complete your order: ${cartUrl} (stop these in your account settings)`;
+        },
+      },
+    },
   },
 };
 

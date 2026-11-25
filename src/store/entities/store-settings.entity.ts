@@ -1,4 +1,4 @@
-import { Field, GraphQLISODateTime, ID, ObjectType } from '@nestjs/graphql';
+import { Field, GraphQLISODateTime, ID, Int, ObjectType } from '@nestjs/graphql';
 import { CurrencyEnum } from '../../products/enums/product.enum';
 
 @ObjectType({ description: 'The settings of the store this deployment serves' })
@@ -29,6 +29,11 @@ export class StoreSettings {
 
   @Field(() => String, { nullable: true })
   supportPhone: string | null;
+
+  @Field(() => Int, {
+    description: 'Hours a signed-in customer’s cart sits unchanged before the abandoned-cart reminder (P6-G.2)',
+  })
+  abandonedCartReminderDelayHours: number;
 
   @Field(() => GraphQLISODateTime)
   createdAt: Date;

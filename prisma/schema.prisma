@@ -56,6 +56,8 @@ model User {
   notifications             Notification[]
   notificationPreferences   NotificationPreference[]
   consentEvents             ConsentEvent[]
+  savedCartItems            SavedCartItem[]
+  abandonedCartReminders    AbandonedCartReminder[]
   /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
   mfaSecret                 String?
   /// Set once the first code confirmed enrolment; MFA is active only from then
@@ -237,6 +239,7 @@ model Variant {
   costPrice         Decimal?            @db.Decimal(14, 4)
   costChanges       CostChange[]
   purchaseLines     PurchaseOrderLine[]
+  savedCartItems    SavedCartItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1220,6 +1223,8 @@ model Store {
   /// Cash-on-delivery risk gates (P3-B.2): open COD orders allowed per verified phone, and the highest COD grand total.
   codMaxOpenOrdersPerPhone   Int                     @default(2)
   codMaxOrderTotal           Decimal                 @default(2000) @db.Decimal(14, 2)
+  /// Hours a signed-in customer's cart sits unchanged before the abandoned-cart reminder (P6-G.2); CHECK 1-72.
+  abandonedCartReminderDelayHours Int                @default(4)
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
   memberships                StoreMembership[]
@@ -2366,4 +2371,33 @@ model ConsentEvent {
   user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+/// A variant a customer moved out of their cart to buy later (P6-G.2); one row per customer and variant.
+model SavedCartItem {
+  id        String   @id @default(cuid())
+  userId    String
+  variantId String
+  /// CHECK > 0
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variant   Variant  @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, variantId])
+  @@index([variantId])
+}
+
+/// One abandoned-cart reminder (P6-G.2): the cart state it was about (cartStateHash: variants and quantities), unique
+/// per customer so a state is reminded about once; sentAt drives the one-reminder-per-7-days rule.
+model AbandonedCartReminder {
+  id            String   @id @default(cuid())
+  userId        String
+  cartStateHash String
+  sentAt        DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cartStateHash])
+  @@index([userId, sentAt])
 }

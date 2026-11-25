@@ -86,6 +86,7 @@ Mutation failMyDelivery                  permission: delivery.ride
 Mutation forgotPassword                  public
 Mutation markAllNotificationsRead        authenticated
 Mutation markNotificationsRead           authenticated
+Mutation moveSavedItemToCart             authenticated
 Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
@@ -110,6 +111,7 @@ Mutation removeFromWishlist              authenticated
 Mutation removePaystackConfig            permission: payment.settings.manage; step-up
 Mutation removePriceListEntries          permission: pricelist.manage; step-up
 Mutation removeProductsFromTag           permission: catalog.taxonomy.write
+Mutation removeSavedItem                 authenticated
 Mutation removeStaffRole                 permission: staff.manage; step-up
 Mutation removeSubCategory               permission: catalog.taxonomy.write
 Mutation removeTagFromProduct            permission: catalog.product.write
@@ -121,6 +123,7 @@ Mutation restockVariant                  permission: inventory.adjust
 Mutation restorePayment                  permission: payment.manage
 Mutation restoreProduct                  permission: catalog.product.write
 Mutation retryFailedJob                  permission: jobs.manage
+Mutation saveCartItemForLater            authenticated
 Mutation sendPurchaseOrder               permission: purchasing.manage
 Mutation setPaystackConfig               permission: payment.settings.manage; step-up
 Mutation setPickupLocationFulfilmentLocations permission: inventory.location.manage
@@ -140,6 +143,7 @@ Mutation stepUp                          authenticated
 Mutation submitStockTake                 permission: inventory.adjust
 Mutation unassignShipmentItemSerials     permission: order.fulfil
 Mutation unassignShipmentRider           permission: order.fulfil
+Mutation unsubscribeMarketingEmail       public
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
 Mutation updateBrand                     permission: catalog.taxonomy.write
@@ -238,6 +242,7 @@ Query revenueByCategory                  permission: report.view
 Query review                             authenticated
 Query riders                             permission: order.fulfil
 Query salesReport                        permission: report.view
+Query savedItems                         authenticated
 Query serialUnitLookup                   permission: order.view
 Query shippingZone                       permission: shipping.manage
 Query shippingZones                      permission: shipping.manage

@@ -1,13 +1,16 @@
-import { Field, InputType } from '@nestjs/graphql';
+import { Field, InputType, Int } from '@nestjs/graphql';
 import {
   IsBoolean,
   IsEmail,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsPhoneNumber,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
@@ -63,4 +66,15 @@ export class UpdateStoreSettingsInput {
   @Transform(trim)
   @IsPhoneNumber(undefined, { message: 'supportPhone must be a valid phone number in international format' })
   supportPhone?: string | null;
+
+  @Field(() => Int, {
+    nullable: true,
+    description:
+      'Hours a signed-in customer’s cart sits unchanged before the abandoned-cart reminder (1-72; default 4)',
+  })
+  @unlessOmitted
+  @IsInt()
+  @Min(1)
+  @Max(72)
+  abandonedCartReminderDelayHours?: number;
 }

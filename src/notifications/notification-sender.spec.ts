@@ -61,6 +61,10 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
   const readyForPickup = { notify: jest.fn().mockResolvedValue(undefined) };
   const deliveryCodes = { issue: jest.fn().mockResolvedValue('123456') };
   const config = { getOrThrow: (key: string) => CONFIG[key] };
+  const marketingLinks = {
+    cartUrl: () => 'https://shop.example.com/cart',
+    unsubscribeUrl: (userId: string) => `https://shop.example.com/unsubscribe?token=t-${userId}`,
+  };
   return {
     lowStockAlerts,
     notifications,
@@ -74,6 +78,7 @@ function buildSender(order: typeof ORDER | null = ORDER, refund: typeof REFUND |
       notifications as never,
       readyForPickup as never,
       deliveryCodes as never,
+      marketingLinks as never,
       config as never,
     ),
     prisma,
@@ -656,6 +661,68 @@ describe('NotificationSender in-app feed (P6-N.4)', () => {
     for (const [delivery] of dispatcher.deliver.mock.calls as [{ channel: string }][]) {
       expect(delivery.channel).toBe('EMAIL');
     }
+  });
+});
+
+describe('NotificationSender abandoned-cart reminder (P6-G.2)', () => {
+  const user = {
+    email: 'kwame@gmail.com',
+    isActive: true,
+    phoneNumber: '+233244123456',
+    phoneVerifiedAt: new Date(),
+    phoneVerifiedNumber: '+233244123456',
+    cart: {
+      items: [{ quantity: 2, variant: { optionValues: { size: 'M' }, product: { name: 'Kente scarf' } } }],
+    },
+  };
+  const reminder = {
+    items: [{ productName: 'Kente scarf', variantLabel: 'M', quantity: 2 }],
+    cartUrl: 'https://shop.example.com/cart',
+    unsubscribeUrl: 'https://shop.example.com/unsubscribe?token=t-user1',
+  };
+
+  it('sends the current cart by email and to the verified phone; the dispatcher checks consent per channel', async () => {
+    const { sender, dispatcher, prisma } = buildSender();
+    prisma.user.findUnique.mockResolvedValue(user);
+
+    await sender.send('cart.abandoned_reminder.v1', event({ reminderId: 'r1', userId: 'user1' }), 'evt5');
+
+    expect(dispatcher.deliver).toHaveBeenCalledWith({
+      dedupeKey: 'evt5:EMAIL',
+      userId: 'user1',
+      template: 'cart.abandoned',
+      data: reminder,
+      channel: 'EMAIL',
+      to: 'kwame@gmail.com',
+      idempotencyKey: 'evt5',
+    });
+    expect(dispatcher.deliver).toHaveBeenCalledWith({
+      dedupeKey: 'evt5:SMS',
+      userId: 'user1',
+      template: 'cart.abandoned',
+      data: reminder,
+      channel: 'SMS',
+      to: '+233244123456',
+    });
+  });
+
+  it('gives the SMS no number when the phone is not verified', async () => {
+    const { sender, dispatcher, prisma } = buildSender();
+    prisma.user.findUnique.mockResolvedValue({ ...user, phoneVerifiedAt: null });
+
+    await sender.send('cart.abandoned_reminder.v1', event({ reminderId: 'r1', userId: 'user1' }), 'evt5');
+
+    expect(dispatcher.deliver).toHaveBeenLastCalledWith(expect.objectContaining({ channel: 'SMS', to: null }));
+  });
+
+  it('sends nothing when the cart was emptied or the account deactivated since', async () => {
+    const { sender, dispatcher, prisma } = buildSender();
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, cart: { items: [] } });
+    await sender.send('cart.abandoned_reminder.v1', event({ reminderId: 'r1', userId: 'user1' }), 'a');
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, isActive: false });
+    await sender.send('cart.abandoned_reminder.v1', event({ reminderId: 'r1', userId: 'user1' }), 'b');
+
+    expect(dispatcher.deliver).not.toHaveBeenCalled();
   });
 });
 

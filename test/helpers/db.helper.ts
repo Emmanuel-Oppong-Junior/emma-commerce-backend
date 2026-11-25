@@ -97,6 +97,7 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
       cashOnDeliveryEnabled: true,
       cardPaymentProvider: 'PAYSTACK',
       mobileMoneyPaymentProvider: 'PAYSTACK',
+      abandonedCartReminderDelayHours: 4,
     },
   });
   await relaxVelocityLimits(prisma);

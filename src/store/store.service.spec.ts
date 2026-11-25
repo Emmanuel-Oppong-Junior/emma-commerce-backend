@@ -25,6 +25,7 @@ const store: Store = {
   mobileMoneyPaymentProvider: 'PAYSTACK',
   codMaxOpenOrdersPerPhone: 2,
   codMaxOrderTotal: new Prisma.Decimal(2000),
+  abandonedCartReminderDelayHours: 4,
   createdAt: fixedDate,
   updatedAt: fixedDate,
 };

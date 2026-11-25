@@ -1404,6 +1404,31 @@ A quantity above 0 re-checks the line's variant exactly as `addToCart` does (sti
 
 ---
 
+#### Saved for later (P6-G.2)
+
+A customer can move a cart line out of the cart to buy later, and back. One saved row per variant (saving a variant already saved adds the quantities); at most 100 saved variants. Cart pricing and checkout ignore saved items.
+
+```graphql
+type SavedCartItem { id: ID!  variantId: ID!  variant: Variant!  quantity: Int!  available: Boolean!  unavailableReason: String  createdAt: DateTime! }
+
+query { savedItems { id quantity available unavailableReason variant { id sku price } } }   # newest first
+mutation { saveCartItemForLater(cartItemId: ID!) { ...Cart } }   # CONFLICT reason SAVED_ITEMS_LIMIT_REACHED at 100; NOT_FOUND if not your line
+mutation { moveSavedItemToCart(savedItemId: ID!) { ...Cart } }   # BAD_REQUEST reason SAVED_ITEM_UNAVAILABLE (not on sale: it stays saved), or the cart's stock refusal
+mutation { removeSavedItem(savedItemId: ID!) }                    # Boolean
+```
+
+`available` is false (with `unavailableReason`) when the variant or its product is no longer on sale; show it greyed out with a remove button. Stock is checked when it is moved back.
+
+#### Abandoned-cart reminders (P6-G.2)
+
+A signed-in customer who opted in to marketing (see [15](#15-notifications-system)) and left items in the cart unchanged for `storeSettings.abandonedCartReminderDelayHours` (default 4; carts older than 7 days are left alone) gets one reminder: an email listing the items with a link to `FRONTEND_URL/cart`, and an SMS when they also opted in to SMS marketing and have a verified phone. Nothing is sent if they placed an order since; the same cart contents are never reminded about twice; at most one reminder per customer in 7 days. The email carries a one-click unsubscribe link `FRONTEND_URL/unsubscribe?token=<token>`: that page calls
+
+```graphql
+mutation { unsubscribeMarketingEmail(token: String!) }   # no sign-in; Boolean; BAD_REQUEST reason INVALID_UNSUBSCRIBE_TOKEN
+```
+
+which withdraws email marketing consent (ledger source `EMAIL_LINK`); repeating it changes nothing.
+
 ### 2.10 Wishlist
 
 All wishlist operations require `Bearer` JWT (any role).
@@ -3577,6 +3602,7 @@ One deployment serves one store. Its settings hold the names and tax registratio
   currency: Currency;        // The store currency; every Money field is in it
   supportEmail?: string;
   supportPhone?: string;
+  abandonedCartReminderDelayHours: number; // P6-G.2: hours a cart sits unchanged before the abandoned-cart reminder (default 4)
   createdAt: DateTime;
   updatedAt: DateTime;
 }
@@ -3598,6 +3624,7 @@ One deployment serves one store. Its settings hold the names and tax registratio
   pricesIncludeTax?: boolean;
   supportEmail?: string | null; // Valid email; null clears it
   supportPhone?: string | null; // International format, e.g. +233244000000; null clears it
+  abandonedCartReminderDelayHours?: number; // 1-72. Cannot be null.
 }
 ```
 

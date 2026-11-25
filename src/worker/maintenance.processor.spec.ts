@@ -12,6 +12,7 @@ function buildProcessor() {
   const lowStockDigest = { send: jest.fn().mockResolvedValue(null) };
   const lotExpiry = { writeOffExpired: jest.fn().mockResolvedValue(null) };
   const notificationRetention = { purge: jest.fn().mockResolvedValue(null) };
+  const abandonedCarts = { run: jest.fn().mockResolvedValue(null) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const processor = new MaintenanceProcessor(
     expiredOrders as never,
@@ -22,8 +23,19 @@ function buildProcessor() {
     lowStockDigest as never,
     lotExpiry as never,
     notificationRetention as never,
+    abandonedCarts as never,
   );
-  return { processor, expiredOrders, payments, stock, lowStockDigest, lotExpiry, notificationRetention, logger };
+  return {
+    processor,
+    expiredOrders,
+    payments,
+    stock,
+    lowStockDigest,
+    lotExpiry,
+    notificationRetention,
+    abandonedCarts,
+    logger,
+  };
 }
 
 const job = (name: string) => ({ name, id: '1', queueName: 'maintenance', attemptsMade: 1, opts: {} }) as Job;
@@ -37,6 +49,7 @@ describe('MaintenanceProcessor', () => {
     [MaintenanceJob.SendLowStockDigest, 'lowStockDigest', 'send'],
     [MaintenanceJob.WriteOffExpiredLots, 'lotExpiry', 'writeOffExpired'],
     [MaintenanceJob.PurgeNotifications, 'notificationRetention', 'purge'],
+    [MaintenanceJob.RemindAbandonedCarts, 'abandonedCarts', 'run'],
   ] as const)('runs %s through %s.%s exactly once', async (name, target, method) => {
     const built = buildProcessor();
 
@@ -52,6 +65,7 @@ describe('MaintenanceProcessor', () => {
       built.lowStockDigest.send,
       built.lotExpiry.writeOffExpired,
       built.notificationRetention.purge,
+      built.abandonedCarts.run,
     ].reduce((total, mock) => total + mock.mock.calls.length, 0);
     expect(allCalls).toBe(1);
   });

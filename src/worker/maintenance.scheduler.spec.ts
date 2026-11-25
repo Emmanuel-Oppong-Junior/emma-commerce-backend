@@ -41,6 +41,7 @@ describe('MaintenanceScheduler', () => {
       [MaintenanceJob.SendLowStockDigest]: { pattern: '0 6-21/3 * * *', tz: 'UTC' },
       [MaintenanceJob.WriteOffExpiredLots]: { pattern: '5 * * * *', tz: 'UTC' },
       [MaintenanceJob.PurgeNotifications]: { pattern: '15 3 * * *', tz: 'UTC' },
+      [MaintenanceJob.RemindAbandonedCarts]: { pattern: '20 * * * *', tz: 'UTC' },
     });
   });
 

@@ -9,6 +9,7 @@ export enum MaintenanceJob {
   SendLowStockDigest = 'inventory.low-stock-digest',
   WriteOffExpiredLots = 'inventory.expire-lots',
   PurgeNotifications = 'notifications.purge',
+  RemindAbandonedCarts = 'cart.abandoned-reminders',
 }
 
 // Same cadence the in-process crons had. BullMQ creates one job per tick for the whole cluster.
@@ -22,4 +23,5 @@ export const MAINTENANCE_SCHEDULES: Record<MaintenanceJob, Omit<RepeatOptions, '
   // Hourly; placement and availability already leave expired lots out between runs.
   [MaintenanceJob.WriteOffExpiredLots]: { pattern: '5 * * * *', tz: 'UTC' },
   [MaintenanceJob.PurgeNotifications]: { pattern: '15 3 * * *', tz: 'UTC' },
+  [MaintenanceJob.RemindAbandonedCarts]: { pattern: '20 * * * *', tz: 'UTC' },
 };
