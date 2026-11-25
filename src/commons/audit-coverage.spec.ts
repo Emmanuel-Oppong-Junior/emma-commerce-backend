@@ -117,6 +117,7 @@ const AUDITED: Record<string, string> = {
   completeDelivery: 'proof-of-delivery.service.spec (PROOF_OF_DELIVERY audit row), proof-of-delivery.e2e-spec',
   recordCashRemittance: 'cash.service.spec (recordRemittance)',
   updateStoreSettings: 'store.service.spec',
+  setStoreFeature: 'store-features.service.spec (before and after on the change transaction); store-features.e2e-spec',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
   retryFailedJob: 'failed-jobs.service.spec',
   setPaystackConfig: 'payment-settings.service.spec (audited without the secret)',

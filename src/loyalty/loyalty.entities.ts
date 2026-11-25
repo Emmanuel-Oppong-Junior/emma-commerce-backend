@@ -1,5 +1,5 @@
 import { ArgsType, Field, GraphQLISODateTime, ID, InputType, Int, ObjectType, registerEnumType } from '@nestjs/graphql';
-import { IsBoolean, IsInt, IsOptional, IsString, Length, Max, Min, NotEquals } from 'class-validator';
+import { IsInt, IsOptional, IsString, Length, Max, Min, NotEquals } from 'class-validator';
 import { LoyaltyTransactionType } from '../generated/prisma/client';
 
 export const LOYALTY_HISTORY_MAX = 100;
@@ -88,7 +88,11 @@ export class LoyaltySummary {
 
 @ObjectType({ description: 'How the store’s loyalty programme earns and redeems points' })
 export class LoyaltySettingsEntity {
-  @Field({ description: 'Off: no points are earned or redeemed; balances are kept and still expire' })
+  @Field({
+    description:
+      'The LOYALTY store feature (switched with setStoreFeature). Off: no points are earned or redeemed; balances ' +
+      'are kept and still expire',
+  })
   enabled: boolean;
 
   @Field(() => Int, { description: 'Points per whole GHS 1 of goods paid, credited when the order completes' })
@@ -155,11 +159,6 @@ export class AdjustLoyaltyPointsInput {
 
 @InputType()
 export class UpdateLoyaltySettingsInput {
-  @Field({ nullable: true })
-  @IsOptional()
-  @IsBoolean()
-  enabled?: boolean;
-
   @Field(() => Int, { nullable: true, description: '0-100' })
   @IsOptional()
   @IsInt()

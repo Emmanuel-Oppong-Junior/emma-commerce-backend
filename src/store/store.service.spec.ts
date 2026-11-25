@@ -27,7 +27,6 @@ const store: Store = {
   codMaxOrderTotal: new Prisma.Decimal(2000),
   returnWindowDays: 14,
   abandonedCartReminderDelayHours: 4,
-  loyaltyEnabled: true,
   loyaltyEarnPointsPerCedi: 1,
   loyaltyRedeemPointsPerCedi: 100,
   loyaltyMinRedeemPoints: 500,

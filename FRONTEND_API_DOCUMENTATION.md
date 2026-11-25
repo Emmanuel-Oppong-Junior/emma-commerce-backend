@@ -34,6 +34,7 @@
    - [Addresses](#220-addresses)
    - [Shipping Zones & Pickup Locations](#221-shipping-zones--pickup-locations)
    - [Store settings](#222-store-settings)
+   - [Store features](#222a-store-features-p8-f)
    - [Background jobs](#223-background-jobs)
    - [Staff roles and permissions](#224-staff-roles-and-permissions)
    - [Two-factor authentication and step-up](#225-two-factor-authentication-and-step-up)
@@ -2624,7 +2625,7 @@ Every signed-in customer collects points automatically; guests never do (not eve
 - **Refunds:** a refund of order lines takes back the points of the refunded goods in proportion (rounded down; all of them once everything is refunded). Points already spent become **`pointsOwed`**: the next points credited pay them off first. Redeemed points come back in the same proportion; a cancelled or expired order gives every redeemed point back.
 - **Expiry:** points are spent oldest expiry first; unspent points expire (an `EXPIRE` entry). `balance` only counts points not yet expired.
 
-**Redeeming at checkout:** send `redeemPoints` in `CheckoutQuoteInput` / `CreateOrderInput` (same value in both: it is part of the `quoteHash`). `checkoutQuote.loyalty` gives `{ balance, redeemablePoints, pointsRedeemed, amount }`: show `redeemablePoints` as the most the customer can use on this cart (0 = points cannot be used now). The points take `amount` off the goods (in `discountTotal`, shared over the lines like a cart promotion); they never reduce the delivery fee, and free shipping is decided without them. Refusals on both: `BAD_REQUEST` with `reason` `POINTS_BELOW_MINIMUM` (also a non-whole number), `INSUFFICIENT_POINTS`, `POINTS_ABOVE_CAP`, `POINTS_NOT_WHOLE_PESEWAS` (a store rate where the points are not worth whole pesewas) or `LOYALTY_DISABLED`. `createOrder` debits the points in the order transaction; when they fell since the quote it is `CONFLICT` with `reason: "LOYALTY_BALANCE_CHANGED"` (quote again). The order shows `loyaltyPointsRedeemed` and an adjustment `{ type: LOYALTY_POINTS, sourceId: null, amount }`. Guests have no `redeemPoints` (`GuestCheckoutQuoteInput` leaves it out) and `checkoutQuote.loyalty` is null for them.
+**Redeeming at checkout:** send `redeemPoints` in `CheckoutQuoteInput` / `CreateOrderInput` (same value in both: it is part of the `quoteHash`). `checkoutQuote.loyalty` gives `{ balance, redeemablePoints, pointsRedeemed, amount }`: show `redeemablePoints` as the most the customer can use on this cart (0 = points cannot be used now). The points take `amount` off the goods (in `discountTotal`, shared over the lines like a cart promotion); they never reduce the delivery fee, and free shipping is decided without them. Refusals on both: `BAD_REQUEST` with `reason` `POINTS_BELOW_MINIMUM` (also a non-whole number), `INSUFFICIENT_POINTS`, `POINTS_ABOVE_CAP`, `POINTS_NOT_WHOLE_PESEWAS` (a store rate where the points are not worth whole pesewas), or `FEATURE_DISABLED` with `feature: "LOYALTY"` while loyalty is switched off (**breaking (P8-F):** was `LOYALTY_DISABLED`). `createOrder` debits the points in the order transaction; when they fell since the quote it is `CONFLICT` with `reason: "LOYALTY_BALANCE_CHANGED"` (quote again). The order shows `loyaltyPointsRedeemed` and an adjustment `{ type: LOYALTY_POINTS, sourceId: null, amount }`. Guests have no `redeemPoints` (`GuestCheckoutQuoteInput` leaves it out) and `checkoutQuote.loyalty` is null for them.
 
 | Operation | Who | Notes |
 |---|---|---|
@@ -2632,7 +2633,7 @@ Every signed-in customer collects points automatically; guests never do (not eve
 | `loyaltySettings` | public | `{ enabled earnPointsPerCedi redeemPointsPerCedi minimumRedeemPoints maxRedeemPercent pointsExpiryMonths referrerRewardPoints newCustomerRewardPoints }` (the last two: P6-L.2) |
 | `customerLoyalty(userId, first, after)` | `user.view` | the customer's `LoyaltySummary`; `NOT_FOUND` for an unknown user |
 | `adjustLoyaltyPoints(input: { userId, points, reason })` | `loyalty.manage` (Owner, Manager) + step-up | `points` non-zero, -1000000..1000000; `reason` 3-500 chars, **shown to the customer**. Added points expire like earned ones (and pay off points owed first); taking more than the balance is `CONFLICT` `INSUFFICIENT_POINTS`; staff accounts are `BAD_REQUEST`. Audited |
-| `updateLoyaltySettings(input)` | `loyalty.manage` + step-up | any of `enabled` (off: nothing earned or redeemed; balances kept and still expire), `earnPointsPerCedi` 0-100, `redeemPointsPerCedi` 1-10000, `minimumRedeemPoints` 1-1000000, `maxRedeemPercent` 1-100, `pointsExpiryMonths` 1-120 (for points credited from then on), `referrerRewardPoints` / `newCustomerRewardPoints` 0-100000. Audited |
+| `updateLoyaltySettings(input)` | `loyalty.manage` + step-up | any of `earnPointsPerCedi` 0-100, `redeemPointsPerCedi` 1-10000, `minimumRedeemPoints` 1-1000000, `maxRedeemPercent` 1-100, `pointsExpiryMonths` 1-120 (for points credited from then on), `referrerRewardPoints` / `newCustomerRewardPoints` 0-100000. Audited |
 
 ```graphql
 type LoyaltyTransactionEntity {
@@ -2656,7 +2657,7 @@ Every customer has a **referral code** (8 characters, no look-alike letters or d
 | `signUp(input: { ..., referralCode })` | public | `BAD_REQUEST` `INVALID_REFERRAL_CODE` or `FORBIDDEN` `VELOCITY_LIMIT` before the account is created |
 | `customerReferrals(userId)` | `user.view` | `{ code referredBy referrals }` with ids, status, `disqualifiedReason`, `velocityFlagged`, the qualifying `orderId` and the points given |
 
-`ReferralStatus`: `PENDING` → `REWARDED` → `REVERSED`, or `PENDING` → `DISQUALIFIED`. A new velocity rule `REFERRALS_PER_REFERRER_24H` (defaults: flag above 5, refuse above 20 sign-ups per referrer in 24 hours) appears in `velocityLimits`.
+`ReferralStatus`: `PENDING` → `REWARDED` → `REVERSED`, or `PENDING` → `DISQUALIFIED`. While the `REFERRALS` store feature is off (P8-F), `myReferrals`, `applyReferralCode` and a `signUp` with a `referralCode` fail with `BAD_REQUEST` `FEATURE_DISABLED`, and a referral whose first order completes meanwhile is `DISQUALIFIED` with `disqualifiedReason: "REFERRALS_DISABLED"`. A new velocity rule `REFERRALS_PER_REFERRER_24H` (defaults: flag above 5, refuse above 20 sign-ups per referrer in 24 hours) appears in `velocityLimits`.
 
 ---
 
@@ -3897,6 +3898,38 @@ One deployment serves one store. Its settings hold the names and tax registratio
 ```
 
 The currency cannot be changed through the API.
+
+---
+
+### 2.22a Store features (P8-F)
+
+The Owner can switch store-level features off. While one is off its operations below fail with `BAD_REQUEST`, `extensions: { reason: "FEATURE_DISABLED", feature: "<key>" }` (REST: the same `reason` and `feature` in the 400 body); everything else keeps working. Switching a feature off **never deletes** what it stored (points balances, reviews, referrals, wishlists, saved items, recently viewed lists, returns); switching it back on restores it. Read `storeFeatures` at start-up and hide the UI of features that are off. A change reaches every server within a few seconds at most (usually at once).
+
+| Key | Refused while off | Also while off |
+|---|---|---|
+| `GUEST_CHECKOUT` | `createGuestCart`, `addToGuestCart`, `updateGuestCartItem`, `removeFromGuestCart`, `requestGuestPhoneVerification`, `verifyGuestPhone`, `guestCheckoutQuote`, `createGuestOrder` | `guestCart`, `guestOrder`, `verifyGuestPayment` and `POST /payment/guest/initialize` keep working, so orders already placed can be paid and tracked |
+| `LOYALTY` | (no operation) | no points earned on completion; `redeemPoints` at checkout is `FEATURE_DISABLED`; referrals are not rewarded. `myLoyalty`, `loyaltySettings` (`enabled: false`) and the staff operations keep working; refunds still settle points |
+| `REFERRALS` | `myReferrals`, `applyReferralCode` | `signUp` with a `referralCode` is refused before the account is created; a referral whose first order completes is `DISQUALIFIED` (`REFERRALS_DISABLED`) |
+| `REVIEWS` | `createReview`, `updateReview`, `deleteReview`, `removeReviewPhoto`, `reportReview`, `POST /reviews/:reviewId/photos` | published reviews, ratings and staff moderation stay |
+| `PRODUCT_QA` | `askProductQuestion`, `reportProductQuestion` | answered questions and staff answering/moderation stay |
+| `RECENTLY_VIEWED` | `recordProductView` | `recentlyViewed` still lists what was recorded |
+| `RETURNS` | `requestReturn`, `cancelReturn`, `POST /returns/orders/:orderId/photos` | `myReturns` and every staff return operation stay (open returns can be finished) |
+| `ABANDONED_CART_REMINDERS` | (no operation) | the hourly job sends no reminders |
+| `SAVED_FOR_LATER` | `saveCartItemForLater`, `moveSavedItemToCart`, `removeSavedItem` | `savedItems` stays |
+| `WISHLIST` | `addToWishlist`, `removeFromWishlist`, `clearWishlist` | `wishlist` stays |
+| `CASH_ON_DELIVERY` | (no operation) | the payment method switch (`updatePaymentMethods.cashOnDelivery`, `availablePaymentMethods.cashOnDelivery`): checkout refuses cash on delivery with `PAYMENT_METHOD_UNAVAILABLE` |
+
+#### `storeFeatures`
+- **Type**: Query · **Auth Required**: No
+- **Response**: `[StoreFeature!]!` — every key above, in that order: `{ key: StoreFeatureKey, enabled: Boolean, description: String }`. All on by default.
+
+#### `setStoreFeature` (`store.features.manage`: Owner only, recent step-up)
+- **Type**: Mutation · **Args**: `input: SetStoreFeatureInput! { key: StoreFeatureKey!, enabled: Boolean! }`
+- **Response**: `StoreFeature!`
+- **Side effects**: audit entry (entity `StoreFeature`, id = the key, `changes.enabled { from, to }`). `CASH_ON_DELIVERY` sets the same switch as `updatePaymentMethods`.
+- **Possible Errors**: `FORBIDDEN` (no permission; `reason: STEP_UP_REQUIRED` without a recent step-up), `UNAUTHENTICATED`.
+
+**Breaking changes (P8-F)** `[breaking-api]`: `UpdateLoyaltySettingsInput.enabled` → removed: switch loyalty with `setStoreFeature(input: { key: LOYALTY, enabled })` (`loyaltySettings.enabled` still reports it). Redeeming points while loyalty is off is `FEATURE_DISABLED` (feature `LOYALTY`) instead of `LOYALTY_DISABLED`. New refusals on the operations in the table above while a feature is off.
 
 ---
 

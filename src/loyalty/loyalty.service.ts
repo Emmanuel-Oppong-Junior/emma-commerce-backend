@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService, fieldChanges } from '../commons/audit.service';
+import { StoreFeaturesService } from '../store-features/store-features.service';
 import { LOYALTY_SETTINGS, LoyaltyLedger, LoyaltySettings } from './loyalty-ledger.service';
 import {
   AdjustLoyaltyPointsInput,
@@ -13,9 +14,9 @@ import {
 
 const SETTINGS_FIELDS = Object.keys(LOYALTY_SETTINGS) as (keyof LoyaltySettings)[];
 
-function toSettings(settings: LoyaltySettings): LoyaltySettingsEntity {
+function toSettings(settings: LoyaltySettings, enabled: boolean): LoyaltySettingsEntity {
   return {
-    enabled: settings.loyaltyEnabled,
+    enabled,
     earnPointsPerCedi: settings.loyaltyEarnPointsPerCedi,
     redeemPointsPerCedi: settings.loyaltyRedeemPointsPerCedi,
     minimumRedeemPoints: settings.loyaltyMinRedeemPoints,
@@ -33,6 +34,7 @@ export class LoyaltyService {
     private readonly prisma: PrismaService,
     private readonly ledger: LoyaltyLedger,
     private readonly audit: AuditService,
+    private readonly features: StoreFeaturesService,
   ) {}
 
   /**
@@ -87,12 +89,11 @@ export class LoyaltyService {
   }
 
   async settings(): Promise<LoyaltySettingsEntity> {
-    return toSettings(await this.ledger.settings());
+    return toSettings(await this.ledger.settings(), await this.features.isEnabled('LOYALTY'));
   }
 
   async updateSettings(input: UpdateLoyaltySettingsInput, actorId: string): Promise<LoyaltySettingsEntity> {
     const data: Prisma.StoreUpdateInput = {
-      loyaltyEnabled: input.enabled,
       loyaltyEarnPointsPerCedi: input.earnPointsPerCedi,
       loyaltyRedeemPointsPerCedi: input.redeemPointsPerCedi,
       loyaltyMinRedeemPoints: input.minimumRedeemPoints,
@@ -115,7 +116,7 @@ export class LoyaltyService {
         details: { changes: fieldChanges(before, after, SETTINGS_FIELDS) },
       }),
     );
-    return toSettings(after);
+    return toSettings(after, await this.features.isEnabled('LOYALTY'));
   }
 
   private async history(userId: string, first: number, after?: string) {

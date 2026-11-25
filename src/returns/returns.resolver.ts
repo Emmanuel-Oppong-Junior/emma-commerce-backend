@@ -15,12 +15,14 @@ import {
   ReturnStepInput,
 } from './dto/return.inputs';
 import { ReturnsService } from './returns.service';
+import { RequireFeature } from '../store-features/require-feature';
 
 @Resolver(() => ReturnRequestEntity)
 export class ReturnsResolver {
   constructor(private readonly returnsService: ReturnsService) {}
 
   @CustomerOnly()
+  @RequireFeature('RETURNS')
   @Mutation(() => CustomerReturn, {
     description:
       'Return delivered units of your own order: per line a quantity and reason, optional photos, and for an exchange ' +
@@ -35,6 +37,7 @@ export class ReturnsResolver {
   }
 
   @CustomerOnly()
+  @RequireFeature('RETURNS')
   @Mutation(() => CustomerReturn, { description: 'Withdraw your own return before its goods arrive back' })
   cancelReturn(@ActiveUser('id') userId: string, @Args('returnRequestId', { type: () => ID }) returnRequestId: string) {
     return this.returnsService.cancelReturn(userId, returnRequestId);

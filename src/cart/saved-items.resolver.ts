@@ -18,6 +18,7 @@ import { Variant } from '../variant/entities/variant.entity';
 import { notSellableReason } from '../variant/sellable';
 import { Cart } from './entities/cart.entity';
 import { SavedItemsService, SavedItemWithVariant } from './saved-items.service';
+import { RequireFeature } from '../store-features/require-feature';
 
 @ObjectType({ description: 'A variant saved for later, out of the cart' })
 export class SavedCartItem {
@@ -47,6 +48,7 @@ export class SavedItemsResolver {
     return this.saved.list(userId);
   }
 
+  @RequireFeature('SAVED_FOR_LATER')
   @Mutation(() => Cart, {
     description:
       'Move a cart line to "saved for later" (its quantity adds to the variant if already saved); returns the cart. ' +
@@ -56,6 +58,7 @@ export class SavedItemsResolver {
     return this.saved.saveForLater(userId, cartItemId);
   }
 
+  @RequireFeature('SAVED_FOR_LATER')
   @Mutation(() => Cart, {
     description:
       'Move a saved item back to the cart with its quantity; returns the cart. BAD_REQUEST with reason ' +
@@ -65,6 +68,7 @@ export class SavedItemsResolver {
     return this.saved.moveToCart(userId, savedItemId);
   }
 
+  @RequireFeature('SAVED_FOR_LATER')
   @Mutation(() => Boolean, { description: 'Delete a saved item' })
   removeSavedItem(@ActiveUser('id') userId: string, @Args('savedItemId', { type: () => ID }) savedItemId: string) {
     return this.saved.remove(userId, savedItemId);

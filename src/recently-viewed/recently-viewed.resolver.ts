@@ -6,6 +6,7 @@ import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { Product } from '../products/entities/product.entity';
 import { RECENTLY_VIEWED_LIMIT, RecentlyViewedService } from './recently-viewed.service';
+import { RequireFeature } from '../store-features/require-feature';
 
 /** Recently viewed products of signed-in users (P6-G.3); guests keep theirs on the device. */
 @Auth(AuthType.Bearer)
@@ -14,6 +15,7 @@ export class RecentlyViewedResolver {
   constructor(private readonly service: RecentlyViewedService) {}
 
   @Throttle({ productView: { limit: 60, ttl: 60000 } })
+  @RequireFeature('RECENTLY_VIEWED')
   @Mutation(() => Boolean, {
     name: 'recordProductView',
     description: `Records that the caller viewed a public product; the latest ${RECENTLY_VIEWED_LIMIT} distinct products are kept`,

@@ -74,8 +74,9 @@ export class CheckoutQuoteInput {
     nullable: true,
     description:
       'Loyalty points to redeem (at most loyalty.redeemablePoints); they pay part of the goods, never delivery. ' +
-      'BAD_REQUEST with reason POINTS_BELOW_MINIMUM, INSUFFICIENT_POINTS, POINTS_ABOVE_CAP, POINTS_NOT_WHOLE_PESEWAS ' +
-      'or LOYALTY_DISABLED; createOrder: CONFLICT with reason LOYALTY_BALANCE_CHANGED when the balance fell meanwhile',
+      'BAD_REQUEST with reason POINTS_BELOW_MINIMUM, INSUFFICIENT_POINTS, POINTS_ABOVE_CAP, POINTS_NOT_WHOLE_PESEWAS' +
+      ', or FEATURE_DISABLED with feature LOYALTY while loyalty is switched off; createOrder: CONFLICT with reason ' +
+      'LOYALTY_BALANCE_CHANGED when the balance fell meanwhile',
   })
   @IsOptional()
   @IsInt()

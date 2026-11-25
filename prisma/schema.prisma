@@ -1492,9 +1492,8 @@ model Store {
   returnWindowDays           Int                     @default(14)
   /// Hours a signed-in customer's cart sits unchanged before the abandoned-cart reminder (P6-G.2); CHECK 1-72.
   abandonedCartReminderDelayHours Int                @default(4)
-  /// Loyalty points (P6-L.1); CHECKs: earn 0-100 points per GHS 1, redeem 1-10000 points per GHS 1, minimum >= 1,
+  /// Loyalty points (P6-L.1; on/off is the LOYALTY StoreFeature since P8-F); CHECKs: earn 0-100 points per GHS 1, redeem 1-10000 points per GHS 1, minimum >= 1,
   /// cap 1-100 % of the goods after promotions, expiry 1-120 months
-  loyaltyEnabled             Boolean                 @default(true)
   loyaltyEarnPointsPerCedi   Int                     @default(1)
   loyaltyRedeemPointsPerCedi Int                     @default(100)
   loyaltyMinRedeemPoints     Int                     @default(500)
@@ -1510,6 +1509,7 @@ model Store {
   paymentProviderConfigs     PaymentProviderConfig[]
   velocityLimits             VelocityLimit[]
   suppliers                  Supplier[]
+  features                   StoreFeature[]
 }
 
 /// Test or live keys, from the secret key's prefix (sk_test_ / sk_live_).
@@ -2813,4 +2813,36 @@ model Referral {
   referee            User           @relation("ReferralReferee", fields: [refereeId], references: [id], onDelete: Cascade)
 
   @@index([referrerId, createdAt])
+}
+
+/// A store-level feature that can be switched off (P8-F). The catalogue (description, default, gated operations) is code:
+/// src/store-features/store-feature-registry.ts. No row = the registry default. CASH_ON_DELIVERY is listed for the
+/// feature view only; it lives in Store.cashOnDeliveryEnabled, so a CHECK keeps it out of this table.
+enum StoreFeatureKey {
+  GUEST_CHECKOUT
+  LOYALTY
+  REFERRALS
+  REVIEWS
+  PRODUCT_QA
+  RECENTLY_VIEWED
+  RETURNS
+  ABANDONED_CART_REMINDERS
+  SAVED_FOR_LATER
+  WISHLIST
+  CASH_ON_DELIVERY
+}
+
+/// The stored on/off value of one feature (P8-F); switching it off never deletes the feature's data.
+model StoreFeature {
+  id          String          @id @default(cuid())
+  storeId     String
+  store       Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  key         StoreFeatureKey
+  enabled     Boolean
+  /// The staff member who last switched it (no foreign key, like VelocityLimit)
+  updatedById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([storeId, key])
 }

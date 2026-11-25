@@ -3,7 +3,6 @@ import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helpe
 import { LoyaltyService } from './loyalty.service';
 
 const SETTINGS = {
-  loyaltyEnabled: true,
   loyaltyEarnPointsPerCedi: 1,
   loyaltyRedeemPointsPerCedi: 100,
   loyaltyMinRedeemPoints: 500,
@@ -31,7 +30,8 @@ function build(user: { storeMemberships: { id: string }[] } | null = { storeMemb
       .mockResolvedValue({ ...SETTINGS, loyaltyMinRedeemPoints: 1_000 }),
   };
   const audit = createAuditServiceMock();
-  const service = new LoyaltyService(prisma as never, ledger as never, audit as never);
+  const features = { isEnabled: jest.fn().mockResolvedValue(true) };
+  const service = new LoyaltyService(prisma as never, ledger as never, audit as never, features as never);
   return { service, ledger, audit };
 }
 

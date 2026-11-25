@@ -16,6 +16,7 @@ import {
 import { PhoneVerificationReason as Reason } from '../phone-verification/phone-otp';
 import { STORE_COUNTRY } from '../addresses/dto/create-address.input';
 import { LoggerService } from '../commons/logger.service';
+import { StoreFeaturesService } from '../store-features/store-features.service';
 import { guestCartExpiry, guestCartTokenHash, newGuestCartToken } from './guest-cart-token';
 import { GuestOrderAccess } from './guest-order-access';
 import { assertGuestPhoneVerified, guestPayerEmail } from './guest-checkout-rules';
@@ -84,12 +85,14 @@ export class GuestCheckoutService {
     private readonly phoneVerification: PhoneVerificationService,
     private readonly access: GuestOrderAccess,
     private readonly logger: LoggerService,
+    private readonly features: StoreFeaturesService,
     config: ConfigService,
   ) {
     this.frontendUrl = config.getOrThrow<string>('FRONTEND_URL');
   }
 
   async createCart(now = new Date()): Promise<{ guestCartToken: string; cart: GuestCart }> {
+    await this.features.assertEnabled('GUEST_CHECKOUT');
     const guestCartToken = newGuestCartToken();
     const created = await this.carts.createGuest(guestCartTokenHash(guestCartToken)!, guestCartExpiry(now));
     return { guestCartToken, cart: toGuestCart({ ...created, items: [] }) };
@@ -100,20 +103,20 @@ export class GuestCheckoutService {
   }
 
   async addItem(token: string, input: AddToCartInput): Promise<GuestCart> {
-    return toGuestCart(await this.cartService.addToGuestCart((await this.cartFor(token)).id, input));
+    return toGuestCart(await this.cartService.addToGuestCart((await this.openCart(token)).id, input));
   }
 
   async updateItem(token: string, input: UpdateCartItemInput): Promise<GuestCart> {
-    return toGuestCart(await this.cartService.updateGuestCartItem((await this.cartFor(token)).id, input));
+    return toGuestCart(await this.cartService.updateGuestCartItem((await this.openCart(token)).id, input));
   }
 
   async removeItem(token: string, cartItemId: string): Promise<GuestCart> {
-    return toGuestCart(await this.cartService.removeFromGuestCart((await this.cartFor(token)).id, cartItemId));
+    return toGuestCart(await this.cartService.removeFromGuestCart((await this.openCart(token)).id, cartItemId));
   }
 
   /** Texts a code to `phone`; once sent, that phone is the cart's (a different one is no longer verified). */
   async requestPhoneCode(token: string, phone: string): Promise<PhoneVerificationRequestResult> {
-    const cart = await this.cartFor(token);
+    const cart = await this.openCart(token);
     if (cart.guestPhone === phone && cart.guestPhoneVerifiedAt) {
       throw new BadRequestException({
         message: 'This phone number is already verified for this cart',
@@ -126,7 +129,7 @@ export class GuestCheckoutService {
   }
 
   async verifyPhone(token: string, code: string, now = new Date()): Promise<GuestCart> {
-    const cart = await this.cartFor(token);
+    const cart = await this.openCart(token);
     const phone = cart.guestPhone;
     if (!phone) {
       throw new BadRequestException({
@@ -146,7 +149,7 @@ export class GuestCheckoutService {
   }
 
   async quote(token: string, input: GuestCheckoutQuoteInput): Promise<CheckoutQuote> {
-    return this.orders.guestCheckoutQuote((await this.cartFor(token)).id, checkoutParams(input));
+    return this.orders.guestCheckoutQuote((await this.openCart(token)).id, checkoutParams(input));
   }
 
   async placeOrder(
@@ -154,7 +157,7 @@ export class GuestCheckoutService {
     input: CreateGuestOrderInput,
     clientIp?: string,
   ): Promise<{ orderAccessToken: string; order: Order & { items: OrderItem[] } }> {
-    const cart = await this.cartFor(token);
+    const cart = await this.openCart(token);
     // Checked again on the locked cart in the order transaction; this refuses early, before velocity counts.
     assertGuestPhoneVerified(cart, cart.guestPhone ?? '');
     const order = await this.orders.createGuestOrder(cart.id, {
@@ -195,6 +198,12 @@ export class GuestCheckoutService {
     const order = await this.getOrder(orderAccessToken);
     await this.payments.verifyGuestPayment(reference, order.id);
     return this.getOrder(orderAccessToken);
+  }
+
+  /** cartFor for a change: BAD_REQUEST with reason FEATURE_DISABLED while guest checkout is switched off. */
+  private async openCart(token: string): Promise<Cart> {
+    await this.features.assertEnabled('GUEST_CHECKOUT');
+    return this.cartFor(token);
   }
 
   private async cartFor(token: string, now = new Date()): Promise<Cart> {

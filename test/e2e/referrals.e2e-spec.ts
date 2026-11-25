@@ -4,7 +4,7 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { signInAdmin, signInUser } from '../helpers/auth.helper';
+import { signInAdmin, signInSuperAdmin, signInUser } from '../helpers/auth.helper';
 import { relaxVelocityLimits, resetDb, seedMinimal, setStock, verifyPhoneForCod } from '../helpers/db.helper';
 
 interface GqlResult {
@@ -257,6 +257,34 @@ describe('Referrals (P6-L.2, e2e)', () => {
     const referrer = await referralPoints('seed_user');
     expect(referrer).toHaveLength(before + 1);
     expect(referrer[referrer.length - 1]).toMatchObject({ type: 'REVERSE' });
+  });
+
+  it('rewards no referral completing while referrals are switched off, and works again once on (P8-F)', async () => {
+    const ownerToken = await signInSuperAdmin(app);
+    const switchReferrals = async (enabled: boolean) =>
+      expect(
+        (
+          await gql(
+            `mutation { setStoreFeature(input: { key: REFERRALS, enabled: ${enabled} }) { enabled } }`,
+            ownerToken,
+          )
+        ).errors,
+      ).toBeUndefined();
+    const pending = await newCustomer('abena', referrerCode);
+
+    await switchReferrals(false);
+    expect(reasonOf(await gql(`{ myReferrals { code } }`, referrerToken))).toBe('FEATURE_DISABLED');
+    await completedOrder(pending);
+    expect(await referralOf(pending.userId)).toMatchObject({
+      status: 'DISQUALIFIED',
+      disqualifiedReason: 'REFERRALS_DISABLED',
+    });
+    expect(await referralPoints(pending.userId)).toEqual([]);
+
+    await switchReferrals(true);
+    const later = await newCustomer('kwesi', referrerCode);
+    await completedOrder(later);
+    expect(await referralOf(later.userId)).toMatchObject({ status: 'REWARDED' });
   });
 
   it('refuses a code used too often today and flags those over the soft limit', async () => {

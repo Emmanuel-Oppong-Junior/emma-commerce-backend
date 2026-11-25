@@ -16,6 +16,7 @@ import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { ActiveAccess, CustomerOnly, RequirePermission } from '../iam/authorization/policy.decorators';
 import { hasPermission, StaffAccess } from '../iam/authorization/staff-access';
 import { ReviewPhotosLoader } from './review.loaders';
+import { RequireFeature } from '../store-features/require-feature';
 
 export const CONTENT_WRITE_LIMIT = { contentWrite: { limit: 10, ttl: 60000 } };
 
@@ -71,6 +72,7 @@ export class ReviewResolver {
 
   @CustomerOnly()
   @Throttle(CONTENT_WRITE_LIMIT)
+  @RequireFeature('REVIEWS')
   @Mutation(() => Review, {
     name: 'createReview',
     description:
@@ -84,6 +86,7 @@ export class ReviewResolver {
   }
 
   @CustomerOnly()
+  @RequireFeature('REVIEWS')
   @Mutation(() => Review, {
     name: 'updateReview',
     description: "Updates the caller's review; null or blank title/comment clears it",
@@ -96,6 +99,7 @@ export class ReviewResolver {
   }
 
   @CustomerOnly()
+  @RequireFeature('REVIEWS')
   @Mutation(() => Review, {
     name: 'deleteReview',
     description: "Deletes the caller's own review for good",
@@ -105,6 +109,7 @@ export class ReviewResolver {
   }
 
   @CustomerOnly()
+  @RequireFeature('REVIEWS')
   @Mutation(() => Boolean, {
     name: 'removeReviewPhoto',
     description: "Removes a photo from the caller's review",
@@ -115,6 +120,7 @@ export class ReviewResolver {
 
   @CustomerOnly()
   @Throttle(CONTENT_WRITE_LIMIT)
+  @RequireFeature('REVIEWS')
   @Mutation(() => Boolean, {
     name: 'reportReview',
     description: 'Reports a published review to staff; once per customer and review (ALREADY_REPORTED)',

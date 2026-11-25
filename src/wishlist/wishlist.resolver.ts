@@ -4,6 +4,7 @@ import { Wishlist } from './entities/wishlist.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
+import { RequireFeature } from '../store-features/require-feature';
 
 @Auth(AuthType.Bearer)
 @Resolver(() => Wishlist)
@@ -18,6 +19,7 @@ export class WishlistResolver {
     return this.wishlistService.getOrCreateWishlist(userId);
   }
 
+  @RequireFeature('WISHLIST')
   @Mutation(() => Wishlist, {
     name: 'addToWishlist',
     description: 'Adds a product to the user’s wishlist',
@@ -26,6 +28,7 @@ export class WishlistResolver {
     return this.wishlistService.addToWishlist(userId, productId);
   }
 
+  @RequireFeature('WISHLIST')
   @Mutation(() => Wishlist, {
     name: 'removeFromWishlist',
     description: 'Removes a product from the user’s wishlist',
@@ -37,6 +40,7 @@ export class WishlistResolver {
     return this.wishlistService.removeFromWishlist(userId, productId);
   }
 
+  @RequireFeature('WISHLIST')
   @Mutation(() => Wishlist, {
     name: 'clearWishlist',
     description: 'Clears the user’s wishlist',
