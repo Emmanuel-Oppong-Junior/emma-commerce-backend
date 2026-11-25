@@ -28,11 +28,11 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
 | 4 — Inventory | 7 / 7 | ✅ complete |
 | 5 — Delivery & fulfilment | 7 / 8 | 🔄 in progress (P5-D deferred) |
-| 6 — Customer engagement | 12 / 17 | 🔄 in progress |
+| 6 — Customer engagement | 14 / 17 | 🔄 in progress (N.3, S.3, L.3 deferred) |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **120 / 154** | |
+| **All** | **122 / 154** | |
 
 ---
 
@@ -443,8 +443,8 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ### P6-L — Loyalty
 > Run: ∥ · L · ⬜
-- [ ] 🔄 **P6-L.1** Loyalty points
-- [ ] **P6-L.2** Referrals
+- [x] **P6-L.1** Loyalty points [9aed656]
+- [x] **P6-L.2** Referrals [6b0f5c9]
 - [ ] **P6-L.3** Store credit / wallet / gift cards (**legal sign-off first — BoG e-money**)
 
 ## Phase 7 — Vertical packs (each pack = product types + attribute sets + capability flags + rules)
