@@ -124,6 +124,14 @@ const AUDITED: Record<string, string> = {
   updatePaymentMethods: 'payment-settings.service.spec',
   updateVelocityLimits: 'velocity.service.spec (updateLimits)',
   clearOrderReviewFlags: 'velocity.service.spec (clears flags with an audit row)',
+  hideReview: 'review.service.spec (moderation audit trail)',
+  unhideReview: 'review.service.spec (moderation audit trail)',
+  dismissReviewReports: 'review.service.spec (moderation audit trail)',
+  replyToReview: 'review.service.spec (moderation audit trail)',
+  answerProductQuestion: 'product-questions.service.spec (answers under the row lock with an audit row)',
+  hideProductQuestion: 'product-questions.service.spec (hides and unhides with audit rows)',
+  unhideProductQuestion: 'product-questions.service.spec (hides and unhides with audit rows)',
+  dismissProductQuestionReports: 'product-questions.service.spec (dismisses reports with an audit row)',
   updateCodRiskSettings: 'cod-risk.service.spec (audits the changed limits); cod-risk.e2e-spec',
   setShippingZoneCashOnDelivery: 'cod-risk.e2e-spec (zone gate)',
   addCodBlacklistEntry: 'cod-risk.e2e-spec (blacklist management)',
@@ -157,7 +165,6 @@ const NOT_AUDITED: Record<string, string> = {
   deleteTag: CATALOGUE_FOLLOW_UP,
   addProductsToTag: CATALOGUE_FOLLOW_UP,
   removeProductsFromTag: CATALOGUE_FOLLOW_UP,
-  adminDeleteReview: CATALOGUE_FOLLOW_UP,
 };
 
 type ClassRef = { prototype: object; name: string };

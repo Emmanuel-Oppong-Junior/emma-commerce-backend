@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Args, Info, Int, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { ProductsService } from './products.service';
 import { Product } from './entities/product.entity';
@@ -31,7 +32,16 @@ const CHANGES_PRICES: StepUpCondition = {
 };
 
 // Field resolvers and nested product lists must never be loaded through the Prisma select.
-const RESOLVED_FIELDS = ['priceRange', 'totalStock', 'inStock', 'variants', 'reviews', 'products', 'productType'];
+const RESOLVED_FIELDS = [
+  'priceRange',
+  'totalStock',
+  'inStock',
+  'variants',
+  'reviews',
+  'products',
+  'productType',
+  'rating',
+];
 
 const connectionSelect = (info?: GraphQLResolveInfo) =>
   extractRequestedFieldsFromQuery(info!, {
@@ -219,8 +229,16 @@ export class ProductsResolver {
     return this.productTypesLoader.loader.load(product.productTypeId);
   }
 
-  @ResolveField(() => [Review], { nullable: true })
-  async reviews(@Parent() product: Product) {
-    return this.reviewsLoader.loader.load(product.id);
+  @ResolveField(() => [Review], {
+    description: 'The latest published reviews, newest first; productReviews pages through all of them',
+  })
+  async reviews(
+    @Parent() product: Product,
+    @Args('first', { type: () => Int, defaultValue: 5, description: '1-20' }) first: number,
+  ) {
+    if (!Number.isInteger(first) || first < 1 || first > 20) {
+      throw new BadRequestException(`reviews(first: ${first}) must be between 1 and 20`);
+    }
+    return this.reviewsLoader.loader.load({ productId: product.id, first });
   }
 }

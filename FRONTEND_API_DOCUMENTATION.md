@@ -24,6 +24,8 @@
    - [Inventory](#215-inventory)
    - [Returns](#216-returns)
    - [Reviews](#217-reviews)
+   - [Product questions and answers](#217a-product-questions-and-answers)
+   - [Recently viewed products](#217b-recently-viewed-products)
    - [Tax](#218-tax)
    - [Analytics](#219-analytics)
    - [Addresses](#220-addresses)
@@ -142,7 +144,7 @@ PostgreSQL via Prisma. Product search (P6-S.1, ADR-0010) runs on Postgres full-t
 
 **Auth.** Every operation requires `Authorization: Bearer <accessToken>` unless marked **Auth Required: No** (public). A missing, invalid or expired token, or a deactivated account, gives `UNAUTHENTICATED`. The account (and its role) is re-read from the database on every request.
 
-**Permissions.** Staff operations need a permission (e.g. `order.refund`), granted by the user's staff role (see [2.24](#224-staff-roles-and-permissions)). Customers have no staff role and no permissions. The labels in this reference still say `ADMIN` and `SUPER_ADMIN`: `ADMIN` means the **Manager** role (every legacy ADMIN account became a Manager) and `SUPER_ADMIN` the **Owner** role; the exact permission of every operation is in the table in [2.24](#224-staff-roles-and-permissions). The Owner holds every permission, so nothing locks an Owner out any more (the former `ADMIN`-only operations `getUserPayment`, `softDeletePayment`, `restorePayment`, `updateSubCategory` and `removeSubCategory` now accept the Owner too). A few self-service operations (`cancelOrder`, `verifyPayment`, `getMyPayments`, `createReview`, `updateReview`, `deleteReview`) are for customers only and refuse any staff account with `FORBIDDEN`. Permissions are re-read with the account on every request, so a role change applies on the caller's next request. A missing permission is `FORBIDDEN`.
+**Permissions.** Staff operations need a permission (e.g. `order.refund`), granted by the user's staff role (see [2.24](#224-staff-roles-and-permissions)). Customers have no staff role and no permissions. The labels in this reference still say `ADMIN` and `SUPER_ADMIN`: `ADMIN` means the **Manager** role (every legacy ADMIN account became a Manager) and `SUPER_ADMIN` the **Owner** role; the exact permission of every operation is in the table in [2.24](#224-staff-roles-and-permissions). The Owner holds every permission, so nothing locks an Owner out any more (the former `ADMIN`-only operations `getUserPayment`, `softDeletePayment`, `restorePayment`, `updateSubCategory` and `removeSubCategory` now accept the Owner too). A few self-service operations (`cancelOrder`, `verifyPayment`, `getMyPayments`, `createReview`, `updateReview`, `deleteReview`, `reportReview`, `askProductQuestion`, `reportProductQuestion`) are for customers only and refuse any staff account with `FORBIDDEN`. Permissions are re-read with the account on every request, so a role change applies on the caller's next request. A missing permission is `FORBIDDEN`.
 
 **Query limits** (checked before execution; a violation is a `GRAPHQL_VALIDATION_FAILED` error, HTTP 400):
 
@@ -3119,28 +3121,28 @@ interface ReturnRequest {
 
 ### 2.17 Reviews
 
-> **Privacy:** `Review.user` is a `PublicProfile { displayName }` (first name + last initial, or "Customer"). Reviewer email, phone, addresses and orders are not reachable from reviews. Separately, `User.email`, `User.emailVerified`, `User.pendingEmail`, `User.phoneNumber`, `User.addresses`, `User.orders` and `Order.user` return a `FORBIDDEN` error unless the caller is that user or an ADMIN/SUPER_ADMIN.
+> **Privacy:** `Review.user` is a `PublicProfile { displayName }` (first name + last initial, or "Customer"). A review exposes no user id, email, phone, address or order. Separately, `User.email`, `User.emailVerified`, `User.pendingEmail`, `User.phoneNumber`, `User.addresses`, `User.orders` and `Order.user` return a `FORBIDDEN` error unless the caller is that user or an ADMIN/SUPER_ADMIN.
 
-The review queries and mutations below require a signed-in user. Guests can still read reviews through `Product.reviews` on the public `products`/`product` queries (field resolvers are not role-checked).
+**Rules (P6-V.1).** Only a customer who **received** the product can review it (a *verified purchase*): one of their order lines for the product has a unit in a `DELIVERED` shipment, or the order is `COMPLETED`, and not all of that line's units were refunded. Otherwise `createReview` fails with `FORBIDDEN` + `extensions.reason: "REVIEW_NOT_VERIFIED_PURCHASE"`. One review per customer and product (enforced by the database; a second one, even sent at the same moment, is `CONFLICT` + `reason: "REVIEW_ALREADY_EXISTS"`: edit the existing one). Reviews are **published at once**. Reviews written before this check show `verifiedPurchase: false`. Staff can hide a review (it leaves every public read and the rating; its author still sees it in `userReviews` with `status: HIDDEN`) and publish it again. Only active, `PUBLISHED` products have readable reviews (`NOT_FOUND` otherwise). Writing reviews and reports is rate-limited (10 a minute).
 
----
-
-#### `review`
-- **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Args**: `reviewId: String!`
-- **Response**: `Review!` (`NOT_FOUND` if unknown)
+**Rating.** `Product.rating { average count distribution { stars count } }` covers the published reviews: `average` to 2 decimals (null without reviews), `distribution` 5 stars first. It is stored on the product and updated in the same transaction as every review create, edit, delete, hide and unhide.
 
 **`Review` Object Type**:
 
 ```typescript
 {
   id: string;
-  score: number;       // 1–5
-  comment?: string;
+  score: number;             // 1–5
+  title?: string;            // up to 120 characters
+  comment?: string;          // up to 2000 characters
   productId: string;
-  userId: string;
-  user: PublicProfile; // { displayName } only, e.g. "Kwame A." ("Customer" if no name)
+  verifiedPurchase: boolean; // written by a customer who received the product
+  status: ModerationStatus;  // PUBLISHED | HIDDEN (only the author and moderators ever see HIDDEN)
+  hiddenReason?: string;     // staff with review.moderate only (FORBIDDEN for anyone else)
+  reply?: { body: string; repliedAt: DateTime }; // the store's public reply
+  photos: { id: string; url: string }[];         // at most 4
+  editedAt?: DateTime;       // when the author last changed it
+  user: PublicProfile;       // { displayName } only, e.g. "Kwame A." ("Customer" if no name)
   product: Product;
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -3149,78 +3151,129 @@ The review queries and mutations below require a signed-in user. Guests can stil
 
 ---
 
-#### `productReviews`
+#### `productReviews` (public, optional sign-in)
 - **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Args**: `productId: String!`
-- **Response**: `[Review!]!`
+- **Args**: `productId: ID!`, `sort: ReviewSort = NEWEST` (`NEWEST`, `HIGHEST`, `LOWEST`; newest first within a score), `first: Int = 20` (1–50), `after: ID` (the last review id of the previous page)
+- **Response**: `[Review!]!`: published reviews only. Fewer than `first` items means the last page; `Product.rating.count` is the total.
+
+`Product.reviews(first: Int = 5)` (1–20) gives the latest published reviews for a product card or page.
+
+---
+
+#### `review` (public, optional sign-in)
+- **Type**: Query
+- **Args**: `reviewId: String!`
+- **Response**: `Review!`: a published review of a public product; its author and moderators also get it when hidden. `NOT_FOUND` otherwise.
 
 ---
 
 #### `userReviews`
-- **Type**: Query
-- **Roles**: `USER`, `ADMIN`, `SUPER_ADMIN`
-- **Description**: Reviews written by the current user.
-- **Response**: `[Review!]!`
+- **Type**: Query (signed in)
+- **Args**: `first: Int = 20` (1–50), `after: ID`
+- **Response**: `[Review!]!`: the caller's own reviews in any status, newest first.
 
 ---
 
-#### `createReview`
+#### `createReview` (customers only)
 - **Type**: Mutation
-- **Roles**: `USER` only
 - **Args**: `input: CreateReviewInput!`
 - **Response**: `Review!`
-- **Description**: One review per user per product. Buying the product is not required.
-
-**Input: `CreateReviewInput`**
 
 ```typescript
 {
   productId: string;  // Required.
   score: number;      // Required. Integer 1–5.
-  comment?: string;   // Optional.
+  title?: string;     // Optional, trimmed, up to 120 characters.
+  comment?: string;   // Optional, trimmed, up to 2000 characters.
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (product), `BAD_REQUEST` ("You have already reviewed product …").
+**Possible Errors**: `NOT_FOUND` (product not public), `FORBIDDEN` + `REVIEW_NOT_VERIFIED_PURCHASE`, `CONFLICT` + `REVIEW_ALREADY_EXISTS`, `BAD_USER_INPUT` (lengths, score).
 
 ---
 
-#### `updateReview`
+#### `updateReview` (customers only)
 - **Type**: Mutation
-- **Roles**: `USER` only
-- **Args**: `input: UpdateReviewInput!`
+- **Args**: `input: UpdateReviewInput!` = `{ id: string; score?: number; title?: string | null; comment?: string | null }`
 - **Response**: `Review!`
+- **Description**: Omitted fields stay as they are; `title`/`comment` sent as `null` (or blank) are cleared. Sets `editedAt`. `NOT_FOUND` (review), `FORBIDDEN` ("You can only modify your own reviews").
 
-**Input: `UpdateReviewInput`**
+---
+
+#### `deleteReview` (customers only)
+- **Type**: Mutation
+- **Args**: `reviewId: String!`
+- **Response**: `Review!`
+- **Description**: Permanently deletes one of the caller's own reviews (with its photos); the customer may then write a new one. Same errors as `updateReview`.
+
+---
+
+#### Photos: `POST /reviews/:reviewId/photos` and `removeReviewPhoto` (customers only)
+Upload one image per request as multipart field `file` (JPEG, PNG or WebP, checked by content, at most 5 MB) to the caller's own review: `201 { id, url }`. A review holds at most 4 photos (`400`, `reason: REVIEW_PHOTO_LIMIT`); another customer's review is `403`, no token `401`. `mutation removeReviewPhoto(photoId: String!): Boolean!` removes one (`NOT_FOUND` for someone else's photo).
+
+---
+
+#### `reportReview` (customers only)
+- **Type**: Mutation
+- **Args**: `input: ReportContentInput!` = `{ id: ID! (the review), reason: ContentReportReason!, note?: string (up to 500; required for OTHER) }`
+- **Response**: `Boolean!`
+- **Description**: `ContentReportReason`: `SPAM`, `OFFENSIVE`, `OFF_TOPIC`, `FAKE`, `PERSONAL_INFORMATION`, `OTHER`. Once per customer and review (`CONFLICT` + `reason: ALREADY_REPORTED`); not your own review (`BAD_REQUEST`); hidden reviews are `NOT_FOUND`.
+
+---
+
+#### Moderation (staff with `review.moderate`: Owner, Manager, Support)
+- `reportedReviews(first: Int = 20, after: ID): [ReportedReview!]!`: the queue: reviews with open reports, oldest first. `ReportedReview { review: Review!, openReports: [ContentReport!]! }`, `ContentReport { id, reason, note, createdAt }` (the reporter is not shown).
+- `hideReview(input: { id, reason }): Review!`: hides a published review (`CONFLICT` if already hidden) and closes its open reports. Audited.
+- `unhideReview(input: { id, reason }): Review!`: publishes a hidden review again (`CONFLICT` if not hidden). Audited.
+- `dismissReviewReports(input: { id, reason }): Review!`: closes the open reports and leaves the review as it is. Audited.
+- `replyToReview(input: { reviewId, body }): Review!`: sets (or replaces) the store's public reply, up to 2000 characters. Audited.
+
+**Breaking changes (P6-V.1)** `[breaking-api]`: `adminDeleteReview` removed (use `hideReview`); `Review.userId` removed; `productReviews` takes `productId: ID!`, pages (`first` default 20, `after`, `sort`) and is public; `review` is public (published reviews only); `userReviews` pages (`first`, `after`); `Product.reviews` returns only the latest published reviews (`first` default 5, max 20) instead of every review; `createReview` requires a verified purchase and answers a duplicate with `CONFLICT` (was `BAD_REQUEST`); `updateReview` no longer takes `productId`, a `null` comment now clears it, and another customer's review is `FORBIDDEN` (was `BAD_REQUEST`). New: `Product.rating`, `Review.title/verifiedPurchase/status/hiddenReason/reply/photos/editedAt`, `reportReview`, `removeReviewPhoto`, `POST /reviews/:reviewId/photos`, the moderation operations above.
+
+---
+
+### 2.17a Product questions and answers
+
+**Rules (P6-V.2).** A signed-in customer asks a question about an active, `PUBLISHED` product (5–1000 characters, trimmed). Staff with `review.moderate` (Owner, Manager, Support) answer it; customers do not answer. A question is **public once answered** and not hidden; until then only its asker (in `myProductQuestions`) and staff see it. The asker is shown only as `user: PublicProfile { displayName }`. Customers report public questions (once each); staff hide and unhide them like reviews. Asking and reporting are rate-limited (10 a minute).
+
+**`ProductQuestion` Object Type**:
 
 ```typescript
 {
-  id: string;          // Required. The review ID.
-  score?: number;      // Optional. 1–5.
-  comment?: string;    // Optional.
-  productId?: string;  // Optional.
+  id: string;
+  productId: string;
+  body: string;
+  answer?: string;          // the store's answer; null until answered
+  answeredAt?: DateTime;
+  status: ModerationStatus; // PUBLISHED | HIDDEN
+  hiddenReason?: string;    // staff with review.moderate only
+  user: PublicProfile;      // { displayName } only
+  product: Product;
+  createdAt: DateTime;
 }
 ```
 
-**Possible Errors**: `NOT_FOUND` (review), `BAD_REQUEST` ("You can only modify your own reviews").
+- `productQuestions(productId: ID!, first: Int = 20, after: ID): [ProductQuestion!]!` (public, optional sign-in): answered, published questions, latest answer first; `after` = last id of the previous page. `NOT_FOUND` for a product that is not public.
+- `productQuestion(questionId: String!): ProductQuestion!` (public, optional sign-in): an answered public question; its asker and moderators also get it unanswered or hidden; `NOT_FOUND` otherwise.
+- `myProductQuestions(first: Int = 20, after: ID): [ProductQuestion!]!` (signed in): the caller's questions, answered or not, newest first.
+- `askProductQuestion(input: { productId: ID!, body: String! }): ProductQuestion!` (customers only): `NOT_FOUND` (product not public), `BAD_USER_INPUT` (length).
+- `reportProductQuestion(input: ReportContentInput!): Boolean!` (customers only): same input and rules as `reportReview` (`ALREADY_REPORTED`, not your own, `OTHER` needs a note, non-public questions `NOT_FOUND`).
+- Staff (`review.moderate`): `unansweredProductQuestions(first, after)` (published, unanswered, oldest first); `reportedProductQuestions(first, after): [ReportedProductQuestion!]!` (`{ question, openReports: [ContentReport] }`); `answerProductQuestion(input: { questionId, answer })` (sets or replaces the answer, up to 2000 characters); `hideProductQuestion(input: { id, reason })` (closes open reports); `unhideProductQuestion(input: { id, reason })`; `dismissProductQuestionReports(input: { id, reason })`. All four mutations are audited; `CONFLICT` when hiding a hidden question or unhiding a visible one.
+
+New in P6-V.2 (additive, no breaking change).
 
 ---
 
-#### `deleteReview`
-- **Type**: Mutation
-- **Roles**: `USER` only
-- **Args**: `reviewId: String!`
-- **Response**: `Review!`
-- **Description**: Permanently deletes one of the caller's own reviews (hard delete). Same errors as `updateReview`.
+### 2.17b Recently viewed products
 
----
+**Signed-in users (P6-G.3).** The server does not record views on its own: call `recordProductView` when a product page is shown.
 
-#### `adminDeleteReview` (ADMIN, SUPER_ADMIN)
-- **Type**: Mutation
-- **Args**: `reviewId: String!`
-- **Response**: `Review!`
-- **Description**: Permanently deletes any review (moderation). `NOT_FOUND` if unknown.
+- `recordProductView(productId: ID!): Boolean!` (signed in, staff included): records the view of an active, `PUBLISHED` product (`NOT_FOUND` otherwise). One entry per product (viewing it again moves it to the top); only the latest 20 distinct products are kept. Rate-limited to 60 a minute.
+- `recentlyViewed(limit: Int = 20): [Product!]!` (signed in): latest first, 1–20 (`BAD_REQUEST` outside). Products no longer on sale (inactive, draft, archived) are left out.
+
+**Guests:** keep the list on the device (e.g. `localStorage`, latest 20 product ids) and read the products with the public `product` query. The server has no guest list and does not merge a guest list into the account at sign-in; a client may replay its ids through `recordProductView` after signing in (oldest first).
+
+New in P6-G.3 (additive, no breaking change).
 
 ---
 
@@ -4450,10 +4503,11 @@ Cancelling a paid online order records a `PENDING` refund (reason `ORDER_CANCELL
 
 ### Review Submission Flow
 
-1. User must be authenticated with the `USER` role.
-2. Call `mutation createReview(input: { productId, score, comment? })`. `score` must be 1–5; one review per product.
-3. To update: `mutation updateReview(input: { id, score?, comment? })`.
-4. To delete: `mutation deleteReview(reviewId)` — permanently deletes the review.
+1. Show "Write a review" for products the customer received (a delivered shipment or a completed order); others get `REVIEW_NOT_VERIFIED_PURCHASE`.
+2. Call `mutation createReview(input: { productId, score, title?, comment? })`, then upload photos (up to 4) with `POST /reviews/:reviewId/photos`.
+3. To update: `mutation updateReview(input: { id, score?, title?, comment? })` (`null` clears a text field).
+4. To delete: `mutation deleteReview(reviewId)`: permanently deletes the review.
+5. Product pages read `Product.rating` and `Product.reviews(first)`, then page with `productReviews(productId, sort, first, after)`.
 
 ---
 

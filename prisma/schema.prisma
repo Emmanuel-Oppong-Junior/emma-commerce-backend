@@ -31,6 +31,10 @@ model User {
   lockedUntil               DateTime?
   addresses                 Address[]
   reviews                   Review[]
+  reviewReports             ReviewReport[]
+  productQuestions          ProductQuestion[]
+  productQuestionReports    ProductQuestionReport[]
+  recentlyViewedProducts    RecentlyViewedProduct[]
   cart                      Cart?
   order                     Order[]
   authProvider              AuthProvider[]
@@ -358,6 +362,16 @@ model Product {
   fulfilmentKind       FulfilmentKind @default(PHYSICAL)
   unitOfMeasure        UnitOfMeasure  @default(EACH)
 
+  /// Rating of the PUBLISHED reviews (P6-V.1), kept in step by the review service under the product row lock
+  ratingCount   Int      @default(0)
+  /// Mean score to 2 decimals; null while there is no published review
+  ratingAverage Decimal? @db.Decimal(3, 2)
+  rating1Count  Int      @default(0)
+  rating2Count  Int      @default(0)
+  rating3Count  Int      @default(0)
+  rating4Count  Int      @default(0)
+  rating5Count  Int      @default(0)
+
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   categoryId       String?
@@ -372,6 +386,8 @@ model Product {
   cartItem         CartItem[]
   orderItem        OrderItem[]
   wishlist         WishList[]
+  questions        ProductQuestion[]
+  recentlyViewedBy RecentlyViewedProduct[]
   brand            Brand?       @relation(fields: [brandId], references: [id])
   brandId          String?
   /// Full-text document (P6-S.1, simple config): name weight A; brand, category, sub-category and tag names B;
@@ -409,20 +425,131 @@ enum DeliveryOptions {
 }
 
 model Review {
-  id        String    @id @default(cuid())
-  score     Int
-  comment   String?
-  productId String
-  userId    String
-  deleted   Boolean   @default(false)
-  deletedAt DateTime?
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id               String           @id @default(cuid())
+  score            Int
+  title            String?          @db.VarChar(120)
+  comment          String?
+  productId        String
+  userId           String
+  status           ModerationStatus @default(PUBLISHED)
+  /// Written by a customer who received the product (P6-V.1); false on reviews written before the check
+  verifiedPurchase Boolean          @default(false)
+  /// The delivered order line that made the purchase verified
+  orderItemId      String?
+  orderItem        OrderItem?       @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  /// Why staff hid it (staff only); set while HIDDEN
+  hiddenReason     String?
+  hiddenAt         DateTime?
+  /// The store's public reply
+  reply            String?
+  repliedAt        DateTime?
+  /// When its author last changed it
+  editedAt         DateTime?
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product          Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  photos           ReviewPhoto[]
+  reports          ReviewReport[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
+  @@unique([userId, productId])
+  @@index([productId, status, createdAt])
+  @@index([orderItemId])
+}
+
+/// Visibility of customer content (reviews, product questions): published at once, hidden by staff
+enum ModerationStatus {
+  PUBLISHED
+  HIDDEN
+}
+
+/// A photo on a review, uploaded into Cloudinary folder reviews/<reviewId>/ (at most MAX_REVIEW_PHOTOS)
+model ReviewPhoto {
+  id        String   @id @default(cuid())
+  reviewId  String
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  publicId  String
+  url       String
+  createdAt DateTime @default(now())
+
+  @@index([reviewId])
+}
+
+enum ContentReportReason {
+  SPAM
+  OFFENSIVE
+  OFF_TOPIC
+  FAKE
+  PERSONAL_INFORMATION
+  OTHER
+}
+
+/// A customer's report of a review (one per customer and review); open until staff hide the review or dismiss it
+model ReviewReport {
+  id         String              @id @default(cuid())
+  reviewId   String
+  review     Review              @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter   User                @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  reason     ContentReportReason
+  note       String?             @db.VarChar(500)
+  resolvedAt DateTime?
+  createdAt  DateTime            @default(now())
+
+  @@unique([reviewId, reporterId])
+  @@index([reporterId])
+}
+
+/// A customer's question on a product (P6-V.2): public once staff answer it; reportable and hideable like reviews
+model ProductQuestion {
+  id           String                  @id @default(cuid())
+  productId    String
+  product      Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body         String                  @db.VarChar(1000)
+  /// The store's answer (staff with review.moderate); the question is public once answered
+  answer       String?                 @db.VarChar(2000)
+  answeredAt   DateTime?
+  status       ModerationStatus        @default(PUBLISHED)
+  /// Why staff hid it (staff only); set while HIDDEN
+  hiddenReason String?
+  hiddenAt     DateTime?
+  reports      ProductQuestionReport[]
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  @@index([productId, status, answeredAt])
+  @@index([userId, createdAt])
+}
+
+/// A customer's report of a product question (one per customer and question); open until staff hide it or dismiss it
+model ProductQuestionReport {
+  id         String              @id @default(cuid())
+  questionId String
+  question   ProductQuestion     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter   User                @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  reason     ContentReportReason
+  note       String?             @db.VarChar(500)
+  resolvedAt DateTime?
+  createdAt  DateTime            @default(now())
+
+  @@unique([questionId, reporterId])
+  @@index([reporterId])
+}
+
+/// The products a signed-in user viewed (P6-G.3): one row per product, the latest RECENTLY_VIEWED_LIMIT kept
+model RecentlyViewedProduct {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  viewedAt  DateTime
+
+  @@id([userId, productId])
+  @@index([userId, viewedAt])
   @@index([productId])
-  @@index([userId])
 }
 
 model Cart {
@@ -566,6 +693,7 @@ model OrderItem {
   serialUnits          SerialUnit[]
   shipmentItems        ShipmentItem[]
   returnLines          ReturnLine[]
+  reviews              Review[]
 
   @@index([orderId])
   @@index([productId, orderId])

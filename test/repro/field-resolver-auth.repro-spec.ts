@@ -7,6 +7,7 @@ import { APP_GUARD } from '@nestjs/core';
 import * as request from 'supertest';
 import { ReviewResolver } from '../../src/review/review.resolver';
 import { ReviewService } from '../../src/review/review.service';
+import { ReviewPhotosLoader } from '../../src/review/review.loaders';
 import { UsersResolver } from '../../src/users/users.resolver';
 import { UsersService } from '../../src/users/users.service';
 import { UsersLoader } from '../../src/users/loaders/users.loader';
@@ -81,6 +82,7 @@ describe('Field-level authorisation (audit repro: SEC-01)', () => {
         { provide: AddressesLoader, useValue: { loader: { load: async () => [reviewerAddress] } } },
         { provide: OrdersLoader, useValue: { loader: { load: async () => [] } } },
         { provide: ProductsLoader, useValue: { loader: { load: async () => null } } },
+        { provide: ReviewPhotosLoader, useValue: { loader: { load: async () => [] } } },
         {
           provide: AccessTokenGuard,
           useValue: {

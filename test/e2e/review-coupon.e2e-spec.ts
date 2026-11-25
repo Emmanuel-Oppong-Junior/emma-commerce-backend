@@ -5,6 +5,7 @@ import { ghs, gqlRequest } from '../helpers/graphql.helper';
 import { resetDb, seedMinimal, takeOrderNumber } from '../helpers/db.helper';
 import { signInUser, signUpUser } from '../helpers/auth.helper';
 import { CouponFixture, createCoupon } from '../helpers/promotion.helper';
+import { purchase } from '../helpers/review.helper';
 
 describe('Reviews & Coupons (e2e)', () => {
   let app: INestApplication;
@@ -25,6 +26,12 @@ describe('Reviews & Coupons (e2e)', () => {
       password: 'Other@123',
     });
     otherUserToken = accessToken;
+
+    // Only customers who received a product may review it (P6-V.1)
+    const otherUser = await prisma.user.findUniqueOrThrow({ where: { email: 'otheruser@test.com' } });
+    await purchase(prisma, 'seed_user', { productId: 'seed_prod1', variantId: 'seed_var1' }, 'COMPLETED');
+    await purchase(prisma, otherUser.id, { productId: 'seed_prod1', variantId: 'seed_var1' }, 'COMPLETED');
+    await purchase(prisma, otherUser.id, { productId: 'seed_prod2', variantId: 'seed_var2' }, 'COMPLETED');
   });
 
   afterAll(() => app.close());

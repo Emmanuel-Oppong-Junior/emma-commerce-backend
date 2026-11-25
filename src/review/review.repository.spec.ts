@@ -1,192 +1,113 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
 import { ReviewRepository } from './review.repository';
 import { PrismaService } from '../prisma/prisma.service';
-import { Prisma, Review } from '../generated/prisma/client';
-
-const mockReview = {
-  id: 'review1',
-  userId: 'user1',
-  productId: 'prod1',
-  score: 5,
-  comment: 'Great product!',
-  deleted: false,
-  deletedAt: null,
-  user: { id: 'user1', email: 'user@example.com' },
-  product: { id: 'prod1', name: 'T-Shirt' },
-} as unknown as Review & { user: { id: string; email: string }; product: { id: string; name: string } };
-
-const mockPrismaReview = {
-  create: jest.fn(),
-  findUnique: jest.fn(),
-  findFirst: jest.fn(),
-  findMany: jest.fn(),
-  update: jest.fn(),
-  delete: jest.fn(),
-};
-
-const mockPrismaProduct = { findUnique: jest.fn() };
-
-const mockPrisma = { review: mockPrismaReview, product: mockPrismaProduct };
+import { Prisma } from '../generated/prisma/client';
+import { ReviewSort } from './dto/review-list.args';
 
 describe('ReviewRepository', () => {
   let repository: ReviewRepository;
+  const prisma = {
+    product: { count: jest.fn() },
+    review: { findMany: jest.fn(), groupBy: jest.fn() },
+    orderItem: { findMany: jest.fn() },
+    $queryRaw: jest.fn(),
+    $executeRaw: jest.fn(),
+  };
+  const tx = prisma as unknown as Prisma.TransactionClient;
 
   beforeEach(async () => {
+    jest.resetAllMocks();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ReviewRepository, { provide: PrismaService, useValue: mockPrisma }],
+      providers: [ReviewRepository, { provide: PrismaService, useValue: prisma }],
     }).compile();
-
-    repository = module.get<ReviewRepository>(ReviewRepository);
-    jest.clearAllMocks();
+    repository = module.get(ReviewRepository);
   });
 
-  describe('findProductById', () => {
-    it('should find a product by ID', async () => {
-      mockPrismaProduct.findUnique.mockResolvedValue({ id: 'prod1' });
+  it('treats only active, PUBLISHED products as public', async () => {
+    prisma.product.count.mockResolvedValue(1);
 
-      const result = await repository.findProductById('prod1');
-
-      expect(result).toEqual({ id: 'prod1' });
-    });
-
-    it('should return null if product not found', async () => {
-      mockPrismaProduct.findUnique.mockResolvedValue(null);
-
-      const result = await repository.findProductById('nonexistent');
-
-      expect(result).toBeNull();
+    await expect(repository.isPublicProduct('prod1')).resolves.toBe(true);
+    expect(prisma.product.count).toHaveBeenCalledWith({
+      where: { id: 'prod1', isActive: true, status: 'PUBLISHED' },
     });
   });
 
-  describe('findExisting', () => {
-    it('should find an existing review for user and product', async () => {
-      mockPrismaReview.findFirst.mockResolvedValue(mockReview);
+  it('reports whether the product row was locked', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([{ '?column?': 1 }]).mockResolvedValueOnce([]);
 
-      const result = await repository.findExisting('user1', 'prod1');
+    await expect(repository.lockProduct(tx, 'prod1')).resolves.toBe(true);
+    await expect(repository.lockProduct(tx, 'gone')).resolves.toBe(false);
+  });
 
-      expect(result).toEqual(mockReview);
-    });
+  it('sums delivered shipment units and non-failed refund units per order line', async () => {
+    const orderedAt = new Date('2026-11-01');
+    prisma.orderItem.findMany.mockResolvedValue([
+      {
+        id: 'item1',
+        quantity: 3,
+        order: { status: 'IN_FULFILMENT', createdAt: orderedAt },
+        shipmentItems: [{ quantity: 1 }, { quantity: 1 }],
+        refundLines: [{ quantity: 1 }],
+      },
+    ]);
 
-    it('should return null if no existing review', async () => {
-      mockPrismaReview.findFirst.mockResolvedValue(null);
+    await expect(repository.purchasedLines(tx, 'user1', 'prod1')).resolves.toEqual([
+      {
+        orderItemId: 'item1',
+        orderStatus: 'IN_FULFILMENT',
+        orderedAt,
+        quantity: 3,
+        deliveredUnits: 2,
+        refundedUnits: 1,
+      },
+    ]);
+    const where = prisma.orderItem.findMany.mock.calls[0][0];
+    expect(where.where).toEqual({ productId: 'prod1', order: { userId: 'user1' } });
+    expect(where.select.shipmentItems.where).toEqual({ shipment: { status: 'DELIVERED' } });
+    expect(where.select.refundLines.where).toEqual({ refund: { status: { not: 'FAILED' } } });
+  });
 
-      const result = await repository.findExisting('user1', 'prod1');
+  it('recomputes the stored rating from the published reviews only', async () => {
+    prisma.review.groupBy.mockResolvedValue([
+      { score: 5, _count: { _all: 2 } },
+      { score: 2, _count: { _all: 1 } },
+    ]);
 
-      expect(result).toBeNull();
+    await repository.refreshRating(tx, 'prod1');
+
+    expect(prisma.review.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { productId: 'prod1', status: 'PUBLISHED' } }),
+    );
+    const [, count, average, c1, c2, c3, c4, c5, id] = prisma.$executeRaw.mock.calls[0];
+    expect({ count, average, c1, c2, c3, c4, c5, id }).toEqual({
+      count: 3,
+      average: '4.00',
+      c1: 0,
+      c2: 1,
+      c3: 0,
+      c4: 0,
+      c5: 2,
+      id: 'prod1',
     });
   });
 
-  describe('create', () => {
-    it('should create a review with user and product includes', async () => {
-      mockPrismaReview.create.mockResolvedValue(mockReview);
+  it('pages published reviews by the chosen sort with the last id as cursor', async () => {
+    prisma.review.findMany.mockResolvedValue([]);
 
-      const result = await repository.create({
-        user: { connect: { id: 'user1' } },
-        product: { connect: { id: 'prod1' } },
-        score: 5,
-        comment: 'Great!',
-      });
+    await repository.findPublished('prod1', ReviewSort.LOWEST, 10, 'rev9');
+    await repository.findPublished('prod1', ReviewSort.NEWEST, 10);
 
-      expect(result).toEqual(mockReview);
-      expect(mockPrismaReview.create).toHaveBeenCalledWith(
-        expect.objectContaining({ include: expect.objectContaining({ user: expect.any(Object) }) }),
-      );
+    expect(prisma.review.findMany).toHaveBeenNthCalledWith(1, {
+      where: { productId: 'prod1', status: 'PUBLISHED' },
+      orderBy: [{ score: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }],
+      take: 10,
+      skip: 1,
+      cursor: { id: 'rev9' },
     });
-  });
-
-  describe('findById', () => {
-    it('should find a review by ID with includes', async () => {
-      mockPrismaReview.findUnique.mockResolvedValue(mockReview);
-
-      const result = await repository.findById('review1');
-
-      expect(result).toEqual(mockReview);
-    });
-
-    it('should return null if not found', async () => {
-      mockPrismaReview.findUnique.mockResolvedValue(null);
-
-      const result = await repository.findById('nonexistent');
-
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('findByProduct', () => {
-    it('should return all reviews for a product', async () => {
-      mockPrismaReview.findMany.mockResolvedValue([mockReview]);
-
-      const result = await repository.findByProduct('prod1');
-
-      expect(result).toEqual([mockReview]);
-      expect(mockPrismaReview.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { productId: 'prod1' } }),
-      );
-    });
-  });
-
-  describe('findByUser', () => {
-    it('should return all reviews by a user', async () => {
-      mockPrismaReview.findMany.mockResolvedValue([mockReview]);
-
-      const result = await repository.findByUser('user1');
-
-      expect(result).toEqual([mockReview]);
-      expect(mockPrismaReview.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'user1' } }));
-    });
-  });
-
-  describe('update', () => {
-    it('should update a review', async () => {
-      const updated = { ...mockReview, comment: 'Updated comment', score: 4 };
-      mockPrismaReview.update.mockResolvedValue(updated);
-
-      const result = await repository.update('review1', { score: 4, comment: 'Updated comment' });
-
-      expect(result).toEqual(updated);
-    });
-
-    it('should throw NotFoundException on P2025', async () => {
-      const prismaError = new Prisma.PrismaClientKnownRequestError('Not found', {
-        code: 'P2025',
-        clientVersion: '5.0',
-      });
-      mockPrismaReview.update.mockRejectedValue(prismaError);
-
-      await expect(repository.update('nonexistent', { score: 3, comment: 'x' })).rejects.toThrow(NotFoundException);
-    });
-
-    it('should rethrow unknown errors', async () => {
-      mockPrismaReview.update.mockRejectedValue(new Error('DB error'));
-
-      await expect(repository.update('review1', { score: 3, comment: 'x' })).rejects.toThrow('DB error');
-    });
-  });
-
-  describe('delete', () => {
-    it('should delete a review', async () => {
-      mockPrismaReview.delete.mockResolvedValue(mockReview);
-
-      const result = await repository.delete('review1');
-
-      expect(result).toEqual(mockReview);
-    });
-
-    it('should throw NotFoundException on P2025', async () => {
-      const prismaError = new Prisma.PrismaClientKnownRequestError('Not found', {
-        code: 'P2025',
-        clientVersion: '5.0',
-      });
-      mockPrismaReview.delete.mockRejectedValue(prismaError);
-
-      await expect(repository.delete('nonexistent')).rejects.toThrow(NotFoundException);
-    });
-
-    it('should rethrow unknown errors on delete', async () => {
-      mockPrismaReview.delete.mockRejectedValue(new Error('DB error'));
-
-      await expect(repository.delete('review1')).rejects.toThrow('DB error');
+    expect(prisma.review.findMany).toHaveBeenNthCalledWith(2, {
+      where: { productId: 'prod1', status: 'PUBLISHED' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 10,
     });
   });
 });
