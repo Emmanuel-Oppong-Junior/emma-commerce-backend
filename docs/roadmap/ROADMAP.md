@@ -28,11 +28,11 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 3 — Payments & Ghana methods | 8 / 11 | 🔄 in progress |
 | 4 — Inventory | 7 / 7 | ✅ complete |
 | 5 — Delivery & fulfilment | 7 / 8 | 🔄 in progress (P5-D deferred) |
-| 6 — Customer engagement | 0 / 17 | 🔄 in progress |
+| 6 — Customer engagement | 11 / 17 | 🔄 in progress |
 | 7 — Vertical packs | 0 / 8 | ⬜ not started |
 | 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **108 / 154** | |
+| **All** | **119 / 154** | |
 
 ---
 
@@ -414,32 +414,32 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ### P6-N — Notifications (ADR-0015)
 > Run: N.1 → (N.2 ∥ N.3 ∥ N.4) · L · 🟥 N.1–N.2 / 🟧 N.3–N.4
-- [ ] 🔄 **P6-N.1** Templates (escaped, versioned) + preferences + consent
-- [ ] **P6-N.2** SMS adapter (Hubtel/mNotify) with sender ID
+- [x] **P6-N.1** Templates (escaped, versioned) + preferences + consent [82796c2]
+- [x] **P6-N.2** SMS adapter (Hubtel/mNotify) with sender ID [6a1dc94]
 - [ ] **P6-N.3** WhatsApp via BSP
-- [ ] **P6-N.4** In-app feed
+- [x] **P6-N.4** In-app feed [ca95363]
 
-### P6-R — Returns/RMA
+### P6-R — Returns/RMA ✅ complete
 > Run: → · L · 🟥
-- [ ] 🔄 **P6-R.1** Item-level returns (M11), reasons, windows per product type (Act 772 14-day rule + exemptions), inspection, restock/disposition, refund or exchange
+- [x] **P6-R.1** Item-level returns (M11), reasons, windows per product type (Act 772 14-day rule + exemptions), inspection, restock/disposition, refund or exchange [af9d06c]
 
 ### P6-S — Search (ADR-0010)
 > Run: S.1 → S.2; S.3/S.4 later · L · 🟥 S.1 / 🟧 S.2–S.4
-- [ ] 🔄 **P6-S.1** Fix filters (inStock, price range, subcategory) + `websearch_to_tsquery` + GIN + pg_trgm
-- [ ] **P6-S.2** Attribute facets
+- [x] **P6-S.1** Fix filters (inStock, price range, subcategory) + `websearch_to_tsquery` + GIN + pg_trgm [237d126]
+- [x] **P6-S.2** Attribute facets [fa0578d]
 - [ ] **P6-S.3** Meilisearch adapter (when triggered)
-- [ ] **P6-S.4** Autocomplete, synonyms
+- [x] **P6-S.4** Autocomplete, synonyms [c1f97d8]
 
 ### P6-G — Guest & carts
 > Run: ∥ · M · 🟧
 - [ ] **P6-G.1** Guest checkout with phone/email verification
-- [ ] **P6-G.2** Saved carts, abandoned-cart recovery (SMS/WhatsApp)
-- [ ] **P6-G.3** Recently viewed
+- [x] **P6-G.2** Saved carts, abandoned-cart recovery (SMS/WhatsApp) [62ba1be]
+- [x] **P6-G.3** Recently viewed [3211b97]
 
-### P6-V — Reviews
+### P6-V — Reviews ✅ complete
 > Run: ∥ · M · 🟧
-- [ ] 🔄 **P6-V.1** Verified purchase, DB unique (user, product), moderation queue, media, rating aggregates
-- [ ] **P6-V.2** Product Q&A
+- [x] **P6-V.1** Verified purchase, DB unique (user, product), moderation queue, media, rating aggregates [7efd6ff]
+- [x] **P6-V.2** Product Q&A [a4e8bd2]
 
 ### P6-L — Loyalty
 > Run: ∥ · L · ⬜
