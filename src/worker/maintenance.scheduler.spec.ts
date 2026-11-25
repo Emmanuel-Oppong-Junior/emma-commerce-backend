@@ -43,6 +43,7 @@ describe('MaintenanceScheduler', () => {
       [MaintenanceJob.PurgeNotifications]: { pattern: '15 3 * * *', tz: 'UTC' },
       [MaintenanceJob.RemindAbandonedCarts]: { pattern: '20 * * * *', tz: 'UTC' },
       [MaintenanceJob.PurgeGuestCarts]: { pattern: '45 3 * * *', tz: 'UTC' },
+      [MaintenanceJob.ExpireLoyaltyPoints]: { pattern: '50 0 * * *', tz: 'UTC' },
     });
   });
 

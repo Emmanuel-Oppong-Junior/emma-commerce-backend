@@ -1,3 +1,4 @@
+import { LoyaltyLedgerModule } from '../loyalty/loyalty-ledger.module';
 import { Module } from '@nestjs/common';
 import { CommonsModule } from '../commons/commons.module';
 import { PaymentProvidersModule } from '../payment/providers/payment-providers.module';
@@ -13,7 +14,7 @@ import { OrderRefundsResolver } from './order-refunds.resolver';
  * which also needs OrderModule for exchanges) can both use it.
  */
 @Module({
-  imports: [CommonsModule, PaymentProvidersModule, OutboxModule, DisputesModule],
+  imports: [CommonsModule, PaymentProvidersModule, OutboxModule, DisputesModule, LoyaltyLedgerModule],
   providers: [RefundsService, RefundsResolver, RefundRepository, OrderRefundsResolver],
   exports: [RefundsService, RefundRepository],
 })

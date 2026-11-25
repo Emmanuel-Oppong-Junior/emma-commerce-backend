@@ -1,3 +1,4 @@
+import { LoyaltyLedgerModule } from '../loyalty/loyalty-ledger.module';
 import { Module } from '@nestjs/common';
 import { PaymentService } from './payment.service';
 import { PaymentResolver } from './payment.resolver';
@@ -27,6 +28,7 @@ import { CashModule } from './cash/cash.module';
     FraudModule,
     DisputesModule,
     CashModule,
+    LoyaltyLedgerModule,
   ],
   providers: [
     PaymentResolver,

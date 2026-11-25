@@ -34,6 +34,7 @@ const service = new ShipmentsService(
   stockLedger as never,
   serialUnits as never,
   outbox as never,
+  { settleOrder: jest.fn() } as never,
 );
 
 const confirmed = {

@@ -49,7 +49,8 @@ export class Order {
 
   @Field(() => MoneyObject, {
     nullable: true,
-    description: 'Product discounts plus the coupon (the negated sum of the adjustments); null on some older orders',
+    description:
+      'Product discounts, the coupon and redeemed points (the negated sum of the merchandise adjustments); null on some older orders',
   })
   discountTotal?: Decimal | null;
 
@@ -90,8 +91,15 @@ export class Order {
   })
   rateRuleId?: string | null;
 
-  @Field(() => [OrderAdjustment], { description: 'Product discounts (per line) and the coupon, as placed' })
+  @Field(() => [OrderAdjustment], {
+    description: 'Product discounts (per line), the coupon and redeemed loyalty points (LOYALTY_POINTS), as placed',
+  })
   adjustments: OrderAdjustment[];
+
+  @Field(() => Int, {
+    description: 'Loyalty points redeemed on this order (their value is the LOYALTY_POINTS adjustment)',
+  })
+  loyaltyPointsRedeemed: number;
 
   @Field(() => OrderStatusEnum)
   status: OrderStatus;

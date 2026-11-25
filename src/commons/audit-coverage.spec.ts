@@ -124,6 +124,8 @@ const AUDITED: Record<string, string> = {
   updatePaymentMethods: 'payment-settings.service.spec',
   updateVelocityLimits: 'velocity.service.spec (updateLimits)',
   clearOrderReviewFlags: 'velocity.service.spec (clears flags with an audit row)',
+  adjustLoyaltyPoints: 'loyalty.service.spec (ledger change and audit row on one transaction)',
+  updateLoyaltySettings: 'loyalty.service.spec (fields before and after)',
   hideReview: 'review.service.spec (moderation audit trail)',
   unhideReview: 'review.service.spec (moderation audit trail)',
   dismissReviewReports: 'review.service.spec (moderation audit trail)',

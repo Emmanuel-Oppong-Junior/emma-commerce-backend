@@ -101,6 +101,12 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
       mobileMoneyPaymentProvider: 'PAYSTACK',
       returnWindowDays: 14,
       abandonedCartReminderDelayHours: 4,
+      loyaltyEnabled: true,
+      loyaltyEarnPointsPerCedi: 1,
+      loyaltyRedeemPointsPerCedi: 100,
+      loyaltyMinRedeemPoints: 500,
+      loyaltyMaxRedeemPercent: 50,
+      loyaltyPointsExpiryMonths: 12,
     },
   });
   await relaxVelocityLimits(prisma);

@@ -58,6 +58,8 @@ import {
 import { DeliveryAddressFacts } from '../cod/cod-blacklist';
 import { ExpiredLotUnits, sellableLevels } from '../inventory/lots/lots';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
+import { LOYALTY_BALANCE_CHANGED, LoyaltyLedger } from '../loyalty/loyalty-ledger.service';
+import { PointsNotRedeemableError, PointsRefusal, PricingLoyalty } from '../pricing/points-redemption';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -84,6 +86,8 @@ export interface CheckoutParams {
   serviceLevel?: DeliveryServiceLevel;
   /** STANDARD delivery to a zone with slots: the slot booked (one of checkoutQuote.deliverySlots). */
   deliverySlot?: { slotId: string; date: string };
+  /** Customers only (P6-L.1): loyalty points to redeem; refused with BAD_REQUEST and a PointsRefusal reason. */
+  redeemPoints?: number;
 }
 
 export interface CreateOrderParams extends CheckoutParams {
@@ -113,6 +117,16 @@ export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments' | 'de
   deliverySlots: AvailableSlot[];
   /** createOrder needs a deliverySlot: STANDARD delivery to a zone with active slots. */
   deliverySlotRequired: boolean;
+  /** A customer's loyalty points for this checkout (P6-L.1); null for a guest. */
+  loyalty: CheckoutLoyalty | null;
+}
+
+export interface CheckoutLoyalty {
+  balance: number;
+  redeemablePoints: number;
+  pointsRedeemed: number;
+  /** What the points redeemed take off (positive; 0 when none). */
+  amount: Decimal;
 }
 
 export interface DeliveryQuote extends DeliveryFee {
@@ -147,6 +161,8 @@ interface PricedCheckout {
   /** The coupon code entered, when its promotion applied. */
   couponCode?: { id: string; promotionId: string };
   fulfilment: Fulfilment;
+  /** The customer's points as priced; null for a guest. */
+  loyalty: PricingLoyalty | null;
 }
 
 function quoteChanged(): ConflictException {
@@ -220,6 +236,7 @@ export class OrdersService {
     private readonly serialUnits: SerialUnitsService,
     private readonly logger: LoggerService,
     private readonly deliverySlots: DeliverySlotsService,
+    private readonly loyalty: LoyaltyLedger,
   ) {}
 
   /**
@@ -243,7 +260,7 @@ export class OrdersService {
   private async quoteFor(buyer: Buyer, params: CheckoutParams): Promise<CheckoutQuote> {
     if ('guestCartId' in buyer) assertGuestPaymentMethod(params.paymentMethod);
     await this.paymentSettings.assertOrderPaymentMethod(params.paymentMethod ?? PaymentMethod.ONLINE);
-    const { cart, snapshot, fulfilment, delivery } = await this.priceCheckout(buyer, params);
+    const { cart, snapshot, fulfilment, delivery, loyalty } = await this.priceCheckout(buyer, params);
     const cashOnDelivery: CodAvailability =
       'userId' in buyer
         ? await this.codRisk.availability(buyer.userId, {
@@ -273,6 +290,12 @@ export class OrdersService {
       deliveryOptions: delivery?.options ?? [],
       deliverySlots: delivery?.slots ?? [],
       deliverySlotRequired: delivery?.slotRequired ?? false,
+      loyalty: loyalty && {
+        balance: loyalty.balance,
+        redeemablePoints: snapshot.redeemablePoints,
+        pointsRedeemed: snapshot.loyaltyRedemption?.points ?? 0,
+        amount: snapshot.loyaltyRedemption?.amount.neg() ?? new Decimal(0),
+      },
     };
   }
 
@@ -360,8 +383,14 @@ export class OrdersService {
         ? await this.deliveryTo(buyer, params, tx)
         : await this.pickupAt(params.pickupLocationId, tx);
     if (tx) await this.ordersRepository.lockVariants(tx, [...new Set(cart.items.map((item) => item.variantId))]);
-    const { snapshot, couponCode, delivery } = await this.buildOrderDetails(cart.items, buyer, fulfilment, params, tx);
-    return { cart, buyer, snapshot, couponCode, fulfilment, delivery };
+    const { snapshot, couponCode, delivery, loyalty } = await this.buildOrderDetails(
+      cart.items,
+      buyer,
+      fulfilment,
+      params,
+      tx,
+    );
+    return { cart, buyer, snapshot, couponCode, fulfilment, delivery, loyalty };
   }
 
   private async deliveryTo(
@@ -601,12 +630,13 @@ export class OrdersService {
     cartItems: CartItem[],
     buyer: Buyer,
     shipping: Pick<Fulfilment, 'zone' | 'shippingZoneId' | 'fulfilmentLocationIds'>,
-    params: Pick<CheckoutParams, 'couponCode' | 'serviceLevel' | 'deliverySlot'>,
+    params: Pick<CheckoutParams, 'couponCode' | 'serviceLevel' | 'deliverySlot' | 'redeemPoints'>,
     tx: Prisma.TransactionClient | undefined,
   ): Promise<{
     snapshot: OrderSnapshot;
     couponCode?: { id: string; promotionId: string };
     delivery: PricedCheckout['delivery'];
+    loyalty: PricingLoyalty | null;
   }> {
     const { couponCode } = params;
     const now = new Date();
@@ -640,9 +670,12 @@ export class OrdersService {
       tx,
     );
     const taxes = await this.taxService.findActive(tx);
+    // In the order transaction this locks the customer's loyalty account until the order commits.
+    const loyalty = 'userId' in buyer ? await this.loyalty.pricingFacts(buyer.userId, now, tx) : null;
+    const redeemPoints = params.redeemPoints ?? 0;
 
-    const priceWith = (shippingFee: Decimal, delivery: Quote['delivery']) =>
-      this.priceOrThrow(() =>
+    const priceWith = (shippingFee: Decimal, delivery: Quote['delivery'], points: number) =>
+      this.priceOrThrow(tx !== undefined, () =>
         price(
           {
             lines: variants.map((variant, index) => ({
@@ -658,6 +691,7 @@ export class OrdersService {
             shippingFee,
             shippingZoneId: shipping.shippingZoneId,
             delivery,
+            redeemPoints: points,
           },
           {
             currency,
@@ -666,23 +700,31 @@ export class OrdersService {
             taxRates: taxes.map((tax) => ({ id: tax.id, name: tax.name, rate: tax.rate })),
             customer: promotions.customer,
             priceLists,
+            loyalty,
           },
         ),
       );
-    const merchandise = priceWith(new Decimal(0), null);
+    // The delivery fee depends on the goods after promotions, never on the points that pay part of them.
+    const merchandise = priceWith(new Decimal(0), null, 0);
     if (!shipping.zone && params.deliverySlot) throw slotUnavailable('Pickup orders have no delivery slot');
     const fee = shipping.zone && this.priceDelivery(shipping.zone, variants, cartItems, merchandise, params);
     const delivery = fee && { ...fee, ...(await this.chooseSlot(fee.quote, params.deliverySlot, now, tx)) };
     const slot = delivery?.quote.slot;
     const quote = delivery
-      ? priceWith(delivery.quote.fee, {
-          rateRuleId: delivery.quote.rateRuleId,
-          serviceLevel: delivery.quote.serviceLevel,
-          slot: slot
-            ? { slotId: slot.slotId, date: slot.date, startMinute: slot.startMinute, endMinute: slot.endMinute }
-            : null,
-        })
-      : merchandise;
+      ? priceWith(
+          delivery.quote.fee,
+          {
+            rateRuleId: delivery.quote.rateRuleId,
+            serviceLevel: delivery.quote.serviceLevel,
+            slot: slot
+              ? { slotId: slot.slotId, date: slot.date, startMinute: slot.startMinute, endMinute: slot.endMinute }
+              : null,
+          },
+          redeemPoints,
+        )
+      : redeemPoints > 0
+        ? priceWith(new Decimal(0), null, redeemPoints)
+        : merchandise;
     const snapshot: OrderSnapshot = {
       ...quote,
       lines: quote.lines.map((line) => ({
@@ -694,7 +736,12 @@ export class OrdersService {
     };
     const applied = appliedPromotionIds(quote);
     const code = promotions.couponCode;
-    return { snapshot, couponCode: code && applied.includes(code.promotionId) ? code : undefined, delivery };
+    return {
+      snapshot,
+      couponCode: code && applied.includes(code.promotionId) ? code : undefined,
+      delivery,
+      loyalty,
+    };
   }
 
   /**
@@ -765,11 +812,21 @@ export class OrdersService {
     return { quote: { ...fee, slot }, slots: upcomingSlots(calendar, now), slotRequired };
   }
 
-  private priceOrThrow<T>(pricing: () => T): T {
+  /**
+   * Runs the engine, turning its refusals into client errors. Points the balance no longer covers are a CONFLICT with
+   * reason LOYALTY_BALANCE_CHANGED inside the order transaction (they were there at the quote).
+   */
+  private priceOrThrow<T>(placing: boolean, pricing: () => T): T {
     try {
       return pricing();
     } catch (error) {
       if (error instanceof CouponNotApplicableError) throw new BadRequestException(error.message);
+      if (error instanceof PointsNotRedeemableError) {
+        if (placing && error.reason === PointsRefusal.INSUFFICIENT_POINTS) {
+          throw new ConflictException({ message: error.message, extensions: { reason: LOYALTY_BALANCE_CHANGED } });
+        }
+        throw new BadRequestException({ message: error.message, extensions: { reason: error.reason } });
+      }
       throw error;
     }
   }
@@ -898,6 +955,8 @@ export class OrdersService {
       checkout.couponCode,
       discountedUnits(checkout.snapshot),
     );
+    const redemption = checkout.snapshot.loyaltyRedemption;
+    if (redemption && userId) await this.loyalty.redeem(tx, userId, newOrder.id, redemption.points, new Date());
     await this.outbox.record(tx, {
       type: 'order.placed.v1',
       aggregateId: newOrder.id,
@@ -954,6 +1013,7 @@ export class OrdersService {
         guard: close.guard,
       });
       if (!closed) throw this.changedMeanwhile(order.id);
+      await this.loyalty.settleOrder(tx, order.id, new Date());
       if (close.audit) {
         await this.auditService.log(
           {

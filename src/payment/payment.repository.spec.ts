@@ -1,3 +1,4 @@
+import { LoyaltyLedger } from '../loyalty/loyalty-ledger.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PaymentRepository } from './payment.repository';
@@ -130,6 +131,7 @@ describe('PaymentRepository', () => {
           provide: SerialUnitsService,
           useValue: { releaseOrder: jest.fn(), startWarranty: jest.fn() },
         },
+        { provide: LoyaltyLedger, useValue: { settleOrder: jest.fn() } },
       ],
     }).compile();
 

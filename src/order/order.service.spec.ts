@@ -4,6 +4,7 @@ import { CartService } from '../cart/cart.service';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { OrderStatus } from '../generated/prisma/client';
 import { CreateOrderParams, ORDER_EXPIRY_LOCK_KEY, OrdersService } from './order.service';
+import { LoyaltyLedger } from '../loyalty/loyalty-ledger.service';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { abandonedOrderWhere, OrdersRepository } from './order.repository';
 import { AuditService } from '../commons/audit.service';
@@ -261,6 +262,18 @@ const mockStockLocations = { candidatesFor: jest.fn(), lockFulfilmentLocation: j
 const mockVelocity = velocityStub();
 const mockCodRisk = codRiskStub();
 
+const mockLoyalty = {
+  pricingFacts: jest.fn().mockResolvedValue({
+    enabled: true,
+    balance: 0,
+    redeemPointsPerCedi: 100,
+    minimumRedeemPoints: 500,
+    maxRedeemPercent: 50,
+  }),
+  redeem: jest.fn(),
+  settleOrder: jest.fn(),
+};
+
 describe('OrdersService', () => {
   let ordersService: OrdersService;
   let placeOrder: (params: Omit<CreateOrderParams, 'quoteHash'>) => ReturnType<OrdersService['createOrderFromCart']>;
@@ -293,6 +306,7 @@ describe('OrdersService', () => {
         },
         { provide: LoggerService, useValue: { warn: jest.fn() } },
         { provide: DeliverySlotsService, useValue: mockDeliverySlots },
+        { provide: LoyaltyLedger, useValue: mockLoyalty },
       ],
     }).compile();
 

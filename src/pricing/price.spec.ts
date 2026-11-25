@@ -20,6 +20,7 @@ import {
   Quote,
   stackedUnitPromotions,
 } from './price';
+import { PointsNotRedeemableError, PointsRefusal, PricingLoyalty } from './points-redemption';
 
 const d = (value: Decimal.Value) => new Decimal(value);
 const sum = (values: Decimal[]) => values.reduce((total, value) => total.add(value), d(0));
@@ -2050,5 +2051,110 @@ describe('price', () => {
         }
       },
     );
+  });
+
+  describe('loyalty points (P6-L.1, PRICING_VERSION 6)', () => {
+    const member = (overrides: Partial<PricingLoyalty> = {}): PricingLoyalty => ({
+      enabled: true,
+      balance: 10_000,
+      redeemPointsPerCedi: 100,
+      minimumRedeemPoints: 500,
+      maxRedeemPercent: 50,
+      ...overrides,
+    });
+    const freeShipping = (minimumSpend: Decimal.Value) =>
+      promotion('free', 'FREE_SHIPPING', 0, {
+        scope: 'CART',
+        targetIds: [],
+        value: null,
+        minimumSpend: d(minimumSpend),
+      });
+    const refusal = (run: () => unknown) => {
+      try {
+        run();
+      } catch (error) {
+        if (error instanceof PointsNotRedeemableError) return error.reason;
+        throw error;
+      }
+      return null;
+    };
+
+    it('takes the points off the goods after item and cart promotions, never off the delivery fee', () => {
+      const lines = [line({ unitListPrice: d(100) }), line({ variantId: 'v2', productId: 'p2', unitListPrice: d(50) })];
+      const quote = price(cart(lines, { redeemPoints: 2_000, shippingFee: d(25), shippingZoneId: 'z1' }), {
+        ...context({ promotions: [pct('item', 10), flat('cartOff', 10, { scope: 'CART', targetIds: [] })] }),
+        loyalty: member(),
+      });
+
+      // 150 - 10 (item) - 10 (cart) = 130 of goods; 2000 points = 20.00.
+      expect(quote.loyaltyRedemption).toEqual({
+        points: 2_000,
+        amount: d(-20),
+        allocations: [expect.any(Decimal), expect.any(Decimal)],
+      });
+      expect(money(sum(quote.loyaltyRedemption!.allocations))).toBe('-20.00');
+      expect(money(quote.discountTotal)).toBe('40.00');
+      expect(money(quote.shippingTotal)).toBe('25.00');
+      expect(money(quote.grandTotal)).toBe('135.00');
+      expect(quote.pricingVersion).toBe(PRICING_VERSION);
+    });
+
+    it('decides free shipping on the goods before points, so redeeming never costs the customer free delivery', () => {
+      const quote = price(
+        cart([line({ unitListPrice: d(100) })], { redeemPoints: 4_000, shippingFee: d(25), shippingZoneId: 'z1' }),
+        { ...context({ promotions: [freeShipping(100)] }), loyalty: member() },
+      );
+
+      expect(money(quote.shippingTotal)).toBe('0.00');
+      expect(money(quote.grandTotal)).toBe('60.00');
+    });
+
+    it('allocates the points over the lines by what each still costs', () => {
+      const lines = [line({ unitListPrice: d(30) }), line({ variantId: 'v2', productId: 'p2', unitListPrice: d(70) })];
+      const quote = price(cart(lines, { redeemPoints: 1_001 }), {
+        ...context(),
+        loyalty: member({ minimumRedeemPoints: 1 }),
+      });
+
+      expect(quote.loyaltyRedemption!.allocations.map(money)).toEqual(['-3.00', '-7.01']);
+    });
+
+    it('reports the most points the cart allows: the balance, the cap and the minimum', () => {
+      const goods = cart([line({ unitListPrice: d(100) })]);
+      expect(price(goods, { ...context(), loyalty: member() }).redeemablePoints).toBe(5_000);
+      expect(price(goods, { ...context(), loyalty: member({ balance: 1_234 }) }).redeemablePoints).toBe(1_234);
+      expect(price(goods, { ...context(), loyalty: member({ balance: 499 }) }).redeemablePoints).toBe(0);
+      expect(price(goods, { ...context(), loyalty: member({ enabled: false }) }).redeemablePoints).toBe(0);
+      expect(price(goods, context()).redeemablePoints).toBe(0);
+    });
+
+    it('refuses points below the minimum, above the balance or the cap, when off, or for a guest', () => {
+      const goods = (points: number) => cart([line({ unitListPrice: d(100) })], { redeemPoints: points });
+      expect(refusal(() => price(goods(499), { ...context(), loyalty: member() }))).toBe(
+        PointsRefusal.POINTS_BELOW_MINIMUM,
+      );
+      expect(refusal(() => price(goods(600), { ...context(), loyalty: member({ balance: 599 }) }))).toBe(
+        PointsRefusal.INSUFFICIENT_POINTS,
+      );
+      expect(refusal(() => price(goods(5_001), { ...context(), loyalty: member() }))).toBe(
+        PointsRefusal.POINTS_ABOVE_CAP,
+      );
+      expect(refusal(() => price(goods(5_000), { ...context(), loyalty: member() }))).toBeNull();
+      expect(refusal(() => price(goods(500), { ...context(), loyalty: member({ enabled: false }) }))).toBe(
+        PointsRefusal.LOYALTY_DISABLED,
+      );
+      expect(refusal(() => price(goods(500), context()))).toBe(PointsRefusal.NOT_A_MEMBER);
+    });
+
+    it('changes the quote hash with the points redeemed, but not with the balance', () => {
+      const goods = (points?: number) => cart([line({ unitListPrice: d(100) })], { redeemPoints: points });
+      const none = price(goods(), { ...context(), loyalty: member() });
+      const richer = price(goods(), { ...context(), loyalty: member({ balance: 50_000 }) });
+      const some = price(goods(1_000), { ...context(), loyalty: member() });
+      const more = price(goods(2_000), { ...context(), loyalty: member() });
+
+      expect(richer.quoteHash).toBe(none.quoteHash);
+      expect(new Set([none.quoteHash, some.quoteHash, more.quoteHash]).size).toBe(3);
+    });
   });
 });

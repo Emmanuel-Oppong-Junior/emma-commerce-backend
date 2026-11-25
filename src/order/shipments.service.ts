@@ -1,3 +1,4 @@
+import { LoyaltyLedger } from '../loyalty/loyalty-ledger.service';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Order, OrderItem, OrderStatus, PaymentMethod, Prisma, ShipmentStatus } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
@@ -32,6 +33,7 @@ export class ShipmentsService {
     private readonly stockLedger: StockLedgerService,
     private readonly serialUnits: SerialUnitsService,
     private readonly outbox: OutboxService,
+    private readonly loyalty: LoyaltyLedger,
   ) {}
 
   /**
@@ -286,6 +288,7 @@ export class ShipmentsService {
     const refunded = await this.shipmentsRepository.refundedUnits(tx, order.id);
     if (!isOrderDelivered(lines, shipments, refunded)) return;
     await this.moveOrder(tx, order.id, OrderStatus.IN_FULFILMENT, OrderStatus.COMPLETED, actorId, reason);
+    await this.loyalty.settleOrder(tx, order.id, new Date(), true);
     await this.outbox.record(tx, {
       type: 'order.status_changed.v2',
       aggregateId: order.id,

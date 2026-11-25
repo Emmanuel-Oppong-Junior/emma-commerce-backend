@@ -8,9 +8,10 @@ import {
 } from '../generated/prisma/client';
 import { Money, roundHalfUp } from '../commons/money/money';
 import { quoteHash } from './quote-hash';
+import { maxRedeemablePoints, PricingLoyalty, redemptionAmount } from './points-redemption';
 
 /** The pricing rules `price` implements; stored on every order it priced (legacy orders have 0). */
-export const PRICING_VERSION = 5;
+export const PRICING_VERSION = 6;
 
 export interface PricingLine {
   variantId: string;
@@ -154,6 +155,8 @@ export interface PricingCart {
   shippingZoneId: string | null;
   /** How the fee was chosen (P5-A); null for pickup. Carried into the quote and its hash, never priced. */
   delivery: PricingDelivery | null;
+  /** Loyalty points the customer redeems (P6-L.1); none when absent or 0. */
+  redeemPoints?: number;
 }
 
 /** The rate rule and service level the delivery fee comes from, and the booked delivery slot. */
@@ -174,6 +177,8 @@ export interface PricingContext {
   customer: PricingCustomer;
   /** Candidate price lists (P2-W.1); the engine decides which are open to the customer and which price wins. */
   priceLists: readonly PricingPriceList[];
+  /** The customer's points and the redemption rules (P6-L.1); null or absent for a guest. */
+  loyalty?: PricingLoyalty | null;
 }
 
 /** A reduction with its source promotion; amounts are negative. */
@@ -224,11 +229,18 @@ export interface QuoteLine {
   taxLines: QuoteTaxLine[];
 }
 
+/** Loyalty points redeemed (P6-L.1): their value (negative) and its share of each line, in `Quote.lines` order. */
+export interface QuoteLoyaltyRedemption {
+  points: number;
+  amount: Decimal;
+  allocations: Decimal[];
+}
+
 export type UnhashedQuote = Omit<Quote, 'quoteHash'>;
 
 /**
  * Every amount is exact to the pesewa and
- *   grandTotal = Σ unitNet × quantity + Σ order adjustments + taxTotal + shippingTotal
+ *   grandTotal = Σ unitNet × quantity + Σ order adjustments + points redeemed + taxTotal + shippingTotal
  *              = subtotal - discountTotal + shippingTotal,
  *   shippingTotal = the fee + Σ shipping adjustments.
  */
@@ -241,9 +253,13 @@ export interface Quote {
   adjustments: QuoteOrderAdjustment[];
   /** The free-shipping promotions that take something off the delivery fee (already in shippingTotal). */
   shippingAdjustments: QuoteAdjustment[];
+  /** The loyalty points redeemed (in discountTotal); null when none. */
+  loyaltyRedemption: QuoteLoyaltyRedemption | null;
+  /** The most points the customer could redeem on this cart (0 for a guest); not part of the hash. */
+  redeemablePoints: number;
   /** Σ unitListPrice × quantity (price-list prices where they apply). */
   subtotal: Decimal;
-  /** Item discounts plus order adjustments (merchandise only, not shipping), as a positive amount. */
+  /** Item discounts, order adjustments and redeemed points (merchandise only, not shipping), as a positive amount. */
   discountTotal: Decimal;
   taxTotal: Decimal;
   /** The delivery fee after free-shipping promotions. */
@@ -299,8 +315,12 @@ export class CouponNotApplicableError extends Error {}
  * - every tie between equal savings goes to the lowest priority number, then the oldest promotion (createdAt, id);
  * - a taxable price includes the active taxes: per unit, the net is the discounted price over (1 + Σ rates), rounded
  *   half-up, the tax is the rest, split over the rates by largest remainder; cart promotions and shipping are untaxed.
+ * - loyalty points (P6-L.1, PRICING_VERSION 6) come last: they pay part of the goods after item and cart promotions
+ *   (every line, price-list ones too), never the delivery fee, so free shipping is decided without them; at most the
+ *   store's cap of those goods, from its minimum, within the customer's balance (redemptionAmount). Their value is
+ *   allocated to the lines by largest remainder like a cart promotion and counted in discountTotal.
  * A coupon code whose promotion cannot be used throws CouponNotApplicableError; one that loses to an exclusive or a
- * better promotion simply takes nothing off.
+ * better promotion simply takes nothing off. Points that cannot be redeemed throw PointsNotRedeemableError.
  */
 export function price(cart: PricingCart, context: PricingContext): Quote {
   const unhashed = priceWithoutHash(cart, context);
@@ -430,9 +450,25 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
     shipping = shipping.subtract(money(saving));
   }
 
+  // Points pay part of the goods after every promotion; the fee and free shipping are settled without them.
+  const goods = quoteLines.map((line, index) =>
+    adjustments.reduce((sum, adjustment) => sum.add(money(adjustment.allocations[index])), money(line.lineTotal)),
+  );
+  const goodsTotal = goods.reduce((sum, amount) => sum.add(amount), zero);
+  const loyalty = context.loyalty ?? null;
+  let loyaltyRedemption: QuoteLoyaltyRedemption | null = null;
+  if (cart.redeemPoints) {
+    const amount = money(redemptionAmount(cart.redeemPoints, goodsTotal.amount, loyalty));
+    loyaltyRedemption = {
+      points: cart.redeemPoints,
+      amount: negate(amount.amount),
+      allocations: allocateToLines(amount, quoteLines, goods).map((share) => negate(share.amount)),
+    };
+  }
+
   const itemDiscounts = quoteLines.reduce((sum, line) => sum.add(money(line.unitDiscount).times(line.quantity)), zero);
   const orderDiscounts = adjustments.reduce((sum, adjustment) => sum.subtract(money(adjustment.amount)), zero);
-  const discountTotal = itemDiscounts.add(orderDiscounts);
+  const discountTotal = itemDiscounts.add(orderDiscounts).subtract(money(loyaltyRedemption?.amount ?? 0));
   const taxTotal = quoteLines.reduce((sum, line) => sum.add(money(line.unitTax).times(line.quantity)), zero);
 
   return {
@@ -441,6 +477,8 @@ function priceWithoutHash(cart: PricingCart, context: PricingContext): UnhashedQ
     lines: quoteLines,
     adjustments,
     shippingAdjustments,
+    loyaltyRedemption,
+    redeemablePoints: loyalty ? maxRedeemablePoints(goodsTotal.amount, loyalty) : 0,
     subtotal: grossSubtotal.amount,
     discountTotal: discountTotal.amount,
     taxTotal: taxTotal.amount,

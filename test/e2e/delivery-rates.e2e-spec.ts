@@ -236,7 +236,7 @@ describe('Delivery zones and rate rules (P5-A.1, e2e)', () => {
         shippingZoneName: 'Koforidua',
         rateRuleId: quote.delivery!.rateRuleId,
         serviceLevel: 'EXPRESS',
-        pricingVersion: 5,
+        pricingVersion: 6,
       });
       expect(stored.shippingFee?.toFixed(2)).toBe('45.00');
       expect(stored.shippingTotal?.toFixed(2)).toBe('45.00');

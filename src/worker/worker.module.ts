@@ -6,6 +6,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { PaymentModule } from '../payment/payment.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CartModule } from '../cart/cart.module';
+import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { OutboxRelay } from '../outbox/outbox.relay';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
@@ -34,6 +35,7 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
     PaymentModule,
     NotificationsModule,
     CartModule,
+    LoyaltyModule,
   ],
   providers: [
     OutboxRelay,

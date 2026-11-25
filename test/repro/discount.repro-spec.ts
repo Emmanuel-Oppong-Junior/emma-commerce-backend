@@ -202,6 +202,17 @@ describe('Discounts (audit repro: DISC-01, DISC-02)', () => {
         book: jest.fn(),
         releaseForOrder: jest.fn(),
       } as never,
+      {
+        pricingFacts: jest.fn().mockResolvedValue({
+          enabled: true,
+          balance: 0,
+          redeemPointsPerCedi: 100,
+          minimumRedeemPoints: 500,
+          maxRedeemPercent: 50,
+        }),
+        redeem: jest.fn(),
+        settleOrder: jest.fn(),
+      } as never,
     );
 
     const params = {

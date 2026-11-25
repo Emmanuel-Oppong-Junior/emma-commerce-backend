@@ -14,6 +14,7 @@ import { LotExpiryTask } from '../inventory/tasks/lot-expiry.task';
 import { NotificationRetentionTask } from '../notifications/notification-retention.task';
 import { AbandonedCartTask } from '../cart/abandoned/abandoned-cart.task';
 import { GuestCartPurgeTask } from '../cart/guest-cart-purge.task';
+import { LoyaltyExpiryTask } from '../loyalty/loyalty-expiry.task';
 import { MaintenanceJob } from './maintenance-jobs';
 
 const CONTEXT = 'MaintenanceProcessor';
@@ -35,6 +36,7 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly notificationRetention: NotificationRetentionTask,
     private readonly abandonedCarts: AbandonedCartTask,
     private readonly guestCarts: GuestCartPurgeTask,
+    private readonly loyaltyExpiry: LoyaltyExpiryTask,
   ) {
     super();
   }
@@ -68,6 +70,9 @@ export class MaintenanceProcessor extends WorkerHost {
         return;
       case MaintenanceJob.PurgeGuestCarts:
         await this.guestCarts.purge();
+        return;
+      case MaintenanceJob.ExpireLoyaltyPoints:
+        await this.loyaltyExpiry.expire();
         return;
       default:
         throw new Error(`Unknown maintenance job "${job.name}"`);

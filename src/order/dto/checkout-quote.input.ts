@@ -1,5 +1,5 @@
-import { Field, ID, InputType } from '@nestjs/graphql';
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { Field, ID, InputType, Int } from '@nestjs/graphql';
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { FulfillmentTypeEnum, OrderPaymentMethodEnum } from '../enums/order.enum';
 import { DeliveryServiceLevel } from '../../shipping-zones/enums/delivery.enums';
 import { DeliverySlotChoiceInput } from '../../shipping-zones/slots/delivery-slots.types';
@@ -69,4 +69,17 @@ export class CheckoutQuoteInput {
   @ValidateNested()
   @Type(() => DeliverySlotChoiceInput)
   deliverySlot?: DeliverySlotChoiceInput;
+
+  @Field(() => Int, {
+    nullable: true,
+    description:
+      'Loyalty points to redeem (at most loyalty.redeemablePoints); they pay part of the goods, never delivery. ' +
+      'BAD_REQUEST with reason POINTS_BELOW_MINIMUM, INSUFFICIENT_POINTS, POINTS_ABOVE_CAP, POINTS_NOT_WHOLE_PESEWAS ' +
+      'or LOYALTY_DISABLED; createOrder: CONFLICT with reason LOYALTY_BALANCE_CHANGED when the balance fell meanwhile',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  redeemPoints?: number;
 }

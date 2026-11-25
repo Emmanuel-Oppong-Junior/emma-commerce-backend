@@ -1,3 +1,4 @@
+import { LoyaltyLedger } from '../loyalty/loyalty-ledger.service';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   CashCollection,
@@ -133,6 +134,7 @@ export class PaymentRepository {
     private readonly outbox: OutboxService,
     private readonly stockLedger: StockLedgerService,
     private readonly serialUnits: SerialUnitsService,
+    private readonly loyalty: LoyaltyLedger,
   ) {}
 
   /**
@@ -286,6 +288,7 @@ export class PaymentRepository {
         context,
       );
       if (!completed) throw changed();
+      await this.loyalty.settleOrder(tx, orderId, new Date(), true);
       await this.outbox.record(tx, {
         type: 'order.status_changed.v2',
         aggregateId: orderId,

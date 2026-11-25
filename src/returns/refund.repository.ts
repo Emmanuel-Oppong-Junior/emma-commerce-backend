@@ -1,3 +1,4 @@
+import { LoyaltyLedger } from '../loyalty/loyalty-ledger.service';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   OrderStatus,
@@ -77,6 +78,7 @@ export class RefundRepository {
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxService,
+    private readonly loyalty: LoyaltyLedger,
   ) {}
 
   async findByReturnRequest(returnRequestId: string): Promise<Refund | null> {
@@ -387,9 +389,13 @@ export class RefundRepository {
     return tx.refund.findUniqueOrThrow({ where: { id: refundId } });
   }
 
-  /** A refund has moved money: the payment machine follows and the customer is told (by the worker, via the outbox). */
+  /**
+   * A refund has moved money: the payment machine follows, the order's loyalty points follow the goods refunded, and
+   * the customer is told (by the worker, via the outbox).
+   */
   private async followProcessed(tx: Tx, refund: Refund): Promise<void> {
     const orderId = await this.followRefund(tx, refund);
+    await this.loyalty.settleOrder(tx, orderId, new Date());
     await this.outbox.record(tx, {
       type: 'refund.succeeded.v1',
       aggregateId: orderId,

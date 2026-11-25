@@ -75,6 +75,7 @@ export class OrdersResolver {
       paymentMethod: input.paymentMethod as PaymentMethod,
       serviceLevel: input.serviceLevel,
       deliverySlot: input.deliverySlot,
+      redeemPoints: input.redeemPoints,
     });
   }
 
@@ -101,6 +102,7 @@ export class OrdersResolver {
       paymentMethod: input.paymentMethod as PaymentMethod,
       serviceLevel: input.serviceLevel,
       deliverySlot: input.deliverySlot,
+      redeemPoints: input.redeemPoints,
       quoteHash: input.quoteHash,
       clientIp: req.ip,
     });

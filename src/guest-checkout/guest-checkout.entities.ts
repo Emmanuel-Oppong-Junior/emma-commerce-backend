@@ -62,7 +62,11 @@ export class GuestPhoneInput {
   description:
     'checkoutQuote for a guest cart: like CheckoutQuoteInput, with the delivery address itself instead of a saved one',
 })
-export class GuestCheckoutQuoteInput extends OmitType(CheckoutQuoteInput, ['shippingAddressId'] as const, InputType) {
+export class GuestCheckoutQuoteInput extends OmitType(
+  CheckoutQuoteInput,
+  ['shippingAddressId', 'redeemPoints'] as const,
+  InputType,
+) {
   @Field(() => CreateAddressInput, { nullable: true, description: 'Required when fulfillmentType is DELIVERY' })
   @IsOptional()
   @ValidateNested()

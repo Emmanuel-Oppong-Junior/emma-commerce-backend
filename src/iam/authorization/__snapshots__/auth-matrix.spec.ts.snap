@@ -13,6 +13,7 @@ Mutation addTagToProduct                 permission: catalog.product.write
 Mutation addToCart                       authenticated
 Mutation addToGuestCart                  public
 Mutation addToWishlist                   authenticated
+Mutation adjustLoyaltyPoints             permission: loyalty.manage; step-up
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
 Mutation answerProductQuestion           permission: review.moderate
@@ -180,6 +181,7 @@ Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateDeliverySlot              permission: shipping.manage
 Mutation updateDisputeStatus             permission: payment.dispute.manage
 Mutation updateGuestCartItem             public
+Mutation updateLoyaltySettings           permission: loyalty.manage; step-up
 Mutation updateMyProfile                 authenticated
 Mutation updateNotificationPreference    authenticated
 Mutation updatePaymentMethods            permission: payment.settings.manage; step-up
@@ -230,6 +232,7 @@ Query codRiskSettings                    permission: payment.settings.manage
 Query customerConsentHistory             permission: user.view
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
+Query customerLoyalty                    permission: user.view
 Query dashboardSummary                   permission: report.view
 Query deliveryBookings                   permission: order.view
 Query dispute                            permission: payment.view
@@ -242,8 +245,10 @@ Query getUserPayment                     permission: payment.view
 Query guestCart                          public
 Query guestCheckoutQuote                 public
 Query guestOrder                         public
+Query loyaltySettings                    public
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
+Query myLoyalty                          authenticated
 Query myNotificationPreferences          authenticated
 Query myNotifications                    authenticated
 Query myPhoneVerification                authenticated

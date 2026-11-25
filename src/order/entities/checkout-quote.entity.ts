@@ -167,6 +167,25 @@ export class QuoteLine {
   taxLines: QuoteTaxLine[];
 }
 
+@ObjectType({ description: "The customer's loyalty points at this checkout (P6-L.1)" })
+export class CheckoutLoyalty {
+  @Field(() => Int, { description: 'Points the customer can spend now' })
+  balance: number;
+
+  @Field(() => Int, {
+    description:
+      'The most points redeemPoints may be on this cart (balance, minimum and the cap on the goods after promotions); ' +
+      '0 when points cannot be redeemed',
+  })
+  redeemablePoints: number;
+
+  @Field(() => Int, { description: 'The points redeemed in this quote (redeemPoints); 0 when none' })
+  pointsRedeemed: number;
+
+  @Field(() => MoneyObject, { description: 'What the points redeemed take off the goods (already in discountTotal)' })
+  amount: Decimal;
+}
+
 @ObjectType({
   description:
     'The cart priced for checkout. createOrder charges exactly grandTotal when it is sent quoteHash and nothing changed',
@@ -202,7 +221,8 @@ export class CheckoutQuote {
   subtotal: Decimal;
 
   @Field(() => MoneyObject, {
-    description: 'Item and cart promotions (merchandise only; shipping ones are in shippingTotal)',
+    description:
+      'Item and cart promotions and redeemed loyalty points (merchandise only; shipping ones are in shippingTotal)',
   })
   discountTotal: Decimal;
 
@@ -245,4 +265,7 @@ export class CheckoutQuote {
 
   @Field({ description: 'createOrder needs a deliverySlot (STANDARD delivery to a zone with slots)' })
   deliverySlotRequired: boolean;
+
+  @Field(() => CheckoutLoyalty, { nullable: true, description: "The customer's loyalty points; null for a guest" })
+  loyalty: CheckoutLoyalty | null;
 }

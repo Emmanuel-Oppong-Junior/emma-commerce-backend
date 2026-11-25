@@ -177,7 +177,7 @@ describe('Checkout quote and the quote hash on createOrder (P2-A.2, e2e)', () =>
     // 117.50 - 11.75 = 105.75 a unit (15.75 tax in it); the phone has no tax. 211.50 + 499.99 - 20 + 15.
     expect(quoted).toMatchObject({
       currency: 'GHS',
-      pricingVersion: 5,
+      pricingVersion: 6,
       subtotal: ghs('734.99'),
       discountTotal: ghs('43.50'),
       taxTotal: ghs('31.50'),

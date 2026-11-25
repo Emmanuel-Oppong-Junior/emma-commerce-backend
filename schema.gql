@@ -80,6 +80,17 @@ type Address {
   zipCode: String
 }
 
+input AdjustLoyaltyPointsInput {
+  """
+  Points to add (positive) or take (negative, at most the balance); not 0
+  """
+  points: Int!
+
+  """Why (3-500 characters); the customer sees it in their history"""
+  reason: String!
+  userId: ID!
+}
+
 input AdjustVariantStockInput {
   """
   Signed change to on-hand stock, never an absolute quantity: negative removes, positive adds
@@ -464,6 +475,23 @@ input ChangeUserPasswordInput {
   oldPassword: String!
 }
 
+"""The customer's loyalty points at this checkout (P6-L.1)"""
+type CheckoutLoyalty {
+  """What the points redeemed take off the goods (already in discountTotal)"""
+  amount: Money!
+
+  """Points the customer can spend now"""
+  balance: Int!
+
+  """The points redeemed in this quote (redeemPoints); 0 when none"""
+  pointsRedeemed: Int!
+
+  """
+  The most points redeemPoints may be on this cart (balance, minimum and the cap on the goods after promotions); 0 when points cannot be redeemed
+  """
+  redeemablePoints: Int!
+}
+
 """
 The cart priced for checkout. createOrder charges exactly grandTotal when it is sent quoteHash and nothing changed
 """
@@ -498,7 +526,7 @@ type CheckoutQuote {
   deliverySlots: [AvailableDeliverySlot!]!
 
   """
-  Item and cart promotions (merchandise only; shipping ones are in shippingTotal)
+  Item and cart promotions and redeemed loyalty points (merchandise only; shipping ones are in shippingTotal)
   """
   discountTotal: Money!
 
@@ -509,6 +537,9 @@ type CheckoutQuote {
 
   """In cart order"""
   lines: [QuoteLine!]!
+
+  """The customer's loyalty points; null for a guest"""
+  loyalty: CheckoutLoyalty
 
   """The pricing rules that produced the quote"""
   pricingVersion: Int!
@@ -559,6 +590,11 @@ input CheckoutQuoteInput {
   Required when fulfillmentType is PICKUP — the ID of the chosen pickup location
   """
   pickupLocationId: ID
+
+  """
+  Loyalty points to redeem (at most loyalty.redeemablePoints); they pay part of the goods, never delivery. BAD_REQUEST with reason POINTS_BELOW_MINIMUM, INSUFFICIENT_POINTS, POINTS_ABOVE_CAP, POINTS_NOT_WHOLE_PESEWAS or LOYALTY_DISABLED; createOrder: CONFLICT with reason LOYALTY_BALANCE_CHANGED when the balance fell meanwhile
+  """
+  redeemPoints: Int
 
   """
   DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
@@ -1079,6 +1115,11 @@ input CreateOrderInput {
   quoteHash from checkoutQuote for the same fulfilment and coupon. The order is placed only if the cart still prices to that quote; otherwise CONFLICT with reason QUOTE_CHANGED
   """
   quoteHash: String!
+
+  """
+  Loyalty points to redeem (at most loyalty.redeemablePoints); they pay part of the goods, never delivery. BAD_REQUEST with reason POINTS_BELOW_MINIMUM, INSUFFICIENT_POINTS, POINTS_ABOVE_CAP, POINTS_NOT_WHOLE_PESEWAS or LOYALTY_DISABLED; createOrder: CONFLICT with reason LOYALTY_BALANCE_CHANGED when the balance fell meanwhile
+  """
+  redeemPoints: Int
 
   """
   DELIVERY only (ignored for PICKUP): one of the levels in deliveryOptions. BAD_REQUEST with reason DELIVERY_LEVEL_UNAVAILABLE when the zone does not offer it
@@ -2224,6 +2265,111 @@ type LotLocationStock {
   onHand: Int!
 }
 
+"""The points that expire first"""
+type LoyaltyExpiry {
+  expiresAt: DateTime!
+  points: Int!
+}
+
+"""How the store’s loyalty programme earns and redeems points"""
+type LoyaltySettingsEntity {
+  """
+  Points per whole GHS 1 of goods paid, credited when the order completes
+  """
+  earnPointsPerCedi: Int!
+
+  """
+  Off: no points are earned or redeemed; balances are kept and still expire
+  """
+  enabled: Boolean!
+
+  """Points pay at most this percentage of the goods after promotions"""
+  maxRedeemPercent: Int!
+
+  """The fewest points one checkout may redeem"""
+  minimumRedeemPoints: Int!
+
+  """Credited points expire after this many months"""
+  pointsExpiryMonths: Int!
+
+  """Points worth GHS 1 at checkout"""
+  redeemPointsPerCedi: Int!
+}
+
+"""A customer’s loyalty points"""
+type LoyaltySummary {
+  """Points that can be spent now"""
+  balance: Int!
+  history: LoyaltyTransactionPage!
+
+  """Null when no points are due to expire"""
+  nextExpiry: LoyaltyExpiry
+
+  """
+  Points owed: refunds took back more than the balance held; the next points credited pay them off
+  """
+  pointsOwed: Int!
+}
+
+"""One change to a customer’s loyalty points"""
+type LoyaltyTransactionEntity {
+  createdAt: DateTime!
+
+  """
+  Change to the points owed: positive when points taken back exceeded the balance, negative when repaid
+  """
+  debtChange: Int!
+
+  """Points credited by it expire at this time"""
+  expiresAt: DateTime
+  id: ID!
+
+  """The order it is about"""
+  orderId: ID
+
+  """
+  Change to the balance: positive credited, negative spent, taken back or expired
+  """
+  points: Int!
+
+  """ADJUST: the store’s reason (shown to the customer)"""
+  reason: String
+  type: LoyaltyTransactionType!
+}
+
+type LoyaltyTransactionPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+
+  """Newest first"""
+  nodes: [LoyaltyTransactionEntity!]!
+  totalCount: Int!
+}
+
+"""What a loyalty transaction did to the points"""
+enum LoyaltyTransactionType {
+  """A correction by the store, with a reason"""
+  ADJUST
+
+  """Earned by a completed order"""
+  EARN
+
+  """Unspent points past their expiry"""
+  EXPIRE
+
+  """Spent at checkout"""
+  REDEEM
+
+  """Redeemed points given back (order cancelled, expired or refunded)"""
+  REDEEM_RETURN
+
+  """A referral reward"""
+  REFERRAL
+
+  """Earned points taken back because the order was refunded"""
+  REVERSE
+}
+
 """
 A started two-factor enrolment; confirm it with a code from the authenticator app
 """
@@ -2309,6 +2455,11 @@ type Mutation {
 
   """Adds a product to the user’s wishlist"""
   addToWishlist(productId: String!): Wishlist!
+
+  """
+  Add (positive) or take (negative) a customer's points with a reason. Added points expire like earned ones; taking more than the balance is CONFLICT (reason INSUFFICIENT_POINTS); staff accounts are refused. Owner or Manager, recent step-up, audited
+  """
+  adjustLoyaltyPoints(input: AdjustLoyaltyPointsInput!): LoyaltySummary!
 
   """
   Change a variant’s on-hand stock at a location by a signed amount with a reason, never below reserved (admin only)
@@ -2983,6 +3134,11 @@ type Mutation {
   ): GuestCart!
 
   """
+  Change the loyalty programme settings; fields left out keep theirs. Owner or Manager, recent step-up, audited
+  """
+  updateLoyaltySettings(input: UpdateLoyaltySettingsInput!): LoyaltySettingsEntity!
+
+  """
   Update user profile. Changing the email requires currentPassword; the new address is stored as pendingEmail and only replaces the email (signing the user out everywhere) once verified with verifyEmail.
   """
   updateMyProfile(
@@ -3182,7 +3338,9 @@ input OpeningHoursInput {
 }
 
 type Order {
-  """Product discounts (per line) and the coupon, as placed"""
+  """
+  Product discounts (per line), the coupon and redeemed loyalty points (LOYALTY_POINTS), as placed
+  """
   adjustments: [OrderAdjustment!]!
 
   """
@@ -3202,7 +3360,7 @@ type Order {
   deliverySlot: DeliveryWindow
 
   """
-  Product discounts plus the coupon (the negated sum of the adjustments); null on some older orders
+  Product discounts, the coupon and redeemed points (the negated sum of the merchandise adjustments); null on some older orders
   """
   discountTotal: Money
 
@@ -3213,6 +3371,11 @@ type Order {
   grandTotal: Money!
   id: ID!
   items: [OrderItem!]!
+
+  """
+  Loyalty points redeemed on this order (their value is the LOYALTY_POINTS adjustment)
+  """
+  loyaltyPointsRedeemed: Int!
 
   """Auto-generated sequential order reference number"""
   orderNumber: Int!
@@ -3332,6 +3495,9 @@ enum OrderAdjustmentTarget {
 enum OrderAdjustmentType {
   COUPON
   DISCOUNT
+
+  """Loyalty points redeemed at checkout (no promotion: sourceId is null)"""
+  LOYALTY_POINTS
 }
 
 type OrderItem {
@@ -4574,6 +4740,16 @@ type Query {
   """Admin: customer groups by name"""
   customerGroups: [CustomerGroup!]!
 
+  """A customer's loyalty points and history (staff)"""
+  customerLoyalty(
+    """Id of the last transaction of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 20
+    userId: ID!
+  ): LoyaltySummary!
+
   """Admin dashboard summary (admin only)"""
   dashboardSummary: DashboardSummary!
 
@@ -4651,6 +4827,9 @@ type Query {
     orderAccessToken: String!
   ): GuestOrder!
 
+  """How the loyalty programme earns and redeems points (public)"""
+  loyaltySettings: LoyaltySettingsEntity!
+
   """
   Shipments assigned to the signed-in rider: open ones by default, oldest assignment first
   """
@@ -4671,6 +4850,17 @@ type Query {
 
   """One shipment assigned to the signed-in rider; NOT_FOUND otherwise"""
   myDelivery(shipmentId: ID!): RiderDelivery!
+
+  """
+  Your loyalty points: balance, points owed, the next expiry and your history (newest first)
+  """
+  myLoyalty(
+    """Id of the last transaction of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 20
+  ): LoyaltySummary!
 
   """
   Every category and channel with its current choice: transactional always on (locked), marketing off until you opt in
@@ -7087,6 +7277,24 @@ input UpdateDisputeStatusInput {
   """Kept in the dispute history"""
   note: String
   status: DisputeStatus!
+}
+
+input UpdateLoyaltySettingsInput {
+  """0-100"""
+  earnPointsPerCedi: Int
+  enabled: Boolean
+
+  """1-100"""
+  maxRedeemPercent: Int
+
+  """1-1000000"""
+  minimumRedeemPoints: Int
+
+  """1-120; applies to points credited from now on"""
+  pointsExpiryMonths: Int
+
+  """1-10000"""
+  redeemPointsPerCedi: Int
 }
 
 input UpdateNotificationPreferenceInput {

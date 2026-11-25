@@ -1,3 +1,4 @@
+import { LoyaltyLedgerModule } from '../loyalty/loyalty-ledger.module';
 import { Module } from '@nestjs/common';
 import { OrdersService } from './order.service';
 import { OrdersResolver } from './order.resolver';
@@ -54,6 +55,7 @@ import { OrderTrackingResolver } from './order-tracking.resolver';
     PaymentProvidersModule,
     FraudModule,
     CodModule,
+    LoyaltyLedgerModule,
   ],
   exports: [OrdersService, OrdersRepository, ShipmentsService, ShipmentsRepository],
 })

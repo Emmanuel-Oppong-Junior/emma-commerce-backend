@@ -35,6 +35,17 @@ function buildOrdersService(order: Record<string, unknown>) {
     { dispatchOrder: jest.fn(), releaseOrder: jest.fn(), startWarranty: jest.fn() } as never,
     {} as never,
     { releaseForOrder: jest.fn() } as never,
+    {
+      pricingFacts: jest.fn().mockResolvedValue({
+        enabled: true,
+        balance: 0,
+        redeemPointsPerCedi: 100,
+        minimumRedeemPoints: 500,
+        maxRedeemPercent: 50,
+      }),
+      redeem: jest.fn(),
+      settleOrder: jest.fn(),
+    } as never,
   );
   return { service, repository };
 }
@@ -83,6 +94,7 @@ describe('Order lifecycle (audit repro: ORD-01, ORD-03, ORD-04)', () => {
       {} as never,
       { dispatchShipment: jest.fn() } as never,
       { record: jest.fn() } as never,
+      { settleOrder: jest.fn() } as never,
     );
 
     await expect(shipments.updateShipmentStatus('ship-1', 'OUT_FOR_DELIVERY' as never, 'admin-1')).rejects.toThrow();

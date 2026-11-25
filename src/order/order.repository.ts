@@ -4,6 +4,7 @@ import {
   FulfillmentType,
   Order,
   OrderAdjustmentTarget,
+  OrderAdjustmentType,
   OrderItem,
   OrderStatus,
   PaymentIntentStatus,
@@ -164,6 +165,7 @@ export class OrdersRepository {
         guestPhone: orderDetails.guestPhone,
         guestPhoneVerifiedAt: orderDetails.guestPhoneVerifiedAt,
         contactName: orderDetails.contactName,
+        loyaltyPointsRedeemed: snapshot.loyaltyRedemption?.points ?? 0,
         stockLocationId: orderDetails.stockLocationId,
         shippingZoneId: snapshot.shippingZoneId,
         shippingZoneName: orderDetails.shippingZoneName ?? null,
@@ -180,7 +182,7 @@ export class OrdersRepository {
     for (const [index, line] of snapshot.lines.entries()) {
       const orderAdjustmentShare = snapshot.adjustments.reduce(
         (share, adjustment) => share.add(adjustment.allocations[index]),
-        new Prisma.Decimal(0),
+        snapshot.loyaltyRedemption?.allocations[index] ?? new Prisma.Decimal(0),
       );
       await tx.orderItem.create({
         data: {
@@ -206,6 +208,17 @@ export class OrdersRepository {
     const orderAdjustments = [
       ...snapshot.adjustments.map((adjustment) => ({ ...adjustment, target: OrderAdjustmentTarget.MERCHANDISE })),
       ...snapshot.shippingAdjustments.map((adjustment) => ({ ...adjustment, target: OrderAdjustmentTarget.SHIPPING })),
+      ...(snapshot.loyaltyRedemption
+        ? [
+            {
+              type: OrderAdjustmentType.LOYALTY_POINTS,
+              target: OrderAdjustmentTarget.MERCHANDISE,
+              sourceId: null,
+              code: null,
+              amount: snapshot.loyaltyRedemption.amount,
+            },
+          ]
+        : []),
     ];
     if (orderAdjustments.length > 0) {
       await tx.orderAdjustment.createMany({

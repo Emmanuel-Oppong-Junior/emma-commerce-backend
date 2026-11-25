@@ -13,7 +13,8 @@ const taxLine = (value: QuoteTaxLine) => [value.name, value.rate.toString(), amo
  * version, each line's variant, quantity, prices, the price list it is priced from (list, break reached, whether
  * promotions apply), adjustments with their sources and tax lines, the order adjustments
  * (each line carries its share of them), the shipping adjustments, the delivery zone, the fee before promotions with
- * its rate rule, service level and delivery slot (PRICING_VERSION 5), shipping and the totals. Lines
+ * its rate rule, service level and delivery slot (PRICING_VERSION 5), the loyalty points redeemed with their value and
+ * each line's share (PRICING_VERSION 6), shipping and the totals. Lines
  * are sorted, so the cart's line order does not matter (a split cart line is several lines). Ids that do not change
  * the amount (product, category, tax row) are left out; the zone stays in, since zone-limited free shipping depends on
  * it.
@@ -26,6 +27,10 @@ export function quoteHash(quote: UnhashedQuote): string {
     lines,
     adjustments: quote.adjustments.map(adjustment),
     shippingAdjustments: quote.shippingAdjustments.map(adjustment),
+    loyaltyRedemption: quote.loyaltyRedemption && [
+      quote.loyaltyRedemption.points,
+      amount(quote.loyaltyRedemption.amount),
+    ],
     shippingZoneId: quote.shippingZoneId,
     shippingFee: amount(quote.shippingFee),
     delivery: quote.delivery && [
@@ -57,5 +62,6 @@ function serialiseLine(quote: UnhashedQuote, index: number) {
     line.adjustments.map(adjustment),
     line.taxLines.map(taxLine),
     quote.adjustments.map((value) => amount(value.allocations[index])),
+    quote.loyaltyRedemption && amount(quote.loyaltyRedemption.allocations[index]),
   ];
 }

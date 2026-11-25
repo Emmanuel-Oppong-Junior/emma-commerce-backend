@@ -30,6 +30,7 @@ export const PERMISSION_CATALOGUE = {
   'payment.settings.manage': 'Set the payment provider keys and switch payment methods on or off (Owner only)',
   'promotion.manage': 'Manage promotions, coupon codes and their redemptions',
   'customer.group.manage': 'Manage customer groups and their members',
+  'loyalty.manage': "Adjust customers' loyalty points and change the loyalty programme settings",
   'pricelist.manage': 'Manage B2B price lists and their entries (what members of customer groups pay)',
   'tax.manage': 'Manage tax rates',
   'shipping.manage': 'Manage shipping zones and pickup locations',

@@ -62,6 +62,7 @@ model User {
   consentEvents             ConsentEvent[]
   savedCartItems            SavedCartItem[]
   abandonedCartReminders    AbandonedCartReminder[]
+  loyaltyAccount            LoyaltyAccount?
   /// TOTP secret (base32), AES-256-GCM encrypted with MFA_ENCRYPTION_KEY; set at enrolment start
   mfaSecret                 String?
   /// Set once the first code confirmed enrolment; MFA is active only from then
@@ -670,6 +671,8 @@ model Order {
   guestPhone              String?
   guestPhoneVerifiedAt    DateTime?
   contactName             String?
+  /// Loyalty points redeemed at placement (P6-L.1); their value is the LOYALTY_POINTS adjustment. CHECK >= 0
+  loyaltyPointsRedeemed   Int                @default(0)
 
   @@index([userId, status])
   @@index([guestPhone])
@@ -749,6 +752,8 @@ model OrderAdjustment {
 enum OrderAdjustmentType {
   DISCOUNT
   COUPON
+  /// Loyalty points redeemed at checkout (P6-L.1): no promotion (sourceId null), shared over the lines
+  LOYALTY_POINTS
 }
 
 enum OrderAdjustmentTarget {
@@ -1483,6 +1488,14 @@ model Store {
   returnWindowDays           Int                     @default(14)
   /// Hours a signed-in customer's cart sits unchanged before the abandoned-cart reminder (P6-G.2); CHECK 1-72.
   abandonedCartReminderDelayHours Int                @default(4)
+  /// Loyalty points (P6-L.1); CHECKs: earn 0-100 points per GHS 1, redeem 1-10000 points per GHS 1, minimum >= 1,
+  /// cap 1-100 % of the goods after promotions, expiry 1-120 months
+  loyaltyEnabled             Boolean                 @default(true)
+  loyaltyEarnPointsPerCedi   Int                     @default(1)
+  loyaltyRedeemPointsPerCedi Int                     @default(100)
+  loyaltyMinRedeemPoints     Int                     @default(500)
+  loyaltyMaxRedeemPercent    Int                     @default(50)
+  loyaltyPointsExpiryMonths  Int                     @default(12)
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
   memberships                StoreMembership[]
@@ -2679,4 +2692,78 @@ model AbandonedCartReminder {
 
   @@unique([userId, cartStateHash])
   @@index([userId, sentAt])
+}
+
+/// What a loyalty transaction did to the customer's points (P6-L.1).
+enum LoyaltyTransactionType {
+  /// Earned by a COMPLETED order (one per order)
+  EARN
+  /// Spent at checkout (one per order)
+  REDEEM
+  /// Redeemed points given back: the order was cancelled or expired, or refunded
+  REDEEM_RETURN
+  /// Earned points taken back because the order was refunded
+  REVERSE
+  /// The unspent rest of an earned lot past its expiry
+  EXPIRE
+  /// A staff correction, with a reason (audited)
+  ADJUST
+  /// A referral reward (P6-L.2)
+  REFERRAL
+}
+
+/// A customer's loyalty points (P6-L.1): balance = the remaining points of their lots; points taken back when the
+/// balance could not cover them are owed (debt) and paid off by the next points credited. CHECKs: both >= 0.
+model LoyaltyAccount {
+  userId       String               @id
+  balance      Int                  @default(0)
+  debt         Int                  @default(0)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lots         LoyaltyLot[]
+  transactions LoyaltyTransaction[]
+}
+
+/// Points credited together (an earn, a referral reward, a positive adjustment) and what is left of them; spent oldest
+/// expiry first. CHECK 0 <= remaining <= points.
+model LoyaltyLot {
+  id            String             @id @default(cuid())
+  userId        String
+  transactionId String             @unique
+  points        Int
+  remaining     Int
+  expiresAt     DateTime
+  createdAt     DateTime           @default(now())
+  account       LoyaltyAccount     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  transaction   LoyaltyTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+/// The append-only loyalty ledger (a trigger refuses updates and direct deletes). `points` is the signed change to the
+/// balance, `debtChange` the signed change to the debt. orderId has no foreign key (kept when an order is deleted);
+/// one EARN and one REDEEM per order (partial unique indexes). REDEEM keeps the lots it drew from (`draws`).
+model LoyaltyTransaction {
+  id         String                 @id @default(cuid())
+  userId     String
+  type       LoyaltyTransactionType
+  points     Int
+  debtChange Int                    @default(0)
+  orderId    String?
+  /// EXPIRE: the lot that expired
+  lotId      String?
+  /// REDEEM: [{ lotId, points, expiresAt }]
+  draws      Json?
+  reason     String?                @db.VarChar(500)
+  actorId    String?
+  createdAt  DateTime               @default(now())
+  account    LoyaltyAccount         @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  creditedLot LoyaltyLot?
+
+  @@unique([orderId], map: "LoyaltyTransaction_earn_per_order_key", where: raw("type = 'EARN'::\"LoyaltyTransactionType\""))
+  @@unique([orderId], map: "LoyaltyTransaction_redeem_per_order_key", where: raw("type = 'REDEEM'::\"LoyaltyTransactionType\""))
+  @@index([userId, createdAt])
+  @@index([orderId])
 }

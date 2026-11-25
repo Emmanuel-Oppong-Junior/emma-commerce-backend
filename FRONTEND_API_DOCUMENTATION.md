@@ -22,6 +22,7 @@
    - [Orders](#211-orders)
    - [Payment](#212-payment)
    - [Promotions and coupon codes](#213-promotions-and-coupon-codes)
+   - [Loyalty points](#213a-loyalty-points-p6-l1)
    - [Inventory](#215-inventory)
    - [Returns](#216-returns)
    - [Reviews](#217-reviews)
@@ -1549,7 +1550,7 @@ input GuestCheckoutQuoteInput {   # CheckoutQuoteInput without shippingAddressId
   paymentMethod: OrderPaymentMethod = ONLINE
   serviceLevel: DeliveryServiceLevel = STANDARD
   deliverySlot: DeliverySlotChoiceInput
-}
+}                                 # (no redeemPoints: guests collect no loyalty points)
 input CreateGuestOrderInput {     # GuestCheckoutQuoteInput plus
   contactName: String!            # 1-100 characters
   contactEmail: String            # optional: receipts and updates are emailed only when given
@@ -1850,8 +1851,11 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
   paymentMethod?: OrderPaymentMethod; // Default ONLINE. CASH_ON_DELIVERY to pay on delivery/pickup. (P3-A.2)
   serviceLevel?: DeliveryServiceLevel; // P5-A.1, DELIVERY only (ignored for PICKUP): default STANDARD; one of deliveryOptions
   deliverySlot?: { slotId: ID; date: string }; // P5-A.2, STANDARD delivery to a zone with slots: one of deliverySlots (date YYYY-MM-DD)
+  redeemPoints?: number;             // P6-L.1: loyalty points to redeem, at most loyalty.redeemablePoints (see 2.13a)
 }
 ```
+
+**Loyalty points (P6-L.1).** `CheckoutQuote.loyalty` (null for guests) reports the customer's points and what `redeemPoints` takes off; `discountTotal` includes it. See [2.13a](#213a-loyalty-points-p6-l1).
 
 **Delivery slots (P5-A.2).** A zone can have weekly delivery windows for `STANDARD` delivery (`EXPRESS` is as soon as possible, without slots; pickup has none). `checkoutQuote.deliverySlots` lists the windows of the next 7 days (today included) that are still before their cutoff and not on a closed date, each with `remaining` places (0 = full; show it disabled), and `deliverySlotRequired` says whether `createOrder` needs one. Times are `HH:MM` in Africa/Accra (= UTC, no daylight saving). Quote again with the chosen `deliverySlot` (it is part of the `quoteHash`) and send the same one to `createOrder`. Errors: `BAD_REQUEST` `DELIVERY_SLOT_REQUIRED` (createOrder without a slot where one is required), `BAD_REQUEST` `DELIVERY_SLOT_UNAVAILABLE` (unknown slot, wrong date, past its cutoff, closed date, `EXPRESS`, pickup or a zone without slots), `CONFLICT` `SLOT_FULL` (no place left; another order may have taken the last one meanwhile: quote again and pick another). Cancelling an order, or its expiry, gives its place back.
 
@@ -2608,6 +2612,35 @@ RemovePriceListEntriesInput { priceListId: ID; variantIds: ID[] /* 1-200 */ }
 - `setPriceListEntries(input)`: each entry replaces its variant's entry (and tiers) in the list. `BAD_REQUEST` for an unknown variant, a variant given twice, a tier not above `minQuantity` and the previous tier, or a tier price above the price below it (equal is allowed); `BAD_USER_INPUT` for a price of 0. A list price at or above the variant's normal price is stored but never used (the normal price applies).
 - `removePriceListEntries(input)`: takes the variants out (unknown ones are ignored).
 - Prices are tax-inclusive like `Variant.price` and are **not** repriced when tax rates change. Entry changes are audit-logged, not added to the variant price history (`priceChanges` covers `Variant.price` / `basePrice` only).
+
+---
+
+### 2.13a Loyalty points (P6-L.1)
+
+Every signed-in customer collects points automatically; guests never do (not even when a guest order is attached to an account later), nor staff accounts. Defaults (store settings, `loyaltySettings`): **1 point per whole GHS 1** of goods paid, **100 points = GHS 1** at checkout, at least **500 points** per redemption, points pay at most **50 %** of the goods after promotions, points expire **12 months** after they were credited.
+
+- **Earning:** when an order reaches `COMPLETED`, it earns `floor(goods paid × earn rate)`, where goods paid = the line totals after every item and cart promotion and after the points redeemed, without the delivery fee. Once per order. Cancelled and expired orders never earn.
+- **Refunds:** a refund of order lines takes back the points of the refunded goods in proportion (rounded down; all of them once everything is refunded). Points already spent become **`pointsOwed`**: the next points credited pay them off first. Redeemed points come back in the same proportion; a cancelled or expired order gives every redeemed point back.
+- **Expiry:** points are spent oldest expiry first; unspent points expire (an `EXPIRE` entry). `balance` only counts points not yet expired.
+
+**Redeeming at checkout:** send `redeemPoints` in `CheckoutQuoteInput` / `CreateOrderInput` (same value in both: it is part of the `quoteHash`). `checkoutQuote.loyalty` gives `{ balance, redeemablePoints, pointsRedeemed, amount }`: show `redeemablePoints` as the most the customer can use on this cart (0 = points cannot be used now). The points take `amount` off the goods (in `discountTotal`, shared over the lines like a cart promotion); they never reduce the delivery fee, and free shipping is decided without them. Refusals on both: `BAD_REQUEST` with `reason` `POINTS_BELOW_MINIMUM` (also a non-whole number), `INSUFFICIENT_POINTS`, `POINTS_ABOVE_CAP`, `POINTS_NOT_WHOLE_PESEWAS` (a store rate where the points are not worth whole pesewas) or `LOYALTY_DISABLED`. `createOrder` debits the points in the order transaction; when they fell since the quote it is `CONFLICT` with `reason: "LOYALTY_BALANCE_CHANGED"` (quote again). The order shows `loyaltyPointsRedeemed` and an adjustment `{ type: LOYALTY_POINTS, sourceId: null, amount }`. Guests have no `redeemPoints` (`GuestCheckoutQuoteInput` leaves it out) and `checkoutQuote.loyalty` is null for them.
+
+| Operation | Who | Notes |
+|---|---|---|
+| `myLoyalty(first = 20, after)` | signed in | `LoyaltySummary`: `balance`, `pointsOwed`, `nextExpiry { points expiresAt }` (null when nothing expires), `history { nodes totalCount hasNextPage }` newest first; pass the last node `id` as `after` |
+| `loyaltySettings` | public | `{ enabled earnPointsPerCedi redeemPointsPerCedi minimumRedeemPoints maxRedeemPercent pointsExpiryMonths }` |
+| `customerLoyalty(userId, first, after)` | `user.view` | the customer's `LoyaltySummary`; `NOT_FOUND` for an unknown user |
+| `adjustLoyaltyPoints(input: { userId, points, reason })` | `loyalty.manage` (Owner, Manager) + step-up | `points` non-zero, -1000000..1000000; `reason` 3-500 chars, **shown to the customer**. Added points expire like earned ones (and pay off points owed first); taking more than the balance is `CONFLICT` `INSUFFICIENT_POINTS`; staff accounts are `BAD_REQUEST`. Audited |
+| `updateLoyaltySettings(input)` | `loyalty.manage` + step-up | any of `enabled` (off: nothing earned or redeemed; balances kept and still expire), `earnPointsPerCedi` 0-100, `redeemPointsPerCedi` 1-10000, `minimumRedeemPoints` 1-1000000, `maxRedeemPercent` 1-100, `pointsExpiryMonths` 1-120 (for points credited from then on). Audited |
+
+```graphql
+type LoyaltyTransactionEntity {
+  id: ID! type: LoyaltyTransactionType!   # EARN REDEEM REDEEM_RETURN REVERSE EXPIRE ADJUST REFERRAL
+  points: Int!        # change to the balance (+ credited, - spent / taken back / expired)
+  debtChange: Int!    # change to pointsOwed
+  orderId: ID reason: String expiresAt: DateTime createdAt: DateTime!
+}
+```
 
 ---
 

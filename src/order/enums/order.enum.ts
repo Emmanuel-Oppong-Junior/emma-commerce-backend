@@ -54,9 +54,15 @@ registerEnumType(FulfillmentTypeEnum, { name: 'FulfillmentType' });
 export enum OrderAdjustmentTypeEnum {
   DISCOUNT = 'DISCOUNT',
   COUPON = 'COUPON',
+  LOYALTY_POINTS = 'LOYALTY_POINTS',
 }
 
-registerEnumType(OrderAdjustmentTypeEnum, { name: 'OrderAdjustmentType' });
+registerEnumType(OrderAdjustmentTypeEnum, {
+  name: 'OrderAdjustmentType',
+  valuesMap: {
+    LOYALTY_POINTS: { description: 'Loyalty points redeemed at checkout (no promotion: sourceId is null)' },
+  },
+});
 
 export enum OrderAdjustmentTargetEnum {
   MERCHANDISE = 'MERCHANDISE',
