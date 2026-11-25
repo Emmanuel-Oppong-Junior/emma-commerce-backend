@@ -432,7 +432,7 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 
 ### P6-G — Guest & carts
 > Run: ∥ · M · 🟧
-- [ ] **P6-G.1** Guest checkout with phone/email verification
+- [ ] 🔄 **P6-G.1** Guest checkout with phone/email verification
 - [x] **P6-G.2** Saved carts, abandoned-cart recovery (SMS/WhatsApp) [62ba1be]
 - [x] **P6-G.3** Recently viewed [3211b97]
 

@@ -40,9 +40,13 @@ jobs:
       - run: npm test -- --ci
 
   e2e:
-    name: End-to-end tests (Postgres)
+    name: End-to-end tests (Postgres, shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     services:
       postgres:
         image: postgres:16
@@ -81,7 +85,7 @@ jobs:
       - run: npx prisma migrate deploy
       - name: Migrations match schema.prisma (no drift)
         run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
-      - run: npm run test:e2e
+      - run: npm run test:e2e -- --shard=${{ matrix.shard }}/2
 
   api-schema:
     name: GraphQL schema up to date and no breaking changes
