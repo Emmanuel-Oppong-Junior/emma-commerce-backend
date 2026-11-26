@@ -6,6 +6,7 @@
 // Demo sign-in details (one password for every account, the staff TOTP secret) go to tmp/demo-accounts.md, never
 // to the console.
 import { PrismaPg } from '@prisma/adapter-pg';
+import { config as loadEnv } from 'dotenv';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -51,7 +52,8 @@ import {
   SupplierKey,
 } from './demo-electronics.data';
 
-if (existsSync('.env')) process.loadEnvFile('.env');
+// The app's own .env parser (via @nestjs/config), so the seed reads the same values as the API.
+loadEnv({ path: '.env', quiet: true });
 if (process.env.NODE_ENV === 'production') throw new Error('Refusing to seed demo data with NODE_ENV=production');
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error('DATABASE_URL is not set');
