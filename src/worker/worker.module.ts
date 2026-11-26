@@ -20,6 +20,8 @@ import { MaintenanceProcessor } from './maintenance.processor';
 import { QueueMetrics } from './queue-metrics';
 import { NotificationsProcessor } from '../notifications/notifications.processor';
 import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
+import { ImportsModule } from '../imports/imports.module';
+import { ImportsProcessor } from '../imports/imports.processor';
 
 /**
  * Root module of the `ROLE=worker` process: the outbox relay, the repeatable-job schedules and the queue processors.
@@ -36,6 +38,7 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
     NotificationsModule,
     CartModule,
     LoyaltyModule,
+    ImportsModule,
   ],
   providers: [
     OutboxRelay,
@@ -50,6 +53,7 @@ import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
     MaintenanceProcessor,
     NotificationsProcessor,
     PaymentWebhookProcessor,
+    ImportsProcessor,
     QueueMetrics,
   ],
 })

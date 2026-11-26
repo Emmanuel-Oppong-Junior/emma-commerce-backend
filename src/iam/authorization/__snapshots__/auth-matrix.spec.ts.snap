@@ -17,7 +17,10 @@ Mutation adjustLoyaltyPoints             permission: loyalty.manage; step-up
 Mutation adjustVariantStock              permission: inventory.adjust
 Mutation adminCancelOrder                permission: order.manage
 Mutation answerProductQuestion           permission: review.moderate
+Mutation applyPriceImport                permission: catalog.import; step-up
+Mutation applyProductImport              permission: catalog.import
 Mutation applyReferralCode               customer only
+Mutation applyStockImport                permission: inventory.import
 Mutation approveReturn                   permission: return.manage
 Mutation approveStockTake                permission: inventory.stocktake.approve
 Mutation archiveProduct                  permission: catalog.product.write
@@ -26,10 +29,12 @@ Mutation askProductQuestion              customer only
 Mutation assignShipmentItemSerials       permission: order.fulfil
 Mutation assignShipmentRider             permission: order.fulfil
 Mutation assignStaffRole                 permission: staff.manage; step-up
+Mutation cancelCatalogImport             permission: catalog.import
 Mutation cancelOrder                     customer only
 Mutation cancelPurchaseOrder             permission: purchasing.manage
 Mutation cancelReturn                    customer only
 Mutation cancelShipment                  permission: order.fulfil
+Mutation cancelStockImport               permission: inventory.import
 Mutation cancelStockTake                 permission: inventory.stocktake.approve
 Mutation cancelStockTransfer             permission: inventory.transfer
 Mutation changeUserPassword              authenticated
@@ -224,6 +229,8 @@ Query brand                              public, optional sign-in
 Query brands                             public, optional sign-in
 Query cart                               authenticated
 Query cashRemittances                    permission: cod.cash.manage
+Query catalogImportJob                   permission: catalog.import
+Query catalogImportJobs                  permission: catalog.import
 Query categories                         public, optional sign-in
 Query category                           authenticated
 Query checkoutQuote                      authenticated
@@ -299,6 +306,8 @@ Query shippingZones                      permission: shipping.manage
 Query staffMembers                       permission: staff.view
 Query staffPermissions                   permission: staff.view
 Query staffRoles                         permission: staff.view
+Query stockImportJob                     permission: inventory.import
+Query stockImportJobs                    permission: inventory.import
 Query stockInTransit                     permission: inventory.view
 Query stockLocation                      permission: inventory.view
 Query stockLocations                     permission: inventory.view
@@ -339,11 +348,23 @@ Query velocityLimits                     permission: payment.settings.manage
 Query viewOrder                          permission: order.view
 Query wishlist                           authenticated
 REST GET /                               authenticated
+REST GET /exports/orders                 permission: order.view
+REST GET /exports/orders/with-customers  permission: order.view + customer.data.export; step-up
+REST GET /exports/products               permission: catalog.export
+REST GET /exports/stock                  permission: catalog.export
 REST GET /health                         public
 REST GET /health/live                    public
 REST GET /health/ready                   public
+REST GET /imports/catalog/:id/report     permission: catalog.import
+REST GET /imports/prices/template        permission: catalog.import
+REST GET /imports/products/template      permission: catalog.import
+REST GET /imports/stock/:id/report       permission: inventory.import
+REST GET /imports/stock/template         permission: inventory.import
 REST POST /delivery/my-shipments/:shipmentId/photo permission: delivery.ride
 REST POST /delivery/shipments/:shipmentId/photo permission: order.fulfil
+REST POST /imports/prices                permission: catalog.import; step-up
+REST POST /imports/products              permission: catalog.import
+REST POST /imports/stock                 permission: inventory.import
 REST POST /payment/guest/initialize      public
 REST POST /payment/initialize            authenticated
 REST POST /payment/webhook               public

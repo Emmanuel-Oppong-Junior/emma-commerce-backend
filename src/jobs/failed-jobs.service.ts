@@ -36,11 +36,13 @@ export class FailedJobsService {
     @InjectQueue(JobQueue.NOTIFICATIONS) notifications: Queue,
     @InjectQueue(JobQueue.WEBHOOKS) webhooks: Queue,
     @InjectQueue(JobQueue.MAINTENANCE) maintenance: Queue,
+    @InjectQueue(JobQueue.IMPORTS) imports: Queue,
   ) {
     this.queues = {
       [JobQueue.NOTIFICATIONS]: notifications,
       [JobQueue.WEBHOOKS]: webhooks,
       [JobQueue.MAINTENANCE]: maintenance,
+      [JobQueue.IMPORTS]: imports,
     };
   }
 

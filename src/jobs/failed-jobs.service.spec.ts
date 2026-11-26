@@ -18,13 +18,14 @@ const failedJob = (overrides: Record<string, unknown> = {}) => ({
 
 function buildService() {
   const queue = () => ({ getFailed: jest.fn(), getJob: jest.fn() });
-  const queues = { notifications: queue(), webhooks: queue(), maintenance: queue() };
+  const queues = { notifications: queue(), webhooks: queue(), maintenance: queue(), imports: queue() };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const service = new FailedJobsService(
     audit as never,
     queues.notifications as never,
     queues.webhooks as never,
     queues.maintenance as never,
+    queues.imports as never,
   );
   return { service, queues, audit };
 }

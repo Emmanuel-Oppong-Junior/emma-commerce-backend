@@ -117,6 +117,11 @@ const AUDITED: Record<string, string> = {
   completeDelivery: 'proof-of-delivery.service.spec (PROOF_OF_DELIVERY audit row), proof-of-delivery.e2e-spec',
   recordCashRemittance: 'cash.service.spec (recordRemittance)',
   updateStoreSettings: 'store.service.spec',
+  applyProductImport: 'imports.service.spec (STATUS_CHANGE audit row), imports.e2e-spec',
+  applyPriceImport: 'imports.service.spec (STATUS_CHANGE audit row), imports.e2e-spec',
+  applyStockImport: 'imports.service.spec (STATUS_CHANGE audit row), imports.e2e-spec',
+  cancelCatalogImport: 'imports.service.spec (STATUS_CHANGE audit row)',
+  cancelStockImport: 'imports.service.spec (STATUS_CHANGE audit row)',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
   retryFailedJob: 'failed-jobs.service.spec',
   setPaystackConfig: 'payment-settings.service.spec (audited without the secret)',

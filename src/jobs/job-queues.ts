@@ -4,6 +4,7 @@ export enum JobQueue {
   NOTIFICATIONS = 'notifications',
   WEBHOOKS = 'webhooks',
   MAINTENANCE = 'maintenance',
+  IMPORTS = 'imports',
 }
 
 const DAY_SECONDS = 24 * 60 * 60;
@@ -27,6 +28,13 @@ export const JOB_QUEUE_DEFAULTS: Record<JobQueue, DefaultJobOptions> = {
   [JobQueue.MAINTENANCE]: {
     attempts: 1,
     removeOnComplete: { count: 200 },
+    removeOnFail: { age: 30 * DAY_SECONDS },
+  },
+  // Bulk import validation and apply runs (P8-I); applied rows are tracked per row, so a retry skips them.
+  [JobQueue.IMPORTS]: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 10_000 },
+    removeOnComplete: { age: 7 * DAY_SECONDS },
     removeOnFail: { age: 30 * DAY_SECONDS },
   },
 };

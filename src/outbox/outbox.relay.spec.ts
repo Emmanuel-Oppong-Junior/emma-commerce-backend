@@ -24,6 +24,7 @@ function buildRelay(rows: Row[], add = jest.fn().mockResolvedValue({})) {
     notifications as never,
     other as never,
     other as never,
+    other as never,
   );
   return { relay, tx, add, logger, other };
 }

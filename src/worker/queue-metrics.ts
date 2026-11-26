@@ -30,8 +30,9 @@ export class QueueMetrics implements OnModuleInit, OnModuleDestroy {
     @InjectQueue(JobQueue.NOTIFICATIONS) notifications: Queue,
     @InjectQueue(JobQueue.WEBHOOKS) webhooks: Queue,
     @InjectQueue(JobQueue.MAINTENANCE) maintenance: Queue,
+    @InjectQueue(JobQueue.IMPORTS) imports: Queue,
   ) {
-    this.queues = [notifications, webhooks, maintenance];
+    this.queues = [notifications, webhooks, maintenance, imports];
     this.jobs = meter.createObservableGauge('queue_jobs', { description: 'BullMQ jobs per queue and state' });
     this.outboxBacklog = meter.createObservableGauge('outbox_unpublished_events', {
       description: 'Outbox rows not yet published to a queue',

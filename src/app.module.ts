@@ -57,6 +57,8 @@ import { PhoneVerificationModule } from './phone-verification/phone-verification
 import { GuestCheckoutModule } from './guest-checkout/guest-checkout.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { DeliveryModule } from './delivery/delivery.module';
+import { ImportsModule } from './imports/imports.module';
+import { ExportsModule } from './exports/exports.module';
 import { AppMetrics } from './observability/metrics';
 import { graphqlMetricsPlugin } from './observability/graphql-metrics.plugin';
 import { HttpMetricsMiddleware } from './observability/http-metrics.middleware';
@@ -190,6 +192,8 @@ const THROTTLERS: ThrottlerOptions[] = [
     DeliveryModule,
     GuestCheckoutModule,
     LoyaltyModule,
+    ImportsModule,
+    ExportsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -2165,6 +2165,119 @@ input GuestPhoneInput {
   phone: String!
 }
 
+enum ImportFileFormat {
+  CSV
+  XLSX
+}
+
+"""
+A bulk CSV/Excel import (P8-I). The uploaded file itself is never exposed.
+"""
+type ImportJob {
+  appliedById: ID
+  appliedRows: Int!
+
+  """
+  True when the valid rows are applied as soon as validation ends (no dry run)
+  """
+  applyAfterValidation: Boolean!
+  cancelledAt: DateTime
+  completedAt: DateTime
+  createdAt: DateTime!
+  createdById: ID!
+
+  """Why the whole job failed"""
+  error: String
+  failedRows: Int!
+  fileName: String!
+  fileSize: Int!
+  format: ImportFileFormat!
+  id: ID!
+  invalidRows: Int!
+  kind: ImportKind!
+
+  """The per-row report, by row number"""
+  rows(after: String, first: Int = 50, status: ImportRowStatus): ImportRowPage!
+  sheetName: String
+  skippedRows: Int!
+  status: ImportJobStatus!
+  totalRows: Int!
+  validRows: Int!
+  validatedAt: DateTime
+}
+
+type ImportJobPage {
+  hasNextPage: Boolean!
+  nodes: [ImportJob!]!
+  totalCount: Int!
+}
+
+"""
+QUEUED → VALIDATING → VALIDATED (dry run) → APPLYING → COMPLETED; FAILED; CANCELLED
+"""
+enum ImportJobStatus {
+  APPLYING
+  CANCELLED
+  COMPLETED
+  FAILED
+  QUEUED
+  VALIDATED
+  VALIDATING
+}
+
+"""What a bulk import changes"""
+enum ImportKind {
+  """Set variants' base prices, keyed by SKU"""
+  PRICES
+
+  """Create or update products and variants, keyed by SKU"""
+  PRODUCTS
+
+  """Adjust stock by a delta or to a counted quantity, per SKU and location"""
+  STOCK
+}
+
+"""One data row of an import file and its outcome"""
+type ImportRow {
+  action: ImportRowAction!
+  appliedAt: DateTime
+
+  """The variant, product or stock movement the row changed"""
+  entityId: ID
+  errors: [String!]!
+  id: ID!
+
+  """Line in the sheet; the header is line 1"""
+  rowNumber: Int!
+  sku: String
+  status: ImportRowStatus!
+  warnings: [String!]!
+}
+
+"""What applying the row does"""
+enum ImportRowAction {
+  CREATE
+  NONE
+  UPDATE
+}
+
+type ImportRowPage {
+  hasNextPage: Boolean!
+  nodes: [ImportRow!]!
+  totalCount: Int!
+}
+
+"""
+VALID/INVALID after validation; APPLIED, SKIPPED (nothing to change) or FAILED (refused) after applying
+"""
+enum ImportRowStatus {
+  APPLIED
+  FAILED
+  INVALID
+  SKIPPED
+  VALID
+}
+
 """A message in your in-app notification feed"""
 type InAppNotification {
   body: String!
@@ -2230,6 +2343,7 @@ scalar JSONObject
 
 """Background job queues run by the worker"""
 enum JobQueue {
+  IMPORTS
   MAINTENANCE
   NOTIFICATIONS
   WEBHOOKS
@@ -2500,9 +2614,24 @@ type Mutation {
   answerProductQuestion(input: AnswerProductQuestionInput!): ProductQuestion!
 
   """
+  Staff (catalog.import, step-up): applies the valid rows of a validated prices import
+  """
+  applyPriceImport(id: ID!): ImportJob!
+
+  """
+  Staff (catalog.import): applies the valid rows of a validated products import (or re-runs a failed apply)
+  """
+  applyProductImport(id: ID!): ImportJob!
+
+  """
   Enter a friend's referral code, once and before your first order. BAD_REQUEST with reason INVALID_REFERRAL_CODE, SELF_REFERRAL, ALREADY_REFERRED, HAS_ORDERS or MUTUAL_REFERRAL; FORBIDDEN with reason VELOCITY_LIMIT when the code was used too often today
   """
   applyReferralCode(input: ApplyReferralCodeInput!): MyReferrals!
+
+  """
+  Staff (inventory.import): applies the valid rows of a validated stock import
+  """
+  applyStockImport(id: ID!): ImportJob!
 
   """Approve a requested return (staff)"""
   approveReturn(input: ReturnStepInput!): ReturnRequest!
@@ -2536,6 +2665,9 @@ type Mutation {
   """
   assignStaffRole(roleKey: String!, userId: ID!): StaffMember!
 
+  """Staff (catalog.import): cancels a queued or validated catalogue import"""
+  cancelCatalogImport(id: ID!): ImportJob!
+
   """Cancels the authenticated user's own order and restores stock"""
   cancelOrder(orderId: String!, reason: String): Order!
 
@@ -2549,6 +2681,9 @@ type Mutation {
   Cancel a shipment that has not been dispatched (staff): its units can be shipped again and the serials picked for it go back on the shelf. CONFLICT once dispatched
   """
   cancelShipment(input: CancelShipmentInput!): Order!
+
+  """Staff (inventory.import): cancels a queued or validated stock import"""
+  cancelStockImport(id: ID!): ImportJob!
 
   """Cancel an OPEN or SUBMITTED stock-take; no stock moves"""
   cancelStockTake(id: ID!, reason: String): StockTake!
@@ -3930,6 +4065,11 @@ enum PriceChangeSource {
   """A staff member edited the variant's price or the product's taxability"""
   ADMIN_EDIT
 
+  """
+  A bulk import: a prices import, or the first price of a variant a products import created
+  """
+  IMPORT
+
   """The price a variant had when price history started"""
   MIGRATION
 
@@ -4752,6 +4892,12 @@ type Query {
     riderId: ID
   ): [CashRemittanceEntity!]!
 
+  """Staff (catalog.import): one product or price import"""
+  catalogImportJob(id: ID!): ImportJob!
+
+  """Staff (catalog.import): product and price imports, newest first"""
+  catalogImportJobs(after: String, first: Int = 20): ImportJobPage!
+
   """Retrieves a list of all categories, sorted alphabetically by name"""
   categories: [Category!]!
 
@@ -5210,6 +5356,12 @@ type Query {
 
   """System and custom staff roles with their permissions (staff.view)"""
   staffRoles: [StaffRole!]!
+
+  """Staff (inventory.import): one stock import"""
+  stockImportJob(id: ID!): ImportJob!
+
+  """Staff (inventory.import): stock imports, newest first"""
+  stockImportJobs(after: String, first: Int = 20): ImportJobPage!
 
   """
   Units dispatched and not yet received, per variant; only variants with some in transit (staff)

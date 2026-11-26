@@ -19,6 +19,9 @@ registerEnumType(PriceChangeSource, {
     VARIANT_CREATED: { description: 'The first price of a new variant' },
     TAX_RATE_CHANGE: { description: 'A tax rate was created, changed or deleted, repricing taxable variants' },
     MIGRATION: { description: 'The price a variant had when price history started' },
+    IMPORT: {
+      description: 'A bulk import: a prices import, or the first price of a variant a products import created',
+    },
   },
 });
 

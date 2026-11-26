@@ -127,6 +127,9 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.supplier.deleteMany();
   await prisma.stockLocation.deleteMany({ where: { isDefault: false } });
 
+  // Bulk import jobs (their rows cascade)
+  await prisma.importJob.deleteMany();
+
   // Users last (referenced by many tables above); their staff memberships cascade
   await prisma.user.deleteMany();
   // Custom staff roles a test created; the seeded system roles stay

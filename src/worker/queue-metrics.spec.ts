@@ -25,6 +25,7 @@ function build({
     queue('notifications') as never,
     queue('webhooks') as never,
     queue('maintenance') as never,
+    queue('imports') as never,
   );
   const observed: Observation[] = [];
   const result = {
@@ -54,7 +55,7 @@ describe('QueueMetrics', () => {
     await metrics.observe(result as never);
 
     const jobs = observed.filter(([name]) => name === 'queue_jobs');
-    expect(jobs).toHaveLength(3 * OBSERVED_JOB_STATES.length);
+    expect(jobs).toHaveLength(4 * OBSERVED_JOB_STATES.length);
     expect(jobs).toContainEqual(['queue_jobs', 2, { queue: 'webhooks', state: 'failed' }]);
     expect(observed).toContainEqual(['outbox_unpublished_events', 4, undefined]);
     const age = observed.find(([name]) => name === 'outbox_oldest_unpublished_age_seconds')?.[1];

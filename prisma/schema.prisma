@@ -2069,6 +2069,8 @@ enum PriceChangeSource {
   VARIANT_CREATED
   TAX_RATE_CHANGE
   MIGRATION
+  /// A bulk import (P8-I): a PRICES import, or the first prices of variants a PRODUCTS import created
+  IMPORT
 }
 
 /// Append-only price history (ADR-0005 §6): one row per changed Variant.price or basePrice, written in the same
@@ -2813,4 +2815,103 @@ model Referral {
   referee            User           @relation("ReferralReferee", fields: [refereeId], references: [id], onDelete: Cascade)
 
   @@index([referrerId, createdAt])
+}
+
+/// What a bulk import changes (P8-I): products and variants keyed by SKU, variant prices, or stock adjustments
+enum ImportKind {
+  PRODUCTS
+  PRICES
+  STOCK
+}
+
+enum ImportFileFormat {
+  CSV
+  XLSX
+}
+
+/// QUEUED → VALIDATING → VALIDATED (dry run) → APPLYING → COMPLETED; FAILED when the file cannot be read or the job
+/// runs out of attempts; CANCELLED before applying (pure table: src/imports/import-job-status.ts)
+enum ImportJobStatus {
+  QUEUED
+  VALIDATING
+  VALIDATED
+  APPLYING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// VALID or INVALID after validation; APPLIED, SKIPPED (nothing left to change) or FAILED (refused when applied) after
+enum ImportRowStatus {
+  VALID
+  INVALID
+  APPLIED
+  SKIPPED
+  FAILED
+}
+
+enum ImportRowAction {
+  CREATE
+  UPDATE
+  NONE
+}
+
+/// A bulk import (P8-I). The uploaded file is kept privately in `file` only until validation has parsed it into
+/// ImportRow rows (then cleared); the maintenance job `imports.purge` deletes finished jobs after 30 days.
+model ImportJob {
+  id                   String           @id @default(cuid())
+  kind                 ImportKind
+  status               ImportJobStatus  @default(QUEUED)
+  format               ImportFileFormat
+  fileName             String           @db.VarChar(255)
+  /// The Excel sheet to read; null: the first sheet (CSV has none)
+  sheetName            String?          @db.VarChar(100)
+  fileSize             Int
+  file                 Bytes?
+  /// Apply the valid rows as soon as validation finishes (upload without a dry run)
+  applyAfterValidation Boolean          @default(false)
+  /// Apply runs started, so a re-run after a failure gets its own queue job id
+  applyRuns            Int              @default(0)
+  totalRows            Int              @default(0)
+  validRows            Int              @default(0)
+  invalidRows          Int              @default(0)
+  appliedRows          Int              @default(0)
+  skippedRows          Int              @default(0)
+  failedRows           Int              @default(0)
+  /// Why the whole job failed (unreadable file, wrong columns, attempts spent)
+  error                String?          @db.VarChar(1000)
+  /// Staff member who uploaded it, and who last started applying it (no foreign keys, like order snapshots)
+  createdById          String
+  appliedById          String?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  validatedAt          DateTime?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+  rows                 ImportRow[]
+
+  @@index([kind, createdAt])
+  @@index([status, createdAt])
+}
+
+/// One data row of an import file with its validation and apply outcome. `values` holds the row's cells by column
+/// (trimmed text); apply re-checks them against the catalogue as it is then. appliedAt is set exactly when APPLIED
+/// (CHECK), and a row leaves VALID once (conditional update), so a retried batch never applies it twice.
+model ImportRow {
+  id        String          @id @default(cuid())
+  jobId     String
+  rowNumber Int
+  sku       String?         @db.VarChar(255)
+  status    ImportRowStatus
+  action    ImportRowAction @default(NONE)
+  values    Json
+  errors    String[]
+  warnings  String[]
+  /// The product, variant or stock movement the row created or changed
+  entityId  String?
+  appliedAt DateTime?
+  job       ImportJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, rowNumber])
+  @@index([jobId, status])
 }

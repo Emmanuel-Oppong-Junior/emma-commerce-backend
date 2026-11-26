@@ -38,6 +38,7 @@
    - [Staff roles and permissions](#224-staff-roles-and-permissions)
    - [Two-factor authentication and step-up](#225-two-factor-authentication-and-step-up)
    - [Product types and attributes](#226-product-types-and-attributes)
+   - [Bulk imports and exports](#227-bulk-imports-and-exports)
 3. [REST API Reference](#3-rest-api-reference)
 4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
@@ -3967,6 +3968,9 @@ A Pharmacist role comes with its vertical. The Owner can create **custom roles**
 | `catalog.product.write` | `createProduct`, `updateProduct`, `archiveProduct`, `restoreProduct`, `permanentlyDeleteProduct`, `addTagToProduct`, `removeTagFromProduct`, `createVariant`, `updateVariant`, `deleteVariant` |
 | `catalog.taxonomy.write` | create/update/delete brands, categories, sub-categories, tags and product types (with their attribute definitions); `addProductsToTag`, `removeProductsFromTag` |
 | `catalog.media.upload` | `POST /upload/single-image`, `POST /upload/multiple-images` |
+| `catalog.import` | `POST /imports/products`, `POST /imports/prices` (also step-up), the products/prices templates, `GET /imports/catalog/:id/report`, `catalogImportJobs`, `catalogImportJob`, `applyProductImport`, `applyPriceImport` (also step-up), `cancelCatalogImport` (P8-I; held by Owner and Manager) |
+| `catalog.export` | `GET /exports/products`, `GET /exports/stock` (P8-I; held by Owner, Manager and Inventory clerk) |
+| `inventory.import` | `POST /imports/stock`, `GET /imports/stock/template`, `GET /imports/stock/:id/report`, `stockImportJobs`, `stockImportJob`, `applyStockImport`, `cancelStockImport` (P8-I; held by Owner, Manager and Inventory clerk) |
 | `inventory.view` | `stockMovements`, `stockLocations`, `stockLocation`, `stockTransfers`, `stockTransfer`, `stockInTransit`, `stockTakes`, `stockTake`, `stockTakeLines` (without expected quantities), `expiringStock`, `variantLots`; the `Variant.onHand`, `Variant.reserved` and `Variant.stockLevels` fields; `ShippingZone.fulfilmentLocations`, `PickupLocation.fulfilmentLocations` |
 | `inventory.adjust` | `restockVariant`, `adjustVariantStock`, `openStockTake`, `recordStockTakeCounts`, `submitStockTake` |
 | `inventory.alerts` | No operation: holders receive the low-stock digest email (P4-B.2; held by Owner, Manager and Inventory clerk) |
@@ -4187,9 +4191,69 @@ Two **system types** exist and are read-only: **General** (`id: "product_type_ge
 
 ---
 
+### 2.27 Bulk imports and exports
+
+P8-I. Staff import products, prices and stock from **CSV** (UTF-8, header row, comma or semicolon separated; Excel's "CSV UTF-8") or **Excel .xlsx** (first sheet, or the sheet named in `sheet`), and export catalogue, stock and orders. Files go over REST (below); jobs are read, applied and cancelled in GraphQL. Nothing here is breaking (all new).
+
+**Flow**: `POST /imports/<kind>` (multipart) → the job is `QUEUED` → the worker validates every row (dry run, nothing changes) → `VALIDATED` with a per-row report → staff call the apply mutation → `APPLYING` → `COMPLETED`. Upload with `apply=true` to skip the review: the valid rows are applied as soon as validation ends. `FAILED` with `error` set means the file could not be read (wrong columns, unreadable workbook) or a run used up its retries; a failed apply can be re-run with the same apply mutation (rows already applied are never applied twice). `CANCELLED`: cancel a `QUEUED` or `VALIDATED` job. Poll `catalogImportJob(id)` / `stockImportJob(id)` for progress.
+
+**Limits**: 10 MB per file (`413` above), 10,000 data rows, 100 columns. The type is read from the bytes, never the file name: macro-enabled workbooks (.xlsm), legacy .xls and anything that is not UTF-8 text or an .xlsx workbook are refused with `400`. The file is stored privately (in the database, never on Cloudinary) only until validation has read it; jobs and their reports are deleted after 30 days.
+
+**Rows**: blank cells leave a field unchanged (an import cannot clear a field); column names are case-insensitive and spaces become `_`. Each row in the report has `status` (`VALID`/`INVALID` after validation; `APPLIED`, `SKIPPED` (nothing to change) or `FAILED` (refused when applied) after), `action` (`CREATE`, `UPDATE`, `NONE`), `errors`, `warnings` and `entityId` (the variant, product or stock movement written). Applying re-checks every row against the catalogue as it is then; a row refused at that point is `FAILED` with the reason, the others still apply.
+
+| Kind | Columns (required in bold) | Rules |
+|---|---|---|
+| `PRODUCTS` | **`sku`**, `product_id`, `product_key`, `name`, `description`, `short_description`, `product_type` (key), `category`, `subcategory`, `brand` (by name), `tags` (names separated by `\|`), `status` (`DRAFT`/`PUBLISHED`/`ARCHIVED`), `is_taxable`, `barcode`, `base_price`, `weight_grams`, `low_stock_threshold`, `is_active`, `attr.<key>` (product attributes), `option.<key>` (variant options) | Keyed by SKU (any letter case). An existing SKU updates its variant and product. A new SKU joins the product `product_id`, else a new product grouped by `product_key` (the SKU when blank); a new product needs `name`, a new SKU needs `base_price` (tax-exclusive; the selling price adds tax when the product is taxable). Attributes and options are checked against the product type exactly like `createProduct`. Categories, brands and tags must exist (never created). Not by import: changing an existing product's type or `is_taxable`, the price of an existing SKU (warning; use `PRICES`), removing tags, opening stock (use `STOCK`), images. The rows of one product are all-or-nothing. Variants created get `PriceChange` rows with source `IMPORT`. |
+| `PRICES` | **`sku`**, **`base_price`**, `reason` | Sets the tax-exclusive `basePrice`; `price` follows (tax added for a taxable product). Records `PriceChange` rows with source `IMPORT` (the `reason`, else `Import <job id>`). Uploading and `applyPriceImport` need step-up. Unchanged prices are `SKIPPED`. |
+| `STOCK` | **`sku`**, `location` (id or name; blank: the default location), `delta` or `count` (exactly one), `reason`, `note` | `delta`: a signed change with a reason (`DAMAGED`, `LOST`, `EXPIRED` remove; `FOUND` adds; `CORRECTION`, `OTHER` either way; `OTHER` needs a note). `count`: the counted quantity; the change is count minus on-hand (reason default `CORRECTION`). Written as `ADJUSTMENT` stock movements with `refType: "ImportJob"`, never below what is reserved. Lot- or serial-tracked products are refused per row (adjust them in the admin, naming lots/serials). |
+
+#### `catalogImportJobs` / `stockImportJobs` (Query)
+**Auth**: `catalog.import` / `inventory.import`. **Arguments**: `first: Int = 20` (max 100), `after: String` (job id). **Returns** `ImportJobPage { nodes: [ImportJob!]!, totalCount, hasNextPage }`, newest first; product and price jobs on the first, stock jobs on the second.
+
+#### `catalogImportJob(id: ID!)` / `stockImportJob(id: ID!)` (Query)
+**Auth**: as above (`NOT_FOUND` for a job of the other kind). **Returns** `ImportJob`:
+```graphql
+{ catalogImportJob(id: "…") {
+    id kind status format fileName sheetName fileSize applyAfterValidation
+    totalRows validRows invalidRows appliedRows skippedRows failedRows error
+    createdById appliedById createdAt validatedAt completedAt cancelledAt
+    rows(status: INVALID, first: 50, after: null) { totalCount hasNextPage nodes { id rowNumber sku status action errors warnings entityId appliedAt } }
+} }
+```
+
+#### `applyProductImport(id)` / `applyPriceImport(id)` / `applyStockImport(id)` (Mutation)
+**Auth**: `catalog.import` (prices: also step-up) / `inventory.import`. Starts applying a `VALIDATED` job (or re-runs a `FAILED` apply). **Returns** the `ImportJob` (`APPLYING`). **Errors**: `NOT_FOUND`, `CONFLICT` (not validated), `FORBIDDEN` + `STEP_UP_REQUIRED`. Audited.
+
+#### `cancelCatalogImport(id)` / `cancelStockImport(id)` (Mutation)
+**Auth**: `catalog.import` / `inventory.import`. Cancels a `QUEUED` or `VALIDATED` job. **Errors**: `NOT_FOUND`, `CONFLICT`. Audited.
+
+#### REST: uploads, templates, reports and exports
+All need a Bearer token; downloads take `?format=csv` (default) or `xlsx` and are sent as attachments. Text cells starting with `=`, `+`, `-`, `@`, tab or carriage return get a leading `'` in every download (formula injection), except plain numbers such as `-3`.
+
+| Route | Permission | Notes |
+|---|---|---|
+| `POST /imports/products` | `catalog.import` | multipart: `file` (required), `sheet` (xlsx only), `apply` (`"true"`/`"false"`, default false). `201` with the job (same fields as `ImportJob`). `400` for a missing, empty, macro-enabled or unsupported file or a `sheet` on a CSV; `413` above 10 MB. Throttled (10 per minute). |
+| `POST /imports/prices` | `catalog.import` + step-up | as above |
+| `POST /imports/stock` | `inventory.import` | as above |
+| `GET /imports/products/template`, `/imports/prices/template` | `catalog.import` | header and one example row |
+| `GET /imports/stock/template` | `inventory.import` | |
+| `GET /imports/catalog/:id/report`, `/imports/stock/:id/report` | `catalog.import` / `inventory.import` | columns `row, sku, status, action, errors, warnings, entity_id` |
+| `GET /exports/products` | `catalog.export` | one row per variant: the products-import columns, `price`, and `on_hand.<location name>` per location |
+| `GET /exports/stock` | `catalog.export` | `sku, product_name, location, on_hand, reserved, available` |
+| `GET /exports/orders?from=…&to=…` | `order.view` | ISO dates, `[from, to)`, at most 366 days; one row per order (guest orders included): number, date, status, payment status and method, fulfilment, guest, units, totals, currency, delivery zone. No customer data. |
+| `GET /exports/orders/with-customers?from=…&to=…` | `order.view` + `customer.data.export` + step-up | adds `customer_name`, `customer_email`, `customer_phone`, `delivery_address` |
+
+Exports are built in one request, at most 50,000 rows (`400` above: narrow the range). Every export is audited (`EXPORT`).
+
+New enum values: `PriceChangeSource.IMPORT`, `JobQueue.IMPORTS` (`failedJobs`/`retryFailedJob`).
+
+---
+
 ## 3. REST API Reference
 
 These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ "statusCode": 400, "timestamp": "…", "path": "/payment/initialize", "message": "…" }`.
+
+Bulk import uploads, templates, reports and the CSV/XLSX exports (`/imports/*`, `/exports/*`, P8-I) are listed in [2.27](#227-bulk-imports-and-exports).
 
 ### `POST /payment/initialize`
 
