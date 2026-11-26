@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
 const MIGRATIONS_DIR = join(__dirname, '../../prisma/migrations');
+const MIGRATION_TIMEOUT_MS = 60_000;
 
 /** Migration folder names in the order Prisma applies them. */
 export function migrationNames(): string[] {
@@ -29,9 +30,14 @@ export function migrationSqlFrom(name: string, marker: string): string {
  * real schema no longer has. Every statement runs in its own transaction with search_path set to the scratch schema.
  */
 export class ScratchSchema {
+  /**
+   * `withPublic`: public stays on the search path after the scratch schema, for migrations that use an extension
+   * installed there (pg_trgm operator classes since P6-S.1); tables still resolve to the scratch schema first.
+   */
   constructor(
     private readonly prisma: PrismaService,
     readonly name: string,
+    private readonly options: { withPublic?: boolean } = {},
   ) {
     if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw new Error(`Invalid scratch schema name "${name}"`);
   }
@@ -47,17 +53,25 @@ export class ScratchSchema {
 
   /** Runs `sql` (several statements allowed, no parameters) against the scratch schema. */
   async exec(sql: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${this.name}"`);
-      await tx.$executeRawUnsafe(sql);
-    });
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRawUnsafe(`SET LOCAL search_path TO ${this.searchPath()}`);
+        await tx.$executeRawUnsafe(sql);
+        // A migration with a backfill can take longer than the default 5 s.
+      },
+      { timeout: MIGRATION_TIMEOUT_MS },
+    );
   }
 
   async query<T>(sql: string): Promise<T[]> {
     return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(`SET LOCAL search_path TO "${this.name}"`);
+      await tx.$executeRawUnsafe(`SET LOCAL search_path TO ${this.searchPath()}`);
       return tx.$queryRawUnsafe<T[]>(sql);
     });
+  }
+
+  private searchPath(): string {
+    return this.options.withPublic ? `"${this.name}", public` : `"${this.name}"`;
   }
 
   /** Applies every migration up to and including `lastName`. */

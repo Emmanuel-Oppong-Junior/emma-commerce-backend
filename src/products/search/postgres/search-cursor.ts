@@ -1,7 +1,8 @@
 import { ProductSortKey, SortDirection } from '../product-search.port';
 
 // Keyset cursor of the Postgres adapter: the sort key value and id of the last row, opaque to clients. The key is the
-// value Postgres returned (a float8 rank, a name, or a timestamp as ISO text), so comparing it back is exact.
+// value Postgres returned (a float8 rank, a name, a timestamp as ISO text, or a collection position), so comparing it
+// back is exact.
 
 /** How the search text matched: full-text, or trigram name similarity when full-text found nothing. */
 export type TextMatchMode = 'FTS' | 'FUZZY';
@@ -33,6 +34,7 @@ const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?$/;
 
 function keyFits(sort: ProductSortKey, key: unknown): boolean {
   if (sort === 'RELEVANCE') return typeof key === 'number' && Number.isFinite(key);
+  if (sort === 'POSITION') return Number.isInteger(key);
   if (sort === 'NAME') return typeof key === 'string';
   return typeof key === 'string' && TIMESTAMP.test(key);
 }

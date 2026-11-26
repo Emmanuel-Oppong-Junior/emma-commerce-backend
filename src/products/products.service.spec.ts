@@ -18,6 +18,9 @@ import { VariantService } from '../variant/variant.service';
 import { LotsService } from '../inventory/lots/lots.service';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { ProductSearch } from './search/product-search.port';
+import { SlugsService } from '../seo/slugs.service';
+
+const mockSlugs = { assertAvailable: jest.fn() };
 
 const mockProductsRepository = {
   create: jest.fn(),
@@ -65,6 +68,7 @@ describe('ProductsService', () => {
         { provide: LotsService, useValue: mockLotsService },
         { provide: SerialUnitsService, useValue: { assertTrackingChange: jest.fn() } },
         { provide: ProductSearch, useValue: mockProductSearch },
+        { provide: SlugsService, useValue: mockSlugs },
       ],
     }).compile();
 
@@ -167,6 +171,17 @@ describe('ProductsService', () => {
       await expect(service.create(input, 'admin1')).rejects.toThrow(
         new NotFoundException('Category ID "cat1" not found'),
       );
+    });
+
+    it('refuses a slug another product has before writing anything (P8-C)', async () => {
+      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
+      mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
+      mockSlugs.assertAvailable.mockRejectedValueOnce(new ConflictException('Slug "t-shirt" is already used'));
+
+      await expect(service.create({ ...input, slug: 't-shirt' }, 'admin1')).rejects.toThrow(ConflictException);
+
+      expect(mockSlugs.assertAvailable).toHaveBeenCalledWith('PRODUCT', 't-shirt');
+      expect(mockAuditService.record).not.toHaveBeenCalled();
     });
   });
 
@@ -327,6 +342,14 @@ describe('ProductsService', () => {
       expect(result).toBeNull();
     });
 
+    it('looks up a product by its current slug only among published ones (P8-C)', async () => {
+      mockProductsRepository.findFirst.mockResolvedValue(null);
+
+      await service.findPublishedBySlug('cotton-tee', { name: true });
+
+      expect(productsRepository.findFirst).toHaveBeenCalledWith({ slug: 'cotton-tee', ...published }, { name: true });
+    });
+
     it('returns the newest published products of a parent, capped by first', async () => {
       mockProductsRepository.findMany.mockResolvedValue([]);
 
@@ -419,6 +442,24 @@ describe('ProductsService', () => {
       expect(repriceVariants()).not.toHaveBeenCalled();
       expect(mockTaxService.getTotalActiveRate).not.toHaveBeenCalled();
       expect(result).toEqual(updatedProduct);
+    });
+
+    it('checks a new slug against the other products and audits the SEO fields (P8-C)', async () => {
+      const product = { id: 'prod1', name: 'T-Shirt', slug: 't-shirt', metaTitle: null, isTaxable: false };
+      mockProductsRepository.findById.mockResolvedValue(product);
+      mockProductsRepository.update.mockResolvedValue({ ...product, slug: 'cotton-tee', metaTitle: 'Cotton tee' });
+
+      await service.update('prod1', { slug: 'cotton-tee', metaTitle: 'Cotton tee' }, 'admin1');
+
+      expect(mockSlugs.assertAvailable).toHaveBeenCalledWith('PRODUCT', 'cotton-tee', 'prod1');
+      const entry = mockAuditService.record.mock.calls[0][1]({
+        ...product,
+        slug: 'cotton-tee',
+        metaTitle: 'Cotton tee',
+      });
+      expect(entry.details).toEqual({
+        changes: { slug: { from: 't-shirt', to: 'cotton-tee' }, metaTitle: { from: null, to: 'Cotton tee' } },
+      });
     });
 
     it('checks the lot-tracking switch in the update transaction, only when it changes (P4-C.1)', async () => {

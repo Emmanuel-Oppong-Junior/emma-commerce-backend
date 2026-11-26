@@ -38,7 +38,8 @@
    - [Staff roles and permissions](#224-staff-roles-and-permissions)
    - [Two-factor authentication and step-up](#225-two-factor-authentication-and-step-up)
    - [Product types and attributes](#226-product-types-and-attributes)
-   - [Bulk imports and exports](#227-bulk-imports-and-exports)
+   - [Storefront content and SEO](#227-storefront-content-and-seo-p8-c)
+   - [Bulk imports and exports](#228-bulk-imports-and-exports)
 3. [REST API Reference](#3-rest-api-reference)
 4. [Types & Enums](#4-types--enums)
 5. [Authentication & Authorization](#5-authentication--authorization)
@@ -4189,9 +4190,61 @@ Two **system types** exist and are read-only: **General** (`id: "product_type_ge
 
 **Capability fields on Product** (typed, for rules later phases enforce; today they are stored and returned only): `requiresPrescription` (pharmacy checkout gate), `isPerishable` and `shelfLifeDays` (expiry tracking with the inventory ledger), `trackLots` (enforced since P4-C.1: lots with expiry, see [Lots and expiry](#lots-and-expiry-p4-c1)) and `trackSerials` (serial tracking, enforced since P4-D.1: see [Serial units](#serial-units-p4-d1)), `fulfilmentKind` (`PHYSICAL` | `DIGITAL` | `SERVICE`, for delivery rules) and `unitOfMeasure` (`EACH` | `KG` | `G` | `L` | `ML` | `M`, for weighable goods). `createProduct` / `updateProduct` accept them (all optional; defaults `false`, `PHYSICAL`, `EACH`; `shelfLifeDays` 1-3650). Physical sizes live on the variant: `weightGrams`, `lengthMm`, `widthMm`, `heightMm`.
 
+### 2.27 Storefront content and SEO (P8-C)
+
+All additions; nothing existing changes shape (not a breaking change). Staff reads need `content.view` (Owner, Manager, Support), staff writes `content.manage` (Owner, Manager); every content write is audited. Public reads are open (optional sign-in) and not cached server-side, so a change shows at once. Upload images first with `POST /upload/single-image` (see [14](#14-file-upload-cloudinary)) and pass the HTTPS URL.
+
+**Slugs and SEO fields.** `Product`, `Category`, `SubCategory`, `Brand` and `Collection` have `slug: String!`, `metaTitle`, `metaDescription` and `ogImageUrl` (all nullable but `slug`). Slugs are unique per kind, lower-case ASCII words joined by hyphens (max 100). On create without a slug, one is made from the name (accents dropped, `&` read as "and", apostrophes dropped; a clash takes `-2`, `-3`, ...; a name with no Latin letters gets `product`, `category`, ...). Existing rows were given slugs the same way. The create/update inputs of these five take the four fields; `slug: null` is `BAD_REQUEST` (omit it to keep the slug), a slug of another entity of the same kind `CONFLICT`, a malformed one `BAD_USER_INPUT`. Changing the name never changes the slug. SEO fields of products use `catalog.product.write`, of categories, sub-categories and brands `catalog.taxonomy.write`.
+
+| Query | Access | Notes |
+|---|---|---|
+| `productBySlug(slug)` | public | active, PUBLISHED product with this **current** slug, else null |
+| `categoryBySlug(slug)`, `subCategoryBySlug(slug)`, `brandBySlug(slug)` | public | current slug only |
+| `collection(slug)` | public | live collection (see below) with this current slug |
+| `resolveSlug(type: SlugEntityType!, slug)` | public | `{ type id slug redirected }`: the entity with this slug, or the entity that **used to** have it (`redirected: true`: answer with a 301 to `/…/<slug>`). Null when unknown or not visible (draft product, collection not live) |
+
+`SlugEntityType`: `PRODUCT`, `CATEGORY`, `SUB_CATEGORY`, `BRAND`, `COLLECTION`. When a slug changes, the old one keeps pointing at the entity, however many times it is renamed. If another entity of the same kind takes an old slug, the new owner wins and the old redirect is gone. Suggested page flow: `productBySlug(slug)`; on null, `resolveSlug(type: PRODUCT, slug)`; redirect when it returns a slug, else 404.
+
+**Collections.** `type` is `MANUAL` (staff pick the products and their order) or `RULE` (products matching `rules`: `categoryId`, `subcategoryId`, `brandId`, `tagId`, `productTypeId`, `priceMin`/`priceMax` (as the product list filters), `onSale`, `inStock`; every rule set must match). `onSale: true` means a visitor sees a reduced price: a live automatic `PERCENT`/`AMOUNT_OFF`/`FIXED_PRICE` item promotion without coupon, customer group or first-order condition, with uses and units left. Live = `isActive` and inside `startsAt` (inclusive) / `endsAt` (exclusive).
+
+| Operation | Access | Notes |
+|---|---|---|
+| `collection(slug)`, `collections` | public | live only; `collections` by name, at most 100 |
+| `Collection.products(paginationArgs, sortArgs)` | public | `ProductConnection` of **published** products. MANUAL: staff order unless `sortArgs.sortBy` is given; RULE: newest first unless sorted. Cursors as the product list |
+| `Collection.rules` | public | `CollectionRules` (null for MANUAL) |
+| `Collection.productIds` | `content.view` field | the manual list in order, any status |
+| `adminCollections`, `adminCollection(id)` | `content.view` | live or not |
+| `createCollection(input)` | `content.manage` | `{ name type description imageUrl rules productIds isActive startsAt endsAt slug metaTitle metaDescription ogImageUrl }`; RULE needs at least one rule; MANUAL takes `productIds` (at most 500, no repeats). Unknown ids: `NOT_FOUND`; `priceMin` > `priceMax`, `endsAt` <= `startsAt`: `BAD_REQUEST` |
+| `updateCollection(id, input)` | `content.manage` | same fields but `type` and `productIds`; `rules` replaces every rule (RULE only) |
+| `setCollectionProducts(id, productIds)` | `content.manage` | replaces a MANUAL collection's list, in order |
+| `deleteCollection(id)` | `content.manage` | banners linking to it lose their link; homepage sections showing it are left out |
+
+**Banners.** `Banner { id title subtitle altText imageUrl mobileImageUrl placement position isActive startsAt endsAt link createdAt updatedAt }`. `placement` is a free key in upper case (`HOME_HERO`, `CATEGORY_TOP`, ...; `^[A-Z][A-Z0-9_]*$`, max 50). `link: BannerLink { type targetId slug path url }`, `BannerLinkType` `PRODUCT` / `CATEGORY` / `COLLECTION` (`targetId`; `slug` is the target's current slug), `PATH` (internal path starting with one `/`; a query is allowed; trailing `/` dropped) or `URL` (absolute **https** URL, max 2000). In public reads `link` is null when the linked product is not published or the collection not live; a deleted target removes the link.
+
+| Operation | Access | Notes |
+|---|---|---|
+| `banners(placement)` | public | live banners by `position`, at most 20 |
+| `adminBanners(placement?)` | `content.view` | all, by placement then position |
+| `createBanner(input)` / `updateBanner(id, input)` / `deleteBanner(id)` | `content.manage` | `link: { type, targetId \| path \| url }` (exactly the field of its type); `link: null` on update removes it. Unsafe link: `BAD_REQUEST`; unknown target: `NOT_FOUND` |
+
+**Homepage.** `homepage: [HomepageBlock]` (public) returns the live sections by `position` (at most 20), each `{ id type title products categories brands banners text }` with only the list of its type filled; a section left with nothing visible is omitted. `HomepageSectionType` and its `config` (`HomepageSectionConfigInput`, give only the fields of the type):
+
+| Type | Config | Shows |
+|---|---|---|
+| `PRODUCT_CAROUSEL` | `collectionId`, `productLimit` 1-24 (12) | the first products of a **live** collection, published only |
+| `CATEGORY_GRID` | `categoryIds` 1-24, in order | the categories that still exist |
+| `BRAND_STRIP` | `brandIds` 1-24, in order | the brands that still exist |
+| `BANNER_STRIP` | `bannerPlacement`, `bannerLimit` 1-10 (5) | live banners of the placement |
+| `RICH_TEXT` | `text` 1-5000 characters | markdown: headings, bold, italics, lists, links to an internal path or https URL. No HTML, images or other link targets (`BAD_REQUEST`). **Render as markdown with HTML disabled** |
+
+Staff: `homepageSections` (`content.view`, all), `createHomepageSection(input: { type title position config isActive startsAt endsAt })`, `updateHomepageSection(id, input)` (no `type`; a `config` replaces the whole config), `deleteHomepageSection(id)` (`content.manage`).
+
+**Path redirects.** `resolvePath(path)` (public): `{ toPath statusCode }` after following up to 10 redirects (query and trailing `/` of the asked path ignored), `301` only when every hop is permanent, else `302`; null when no redirect starts there. Staff: `pathRedirects` (`content.view`), `createPathRedirect(input: { fromPath toPath statusCode })` (`content.manage`; internal paths only, `fromPath` without query; `statusCode` 301 (default) or 302; `fromPath` already redirecting: `CONFLICT`; a loop: `CONFLICT` with `reason: REDIRECT_LOOP`), `deletePathRedirect(id)`.
+
+
 ---
 
-### 2.27 Bulk imports and exports
+### 2.28 Bulk imports and exports
 
 P8-I. Staff import products, prices and stock from **CSV** (UTF-8, header row, comma or semicolon separated; Excel's "CSV UTF-8") or **Excel .xlsx** (first sheet, or the sheet named in `sheet`), and export catalogue, stock and orders. Files go over REST (below); jobs are read, applied and cancelled in GraphQL. Nothing here is breaking (all new).
 
@@ -4253,7 +4306,7 @@ New enum values: `PriceChangeSource.IMPORT`, `JobQueue.IMPORTS` (`failedJobs`/`r
 
 These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ "statusCode": 400, "timestamp": "…", "path": "/payment/initialize", "message": "…" }`.
 
-Bulk import uploads, templates, reports and the CSV/XLSX exports (`/imports/*`, `/exports/*`, P8-I) are listed in [2.27](#227-bulk-imports-and-exports).
+Bulk import uploads, templates, reports and the CSV/XLSX exports (`/imports/*`, `/exports/*`, P8-I) are listed in [2.28](#228-bulk-imports-and-exports).
 
 ### `POST /payment/initialize`
 

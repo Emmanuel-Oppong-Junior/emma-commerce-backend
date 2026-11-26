@@ -10,6 +10,10 @@ const mockSubCategory: SubCategory = {
   description: null,
   image: null,
   categoryId: 'cat1',
+  slug: 'phones',
+  metaTitle: null,
+  metaDescription: null,
+  ogImageUrl: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

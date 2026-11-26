@@ -33,6 +33,26 @@ describe('product search SQL', () => {
       expect(all(conditions).values).toEqual([false, 'ARCHIVED']);
     });
 
+    it('keeps the products of a manual collection, bound by id (P8-C)', () => {
+      const conditions = filterConditions({ visibility: 'PUBLIC', collectionId: 'col1' }, NOW);
+      expect(conditions).toHaveLength(2);
+      expect(flat(conditions[1])).toContain('FROM "CollectionProduct" cp WHERE cp."collectionId" = ?');
+      expect(conditions[1].values).toEqual(['col1']);
+    });
+
+    it('finds products on sale by the anonymous display rule, or those not on sale (P8-C)', () => {
+      const [, onSale] = filterConditions({ visibility: 'PUBLIC', onSale: true }, NOW);
+      const sql = flat(onSale);
+      expect(sql).toMatch(/^EXISTS \(SELECT 1 FROM "Promotion" pr/);
+      expect(sql).toContain('NOT pr."requiresCoupon" AND NOT pr."firstOrderOnly"');
+      expect(sql).toContain(`pr."type" IN ('PERCENT', 'AMOUNT_OFF', 'FIXED_PRICE') AND pr."scope" <> 'CART'`);
+      expect(sql).toContain('NOT EXISTS (SELECT 1 FROM "_CustomerGroupToPromotion" g');
+      expect(sql).toContain(`pr."type" <> 'FIXED_PRICE' OR v."price" > pr."value"`);
+      expect(onSale.values).toEqual([NOW, NOW]);
+      const [, notOnSale] = filterConditions({ visibility: 'PUBLIC', onSale: false }, NOW);
+      expect(flat(notOnSale)).toMatch(/^NOT EXISTS \(SELECT 1 FROM "Promotion" pr/);
+    });
+
     it('adds each filter as its own condition with its value bound, so combined filters never overwrite', () => {
       const filters: ProductSearchFilters = {
         visibility: 'PUBLIC',
@@ -216,6 +236,13 @@ describe('product search SQL', () => {
     it('needs a text match to sort by relevance', () => {
       expect(() => sortKey('RELEVANCE', undefined)).toThrow('RELEVANCE sort needs a text match');
       expect(sortKey('NAME', undefined).sql).toBe('p."name"');
+    });
+
+    it('sorts by the position in the manual collection, which it needs (P8-C)', () => {
+      expect(() => sortKey('POSITION', undefined)).toThrow('POSITION sort needs a collection');
+      const key = sortKey('POSITION', undefined, 'col1');
+      expect(flat(key)).toContain('SELECT cp."position" FROM "CollectionProduct" cp');
+      expect(key.values).toEqual(['col1']);
     });
 
     it('always breaks ties by id, after the cursor key in the sort direction', () => {

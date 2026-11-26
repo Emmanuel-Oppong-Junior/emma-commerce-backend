@@ -56,6 +56,7 @@ import { FailedJobsModule } from './jobs/failed-jobs.module';
 import { PhoneVerificationModule } from './phone-verification/phone-verification.module';
 import { GuestCheckoutModule } from './guest-checkout/guest-checkout.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
+import { ContentModule } from './content/content.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { ImportsModule } from './imports/imports.module';
 import { ExportsModule } from './exports/exports.module';
@@ -194,6 +195,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     LoyaltyModule,
     ImportsModule,
     ExportsModule,
+    ContentModule,
   ],
   controllers: [AppController],
   providers: [

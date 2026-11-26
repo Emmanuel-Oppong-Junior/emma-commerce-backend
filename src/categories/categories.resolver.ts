@@ -51,6 +51,16 @@ export class CategoriesResolver {
     return this.categoriesService.findOne(id);
   }
 
+  @Auth(AuthType.Optional)
+  @Query(() => Category, {
+    name: 'categoryBySlug',
+    nullable: true,
+    description: 'The category with this current slug, else null (an old slug: resolveSlug)',
+  })
+  findOneBySlug(@Args('slug', { type: () => String }) slug: string) {
+    return this.categoriesService.findBySlug(slug);
+  }
+
   @RequirePermission('catalog.taxonomy.write')
   @Mutation(() => Category, {
     description: 'Updates an existing category (admin only)',

@@ -47,14 +47,18 @@ Mutation completeMfaSignIn               public
 Mutation completeMyDelivery              permission: delivery.ride
 Mutation confirmMfaEnrollment            authenticated
 Mutation createAddress                   authenticated
+Mutation createBanner                    permission: content.manage
 Mutation createBrand                     permission: catalog.taxonomy.write
 Mutation createCategory                  permission: catalog.taxonomy.write
+Mutation createCollection                permission: content.manage
 Mutation createCouponCode                permission: promotion.manage; step-up
 Mutation createCustomerGroup             permission: customer.group.manage
 Mutation createDeliverySlot              permission: shipping.manage
 Mutation createGuestCart                 public
 Mutation createGuestOrder                public
+Mutation createHomepageSection           permission: content.manage
 Mutation createOrder                     authenticated
+Mutation createPathRedirect              permission: content.manage
 Mutation createPickupLocation            permission: shipping.manage
 Mutation createPriceList                 permission: pricelist.manage; step-up
 Mutation createProduct                   permission: catalog.product.write
@@ -77,11 +81,15 @@ Mutation createUser                      permission: staff.manage; step-up when 
 Mutation createVariant                   permission: catalog.product.write
 Mutation deArchiveUser                   permission: user.manage
 Mutation deleteAddress                   authenticated
+Mutation deleteBanner                    permission: content.manage
 Mutation deleteBrand                     permission: catalog.taxonomy.write
+Mutation deleteCollection                permission: content.manage
 Mutation deleteCouponCode                permission: promotion.manage; step-up
 Mutation deleteCustomerGroup             permission: customer.group.manage
 Mutation deleteDeliverySlot              permission: shipping.manage
+Mutation deleteHomepageSection           permission: content.manage
 Mutation deleteOrder                     permission: order.manage
+Mutation deletePathRedirect              permission: content.manage
 Mutation deletePickupLocation            permission: shipping.manage
 Mutation deletePriceList                 permission: pricelist.manage; step-up
 Mutation deleteProductType               permission: catalog.taxonomy.write
@@ -154,6 +162,7 @@ Mutation restoreProduct                  permission: catalog.product.write
 Mutation retryFailedJob                  permission: jobs.manage
 Mutation saveCartItemForLater            authenticated
 Mutation sendPurchaseOrder               permission: purchasing.manage
+Mutation setCollectionProducts           permission: content.manage
 Mutation setPaystackConfig               permission: payment.settings.manage; step-up
 Mutation setPickupLocationFulfilmentLocations permission: inventory.location.manage
 Mutation setPriceListEntries             permission: pricelist.manage; step-up
@@ -178,15 +187,18 @@ Mutation unhideReview                    permission: review.moderate
 Mutation unsubscribeMarketingEmail       public
 Mutation updateAddress                   authenticated
 Mutation updateAttributeDefinition       permission: catalog.taxonomy.write
+Mutation updateBanner                    permission: content.manage
 Mutation updateBrand                     permission: catalog.taxonomy.write
 Mutation updateCartItem                  authenticated
 Mutation updateCategory                  permission: catalog.taxonomy.write
 Mutation updateCodRiskSettings           permission: payment.settings.manage; step-up
+Mutation updateCollection                permission: content.manage
 Mutation updateCouponCode                permission: promotion.manage; step-up
 Mutation updateCustomerGroup             permission: customer.group.manage
 Mutation updateDeliverySlot              permission: shipping.manage
 Mutation updateDisputeStatus             permission: payment.dispute.manage
 Mutation updateGuestCartItem             public
+Mutation updateHomepageSection           permission: content.manage
 Mutation updateLoyaltySettings           permission: loyalty.manage; step-up
 Mutation updateMyProfile                 authenticated
 Mutation updateNotificationPreference    authenticated
@@ -222,10 +234,15 @@ Query activePickupLocations              public
 Query activeShippingZones                public
 Query address                            authenticated
 Query addresses                          permission: user.view; step-up when userId is omitted (exports every address)
+Query adminBanners                       permission: content.view
+Query adminCollection                    permission: content.view
+Query adminCollections                   permission: content.view
 Query adminProduct                       permission: catalog.product.read
 Query adminProducts                      permission: catalog.product.read
 Query availablePaymentMethods            public
+Query banners                            public, optional sign-in
 Query brand                              public, optional sign-in
+Query brandBySlug                        public, optional sign-in
 Query brands                             public, optional sign-in
 Query cart                               authenticated
 Query cashRemittances                    permission: cod.cash.manage
@@ -233,10 +250,13 @@ Query catalogImportJob                   permission: catalog.import
 Query catalogImportJobs                  permission: catalog.import
 Query categories                         public, optional sign-in
 Query category                           authenticated
+Query categoryBySlug                     public, optional sign-in
 Query checkoutQuote                      authenticated
 Query codBlacklist                       permission: payment.settings.manage
 Query codCashReport                      permission: cod.cash.manage
 Query codRiskSettings                    permission: payment.settings.manage
+Query collection                         public, optional sign-in
+Query collections                        public, optional sign-in
 Query customerConsentHistory             permission: user.view
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
@@ -254,6 +274,8 @@ Query getUserPayment                     permission: payment.view
 Query guestCart                          public
 Query guestCheckoutQuote                 public
 Query guestOrder                         public
+Query homepage                           public, optional sign-in
+Query homepageSections                   permission: content.view
 Query loyaltySettings                    public
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
@@ -267,6 +289,7 @@ Query myReturns                          customer only
 Query order                              authenticated
 Query orders                             permission: order.view
 Query orderShipments                     permission: order.view
+Query pathRedirects                      permission: content.view
 Query payment                            authenticated
 Query payments                           permission: payment.view
 Query paymentSettings                    permission: payment.settings.manage
@@ -275,6 +298,7 @@ Query priceChanges                       permission: catalog.product.read
 Query priceList                          permission: pricelist.manage
 Query priceLists                         permission: pricelist.manage
 Query product                            public, optional sign-in
+Query productBySlug                      public, optional sign-in
 Query productFacets                      public, optional sign-in
 Query productQuestion                    public, optional sign-in
 Query productQuestions                   public, optional sign-in
@@ -291,6 +315,8 @@ Query redemptions                        permission: promotion.manage
 Query refunds                            permission: payment.view
 Query reportedProductQuestions           permission: review.moderate
 Query reportedReviews                    permission: review.moderate
+Query resolvePath                        public, optional sign-in
+Query resolveSlug                        public, optional sign-in
 Query returnRequest                      permission: return.manage
 Query returns                            permission: return.manage
 Query revenueByCategory                  permission: report.view
@@ -321,6 +347,7 @@ Query stockTransfers                     permission: inventory.view
 Query storeSettings                      public
 Query subCategories                      authenticated
 Query subCategory                        authenticated
+Query subCategoryBySlug                  public, optional sign-in
 Query supplier                           permission: purchasing.view
 Query suppliers                          permission: purchasing.view
 Query tag                                authenticated

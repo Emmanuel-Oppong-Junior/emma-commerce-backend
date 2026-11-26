@@ -27,9 +27,10 @@ import {
 } from '../enums/product.enum';
 import { GraphQLJSONObject } from 'graphql-type-json';
 import { VariantFieldsInput } from '../../variant/dto/create-variant.input';
+import { SeoFieldsInput } from '../../seo/dto/seo-fields.input';
 
 @InputType()
-export class CreateProductInput {
+export class CreateProductInput extends SeoFieldsInput {
   @Field(() => String, { description: 'Product name (e.g., "Cotton T-Shirt")' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsNotEmpty({ message: 'Product name is required' })

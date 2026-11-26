@@ -1,8 +1,9 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { Product } from '../../products/entities/product.entity';
+import { SeoFields } from '../../seo/entities/seo-fields.entity';
 
 @ObjectType()
-export class Brand {
+export class Brand extends SeoFields {
   @Field(() => ID)
   id: string;
 

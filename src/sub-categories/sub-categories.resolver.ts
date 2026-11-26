@@ -51,6 +51,16 @@ export class SubCategoriesResolver {
     return this.subCategoriesService.findOne(id);
   }
 
+  @Auth(AuthType.Optional)
+  @Query(() => SubCategory, {
+    name: 'subCategoryBySlug',
+    nullable: true,
+    description: 'The subcategory with this current slug, else null (an old slug: resolveSlug)',
+  })
+  findOneBySlug(@Args('slug', { type: () => String }) slug: string) {
+    return this.subCategoriesService.findBySlug(slug);
+  }
+
   @Mutation(() => SubCategory, {
     description: 'Updates an existing subcategory (admin only)',
   })

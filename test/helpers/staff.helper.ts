@@ -38,6 +38,8 @@ export const MANAGER_PERMISSIONS: Permission[] = [
   'pricelist.manage',
   'tax.manage',
   'shipping.manage',
+  'content.view',
+  'content.manage',
   'review.moderate',
   'user.view',
   'user.manage',

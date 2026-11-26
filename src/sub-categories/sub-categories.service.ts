@@ -3,10 +3,14 @@ import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
 import { SubCategory } from '../generated/prisma/client';
 import { SubCategoriesRepository } from './sub-categories.repository';
+import { SlugsService } from '../seo/slugs.service';
 
 @Injectable()
 export class SubCategoriesService {
-  constructor(private readonly subCategoriesRepository: SubCategoriesRepository) {}
+  constructor(
+    private readonly subCategoriesRepository: SubCategoriesRepository,
+    private readonly slugs: SlugsService,
+  ) {}
 
   /**
    * Creates a new SubCategory using the provided input data.
@@ -23,6 +27,7 @@ export class SubCategoriesService {
         `A SubCategory with the name "${name}" already exists in category ID "${categoryId}"`,
       );
     }
+    await this.slugs.assertAvailable('SUB_CATEGORY', createSubCategoryInput.slug);
 
     return this.subCategoriesRepository.create(createSubCategoryInput);
   }
@@ -44,6 +49,11 @@ export class SubCategoriesService {
     return this.subCategoriesRepository.findById(id);
   }
 
+  /** The sub-category whose current slug this is; an old slug finds nothing (resolveSlug follows it). */
+  async findBySlug(slug: string): Promise<SubCategory | null> {
+    return this.subCategoriesRepository.findFirst({ slug });
+  }
+
   /**
    * Updates an existing SubCategory with the provided input data.
    * @param id - The unique identifier of the SubCategory to update.
@@ -54,6 +64,7 @@ export class SubCategoriesService {
    */
   async update(id: string, updateSubCategoryInput: UpdateSubCategoryInput): Promise<SubCategory> {
     await this.checkSubCategory(id);
+    await this.slugs.assertAvailable('SUB_CATEGORY', updateSubCategoryInput.slug, id);
 
     if (updateSubCategoryInput.name) {
       const current = await this.findOne(id);

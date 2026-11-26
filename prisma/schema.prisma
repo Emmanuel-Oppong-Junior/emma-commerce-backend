@@ -167,6 +167,14 @@ model Category {
   image            String?
   products         Product[]
   subcategories    SubCategory[]
+  /// URL key (P8-C): unique, lower-case ASCII words joined by hyphens; filled from the name by a database trigger when
+  /// not given; a change leaves a SlugRedirect from the old slug
+  slug             String         @unique @default("") @db.VarChar(100)
+  metaTitle        String?        @db.VarChar(120)
+  metaDescription  String?        @db.VarChar(320)
+  ogImageUrl       String?
+  slugRedirects    SlugRedirect[]
+  bannerLinks      Banner[]
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   promotions       Promotion[]   @relation("CategoryToPromotion")
@@ -183,6 +191,13 @@ model SubCategory {
   categoryId  String
   category    Category  @relation(fields: [categoryId], references: [id])
   products    Product[]
+  /// URL key (P8-C): unique, lower-case ASCII words joined by hyphens; filled from the name by a database trigger when
+  /// not given; a change leaves a SlugRedirect from the old slug
+  slug             String         @unique @default("") @db.VarChar(100)
+  metaTitle        String?        @db.VarChar(120)
+  metaDescription  String?        @db.VarChar(320)
+  ogImageUrl       String?
+  slugRedirects    SlugRedirect[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -197,6 +212,13 @@ model Brand {
   products         Product[]
   promotions       Promotion[] @relation("BrandToPromotion")
   rewardPromotions Promotion[] @relation("PromotionRewardBrands")
+  /// URL key (P8-C): unique, lower-case ASCII words joined by hyphens; filled from the name by a database trigger when
+  /// not given; a change leaves a SlugRedirect from the old slug
+  slug             String         @unique @default("") @db.VarChar(100)
+  metaTitle        String?        @db.VarChar(120)
+  metaDescription  String?        @db.VarChar(320)
+  ogImageUrl       String?
+  slugRedirects    SlugRedirect[]
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
@@ -383,6 +405,15 @@ model Product {
   rating4Count  Int      @default(0)
   rating5Count  Int      @default(0)
 
+  /// URL key (P8-C): unique, lower-case ASCII words joined by hyphens; filled from the name by a database trigger when
+  /// not given; a change leaves a SlugRedirect from the old slug
+  slug             String         @unique @default("") @db.VarChar(100)
+  metaTitle        String?        @db.VarChar(120)
+  metaDescription  String?        @db.VarChar(320)
+  ogImageUrl       String?
+  slugRedirects    SlugRedirect[]
+  bannerLinks      Banner[]
+  collections      CollectionProduct[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
   categoryId       String?
@@ -2914,4 +2945,159 @@ model ImportRow {
 
   @@unique([jobId, rowNumber])
   @@index([jobId, status])
+}
+
+/// Which kind of catalogue page a slug belongs to (P8-C); slugs are unique per kind.
+enum SlugEntityType {
+  PRODUCT
+  CATEGORY
+  SUB_CATEGORY
+  BRAND
+  COLLECTION
+}
+
+/// An old slug of a product, category, sub-category, brand or collection (P8-C), so old links still resolve. Written
+/// by database triggers only: a slug change records the old one; a slug taken by a new owner drops its redirect. Points
+/// at the entity (exactly one link, of the kind entityType names; CHECKs), so a chain of changes collapses by itself.
+model SlugRedirect {
+  id            String         @id @default(cuid())
+  entityType    SlugEntityType
+  fromSlug      String         @db.VarChar(100)
+  productId     String?
+  categoryId    String?
+  subCategoryId String?
+  brandId       String?
+  collectionId  String?
+  createdAt     DateTime       @default(now())
+  product       Product?       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  category      Category?      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  subCategory   SubCategory?   @relation(fields: [subCategoryId], references: [id], onDelete: Cascade)
+  brand         Brand?         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  collection    Collection?    @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@unique([entityType, fromSlug])
+  @@index([productId])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([brandId])
+  @@index([collectionId])
+}
+
+enum CollectionType {
+  /// Staff pick the products and their order
+  MANUAL
+  /// Products matching the rules, found by the product search at read time
+  RULE
+}
+
+/// A merchandised product list with its own page (P8-C). Customers see it while active and inside its schedule.
+model Collection {
+  id              String              @id @default(cuid())
+  name            String              @db.VarChar(120)
+  /// See Product.slug
+  slug            String              @unique @default("") @db.VarChar(100)
+  description     String?             @db.Text
+  imageUrl        String?
+  type            CollectionType
+  /// RULE: the product filters (collection-rules.ts); null for MANUAL (CHECK)
+  rules           Json?
+  isActive        Boolean             @default(true)
+  startsAt        DateTime?
+  /// Open-ended when null
+  endsAt          DateTime?
+  metaTitle       String?             @db.VarChar(120)
+  metaDescription String?             @db.VarChar(320)
+  ogImageUrl      String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  products        CollectionProduct[]
+  slugRedirects   SlugRedirect[]
+  bannerLinks     Banner[]
+}
+
+/// A product of a MANUAL collection at its position (0 first).
+model CollectionProduct {
+  collectionId String
+  productId    String
+  position     Int
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, productId])
+  @@unique([collectionId, position])
+  @@index([productId])
+}
+
+/// A promotional image in a storefront slot (P8-C). Customers see it while active and inside its schedule, by position
+/// within its placement. At most one link (CHECK): a product, category, collection, internal path or https URL; a
+/// linked product, category or collection that is deleted leaves the banner without a link.
+model Banner {
+  id               String      @id @default(cuid())
+  title            String      @db.VarChar(120)
+  subtitle         String?     @db.VarChar(240)
+  altText          String?     @db.VarChar(240)
+  imageUrl         String
+  mobileImageUrl   String?
+  /// Storefront slot, e.g. HOME_HERO or CATEGORY_TOP (upper case, digits and underscores)
+  placement        String      @db.VarChar(50)
+  position         Int         @default(0)
+  isActive         Boolean     @default(true)
+  startsAt         DateTime?
+  endsAt           DateTime?
+  linkProductId    String?
+  linkCategoryId   String?
+  linkCollectionId String?
+  linkPath         String?     @db.VarChar(500)
+  linkUrl          String?     @db.VarChar(2000)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  linkProduct      Product?    @relation(fields: [linkProductId], references: [id], onDelete: SetNull)
+  linkCategory     Category?   @relation(fields: [linkCategoryId], references: [id], onDelete: SetNull)
+  linkCollection   Collection? @relation(fields: [linkCollectionId], references: [id], onDelete: SetNull)
+
+  @@index([placement, position])
+  @@index([linkProductId])
+  @@index([linkCategoryId])
+  @@index([linkCollectionId])
+}
+
+enum HomepageSectionType {
+  /// Products of a collection
+  PRODUCT_CAROUSEL
+  /// Chosen categories
+  CATEGORY_GRID
+  /// The live banners of a placement
+  BANNER_STRIP
+  /// Plain text with limited markdown
+  RICH_TEXT
+  /// Chosen brands
+  BRAND_STRIP
+}
+
+/// A block of the storefront homepage (P8-C), shown by position while active and inside its schedule. `config` is
+/// checked per type by section-config.ts; the ids it names are resolved at read time (missing or hidden ones dropped).
+model HomepageSection {
+  id        String              @id @default(cuid())
+  type      HomepageSectionType
+  title     String?             @db.VarChar(120)
+  position  Int                 @default(0)
+  config    Json
+  isActive  Boolean             @default(true)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([position])
+}
+
+/// A staff-entered storefront path redirect (P8-C): fromPath (unique) answers with statusCode (301 or 302) to toPath,
+/// both internal paths; the service refuses loops.
+model PathRedirect {
+  id         String   @id @default(cuid())
+  fromPath   String   @unique @db.VarChar(500)
+  toPath     String   @db.VarChar(500)
+  statusCode Int      @default(301)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }

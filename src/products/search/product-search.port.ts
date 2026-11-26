@@ -6,7 +6,8 @@ import { Prisma } from '../../generated/prisma/client';
 /** PUBLIC: only active, PUBLISHED products. ADMIN: any, narrowed by isActive/status when given. */
 export type SearchVisibility = 'PUBLIC' | 'ADMIN';
 
-export type ProductSortKey = 'RELEVANCE' | 'NAME' | 'CREATED_AT' | 'UPDATED_AT';
+/** POSITION: the staff order of the manual collection named by the collectionId filter (P8-C). */
+export type ProductSortKey = 'RELEVANCE' | 'NAME' | 'CREATED_AT' | 'UPDATED_AT' | 'POSITION';
 export type SortDirection = 'ASC' | 'DESC';
 
 /** Products whose attribute `key` (on the product, or a variant axis of an active variant) is one of `values`. */
@@ -41,6 +42,14 @@ export interface ProductSearchFilters {
   inStock?: boolean;
   /** AND across attributes, OR within one. */
   attributes?: AttributeFilter[];
+  /** Products of this manual collection (P8-C). */
+  collectionId?: string;
+  /**
+   * true: a visitor sees a reduced price on an active variant (P8-C): a live automatic PERCENT, AMOUNT_OFF or
+   * FIXED_PRICE item promotion open to everyone (no coupon, customer group or first-order condition) with uses and
+   * units left targets it, as the product page's display rule shows; false: none does.
+   */
+  onSale?: boolean;
 }
 
 export interface ProductSearchRequest {

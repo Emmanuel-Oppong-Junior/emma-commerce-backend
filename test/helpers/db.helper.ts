@@ -74,6 +74,12 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
   await prisma.productType.deleteMany({ where: { isSystem: false } });
   await prisma.productType.updateMany({ data: { returnable: true, returnWindowDays: null } });
 
+  // Storefront content (P8-C); collection products and slug redirects go with their owners
+  await prisma.homepageSection.deleteMany();
+  await prisma.banner.deleteMany();
+  await prisma.collection.deleteMany();
+  await prisma.pathRedirect.deleteMany();
+
   // Catalogue
   await prisma.priceList.deleteMany();
   await prisma.promotion.deleteMany();

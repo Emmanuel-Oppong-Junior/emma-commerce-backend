@@ -7,6 +7,7 @@ describe('search cursor', () => {
     { sort: 'NAME', direction: 'ASC', key: 'Men\'s "Shoes"', id: 'p3' },
     { sort: 'CREATED_AT', direction: 'DESC', key: '2026-01-01T00:00:00.123', id: 'p4' },
     { sort: 'UPDATED_AT', direction: 'ASC', key: '2026-01-01T00:00:00', id: 'p5' },
+    { sort: 'POSITION', direction: 'ASC', key: 3, id: 'p6' },
   ])('round-trips $sort $direction exactly', (cursor) => {
     const encoded = encodeCursor(cursor);
     expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -32,6 +33,7 @@ describe('search cursor', () => {
       'CREATED_AT',
       'DESC',
     ],
+    ['a position that is not an integer', raw({ s: 'POSITION', d: 'ASC', k: 1.5, i: 'p' }), 'POSITION', 'ASC'],
     ['an unknown match mode', raw({ s: 'RELEVANCE', d: 'DESC', m: 'OTHER', k: 1, i: 'p' }), 'RELEVANCE', 'DESC'],
   ])('refuses %s', (_case, cursor, sort, direction) => {
     expect(decodeCursor(cursor, sort, direction)).toBeNull();
