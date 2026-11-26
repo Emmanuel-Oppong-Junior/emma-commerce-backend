@@ -1,6 +1,7 @@
 import { DisputeSource, OrderStatus, ReturnStatus, ShipmentStatus } from '../generated/prisma/client';
 import { JobQueue } from '../jobs/job-queues';
 import { JobMeta } from '../jobs/job-context';
+import { CatalogueChangeReason } from '../cdn/surrogate-keys';
 
 /**
  * Event names are versioned: they are a contract with consumers (ADR-0009). Change a payload by adding a `.v2` type
@@ -45,6 +46,11 @@ export interface DomainEventPayloads {
   'return.status_changed.v1': { returnRequestId: string; orderId: string; status: ReturnStatus };
   /** An abandoned-cart reminder was recorded (P6-G.2); the worker sends it (email, SMS) if consent still holds. */
   'cart.abandoned_reminder.v1': { reminderId: string; userId: string };
+  /**
+   * A committed catalogue change, recorded by database triggers (P9-C, migration 20261221100000): what changed and
+   * the ids it is about (null: too many, or a store-wide change). The worker purges the CDN by surrogate key.
+   */
+  'catalogue.changed.v1': { reason: CatalogueChangeReason; ids: string[] | null };
 }
 
 export type DomainEventType = keyof DomainEventPayloads;
@@ -71,6 +77,7 @@ export const DOMAIN_EVENT_QUEUES: Record<DomainEventType, JobQueue> = {
   'inventory.low_stock_digest.v1': JobQueue.NOTIFICATIONS,
   'return.status_changed.v1': JobQueue.NOTIFICATIONS,
   'cart.abandoned_reminder.v1': JobQueue.NOTIFICATIONS,
+  'catalogue.changed.v1': JobQueue.MAINTENANCE,
 };
 
 export function isDomainEventType(type: string): type is DomainEventType {

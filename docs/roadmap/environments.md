@@ -49,3 +49,17 @@ What each hosted environment must configure for P1-L. Values are never recorded 
 | PaymentWebhookSignatureRejections / PaymentWebhookSettlementFailing | Post webhooks with a wrong `x-paystack-signature`; or deliver a signed `charge.success` for an unknown reference. |
 | ApiInternalErrorRateHigh | Stop Postgres for 6 minutes under synthetic traffic. |
 | GraphqlLatencyP95High | Add latency to the database connection (e.g. `tc netem`) under load. |
+
+## CDN in front of the API (P9-C)
+
+No CDN is configured yet (it comes with hosting, ADR-0016). Whichever is chosen must:
+
+- **Honour the origin's `Cache-Control`.** Cache only responses marked `public` (anonymous GET catalogue queries, `max-age=60, stale-while-revalidate=30`); never cache `private, no-store` or anything without an explicit `public`, and never cache error statuses by default rules.
+- **Cache GET only**, keyed on the full URL (path and the whole query string: `query`/`extensions`, `variables`, `operationName`). Never cache POST.
+- **Bypass the cache for requests with an `Authorization` header** (the responses also send `Vary: Authorization`).
+- **Forward request headers** to the origin, in particular `Authorization`, `apollo-require-preflight`/`x-apollo-operation-name` (Apollo's CSRF check refuses a GET without one) and `X-Request-ID`.
+- **Purge by surrogate key.** Responses name what they show in `Surrogate-Key` (space separated, Fastly style) and `Cache-Tag` (comma separated, Cloudflare style), at most 64 keys: `catalogue` on every response, `product:<id>`, `category:<id>`, `subcategory:<id>`, `brand:<id>`, `tag:<id>`, `product-type:<id>`, `collection:<id>`, `banner:<id>`, family keys for lists (`products`, `categories`, `brands`, `tags`, `product-types`, `collections`, `banners`), `homepage` and `slugs`. Strip both headers before responses reach browsers if the CDN does not. Use hard purges (a soft purge would let `stale-while-revalidate` serve the old copy).
+
+**How purges are produced.** Database triggers (migration `20261221100000_catalogue_purge_events`) record a `catalogue.changed.v1` outbox event in the transaction of every catalogue write (products, variants and prices, stock crossing between available and unavailable, categories, sub-categories, brands, tags, product types, collections, banners, homepage sections, redirects, promotions, the store row except its order counter, store features, stock locations). The worker turns each into surrogate keys (`src/cdn/surrogate-keys.ts`), collects them in the Redis set `cdn:purges:pending` and, 6 seconds after the first change of a window, sends one purge per 256 keys through the `CdnPurger` port. Today the only adapter logs the purge (`CdnPurger` log lines with `surrogateKeys` and `reasons`) and counts `cdn_purge_requests_total{reason}`; the real adapter (API token from config, retries through the flush job's 5 attempts) replaces it when the CDN is chosen. A failed purge puts its keys back in the set.
+
+**Persisted queries** live in Redis under `graphql:apq:<sha256>` with a 24-hour TTL, shared by every API instance.

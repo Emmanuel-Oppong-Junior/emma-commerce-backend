@@ -2,6 +2,7 @@ import { Job } from 'bullmq';
 import { MaintenanceProcessor } from './maintenance.processor';
 import { MaintenanceJob } from './maintenance-jobs';
 import { ANALYTICS_REBUILD_JOB } from '../analytics/rollup/analytics-rollup.service';
+import { CDN_FLUSH_JOB } from '../cdn/cdn-purges';
 
 function buildProcessor() {
   const expiredOrders = { cancelAbandonedOrders: jest.fn().mockResolvedValue(undefined) };
@@ -21,6 +22,7 @@ function buildProcessor() {
     rebuildRecent: jest.fn().mockResolvedValue(undefined),
     rebuildJob: jest.fn().mockResolvedValue(undefined),
   };
+  const cdnPurges = { enqueue: jest.fn().mockResolvedValue(undefined), flush: jest.fn().mockResolvedValue(undefined) };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const processor = new MaintenanceProcessor(
     expiredOrders as never,
@@ -36,6 +38,7 @@ function buildProcessor() {
     loyaltyExpiry as never,
     importRetention as never,
     analyticsRollup as never,
+    cdnPurges as never,
   );
   return {
     processor,
@@ -50,11 +53,12 @@ function buildProcessor() {
     loyaltyExpiry,
     importRetention,
     analyticsRollup,
+    cdnPurges,
     logger,
   };
 }
 
-const job = (name: string) => ({ name, id: '1', queueName: 'maintenance', attemptsMade: 1, opts: {} }) as Job;
+const job = (name: string) => ({ name, id: '1', queueName: 'maintenance', attemptsMade: 1, opts: {}, data: {} }) as Job;
 
 describe('MaintenanceProcessor', () => {
   it.each([
@@ -71,6 +75,8 @@ describe('MaintenanceProcessor', () => {
     [MaintenanceJob.PurgeImports, 'importRetention', 'purge'],
     [MaintenanceJob.RollupAnalytics, 'analyticsRollup', 'rebuildRecent'],
     [ANALYTICS_REBUILD_JOB, 'analyticsRollup', 'rebuildJob'],
+    ['catalogue.changed.v1', 'cdnPurges', 'enqueue'],
+    [CDN_FLUSH_JOB, 'cdnPurges', 'flush'],
   ] as const)('runs %s through %s.%s exactly once', async (name, target, method) => {
     const built = buildProcessor();
 
@@ -92,6 +98,8 @@ describe('MaintenanceProcessor', () => {
       built.importRetention.purge,
       built.analyticsRollup.rebuildRecent,
       built.analyticsRollup.rebuildJob,
+      built.cdnPurges.enqueue,
+      built.cdnPurges.flush,
     ].reduce((total, mock) => total + mock.mock.calls.length, 0);
     expect(allCalls).toBe(1);
   });
@@ -103,6 +111,16 @@ describe('MaintenanceProcessor', () => {
     await built.processor.process(rebuild);
 
     expect(built.analyticsRollup.rebuildJob).toHaveBeenCalledWith({ from: '2026-01-01', to: '2026-02-01' });
+  });
+
+  it('hands a catalogue change event its payload', async () => {
+    const built = buildProcessor();
+    const payload = { reason: 'product', ids: ['p1'] };
+    const event = { ...job('catalogue.changed.v1'), data: { eventId: 'e1', aggregateId: 'product', payload } } as Job;
+
+    await built.processor.process(event);
+
+    expect(built.cdnPurges.enqueue).toHaveBeenCalledWith(payload);
   });
 
   it('fails a job with an unknown name so it lands in the failed set', async () => {

@@ -64,6 +64,8 @@ import { ExportsModule } from './exports/exports.module';
 import { AppMetrics } from './observability/metrics';
 import { graphqlMetricsPlugin } from './observability/graphql-metrics.plugin';
 import { HttpMetricsMiddleware } from './observability/http-metrics.middleware';
+import { httpCachePlugins } from './cdn/http-cache.plugin';
+import { persistedQueries } from './cdn/apq-cache';
 
 const THROTTLERS: ThrottlerOptions[] = [
   {
@@ -134,25 +136,27 @@ const THROTTLERS: ThrottlerOptions[] = [
     GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
       imports: [CommonsModule],
-      useFactory: (logger: LoggerService, metrics: AppMetrics) => ({
+      useFactory: (logger: LoggerService, metrics: AppMetrics, redis: Redis) => ({
         playground: false,
         introspection: process.env.NODE_ENV !== 'production',
         // Apollo 5 answers bad variable values with HTTP 400; keep v4's 200 until the frontend is checked against it.
         status400ForVariableCoercionErrors: false,
         formatError: formatError(logger),
+        persistedQueries: persistedQueries(redis),
         plugins: [
           process.env.NODE_ENV === 'production'
             ? ApolloServerPluginLandingPageDisabled()
             : ApolloServerPluginLandingPageLocalDefault(),
           queryCostPlugin(),
           graphqlMetricsPlugin(metrics),
+          ...httpCachePlugins(),
         ],
         validationRules: [depthLimitRule(), aliasLimitRule()],
         sortSchema: true,
         autoSchemaFile: 'schema.gql',
         context: ({ req, res }: { req: unknown; res: unknown }) => ({ req, res }),
       }),
-      inject: [LoggerService, AppMetrics],
+      inject: [LoggerService, AppMetrics, REDIS_CLIENT],
     }),
     CommonsModule,
     ProductsModule,

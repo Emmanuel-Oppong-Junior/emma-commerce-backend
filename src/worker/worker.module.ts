@@ -24,6 +24,7 @@ import { NotificationsProcessor } from '../notifications/notifications.processor
 import { PaymentWebhookProcessor } from '../payment/payment-webhook.processor';
 import { ImportsModule } from '../imports/imports.module';
 import { ImportsProcessor } from '../imports/imports.processor';
+import { CdnModule } from '../cdn/cdn.module';
 
 /**
  * Root module of the `ROLE=worker` process: the outbox relay, the repeatable-job schedules and the queue processors.
@@ -43,6 +44,7 @@ import { ImportsProcessor } from '../imports/imports.processor';
     ImportsModule,
     AnalyticsModule,
     StoreFeaturesModule,
+    CdnModule,
   ],
   providers: [
     OutboxRelay,

@@ -4315,6 +4315,29 @@ New enum values: `PriceChangeSource.IMPORT`, `JobQueue.IMPORTS` (`failedJobs`/`r
 
 ---
 
+### 2.29 Persisted queries, GET and CDN caching
+
+P9-C. No schema change and nothing breaking: POST requests behave as before. What is new is how the storefront can make anonymous catalogue reads cacheable by a CDN.
+
+**Automatic persisted queries (APQ).** Apollo's APQ protocol: send `extensions: { persistedQuery: { version: 1, sha256Hash: "<sha256 hex of the query text>" } }` without `query`; if the server does not know the hash it answers `PERSISTED_QUERY_NOT_FOUND`, and the client re-sends once with `query` and the same extension, which registers it. Registered queries are shared by every API instance and expire after 24 hours (a client then re-registers transparently). A hash that does not match the query text is refused (`400`). With Apollo Client: `createPersistedQueryLink({ sha256, useGETForHashedQueries: true })` before the `HttpLink`. There is no safelist yet: any client may register a query; the query limits (depth, aliases, cost) still apply.
+
+**GET.** Queries may be sent as `GET /graphql?query=…` or `GET /graphql?operationName=…&variables=<JSON>&extensions=<JSON>` (URL-encoded). Mutations over GET are refused with `405`. Every GET must carry a non-empty `apollo-require-preflight` (or `x-apollo-operation-name`) header, or it is refused as a possible CSRF (`400`); both headers are allowed by CORS. Apollo Client: `new HttpLink({ uri, headers: { 'apollo-require-preflight': 'true' } })`.
+
+**What a CDN may cache.** A response gets `Cache-Control: public, max-age=60, stale-while-revalidate=30` only when **all** of these hold: it is a GET, it has **no `Authorization` header** (any value), it is a query without errors, every root field is one of the public catalogue queries below, and every field it selects is catalogue data. Everything else gets `Cache-Control: private, no-store`: POSTs, signed-in requests (customer prices, price lists and group promotions differ per customer, so a signed-in response is never cached publicly), mutations, carts, orders and any account data.
+
+| Public catalogue queries | |
+|---|---|
+| Products | `products`, `product`, `productBySlug`, `productFacets`, `searchSuggestions` |
+| Categories and brands | `categories`, `category`, `categoryBySlug`, `subCategories`, `subCategory`, `subCategoryBySlug`, `brands`, `brand`, `brandBySlug` |
+| Content | `collections`, `collection`, `homepage`, `banners`, `resolveSlug`, `resolvePath` |
+| Store | `storeFeatures`, `loyaltySettings` |
+
+Selecting any of these makes the response uncacheable even for a visitor: `Variant.customerPrice`, `Variant.priceTiers` (customer-specific), `Product.reviews` (use `productReviews` with POST), `Variant.priceHistory` and `Variant.stockLevels` (staff). So for cached product pages, query prices with `price`, `discountedPrice` and `appliedPromotion` (the visitor's view) anonymously, and fetch `customerPrice`/`priceTiers` separately with the customer's token. Mixing a public query with anything else in one document makes the whole response `private, no-store`.
+
+**Freshness.** At most 60 seconds (plus 30 seconds served stale while the CDN revalidates). Catalogue changes (products, variants and prices, stock running out or coming back, categories, brands, tags, product types, collections, banners, the homepage, slugs and redirects, promotions, store settings and features) also purge the CDN within a few seconds once a CDN is configured. Cacheable responses carry `Surrogate-Key` (space separated) and `Cache-Tag` (comma separated) headers naming what they show (`catalogue`, `product:<id>`, `products`, `category:<id>`, `homepage`, ...) and `Vary: Authorization`; the frontend can ignore them.
+
+---
+
 ## 3. REST API Reference
 
 These endpoints are not in GraphQL. They use standard HTTP. Errors are JSON: `{ "statusCode": 400, "timestamp": "…", "path": "/payment/initialize", "message": "…" }`.
