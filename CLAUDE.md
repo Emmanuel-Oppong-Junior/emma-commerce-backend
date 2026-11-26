@@ -72,6 +72,7 @@ bash ops/loadtest/run.sh [all|up|seed|smoke|load|stats|down]  # k6 load test (P9
 npx prisma migrate dev  # Run migrations in development (new migration: add --create-only and review the SQL first); no longer generates or seeds
 npx prisma generate     # Regenerate Prisma Client (into src/generated/prisma, gitignored) after install and schema changes
 npx prisma db seed      # Seed the database (command in prisma.config.ts; needs SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD)
+npx prisma migrate reset --force && npm run seed:demo  # Electronics demo store for manual testing (deletes everything in DATABASE_URL first; needs MFA_ENCRYPTION_KEY; sign-in details written to tmp/demo-accounts.md)
 npm run schema:generate # Rewrite schema.gql from the resolvers (no DB or env needed)
 npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code  # Drift check (exit 2 = drift)
 psql "$DATABASE_URL" -f scripts/reports/variant-migration-report.sql  # What the P1-V.2 variant migration could not map (read-only)
