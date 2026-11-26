@@ -20,8 +20,15 @@ import { VariantService } from '../variant/variant.service';
 import { LotsService } from '../inventory/lots/lots.service';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { assertNoSerialisedOpeningStock } from '../inventory/serials/serial-rules';
-import { ProductFacets, ProductSearch, SearchSuggestions, SearchVisibility } from './search/product-search.port';
+import {
+  ProductFacets,
+  ProductSearch,
+  ProductSearchRequest,
+  SearchSuggestions,
+  SearchVisibility,
+} from './search/product-search.port';
 import { searchFiltersProblem, toSearchFilters, toSearchRequest } from './search/product-search-request';
+import { SlugsService } from '../seo/slugs.service';
 
 export const GENERAL_PRODUCT_TYPE_ID = 'product_type_general';
 
@@ -46,6 +53,10 @@ const AUDITED_PRODUCT_FIELDS = [
   'warrantyMonths',
   'fulfilmentKind',
   'unitOfMeasure',
+  'slug',
+  'metaTitle',
+  'metaDescription',
+  'ogImageUrl',
 ] as const satisfies readonly (keyof Product)[];
 
 @Injectable()
@@ -59,6 +70,7 @@ export class ProductsService {
     private readonly lots: LotsService,
     private readonly serialUnits: SerialUnitsService,
     private readonly productSearch: ProductSearch,
+    private readonly slugs: SlugsService,
   ) {}
 
   /**
@@ -67,6 +79,7 @@ export class ProductsService {
    */
   async create(createProductInput: CreateProductInput, actorId: string): Promise<Product> {
     await this.validateProductInput(createProductInput);
+    await this.slugs.assertAvailable('PRODUCT', createProductInput.slug);
     const { variants, isTaxable, productTypeId, attributes: rawAttributes, ...rest } = createProductInput;
     const productType = await this.findProductType(productTypeId ?? GENERAL_PRODUCT_TYPE_ID);
     const attributes = this.checkAttributes(productType, rawAttributes);
@@ -102,6 +115,7 @@ export class ProductsService {
     const existing = await this.productsRepository.findById(id);
     if (!existing) throw new NotFoundException('Product not found');
     await this.validateProductInput({ ...updateProductInput, id });
+    await this.slugs.assertAvailable('PRODUCT', updateProductInput.slug, id);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type and attributes are validated by retype
     const { productTypeId, attributes, priceChangeReason, ...rest } = updateProductInput;
     const updateData: Prisma.ProductUpdateInput = { ...rest };
@@ -182,6 +196,11 @@ export class ProductsService {
     return this.productsRepository.findFirst({ id, ...PUBLIC_PRODUCT_WHERE }, requestedFields);
   }
 
+  /** The active, PUBLISHED product whose current slug this is; an old slug finds nothing (resolveSlug follows it). */
+  async findPublishedBySlug(slug: string, requestedFields: Prisma.ProductSelect = {}): Promise<Product | null> {
+    return this.productsRepository.findFirst({ slug, ...PUBLIC_PRODUCT_WHERE }, requestedFields);
+  }
+
   async findPublishedIn(
     parent: Pick<Prisma.ProductWhereInput, 'categoryId' | 'subcategoryId' | 'brandId'>,
     first: number,
@@ -219,7 +238,14 @@ export class ProductsService {
     sort: ProductSortArgs,
     requestedData?: Prisma.ProductSelect,
   ): Promise<ProductConnection> {
-    const request = toSearchRequest(visibility, paginate, filter, sort);
+    return this.findPage(toSearchRequest(visibility, paginate, filter, sort), requestedData);
+  }
+
+  /**
+   * A page of products for a search request built by the caller (collections build theirs from their rules), loaded
+   * with the requested fields; BAD_REQUEST when the filters cannot be searched.
+   */
+  async findPage(request: ProductSearchRequest, requestedData?: Prisma.ProductSelect): Promise<ProductConnection> {
     const problem = searchFiltersProblem(request.filters);
     if (problem) throw new BadRequestException(problem);
     const page = await this.productSearch.search(request);

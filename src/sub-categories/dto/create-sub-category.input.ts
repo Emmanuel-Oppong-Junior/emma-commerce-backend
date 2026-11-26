@@ -1,9 +1,10 @@
 import { Field, InputType } from '@nestjs/graphql';
 import { IsNotEmpty, IsOptional, IsUrl, Length, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { SeoFieldsInput } from '../../seo/dto/seo-fields.input';
 
 @InputType()
-export class CreateSubCategoryInput {
+export class CreateSubCategoryInput extends SeoFieldsInput {
   @Field(() => String, {
     description: 'The name of the subcategory (e.g., "Shirts")',
   })

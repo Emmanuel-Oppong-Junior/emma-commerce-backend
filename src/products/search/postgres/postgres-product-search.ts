@@ -65,7 +65,7 @@ export class PostgresProductSearch extends ProductSearch {
     if (match) conditions.push(match.condition);
     const query = pageQuery({
       conditions,
-      key: sortKey(sort.key, match?.score),
+      key: sortKey(sort.key, match?.score, filters.collectionId),
       direction: sort.direction,
       cursor,
       limit: first + 1,

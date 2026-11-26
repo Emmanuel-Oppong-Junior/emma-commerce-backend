@@ -16,9 +16,10 @@ import {
 import { PriceRange } from './price-range.entity';
 import { GraphQLJSONObject } from 'graphql-type-json';
 import { ProductType } from '../../product-types/entities/product-type.entity';
+import { SeoFields } from '../../seo/entities/seo-fields.entity';
 
 @ObjectType()
-export class Product {
+export class Product extends SeoFields {
   @Field(() => ID, { description: 'Unique identifier of the product' })
   id: string;
 

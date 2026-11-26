@@ -3,10 +3,14 @@ import { CreateBrandInput } from './dto/create-brand.input';
 import { UpdateBrandInput } from './dto/update-brand.input';
 import { Brand, Prisma } from '../generated/prisma/client';
 import { BrandRepository } from './brand.repository';
+import { SlugsService } from '../seo/slugs.service';
 
 @Injectable()
 export class BrandService {
-  constructor(private readonly brandRepository: BrandRepository) {}
+  constructor(
+    private readonly brandRepository: BrandRepository,
+    private readonly slugs: SlugsService,
+  ) {}
 
   /**
    * Creates a new brand in the database.
@@ -14,6 +18,7 @@ export class BrandService {
    * @param createBrandInput
    */
   async createBrand(createBrandInput: CreateBrandInput): Promise<Brand> {
+    await this.slugs.assertAvailable('BRAND', createBrandInput.slug);
     return this.brandRepository.create(createBrandInput);
   }
 
@@ -26,6 +31,7 @@ export class BrandService {
    */
   async updateBrand(id: string, updateBrandInput: UpdateBrandInput): Promise<Brand> {
     await this.ensureBrandExists(id);
+    await this.slugs.assertAvailable('BRAND', updateBrandInput.slug, id);
     return this.brandRepository.update(id, updateBrandInput);
   }
 
@@ -37,6 +43,11 @@ export class BrandService {
    */
   async getBrandById(id: string): Promise<Brand | null> {
     return this.brandRepository.findById(id);
+  }
+
+  /** The brand whose current slug this is; an old slug finds nothing (resolveSlug follows it). */
+  async getBrandBySlug(slug: string): Promise<Brand | null> {
+    return this.brandRepository.findBySlug(slug);
   }
 
   /**

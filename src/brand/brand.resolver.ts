@@ -38,6 +38,15 @@ export class BrandResolver {
   }
 
   @Auth(AuthType.Optional)
+  @Query(() => Brand, {
+    nullable: true,
+    description: 'The brand with this current slug, else null (an old slug: resolveSlug)',
+  })
+  async brandBySlug(@Args('slug') slug: string) {
+    return this.brandService.getBrandBySlug(slug);
+  }
+
+  @Auth(AuthType.Optional)
   @Query(() => [Brand], { nullable: 'itemsAndList' })
   async brands(@Info() requestInfo?: GraphQLResolveInfo) {
     const requestedFields = extractRequestedFieldsFromQuery(requestInfo!, {

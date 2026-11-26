@@ -28,6 +28,7 @@ import { PostgresProductSearch } from './search/postgres/postgres-product-search
 import { SearchSynonymsRepository } from './search/synonyms/search-synonyms.repository';
 import { SearchSynonymsService } from './search/synonyms/search-synonyms.service';
 import { SearchSynonymsResolver } from './search/synonyms/search-synonyms.resolver';
+import { SeoModule } from '../seo/seo.module';
 
 @Module({
   providers: [
@@ -59,7 +60,8 @@ import { SearchSynonymsResolver } from './search/synonyms/search-synonyms.resolv
     ProductTypesModule,
     VariantModule,
     InventoryModule,
+    SeoModule,
   ],
-  exports: [ProductsLoader],
+  exports: [ProductsLoader, ProductsService],
 })
 export class ProductsModule {}

@@ -112,8 +112,42 @@ function brandConditions(filters: ProductSearchFilters): Prisma.Sql[] {
   return conditions;
 }
 
-/** The filters no facet counts without: visibility, sub-category, tags, product type, creation date. */
-function unfacetedConditions(filters: ProductSearchFilters): Prisma.Sql[] {
+/**
+ * A visitor sees a reduced price on an active variant of p: the anonymous case of the display rule
+ * (displayUnitPromotions in pricing/price.ts): a live automatic simple item promotion open to everyone, with uses and
+ * units left, targeting the variant; a FIXED_PRICE one only below the variant's price.
+ */
+function onSaleCondition(now: Date): Prisma.Sql {
+  return Prisma.sql`EXISTS (SELECT 1 FROM "Promotion" pr
+    WHERE pr."isActive" AND pr."startsAt" <= ${now} AND (pr."endsAt" IS NULL OR pr."endsAt" >= ${now})
+      AND NOT pr."requiresCoupon" AND NOT pr."firstOrderOnly"
+      AND pr."type" IN ('PERCENT', 'AMOUNT_OFF', 'FIXED_PRICE') AND pr."scope" <> 'CART'
+      AND (pr."usageLimit" IS NULL OR pr."usedCount" < pr."usageLimit")
+      AND (pr."unitCap" IS NULL OR pr."unitsUsed" < pr."unitCap")
+      AND NOT EXISTS (SELECT 1 FROM "_CustomerGroupToPromotion" g WHERE g."B" = pr."id")
+      AND EXISTS (SELECT 1 FROM "Variant" v WHERE v."productId" = p."id" AND v."isActive" AND v."price" IS NOT NULL
+        AND (pr."type" <> 'FIXED_PRICE' OR v."price" > pr."value")
+        AND CASE pr."scope"
+          WHEN 'SKU' THEN EXISTS (SELECT 1 FROM "_PromotionToVariant" t WHERE t."A" = pr."id" AND t."B" = v."id")
+          WHEN 'PRODUCT' THEN EXISTS (SELECT 1 FROM "_ProductToPromotion" t WHERE t."A" = p."id" AND t."B" = pr."id")
+          WHEN 'CATEGORY' THEN EXISTS (SELECT 1 FROM "_CategoryToPromotion" t
+                                       WHERE t."A" = p."categoryId" AND t."B" = pr."id")
+          WHEN 'BRAND' THEN EXISTS (SELECT 1 FROM "_BrandToPromotion" t WHERE t."A" = p."brandId" AND t."B" = pr."id")
+          ELSE FALSE
+        END))`;
+}
+
+/** The position of p in the manual collection; NULL when it is not in it. */
+function collectionPosition(collectionId: string): Prisma.Sql {
+  return Prisma.sql`(SELECT cp."position" FROM "CollectionProduct" cp
+    WHERE cp."collectionId" = ${collectionId} AND cp."productId" = p."id")`;
+}
+
+/**
+ * The filters no facet counts without: visibility, sub-category, tags, product type, creation date, collection, on
+ * sale.
+ */
+function unfacetedConditions(filters: ProductSearchFilters, now: Date): Prisma.Sql[] {
   const conditions = visibilityConditions(filters);
   if (filters.subcategoryId) conditions.push(Prisma.sql`p."subcategoryId" = ${filters.subcategoryId}`);
   if (filters.subCategoryName) conditions.push(nameIs('SubCategory', 'subcategoryId', filters.subCategoryName));
@@ -128,6 +162,10 @@ function unfacetedConditions(filters: ProductSearchFilters): Prisma.Sql[] {
   }
   if (filters.productTypeId) conditions.push(Prisma.sql`p."productTypeId" = ${filters.productTypeId}`);
   if (filters.createdAfter) conditions.push(Prisma.sql`p."createdAt" >= ${filters.createdAfter}`);
+  if (filters.collectionId) conditions.push(Prisma.sql`${collectionPosition(filters.collectionId)} IS NOT NULL`);
+  if (filters.onSale !== undefined) {
+    conditions.push(filters.onSale ? onSaleCondition(now) : Prisma.sql`NOT ${onSaleCondition(now)}`);
+  }
   return conditions;
 }
 
@@ -142,7 +180,7 @@ function attributeCondition(filter: AttributeFilter): Prisma.Sql {
 /** Every filter except the search text, each its own condition, so no filter can replace another. */
 export function filterConditions(filters: ProductSearchFilters, now: Date): Prisma.Sql[] {
   return [
-    ...unfacetedConditions(filters),
+    ...unfacetedConditions(filters, now),
     ...categoryConditions(filters),
     ...brandConditions(filters),
     ...variantConditions(filters, now),
@@ -204,7 +242,7 @@ export function facetQuery(filters: ProductSearchFilters, now: Date, textConditi
              (${stockAnyPriceFlag}) AS "f_stock_any",
              (${activeVariantExists([...bounds, sellable])}) AS "f_sellable"
              ${attributes.length ? Prisma.sql`, ${Prisma.join(attributes.map((filter, i) => Prisma.sql`(${attributeCondition(filter)}) AS ${Prisma.raw(`"f_a${i}"`)}`))}` : Prisma.empty}
-      FROM "Product" p ${where([...unfacetedConditions(filters), ...(textCondition ? [textCondition] : [])])}
+      FROM "Product" p ${where([...unfacetedConditions(filters, now), ...(textCondition ? [textCondition] : [])])}
     ),
     attribute_values AS (
       -- Spellings differing in case are one value, shown in its byte-wise first spelling ("Cotton" over "cotton").
@@ -266,11 +304,15 @@ export function where(conditions: Prisma.Sql[]): Prisma.Sql {
   return conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 }
 
-/** The sort key of p as SQL; the relevance needs the text match. */
-export function sortKey(key: ProductSortKey, score: Prisma.Sql | undefined): Prisma.Sql {
+/** The sort key of p as SQL; the relevance needs the text match, the position the collection. */
+export function sortKey(key: ProductSortKey, score: Prisma.Sql | undefined, collectionId?: string): Prisma.Sql {
   if (key === 'RELEVANCE') {
     if (!score) throw new Error('RELEVANCE sort needs a text match');
     return score;
+  }
+  if (key === 'POSITION') {
+    if (!collectionId) throw new Error('POSITION sort needs a collection');
+    return collectionPosition(collectionId);
   }
   if (key === 'NAME') return Prisma.sql`p."name"`;
   return key === 'CREATED_AT' ? Prisma.sql`p."createdAt"` : Prisma.sql`p."updatedAt"`;
@@ -279,6 +321,7 @@ export function sortKey(key: ProductSortKey, score: Prisma.Sql | undefined): Pri
 function cursorKey(cursor: SearchCursor): Prisma.Sql {
   if (cursor.sort === 'RELEVANCE') return Prisma.sql`${cursor.key}::float8`;
   if (cursor.sort === 'NAME') return Prisma.sql`${cursor.key}::text`;
+  if (cursor.sort === 'POSITION') return Prisma.sql`${cursor.key}::int`;
   return Prisma.sql`${cursor.key}::timestamp(3)`;
 }
 

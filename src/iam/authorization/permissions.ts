@@ -34,6 +34,8 @@ export const PERMISSION_CATALOGUE = {
   'pricelist.manage': 'Manage B2B price lists and their entries (what members of customer groups pay)',
   'tax.manage': 'Manage tax rates',
   'shipping.manage': 'Manage shipping zones and pickup locations',
+  'content.view': 'Read every banner, homepage section, collection and path redirect, live or not',
+  'content.manage': 'Manage banners, homepage sections, collections and path redirects',
   'review.moderate':
     'Moderate customer reviews and product questions: hide and unhide them, dismiss reports, reply and answer',
   'user.view': 'Read customer accounts and their addresses',

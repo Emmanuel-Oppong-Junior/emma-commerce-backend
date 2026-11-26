@@ -56,6 +56,7 @@ import { FailedJobsModule } from './jobs/failed-jobs.module';
 import { PhoneVerificationModule } from './phone-verification/phone-verification.module';
 import { GuestCheckoutModule } from './guest-checkout/guest-checkout.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
+import { ContentModule } from './content/content.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { AppMetrics } from './observability/metrics';
 import { graphqlMetricsPlugin } from './observability/graphql-metrics.plugin';
@@ -190,6 +191,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     DeliveryModule,
     GuestCheckoutModule,
     LoyaltyModule,
+    ContentModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,8 +1,9 @@
 import { Field, InputType } from '@nestjs/graphql';
 import { IsNotEmpty, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import { SeoFieldsInput } from '../../seo/dto/seo-fields.input';
 
 @InputType()
-export class CreateBrandInput {
+export class CreateBrandInput extends SeoFieldsInput {
   @Field()
   @IsNotEmpty()
   @IsString()

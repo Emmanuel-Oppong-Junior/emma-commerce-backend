@@ -5,6 +5,9 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
+import { SlugsService } from '../seo/slugs.service';
+
+const mockSlugs = { assertAvailable: jest.fn() };
 
 const mockCategoriesRepository = {
   create: jest.fn(),
@@ -32,6 +35,7 @@ describe('CategoriesService', () => {
         CategoriesService,
         { provide: CategoriesRepository, useValue: mockCategoriesRepository },
         { provide: CACHE_MANAGER, useValue: mockCacheManager },
+        { provide: SlugsService, useValue: mockSlugs },
       ],
     }).compile();
 

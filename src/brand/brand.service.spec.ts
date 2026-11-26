@@ -5,6 +5,9 @@ import { CreateBrandInput } from './dto/create-brand.input';
 import { UpdateBrandInput } from './dto/update-brand.input';
 import { NotFoundException } from '@nestjs/common';
 import { Brand } from '../generated/prisma/client';
+import { SlugsService } from '../seo/slugs.service';
+
+const mockSlugs = { assertAvailable: jest.fn() };
 
 const mockBrandRepository = {
   create: jest.fn(),
@@ -23,6 +26,10 @@ describe('BrandService', () => {
     name: 'Test Brand',
     description: 'Test Description',
     logo: 'test-logo.png',
+    slug: 'test-brand',
+    metaTitle: null,
+    metaDescription: null,
+    ogImageUrl: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -41,7 +48,11 @@ describe('BrandService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [BrandService, { provide: BrandRepository, useValue: mockBrandRepository }],
+      providers: [
+        BrandService,
+        { provide: BrandRepository, useValue: mockBrandRepository },
+        { provide: SlugsService, useValue: mockSlugs },
+      ],
     }).compile();
 
     brandService = module.get<BrandService>(BrandService);

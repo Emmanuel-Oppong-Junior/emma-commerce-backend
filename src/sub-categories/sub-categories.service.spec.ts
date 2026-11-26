@@ -4,6 +4,9 @@ import { SubCategoriesRepository } from './sub-categories.repository';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
+import { SlugsService } from '../seo/slugs.service';
+
+const mockSlugs = { assertAvailable: jest.fn() };
 
 const mockSubCategoriesRepository = {
   create: jest.fn(),
@@ -21,7 +24,11 @@ describe('SubCategoriesService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SubCategoriesService, { provide: SubCategoriesRepository, useValue: mockSubCategoriesRepository }],
+      providers: [
+        SubCategoriesService,
+        { provide: SubCategoriesRepository, useValue: mockSubCategoriesRepository },
+        { provide: SlugsService, useValue: mockSlugs },
+      ],
     }).compile();
 
     service = module.get<SubCategoriesService>(SubCategoriesService);

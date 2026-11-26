@@ -32,6 +32,10 @@ export class BrandRepository {
     return this.prisma.brand.findUnique({ where: { id } });
   }
 
+  async findBySlug(slug: string): Promise<Brand | null> {
+    return this.prisma.brand.findUnique({ where: { slug } });
+  }
+
   async findMany(queryOptions: Prisma.BrandFindManyArgs = {}): Promise<Brand[]> {
     return this.prisma.brand.findMany(queryOptions);
   }

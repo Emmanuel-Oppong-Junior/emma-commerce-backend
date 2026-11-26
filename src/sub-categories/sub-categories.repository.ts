@@ -14,6 +14,10 @@ export class SubCategoriesRepository {
           name: data.name,
           description: data.description,
           image: data.image,
+          slug: data.slug,
+          metaTitle: data.metaTitle,
+          metaDescription: data.metaDescription,
+          ogImageUrl: data.ogImageUrl,
           category: { connect: { id: data.categoryId } },
         },
       });

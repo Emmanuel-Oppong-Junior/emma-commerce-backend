@@ -9,6 +9,10 @@ const mockCategory: Category = {
   name: 'Electronics',
   description: null,
   image: null,
+  slug: 'electronics',
+  metaTitle: null,
+  metaDescription: null,
+  ogImageUrl: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

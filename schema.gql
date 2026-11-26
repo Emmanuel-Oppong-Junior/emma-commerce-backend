@@ -286,6 +286,78 @@ type AvailablePaymentMethods {
   online: [AvailableOnlinePaymentMethod!]!
 }
 
+"""A promotional image in a storefront slot (placement)"""
+type Banner {
+  """Text alternative of the image"""
+  altText: String
+  createdAt: DateTime!
+
+  """Exclusive"""
+  endsAt: DateTime
+  id: ID!
+
+  """Desktop image (HTTPS)"""
+  imageUrl: String!
+  isActive: Boolean!
+
+  """
+  Null without a link; in public reads also when the linked product, category or collection is gone or hidden
+  """
+  link: BannerLink
+
+  """Mobile image (HTTPS); null: use imageUrl"""
+  mobileImageUrl: String
+  placement: String!
+
+  """Order within the placement, lowest first"""
+  position: Int!
+  startsAt: DateTime
+  subtitle: String
+  title: String!
+  updatedAt: DateTime!
+}
+
+"""Where a banner leads"""
+type BannerLink {
+  """PATH: the internal path"""
+  path: String
+
+  """PRODUCT, CATEGORY, COLLECTION: its current slug"""
+  slug: String
+
+  """PRODUCT, CATEGORY, COLLECTION: the linked entity"""
+  targetId: ID
+  type: BannerLinkType!
+
+  """URL: the https URL"""
+  url: String
+}
+
+input BannerLinkInput {
+  """
+  PATH: internal path starting with one "/"
+  """
+  path: String
+
+  """PRODUCT, CATEGORY, COLLECTION: the entity id"""
+  targetId: ID
+  type: BannerLinkType!
+
+  """URL: absolute https URL (max 2000 characters)"""
+  url: String
+}
+
+"""
+PRODUCT, CATEGORY, COLLECTION (targetId), PATH (internal path) or URL (https)
+"""
+enum BannerLinkType {
+  CATEGORY
+  COLLECTION
+  PATH
+  PRODUCT
+  URL
+}
+
 type BookedOrder {
   orderId: ID!
   orderNumber: Int!
@@ -297,13 +369,25 @@ type Brand {
   description: String
   id: ID!
   logo: String
+
+  """Page description for search engines"""
+  metaDescription: String
+
+  """Page title for search engines"""
+  metaTitle: String
   name: String!
+
+  """HTTPS URL of the image shown when the page is shared"""
+  ogImageUrl: String
 
   """Active, PUBLISHED products only"""
   products(
     """Maximum number of products to return (1–100), newest first"""
     first: Int! = 20
   ): [Product!]
+
+  """URL key, unique per kind (see resolveSlug for old slugs)"""
+  slug: String!
   updatedAt: DateTime!
 }
 
@@ -454,14 +538,26 @@ type Category {
   """Optional HTTPS URL to an image representing the category"""
   image: String
 
+  """Page description for search engines"""
+  metaDescription: String
+
+  """Page title for search engines"""
+  metaTitle: String
+
   """Name of the category (e.g., "Clothing")"""
   name: String!
+
+  """HTTPS URL of the image shown when the page is shared"""
+  ogImageUrl: String
 
   """Active, PUBLISHED products only"""
   products(
     """Maximum number of products to return (1–100), newest first"""
     first: Int! = 20
   ): [Product!]!
+
+  """URL key, unique per kind (see resolveSlug for old slugs)"""
+  slug: String!
 
   """List of subcategories under this category (empty if none)"""
   subcategories: [SubCategory!]!
@@ -768,6 +864,95 @@ type CodUncollectedDelivery {
   orderNumber: Int!
 }
 
+"""A merchandised product list with its own page"""
+type Collection {
+  createdAt: DateTime!
+  description: String
+
+  """Exclusive"""
+  endsAt: DateTime
+  id: ID!
+  imageUrl: String
+  isActive: Boolean!
+
+  """Page description for search engines"""
+  metaDescription: String
+
+  """Page title for search engines"""
+  metaTitle: String
+  name: String!
+
+  """HTTPS URL of the image shown when the page is shared"""
+  ogImageUrl: String
+
+  """
+  Staff (content.view): the products of a manual collection in order, in any status; empty for RULE
+  """
+  productIds: [ID!]!
+
+  """
+  What customers see: the published products, paginated. MANUAL: in the staff order unless sortArgs is given; RULE: matching the rules, newest first unless sortArgs is given
+  """
+  products(paginationArgs: PaginationArgs, sortArgs: ProductSortArgs): ProductConnection!
+
+  """RULE: the product filters; MANUAL: null"""
+  rules: CollectionRules
+
+  """URL key, unique per kind (see resolveSlug for old slugs)"""
+  slug: String!
+  startsAt: DateTime
+  type: CollectionType!
+  updatedAt: DateTime!
+}
+
+"""The rules of a rule-based collection; unset rules are null"""
+type CollectionRules {
+  brandId: ID
+  categoryId: ID
+  inStock: Boolean
+  onSale: Boolean
+  priceMax: Decimal
+  priceMin: Decimal
+  productTypeId: ID
+  subcategoryId: ID
+  tagId: ID
+}
+
+"""
+Product filters of a rule-based collection; a product must match every rule set
+"""
+input CollectionRulesInput {
+  brandId: ID
+  categoryId: ID
+
+  """As the product list filter inStock"""
+  inStock: Boolean
+
+  """
+  true: products a visitor sees at a reduced price (a live automatic item promotion open to everyone, without coupon, customer group or first-order condition); false: products with none
+  """
+  onSale: Boolean
+
+  """Highest price (inclusive), as the product list filter priceMax"""
+  priceMax: Decimal
+
+  """
+  Lowest price (inclusive) of an active variant, as the product list filter priceMin
+  """
+  priceMin: Decimal
+  productTypeId: ID
+  subcategoryId: ID
+  tagId: ID
+}
+
+"""
+MANUAL: staff pick the products and their order; RULE: the products matching its rules
+"""
+enum CollectionType {
+  MANUAL
+  RULE
+}
+
 input CompleteDeliveryInput {
   """
   Cash on delivery: the cash collected, which must be the order total. Required for COD, refused otherwise
@@ -995,10 +1180,63 @@ input CreateAddressInput {
   zipCode: String
 }
 
+input CreateBannerInput {
+  """Text alternative of the image (max 240 characters)"""
+  altText: String
+
+  """Live until just before this instant (after startsAt); null: open-ended"""
+  endsAt: DateTime
+
+  """Desktop image, HTTPS (upload it with POST /upload/single-image)"""
+  imageUrl: String!
+
+  """Shown to customers inside its schedule; default true"""
+  isActive: Boolean
+
+  """Where the banner leads; null: nowhere"""
+  link: BannerLinkInput
+
+  """Mobile image, HTTPS"""
+  mobileImageUrl: String
+
+  """
+  Storefront slot: upper-case letters, digits and underscores starting with a letter, e.g. HOME_HERO (max 50 characters)
+  """
+  placement: String!
+
+  """Order within the placement, lowest first; default 0"""
+  position: Int
+
+  """Live from this instant; null: at once"""
+  startsAt: DateTime
+
+  """Max 240 characters"""
+  subtitle: String
+
+  """Max 120 characters"""
+  title: String!
+}
+
 input CreateBrandInput {
   description: String
   logo: String
+
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
   name: String!
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
 }
 
 input CreateCategoryInput {
@@ -1008,8 +1246,71 @@ input CreateCategoryInput {
   """A URL to an image representing the category (must be HTTPS)"""
   image: String
 
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
   """The name of the category (e.g., "Electronics")"""
   name: String!
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
+}
+
+input CreateCollectionInput {
+  """Max 5000 characters"""
+  description: String
+
+  """Live until just before this instant (after startsAt); null: open-ended"""
+  endsAt: DateTime
+
+  """HTTPS URL (upload it with POST /upload/single-image)"""
+  imageUrl: String
+
+  """Shown to customers inside its schedule; default true"""
+  isActive: Boolean
+
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
+  """Name (max 120 characters); the slug is made from it unless given"""
+  name: String!
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """
+  MANUAL: the products in order (any status; customers see the published ones), at most 500
+  """
+  productIds: [ID!]
+
+  """RULE: required, at least one rule"""
+  rules: CollectionRulesInput
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
+
+  """Live from this instant; null: at once"""
+  startsAt: DateTime
+
+  """Cannot change later"""
+  type: CollectionType!
 }
 
 input CreateCouponCodeInput {
@@ -1086,6 +1387,28 @@ input CreateGuestOrderInput {
   shippingAddress: CreateAddressInput
 }
 
+input CreateHomepageSectionInput {
+  config: HomepageSectionConfigInput!
+
+  """Live until just before this instant (after startsAt); null: open-ended"""
+  endsAt: DateTime
+
+  """Shown to customers inside its schedule; default true"""
+  isActive: Boolean
+
+  """Order on the homepage, lowest first; default 0"""
+  position: Int
+
+  """Live from this instant; null: at once"""
+  startsAt: DateTime
+
+  """Max 120 characters"""
+  title: String
+
+  """Cannot change later"""
+  type: HomepageSectionType!
+}
+
 input CreateOrderInput {
   """Contact email for order notifications"""
   contactEmail: String!
@@ -1135,6 +1458,19 @@ input CreateOrderInput {
   Required when fulfillmentType is DELIVERY — the ID of the shipping address
   """
   shippingAddressId: ID
+}
+
+input CreatePathRedirectInput {
+  """
+  Internal path starting with one "/", no query or fragment, max 500 characters; a trailing "/" is dropped. Unique.
+  """
+  fromPath: String!
+
+  """301 (default) or 302"""
+  statusCode: Int = 301
+
+  """Internal path starting with one "/" (a query is allowed); never a loop"""
+  toPath: String!
 }
 
 input CreatePickupLocationInput {
@@ -1242,8 +1578,19 @@ input CreateProductInput {
   """Whether variant prices add tax to their basePrice"""
   isTaxable: Boolean! = false
 
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String!
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
 
   """ID of the product type (defaults to General)"""
   productTypeId: String
@@ -1264,6 +1611,11 @@ input CreateProductInput {
 
   """Short marketing description (max 500 characters)"""
   shortDescription: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
 
   """Publishing lifecycle status (defaults to DRAFT)"""
   status: ProductStatus
@@ -1491,8 +1843,24 @@ input CreateSubCategoryInput {
   """Optional HTTPS URL to an image"""
   image: String
 
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
   """The name of the subcategory (e.g., "Shirts")"""
   name: String!
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
 }
 
 input CreateSupplierInput {
@@ -2165,6 +2533,108 @@ input GuestPhoneInput {
   phone: String!
 }
 
+"""
+A live homepage section with its items resolved; only the list of its type is filled
+"""
+type HomepageBlock {
+  """BANNER_STRIP: the live banners of the placement"""
+  banners: [Banner!]!
+
+  """BRAND_STRIP: the brands that still exist, in order"""
+  brands: [Brand!]!
+
+  """CATEGORY_GRID: the categories that still exist, in order"""
+  categories: [Category!]!
+  id: ID!
+
+  """PRODUCT_CAROUSEL: published products of the collection, in its order"""
+  products: [Product!]!
+
+  """RICH_TEXT: markdown; render it with HTML off"""
+  text: String
+  title: String
+  type: HomepageSectionType!
+}
+
+"""A homepage section as staff configure it"""
+type HomepageSection {
+  config: HomepageSectionConfig!
+  createdAt: DateTime!
+
+  """Exclusive"""
+  endsAt: DateTime
+  id: ID!
+  isActive: Boolean!
+
+  """Order on the homepage, lowest first"""
+  position: Int!
+  startsAt: DateTime
+  title: String
+  type: HomepageSectionType!
+  updatedAt: DateTime!
+}
+
+"""The settings of a homepage section; only those of its type are set"""
+type HomepageSectionConfig {
+  """BANNER_STRIP: banners shown"""
+  bannerLimit: Int
+
+  """BANNER_STRIP: the banner placement shown"""
+  bannerPlacement: String
+
+  """BRAND_STRIP, in order"""
+  brandIds: [ID!]
+
+  """CATEGORY_GRID, in order"""
+  categoryIds: [ID!]
+
+  """PRODUCT_CAROUSEL"""
+  collectionId: ID
+
+  """PRODUCT_CAROUSEL: products shown"""
+  productLimit: Int
+
+  """RICH_TEXT: markdown"""
+  text: String
+}
+
+"""The settings of a homepage section: give only those of its type"""
+input HomepageSectionConfigInput {
+  """BANNER_STRIP: 1-10, default 5"""
+  bannerLimit: Int
+
+  """BANNER_STRIP: required, a placement such as HOME_STRIP"""
+  bannerPlacement: String
+
+  """BRAND_STRIP: 1-24, in order"""
+  brandIds: [ID!]
+
+  """CATEGORY_GRID: 1-24, in order"""
+  categoryIds: [ID!]
+
+  """PRODUCT_CAROUSEL: required"""
+  collectionId: ID
+
+  """PRODUCT_CAROUSEL: 1-24, default 12"""
+  productLimit: Int
+
+  """
+  RICH_TEXT: required, 1-5000 characters of markdown (headings, bold, italics, lists, links to an internal path or https URL); no HTML or images
+  """
+  text: String
+}
+
+"""
+PRODUCT_CAROUSEL (a collection), CATEGORY_GRID, BRAND_STRIP, BANNER_STRIP (a placement) or RICH_TEXT (markdown)
+"""
+enum HomepageSectionType {
+  BANNER_STRIP
+  BRAND_STRIP
+  CATEGORY_GRID
+  PRODUCT_CAROUSEL
+  RICH_TEXT
+}
+
 """A message in your in-app notification feed"""
 type InAppNotification {
   body: String!
@@ -2597,10 +3067,16 @@ type Mutation {
 
   """Creates a new address for the user"""
   createAddress(input: CreateAddressInput!): Address!
+
+  """Admin: create a banner (audited)"""
+  createBanner(input: CreateBannerInput!): Banner!
   createBrand(input: CreateBrandInput!): Brand!
 
   """Creates a new category (admin only)"""
   createCategory(input: CreateCategoryInput!): Category!
+
+  """Admin: create a collection (audited)"""
+  createCollection(input: CreateCollectionInput!): Collection!
 
   """Admin: add a coupon code that unlocks a promotion"""
   createCouponCode(input: CreateCouponCodeInput!): CouponCode!
@@ -2624,9 +3100,19 @@ type Mutation {
   ): GuestOrderPlacement!
 
   """
+  Admin: add a homepage section (audited); BAD_REQUEST when the config does not fit the type
+  """
+  createHomepageSection(input: CreateHomepageSectionInput!): HomepageSection!
+
+  """
   Creates an order from the cart at the price of the checkoutQuote whose quoteHash it is sent; CONFLICT with reason QUOTE_CHANGED if the cart no longer prices to it; FORBIDDEN with reason VELOCITY_LIMIT when too many orders came from the same account, phone number or network in a short time
   """
   createOrder(input: CreateOrderInput!): Order!
+
+  """
+  Admin: add a path redirect (audited). BAD_REQUEST for a path that is not internal; CONFLICT when fromPath already redirects, or with reason REDIRECT_LOOP when it would make a loop
+  """
+  createPathRedirect(input: CreatePathRedirectInput!): PathRedirect!
 
   """Create a pickup location (admin only)"""
   createPickupLocation(input: CreatePickupLocationInput!): PickupLocationEntity!
@@ -2704,7 +3190,15 @@ type Mutation {
 
   """Deletes an address for the user"""
   deleteAddress(addressId: String!): Address!
+
+  """Admin: delete a banner (audited)"""
+  deleteBanner(id: ID!): Banner!
   deleteBrand(id: String!): Brand!
+
+  """
+  Admin: delete a collection (audited); banners linking to it lose their link, homepage sections showing it stop showing
+  """
+  deleteCollection(id: ID!): Collection!
 
   """Admin: delete a coupon code no order has used (deactivate a used one)"""
   deleteCouponCode(id: ID!): CouponCode!
@@ -2719,8 +3213,14 @@ type Mutation {
   """
   deleteDeliverySlot(id: ID!): DeliverySlotEntity!
 
+  """Admin: delete a homepage section (audited)"""
+  deleteHomepageSection(id: ID!): HomepageSection!
+
   """Soft-deletes an order and restores stock (admin only)"""
   deleteOrder(orderId: String!): Order!
+
+  """Admin: remove a path redirect (audited)"""
+  deletePathRedirect(id: ID!): PathRedirect!
 
   """Delete a pickup location (admin only)"""
   deletePickupLocation(id: ID!): PickupLocationEntity!
@@ -3025,6 +3525,11 @@ type Mutation {
   sendPurchaseOrder(id: ID!): PurchaseOrder!
 
   """
+  Admin: replace the products of a manual collection, in this order (at most 500; audited)
+  """
+  setCollectionProducts(id: ID!, productIds: [ID!]!): Collection!
+
+  """
   Store the Paystack keys for this store, encrypted, replacing any earlier ones; they take precedence over PAYSTACK_SECRET_KEY and sign-check webhooks from then on. Owner, recent step-up, audited without the secret
   """
   setPaystackConfig(input: SetPaystackConfigInput!): PaymentSettings!
@@ -3121,6 +3626,9 @@ type Mutation {
   Changes an attribute definition; making it required, changing its unit or narrowing its allowed values needs a type no product uses
   """
   updateAttributeDefinition(attributeId: ID!, input: UpdateAttributeDefinitionInput!): ProductType!
+
+  """Admin: change a banner (audited); link: null removes its link"""
+  updateBanner(id: ID!, input: UpdateBannerInput!): Banner!
   updateBrand(id: String!, input: UpdateBrandInput!): Brand!
 
   """Updates the quantity of an item in the user’s cart"""
@@ -3137,6 +3645,11 @@ type Mutation {
   Change the cash-on-delivery limits; fields left out keep their value. Owner, recent step-up, audited
   """
   updateCodRiskSettings(input: UpdateCodRiskSettingsInput!): CodRiskSettingsEntity!
+
+  """
+  Admin: change a collection (audited); a new slug keeps the old one as a redirect
+  """
+  updateCollection(id: ID!, input: UpdateCollectionInput!): Collection!
 
   """Admin: change a coupon code"""
   updateCouponCode(id: ID!, input: UpdateCouponCodeInput!): CouponCode!
@@ -3162,6 +3675,11 @@ type Mutation {
     guestCartToken: String!
     input: UpdateCartItemInput!
   ): GuestCart!
+
+  """
+  Admin: change a homepage section (audited); a config given replaces the whole config
+  """
+  updateHomepageSection(id: ID!, input: UpdateHomepageSectionInput!): HomepageSection!
 
   """
   Change the loyalty programme settings; fields left out keep theirs. Owner or Manager, recent step-up, audited
@@ -3748,6 +4266,31 @@ input PaginationArgs {
   orderInAsc: Boolean = true
 }
 
+"""A staff-entered storefront path redirect"""
+type PathRedirect {
+  createdAt: DateTime!
+
+  """Path that redirects (no query, no trailing slash)"""
+  fromPath: String!
+  id: ID!
+
+  """301 (permanent) or 302 (temporary)"""
+  statusCode: Int!
+
+  """Internal path it redirects to (may have a query)"""
+  toPath: String!
+  updatedAt: DateTime!
+}
+
+"""
+Where a storefront path redirects to, after following every redirect from it
+"""
+type PathResolution {
+  """301 when every redirect followed is permanent, else 302"""
+  statusCode: Int!
+  toPath: String!
+}
+
 type Payment {
   amount: Money!
   createdAt: DateTime!
@@ -4077,8 +4620,17 @@ type Product {
   """Whether variant prices add tax to their basePrice"""
   isTaxable: Boolean!
 
+  """Page description for search engines"""
+  metaDescription: String
+
+  """Page title for search engines"""
+  metaTitle: String
+
   """Name of the product"""
   name: String!
+
+  """HTTPS URL of the image shown when the page is shared"""
+  ogImageUrl: String
 
   """
   Lowest and highest price of the active variants; null when none is priced
@@ -4119,6 +4671,9 @@ type Product {
 
   """Short marketing description (max 500 chars)"""
   shortDescription: String
+
+  """URL key, unique per kind (see resolveSlug for old slugs)"""
+  slug: String!
 
   """Publishing lifecycle status"""
   status: ProductStatus
@@ -4727,6 +5282,15 @@ type Query {
   """
   addresses(userId: String): [Address!]!
 
+  """Admin: every banner, live or not, optionally of one placement"""
+  adminBanners(placement: String): [Banner!]!
+
+  """Admin: a collection, live or not"""
+  adminCollection(id: ID!): Collection
+
+  """Admin: every collection, live or not, by name"""
+  adminCollections: [Collection!]!
+
   """Admin: a product in any status"""
   adminProduct(productId: String!): Product
 
@@ -4739,7 +5303,15 @@ type Query {
   What a customer can pay with right now: the online methods on offer and whether cash on delivery is (public)
   """
   availablePaymentMethods: AvailablePaymentMethods!
+
+  """
+  The live banners of a storefront placement (e.g. HOME_HERO) by position, at most 20
+  """
+  banners(placement: String!): [Banner!]!
   brand(id: String!): Brand
+
+  """The brand with this current slug, else null (an old slug: resolveSlug)"""
+  brandBySlug(slug: String!): Brand
   brands: [Brand]
 
   """Retrieves the current user’s cart"""
@@ -4760,6 +5332,11 @@ type Query {
     """The ID of the category"""
     id: String!
   ): Category
+
+  """
+  The category with this current slug, else null (an old slug: resolveSlug)
+  """
+  categoryBySlug(slug: String!): Category
 
   """
   Prices the current user's cart for checkout with the chosen fulfilment and coupon: the full breakdown and the quoteHash createOrder needs. Writes nothing
@@ -4783,6 +5360,14 @@ type Query {
   The cash-on-delivery limits: open orders per verified phone and the grand total cap (Owner)
   """
   codRiskSettings: CodRiskSettingsEntity!
+
+  """
+  The live collection with this current slug, else null (an old slug: resolveSlug)
+  """
+  collection(slug: String!): Collection
+
+  """The live collections by name (at most 100)"""
+  collections: [Collection!]!
 
   """A customer's consent ledger, newest first (staff)"""
   customerConsentHistory(userId: ID!): [ConsentEventEntity!]!
@@ -4883,6 +5468,14 @@ type Query {
     orderAccessToken: String!
   ): GuestOrder!
 
+  """
+  The storefront homepage: live sections by position (at most 20) with their items resolved; sections with nothing visible to show are left out
+  """
+  homepage: [HomepageBlock!]!
+
+  """Admin: every homepage section, live or not, by position"""
+  homepageSections: [HomepageSection!]!
+
   """How the loyalty programme earns and redeems points (public)"""
   loyaltySettings: LoyaltySettingsEntity!
 
@@ -4973,6 +5566,9 @@ type Query {
 
   """Retrieves all orders (admin only)"""
   orders: [Order!]!
+
+  """Admin: every path redirect, by fromPath"""
+  pathRedirects: [PathRedirect!]!
   payment(id: String!): Payment!
 
   """
@@ -5013,6 +5609,11 @@ type Query {
 
   """Public catalogue: null unless the product is active and PUBLISHED"""
   product(productId: String!): Product
+
+  """
+  Public catalogue: the active, PUBLISHED product with this current slug, else null (an old slug: resolveSlug)
+  """
+  productBySlug(slug: String!): Product
 
   """
   Facet counts (brands, categories, filterable attributes, price range, in stock) for products
@@ -5135,6 +5736,16 @@ type Query {
     """1-50"""
     first: Int! = 20
   ): [ReportedReview!]!
+
+  """
+  Where a storefront path redirects to (query and trailing "/" ignored), following up to 10 redirects; null when no redirect starts there
+  """
+  resolvePath(path: String!): PathResolution
+
+  """
+  Where a product, category, sub-category, brand or collection slug leads: the current slug, or the entity an old slug belonged to (redirected: true, answer with a 301 to its slug); null when unknown or not visible to customers
+  """
+  resolveSlug(slug: String!, type: SlugEntityType!): SlugResolution
 
   """A return request with its lines and history (staff)"""
   returnRequest(id: ID!): ReturnRequest!
@@ -5304,6 +5915,11 @@ type Query {
     """The ID of the subcategory"""
     id: String!
   ): SubCategory
+
+  """
+  The subcategory with this current slug, else null (an old slug: resolveSlug)
+  """
+  subCategoryBySlug(slug: String!): SubCategory
 
   """A supplier (staff)"""
   supplier(id: ID!): Supplier!
@@ -6621,6 +7237,29 @@ input SignUpInput {
   referralCode: String
 }
 
+"""
+The kind of catalogue page a slug belongs to; slugs are unique per kind
+"""
+enum SlugEntityType {
+  BRAND
+  CATEGORY
+  COLLECTION
+  PRODUCT
+  SUB_CATEGORY
+}
+
+"""Where a slug leads: the entity and its current slug"""
+type SlugResolution {
+  id: ID!
+
+  """The slug asked for is an old one of this entity"""
+  redirected: Boolean!
+
+  """The current slug; link to it (301) when redirected is true"""
+  slug: String!
+  type: SlugEntityType!
+}
+
 input SocialLoginInput {
   """token"""
   token: String!
@@ -7160,14 +7799,26 @@ type SubCategory {
   """url of sub category"""
   image: String
 
+  """Page description for search engines"""
+  metaDescription: String
+
+  """Page title for search engines"""
+  metaTitle: String
+
   """Name of the category"""
   name: String!
+
+  """HTTPS URL of the image shown when the page is shared"""
+  ogImageUrl: String
 
   """Active, PUBLISHED products only"""
   products(
     """Maximum number of products to return (1–100), newest first"""
     first: Int! = 20
   ): [Product!]
+
+  """URL key, unique per kind (see resolveSlug for old slugs)"""
+  slug: String!
 
   """Timestamp when the sub category was last updated"""
   updatedAt: DateTime!
@@ -7332,10 +7983,63 @@ input UpdateAttributeDefinitionInput {
   unit: String
 }
 
+input UpdateBannerInput {
+  """Text alternative of the image (max 240 characters)"""
+  altText: String
+
+  """Live until just before this instant (after startsAt); null: open-ended"""
+  endsAt: DateTime
+
+  """Desktop image, HTTPS (upload it with POST /upload/single-image)"""
+  imageUrl: String
+
+  """Shown to customers inside its schedule; default true"""
+  isActive: Boolean
+
+  """Where the banner leads; null: nowhere"""
+  link: BannerLinkInput
+
+  """Mobile image, HTTPS"""
+  mobileImageUrl: String
+
+  """
+  Storefront slot: upper-case letters, digits and underscores starting with a letter, e.g. HOME_HERO (max 50 characters)
+  """
+  placement: String
+
+  """Order within the placement, lowest first; default 0"""
+  position: Int
+
+  """Live from this instant; null: at once"""
+  startsAt: DateTime
+
+  """Max 240 characters"""
+  subtitle: String
+
+  """Max 120 characters"""
+  title: String
+}
+
 input UpdateBrandInput {
   description: String
   logo: String
+
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
   name: String
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
 }
 
 input UpdateCartItemInput {
@@ -7353,8 +8057,24 @@ input UpdateCategoryInput {
   """A URL to an image representing the category (must be HTTPS)"""
   image: String
 
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
   """The name of the category (e.g., "Electronics")"""
   name: String
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
 }
 
 input UpdateCodRiskSettingsInput {
@@ -7363,6 +8083,45 @@ input UpdateCodRiskSettingsInput {
 
   """Above 0, at most 2 decimals, in the store currency"""
   maxOrderTotal: Decimal
+}
+
+input UpdateCollectionInput {
+  """Max 5000 characters"""
+  description: String
+
+  """Live until just before this instant (after startsAt); null: open-ended"""
+  endsAt: DateTime
+
+  """HTTPS URL (upload it with POST /upload/single-image)"""
+  imageUrl: String
+
+  """Shown to customers inside its schedule; default true"""
+  isActive: Boolean
+
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
+  """Name (max 120 characters); the slug is made from it unless given"""
+  name: String
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """RULE only: replaces every rule"""
+  rules: CollectionRulesInput
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
+
+  """Live from this instant; null: at once"""
+  startsAt: DateTime
 }
 
 """
@@ -7395,6 +8154,25 @@ input UpdateDisputeStatusInput {
   """Kept in the dispute history"""
   note: String
   status: DisputeStatus!
+}
+
+input UpdateHomepageSectionInput {
+  config: HomepageSectionConfigInput
+
+  """Live until just before this instant (after startsAt); null: open-ended"""
+  endsAt: DateTime
+
+  """Shown to customers inside its schedule; default true"""
+  isActive: Boolean
+
+  """Order on the homepage, lowest first; default 0"""
+  position: Int
+
+  """Live from this instant; null: at once"""
+  startsAt: DateTime
+
+  """Max 120 characters"""
+  title: String
 }
 
 input UpdateLoyaltySettingsInput {
@@ -7524,8 +8302,19 @@ input UpdateProductInput {
   """
   isTaxable: Boolean
 
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
   """Product name (e.g., "Cotton T-Shirt")"""
   name: String
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
 
   """Why prices change, kept in the price history (max 500 characters)"""
   priceChangeReason: String
@@ -7549,6 +8338,11 @@ input UpdateProductInput {
 
   """Short marketing description (max 500 characters)"""
   shortDescription: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
 
   """Publishing lifecycle status (defaults to DRAFT)"""
   status: ProductStatus
@@ -7740,8 +8534,24 @@ input UpdateSubCategoryInput {
   """Optional HTTPS URL to an image"""
   image: String
 
+  """Page description for search engines (max 320 characters)"""
+  metaDescription: String
+
+  """Page title for search engines (max 120 characters)"""
+  metaTitle: String
+
   """The name of the subcategory (e.g., "Shirts")"""
   name: String
+
+  """
+  HTTPS URL of the image shown when the page is shared (upload it with POST /upload/single-image)
+  """
+  ogImageUrl: String
+
+  """
+  URL key, unique per kind: lower-case letters and digits in words joined by hyphens, at most 100 characters. Omitted on create: made from the name (accents dropped, "-2", "-3"... on a clash). A change keeps the old slug as a redirect (resolveSlug); taking an old slug of another entity removes its redirect. Never null.
+  """
+  slug: String
 }
 
 input UpdateSupplierInput {

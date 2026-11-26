@@ -1,9 +1,10 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { Product } from '../../products/entities/product.entity';
 import { SubCategory } from '../../sub-categories/entities/sub-category.entity';
+import { SeoFields } from '../../seo/entities/seo-fields.entity';
 
 @ObjectType()
-export class Category {
+export class Category extends SeoFields {
   @Field(() => ID, { description: 'Unique identifier of the category' })
   id: string;
 

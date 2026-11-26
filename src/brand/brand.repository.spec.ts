@@ -9,6 +9,10 @@ const mockBrand: Brand = {
   name: 'Nike',
   description: null,
   logo: null,
+  slug: 'nike',
+  metaTitle: null,
+  metaDescription: null,
+  ogImageUrl: null,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

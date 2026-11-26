@@ -6,6 +6,7 @@ import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
 import { Category, Prisma } from '../generated/prisma/client';
 import { CategoriesRepository } from './categories.repository';
+import { SlugsService } from '../seo/slugs.service';
 
 const CATEGORY_TREE_KEY = 'category:tree';
 const CATEGORY_TTL = 300000; // 5 minutes
@@ -15,6 +16,7 @@ export class CategoriesService {
   constructor(
     private readonly categoriesRepository: CategoriesRepository,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly slugs: SlugsService,
   ) {}
 
   /**
@@ -27,6 +29,7 @@ export class CategoriesService {
     const { name } = createCategoryInput;
     const existing = await this.findCategoryByName(name);
     if (existing) throw new ConflictException(`A category with the name "${name}" already exists`);
+    await this.slugs.assertAvailable('CATEGORY', createCategoryInput.slug);
     const created = await this.categoriesRepository.create(createCategoryInput);
     await this.cacheManager.del(CATEGORY_TREE_KEY);
     return created;
@@ -62,6 +65,11 @@ export class CategoriesService {
     return this.categoriesRepository.findById(id);
   }
 
+  /** The category whose current slug this is; an old slug finds nothing (resolveSlug follows it). */
+  async findBySlug(slug: string): Promise<Category | null> {
+    return this.categoriesRepository.findFirst({ slug });
+  }
+
   /**
    * Updates an existing category with the provided input data.
    * @param id - The unique identifier of the category to update.
@@ -73,6 +81,7 @@ export class CategoriesService {
   async update(id: string, updateCategoryInput: UpdateCategoryInput): Promise<Category> {
     const { name } = updateCategoryInput;
     await this.checkCategory(id);
+    await this.slugs.assertAvailable('CATEGORY', updateCategoryInput.slug, id);
     if (name) {
       const existing = await this.findCategoryByName(name);
       if (existing && existing.id !== id) {

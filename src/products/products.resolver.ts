@@ -43,7 +43,7 @@ const RESOLVED_FIELDS = [
   'rating',
 ];
 
-const connectionSelect = (info?: GraphQLResolveInfo) =>
+export const connectionSelect = (info?: GraphQLResolveInfo) =>
   extractRequestedFieldsFromQuery(info!, {
     excludedFields: ['edges', 'cursor', 'node', ...RESOLVED_FIELDS],
     level: 3,
@@ -171,6 +171,17 @@ export class ProductsResolver {
   })
   findOne(@Args('productId', { type: () => String }) productId: string, @Info() requestInfo?: GraphQLResolveInfo) {
     return this.productsService.findPublishedById(productId, productSelect(requestInfo));
+  }
+
+  @Auth(AuthType.Optional)
+  @Query(() => Product, {
+    name: 'productBySlug',
+    nullable: true,
+    description:
+      'Public catalogue: the active, PUBLISHED product with this current slug, else null (an old slug: resolveSlug)',
+  })
+  findOneBySlug(@Args('slug', { type: () => String }) slug: string, @Info() requestInfo?: GraphQLResolveInfo) {
+    return this.productsService.findPublishedBySlug(slug, productSelect(requestInfo));
   }
 
   @RequirePermission('catalog.product.read')
