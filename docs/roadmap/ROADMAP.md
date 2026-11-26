@@ -31,8 +31,8 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 6 — Customer engagement | 14 / 17 | 🔄 in progress (N.3, S.3, L.3 deferred) |
 | 7 — Vertical packs | 0 / 8 | ⏭ not in the base (built per client on top of it) |
 | 8 — Admin, analytics & content | 4 / 4 | ✅ complete |
-| 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **126 / 154** | |
+| 9 — Scale & hardening | 1 / 5 | 🔄 in progress (T, M parked) |
+| **All** | **127 / 154** | |
 
 ---
 
@@ -500,19 +500,19 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > S · 🟥
 - [x] **P8-F** Store-level vertical/feature toggles + admin UI endpoints [96f0d0f]
 
-## Phase 9 — Scale & hardening
+## Phase 9 — Scale & hardening 🔄 in progress
 
 ### P9-L — Load test
 > M · 🟥 (before first promotion)
-- [ ] **P9-L** k6 scenarios from `03-performance-review.md` §8 against staging at client peak ×3; fix regressions
+- [ ] 🔄 **P9-L** k6 scenarios from `03-performance-review.md` §8 against staging at client peak ×3; fix regressions
 
 ### P9-C — Caching/CDN
 > M · 🟧
-- [ ] **P9-C** Persisted queries + CDN for anonymous catalogue; event-driven invalidation
+- [ ] 🔄 **P9-C** Persisted queries + CDN for anonymous catalogue; event-driven invalidation
 
-### P9-D — DR
+### P9-D — DR ✅ complete
 > S · 🟥
-- [ ] **P9-D** Quarterly restore drills; zero-downtime migration playbook
+- [x] **P9-D** Quarterly restore drills; zero-downtime migration playbook [bdd1ea7]
 
 ### P9-T — Pooled tenancy
 > XL · ⬜
