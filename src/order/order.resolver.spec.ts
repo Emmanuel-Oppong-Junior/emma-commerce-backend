@@ -108,12 +108,12 @@ describe('OrdersResolver', () => {
   });
 
   describe('getOrders', () => {
-    it('should retrieve all orders for admin', async () => {
+    it('passes the page and status filter to the service', async () => {
       mockOrdersService.getOrders.mockResolvedValue([mockOrder]);
 
-      const result = await resolver.getOrders();
+      const result = await resolver.getOrders({ first: 50, after: 'order_9', status: 'PLACED' });
 
-      expect(ordersService.getOrders).toHaveBeenCalled();
+      expect(ordersService.getOrders).toHaveBeenCalledWith({ status: 'PLACED' }, 50, 'order_9');
       expect(result).toEqual([mockOrder]);
     });
   });
@@ -199,7 +199,7 @@ describe('OrdersResolver', () => {
     it('should allow ADMIN role to access getOrders', async () => {
       mockOrdersService.getOrders.mockResolvedValue([mockOrder]);
 
-      const result = await resolver.getOrders();
+      const result = await resolver.getOrders({ first: 20 });
 
       expect(ordersService.getOrders).toHaveBeenCalled();
       expect(result).toEqual([mockOrder]);

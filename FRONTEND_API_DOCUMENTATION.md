@@ -1823,10 +1823,13 @@ PAYMENT_REVIEW  — Money arrived after the order was cancelled or expired; it i
 
 ---
 
-#### `orders` (ADMIN, SUPER_ADMIN only)
+#### `orders` (staff: `order.view`)
 - **Type**: Query
-- **Description**: All orders in the system (not paginated).
+- **Args**: `first: Int = 20` (1-100), `after: ID` (id of the last order of the previous page), `status: OrderStatus`
+- **Description**: Orders newest first (ties by id), optionally of one status, one page at a time. A page shorter than `first` is the last one. `first` outside 1-100 is `BAD_USER_INPUT`.
 - **Response**: `[Order!]!`
+
+**Breaking change (P9-L)** `[breaking-api]`: `orders` returns one page (default 20 orders, newest first) instead of every order; page with `first`/`after`. Unpaginated, it failed outright (Prisma P2029) once the store held about 20,000 orders.
 
 ---
 

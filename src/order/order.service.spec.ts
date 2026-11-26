@@ -118,7 +118,7 @@ const mockStoreService = { getCurrency: jest.fn() };
 const mockOrdersRepository = {
   findById: jest.fn(),
   findByUser: jest.fn(),
-  findAll: jest.fn(),
+  findPage: jest.fn(),
   create: jest.fn(),
   transitionStatus: jest.fn(),
   softDelete: jest.fn(),
@@ -1404,12 +1404,16 @@ describe('OrdersService', () => {
   });
 
   describe('getOrders (admin)', () => {
-    it('should retrieve all non-deleted orders', async () => {
-      mockOrdersRepository.findAll.mockResolvedValue([mockOrder]);
+    it('reads one page of orders of the status asked for', async () => {
+      mockOrdersRepository.findPage.mockResolvedValue([mockOrder]);
 
-      await ordersService.getOrders();
+      const result = await ordersService.getOrders({ status: OrderStatus.CONFIRMED }, 20, 'order_9');
 
-      expect(ordersRepository.findAll).toHaveBeenCalled();
+      expect(ordersRepository.findPage).toHaveBeenCalledWith(
+        { status: OrderStatus.CONFIRMED },
+        { take: 20, after: 'order_9' },
+      );
+      expect(result).toEqual([mockOrder]);
     });
   });
 

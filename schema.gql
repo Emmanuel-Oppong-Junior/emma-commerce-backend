@@ -6016,8 +6016,17 @@ type Query {
   """
   orderShipments(orderId: ID!): [Shipment!]!
 
-  """Retrieves all orders (admin only)"""
-  orders: [Order!]!
+  """
+  Orders newest first, optionally of one status, a page at a time: pass the last id as after (staff). A page shorter than first is the last one
+  """
+  orders(
+    """Id of the last order of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 20
+    status: OrderStatus
+  ): [Order!]!
 
   """Admin: every path redirect, by fromPath"""
   pathRedirects: [PathRedirect!]!
