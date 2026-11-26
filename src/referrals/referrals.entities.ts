@@ -68,7 +68,7 @@ export class StaffReferral {
 
   @Field(() => String, {
     nullable: true,
-    description: 'DISQUALIFIED: PHONE_NOT_VERIFIED, SAME_PHONE or LOYALTY_DISABLED',
+    description: 'DISQUALIFIED: PHONE_NOT_VERIFIED, SAME_PHONE, REFERRALS_DISABLED or LOYALTY_DISABLED',
   })
   disqualifiedReason: string | null;
 

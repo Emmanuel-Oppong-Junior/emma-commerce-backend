@@ -24,6 +24,7 @@ import {
   GuestOrderPlacement,
   GuestPhoneInput,
 } from './guest-checkout.entities';
+import { RequireFeature } from '../store-features/require-feature';
 
 const SENSITIVE = { auth: { ttl: 60000, limit: 5 } };
 // Guests poll their order for tracking; the token is unguessable, so this only caps a misbehaving client.
@@ -47,6 +48,7 @@ export class GuestCheckoutResolver {
   ) {}
 
   @Throttle(SENSITIVE)
+  @RequireFeature('GUEST_CHECKOUT')
   @Mutation(() => GuestCartSession, { description: 'Start a guest cart; every guest cart call takes its token' })
   createGuestCart() {
     return this.guestCheckout.createCart();
@@ -58,6 +60,7 @@ export class GuestCheckoutResolver {
   }
 
   @UseInterceptors(CountCartStarts)
+  @RequireFeature('GUEST_CHECKOUT')
   @Mutation(() => GuestCart, { description: 'Add a variant to the guest cart (as addToCart)' })
   addToGuestCart(
     @Args(TOKEN_ARG.name, { description: TOKEN_ARG.description }) token: string,
@@ -66,6 +69,7 @@ export class GuestCheckoutResolver {
     return this.guestCheckout.addItem(token, input);
   }
 
+  @RequireFeature('GUEST_CHECKOUT')
   @Mutation(() => GuestCart, { description: 'Set the quantity of a guest cart line, 0 removes it (as updateCartItem)' })
   updateGuestCartItem(
     @Args(TOKEN_ARG.name, { description: TOKEN_ARG.description }) token: string,
@@ -74,6 +78,7 @@ export class GuestCheckoutResolver {
     return this.guestCheckout.updateItem(token, input);
   }
 
+  @RequireFeature('GUEST_CHECKOUT')
   @Mutation(() => GuestCart, { description: 'Remove a line from the guest cart' })
   removeFromGuestCart(
     @Args(TOKEN_ARG.name, { description: TOKEN_ARG.description }) token: string,
@@ -83,6 +88,7 @@ export class GuestCheckoutResolver {
   }
 
   @Throttle(SENSITIVE)
+  @RequireFeature('GUEST_CHECKOUT')
   @Mutation(() => PhoneVerificationRequest, {
     description:
       'Text a 6-digit code to the phone the guest orders with (valid 10 minutes; same limits as requestPhoneVerification: ' +
@@ -96,6 +102,7 @@ export class GuestCheckoutResolver {
   }
 
   @Throttle(SENSITIVE)
+  @RequireFeature('GUEST_CHECKOUT')
   @Mutation(() => GuestCart, {
     description:
       'Confirm the guest phone with the code from the SMS. BAD_REQUEST with reason OTP_INVALID (attemptsRemaining), ' +
@@ -109,6 +116,7 @@ export class GuestCheckoutResolver {
   }
 
   @UseInterceptors(CountCheckoutQuotes)
+  @RequireFeature('GUEST_CHECKOUT')
   @Query(() => CheckoutQuote, {
     description:
       'checkoutQuote for the guest cart: the same breakdown and quoteHash, priced as a visitor (no customer-group, ' +
@@ -123,6 +131,7 @@ export class GuestCheckoutResolver {
   }
 
   @Throttle(SENSITIVE)
+  @RequireFeature('GUEST_CHECKOUT')
   @Mutation(() => GuestOrderPlacement, {
     description:
       'Place the guest order at the guestCheckoutQuote price, paid online (then POST /payment/guest/initialize). ' +

@@ -8,7 +8,7 @@ import { LoyaltyLedger } from '../../src/loyalty/loyalty-ledger.service';
 import { LoyaltyExpiryTask } from '../../src/loyalty/loyalty-expiry.task';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
-import { signInAdmin, signInUser } from '../helpers/auth.helper';
+import { signInAdmin, signInSuperAdmin, signInUser } from '../helpers/auth.helper';
 import { resetDb, seedMinimal, setStock } from '../helpers/db.helper';
 import { seedDeliveredOrder } from '../helpers/returns.helper';
 
@@ -389,22 +389,22 @@ describe('Loyalty points (P6-L.1, e2e)', () => {
     await expect(prisma.$executeRaw`DELETE FROM "LoyaltyTransaction"`).rejects.toThrow(/append-only/);
   });
 
+  // The on/off switch is the LOYALTY store feature since P8-F (setStoreFeature, Owner only).
   it('applies the store settings: off stops earning and redeeming', async () => {
-    const off = await gql(
-      `mutation { updateLoyaltySettings(input: { enabled: false }) { enabled minimumRedeemPoints } }`,
-    );
-    expect(off.data!.updateLoyaltySettings).toEqual({ enabled: false, minimumRedeemPoints: 500 });
+    const ownerToken = await signInSuperAdmin(app);
+    const switchLoyalty = (enabled: boolean) =>
+      gql(`mutation { setStoreFeature(input: { key: LOYALTY, enabled: ${enabled} }) { key enabled } }`, ownerToken);
+    const off = await switchLoyalty(false);
+    expect(off.data!.setStoreFeature).toEqual({ key: 'LOYALTY', enabled: false });
     expect((await gql(`{ loyaltySettings { enabled earnPointsPerCedi } }`, '')).data!.loyaltySettings).toEqual({
       enabled: false,
       earnPointsPerCedi: 1,
     });
     expect((await adjust(1_000)).errors).toBeUndefined();
     await fillCart(1);
-    expect(reasonOf(await quote(1_000))).toBe('LOYALTY_DISABLED');
+    expect(reasonOf(await quote(1_000))).toBe('FEATURE_DISABLED');
     const order = await completedOrder(1);
     expect(await transactionsOf(order.id)).toEqual([]);
-    expect(
-      (await gql(`mutation { updateLoyaltySettings(input: { enabled: true }) { enabled } }`)).errors,
-    ).toBeUndefined();
+    expect((await switchLoyalty(true)).errors).toBeUndefined();
   });
 });

@@ -12,6 +12,7 @@ import { LoggerService } from '../commons/logger.service';
 import { PricingLoyalty } from '../pricing/points-redemption';
 import { verifiedPhoneOf } from '../phone-verification/phone-otp';
 import { referralDisqualification, shouldReverseReferral } from '../referrals/referral-rules';
+import { StoreFeaturesService } from '../store-features/store-features.service';
 import {
   addMonths,
   drawPoints,
@@ -33,7 +34,6 @@ export const LOYALTY_BALANCE_CHANGED = 'LOYALTY_BALANCE_CHANGED';
 
 export type LoyaltySettings = Pick<
   Store,
-  | 'loyaltyEnabled'
   | 'loyaltyEarnPointsPerCedi'
   | 'loyaltyRedeemPointsPerCedi'
   | 'loyaltyMinRedeemPoints'
@@ -44,7 +44,6 @@ export type LoyaltySettings = Pick<
 >;
 
 export const LOYALTY_SETTINGS = {
-  loyaltyEnabled: true,
   loyaltyEarnPointsPerCedi: true,
   loyaltyRedeemPointsPerCedi: true,
   loyaltyMinRedeemPoints: true,
@@ -89,6 +88,7 @@ export class LoyaltyLedger {
   constructor(
     private readonly prisma: PrismaService,
     private readonly logger: LoggerService,
+    private readonly features: StoreFeaturesService,
   ) {}
 
   async settings(db: Tx = this.prisma): Promise<LoyaltySettings> {
@@ -113,7 +113,7 @@ export class LoyaltyLedger {
       balance = _sum.remaining ?? 0;
     }
     return {
-      enabled: settings.loyaltyEnabled,
+      enabled: tx ? await this.features.isEnabledIn(tx, 'LOYALTY') : await this.features.isEnabled('LOYALTY'),
       balance,
       redeemPointsPerCedi: settings.loyaltyRedeemPointsPerCedi,
       minimumRedeemPoints: settings.loyaltyMinRedeemPoints,
@@ -290,7 +290,8 @@ export class LoyaltyLedger {
     if (already) return;
     const settings = await this.settings(tx);
     const memberships = await tx.storeMembership.count({ where: { userId } });
-    const refusal = earnRefusal({ guestPhone, isStaff: memberships > 0, enabled: settings.loyaltyEnabled });
+    const enabled = await this.features.isEnabledIn(tx, 'LOYALTY');
+    const refusal = earnRefusal({ guestPhone, isStaff: memberships > 0, enabled });
     if (refusal) {
       this.logger.log(`Order earns no loyalty points | orderId: ${orderId} | reason: ${refusal}`, CONTEXT);
       return;
@@ -383,7 +384,8 @@ export class LoyaltyLedger {
     const disqualified = referralDisqualification({
       refereeVerifiedPhone: verifiedPhoneOf(referee),
       referrerPhones: [referrer.phoneNumber, referrer.phoneVerifiedNumber],
-      loyaltyEnabled: settings.loyaltyEnabled,
+      referralsEnabled: await this.features.isEnabledIn(tx, 'REFERRALS'),
+      loyaltyEnabled: await this.features.isEnabledIn(tx, 'LOYALTY'),
     });
     if (disqualified) {
       await tx.referral.updateMany({

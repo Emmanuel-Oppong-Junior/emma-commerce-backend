@@ -170,6 +170,7 @@ Mutation setPriceListEntries             permission: pricelist.manage; step-up
 Mutation setProductTypeReturnPolicy      permission: catalog.taxonomy.write
 Mutation setShippingZoneCashOnDelivery   permission: payment.settings.manage; step-up
 Mutation setShippingZoneFulfilmentLocations permission: inventory.location.manage
+Mutation setStoreFeature                 permission: store.features.manage; step-up
 Mutation setVariantCost                  permission: purchasing.manage + inventory.cost.view
 Mutation signIn                          public
 Mutation signInWithFacebook              public
@@ -349,6 +350,7 @@ Query stockTakes                         permission: inventory.view
 Query stockTakeVarianceReport            permission: inventory.stocktake.approve
 Query stockTransfer                      permission: inventory.view
 Query stockTransfers                     permission: inventory.view
+Query storeFeatures                      public
 Query storeSettings                      public
 Query subCategories                      authenticated
 Query subCategory                        authenticated

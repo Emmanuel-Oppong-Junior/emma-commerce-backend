@@ -134,6 +134,7 @@ const AUDITED: Record<string, string> = {
   applyStockImport: 'imports.service.spec (STATUS_CHANGE audit row), imports.e2e-spec',
   cancelCatalogImport: 'imports.service.spec (STATUS_CHANGE audit row)',
   cancelStockImport: 'imports.service.spec (STATUS_CHANGE audit row)',
+  setStoreFeature: 'store-features.service.spec (before and after on the change transaction); store-features.e2e-spec',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
   retryFailedJob: 'failed-jobs.service.spec',
   // Not transactional either: the audit row is written right after the rebuild job is queued.

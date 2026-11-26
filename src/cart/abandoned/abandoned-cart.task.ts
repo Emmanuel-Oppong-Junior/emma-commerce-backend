@@ -5,6 +5,7 @@ import { LoggerService } from '../../commons/logger.service';
 import { OutboxService } from '../../outbox/outbox.service';
 import { verifiedPhoneOf } from '../../phone-verification/phone-otp';
 import { mayDeliver } from '../../notifications/preferences/notification-preferences';
+import { StoreFeaturesService } from '../../store-features/store-features.service';
 import { ABANDONED_CART_MAX_AGE_HOURS, abandonedCartDecision, AbandonedCartSkip } from './abandoned-cart';
 
 export const ABANDONED_CART_LOCK_KEY = 70_412_009;
@@ -12,6 +13,7 @@ export const ABANDONED_CART_LOCK_KEY = 70_412_009;
 export const ABANDONED_CART_BATCH = 500;
 const HOUR_MS = 60 * 60 * 1000;
 const CONTEXT = 'AbandonedCartTask';
+const SWITCHED_OFF = 'SWITCHED_OFF';
 
 export interface AbandonedCartRun {
   reminded: number;
@@ -29,6 +31,7 @@ export class AbandonedCartTask {
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxService,
     private readonly logger: LoggerService,
+    private readonly features: StoreFeaturesService,
   ) {}
 
   async run(now = new Date()): Promise<AbandonedCartRun | null> {
@@ -38,6 +41,7 @@ export class AbandonedCartTask {
           { locked: boolean }[]
         >`SELECT pg_try_advisory_xact_lock(${ABANDONED_CART_LOCK_KEY}::bigint) AS locked`;
         if (!locked) return null;
+        if (!(await this.features.isEnabledIn(tx, 'ABANDONED_CART_REMINDERS'))) return SWITCHED_OFF;
         const { abandonedCartReminderDelayHours: delayHours } = await tx.store.findFirstOrThrow({
           where: { singleton: true },
           select: { abandonedCartReminderDelayHours: true },
@@ -76,6 +80,10 @@ export class AbandonedCartTask {
     );
     if (run === null) {
       this.logger.log('Skipped: another instance is already sending abandoned-cart reminders', CONTEXT);
+      return null;
+    }
+    if (run === SWITCHED_OFF) {
+      this.logger.log('Skipped: abandoned-cart reminders are switched off for this store', CONTEXT);
       return null;
     }
     this.logger.log(

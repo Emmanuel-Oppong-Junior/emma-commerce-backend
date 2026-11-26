@@ -45,6 +45,7 @@ describe('referral rules (P6-L.2)', () => {
     const facts = {
       refereeVerifiedPhone: '+233244000001',
       referrerPhones: ['+233244000002', null],
+      referralsEnabled: true,
       loyaltyEnabled: true,
     };
     expect(referralDisqualification(facts)).toBeNull();
@@ -57,6 +58,16 @@ describe('referral rules (P6-L.2)', () => {
     expect(referralDisqualification({ ...facts, loyaltyEnabled: false })).toBe(
       ReferralDisqualification.LOYALTY_DISABLED,
     );
+  });
+
+  it('disqualifies every referral completing while referrals are switched off (P8-F)', () => {
+    const facts = {
+      refereeVerifiedPhone: '+233244000001',
+      referrerPhones: ['+233244000002'],
+      referralsEnabled: false,
+      loyaltyEnabled: false,
+    };
+    expect(referralDisqualification(facts)).toBe(ReferralDisqualification.REFERRALS_DISABLED);
   });
 
   it('reverses a reward only for a full refund within the return window', () => {

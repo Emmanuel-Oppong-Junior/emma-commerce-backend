@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ReviewService } from './review.service';
 import { ReviewRepository } from './review.repository';
+import { StoreFeaturesService } from '../store-features/store-features.service';
+import { featureDisabled } from '../store-features/require-feature';
 import { AuditService } from '../commons/audit.service';
 import { Review } from '../generated/prisma/client';
 import { ReviewSort } from './dto/review-list.args';
@@ -33,6 +35,7 @@ describe('ReviewService', () => {
     deletePhoto: jest.fn(),
   };
   const audit = { log: jest.fn() };
+  const features = { assertEnabled: jest.fn() };
 
   const review = (overrides: Partial<Review> = {}): Review => ({
     id: 'rev1',
@@ -72,9 +75,28 @@ describe('ReviewService', () => {
         ReviewService,
         { provide: ReviewRepository, useValue: repo },
         { provide: AuditService, useValue: audit },
+        { provide: StoreFeaturesService, useValue: features },
       ],
     }).compile();
     service = module.get(ReviewService);
+  });
+
+  it('refuses every customer write while reviews are switched off (P8-F), and still reads', async () => {
+    features.assertEnabled.mockRejectedValue(featureDisabled('REVIEWS'));
+    const disabled = { response: { extensions: { reason: 'FEATURE_DISABLED', feature: 'REVIEWS' } } };
+
+    await expect(service.createReview('user1', { productId: 'prod1', score: 5 })).rejects.toMatchObject(disabled);
+    await expect(service.updateReview('user1', { id: 'rev1', score: 4 })).rejects.toMatchObject(disabled);
+    await expect(service.deleteReview('user1', 'rev1')).rejects.toMatchObject(disabled);
+    await expect(service.reportReview('user2', { id: 'rev1', reason: 'SPAM' } as never)).rejects.toMatchObject(
+      disabled,
+    );
+    await expect(service.assertCanAddPhoto('user1', 'rev1')).rejects.toMatchObject(disabled);
+    await expect(service.removePhoto('user1', 'photo1')).rejects.toMatchObject(disabled);
+    expect(repo.transaction).not.toHaveBeenCalled();
+
+    repo.findById.mockResolvedValue(review());
+    await expect(service.getReview('rev1', { canModerate: false })).resolves.toMatchObject({ id: 'rev1' });
   });
 
   describe('createReview', () => {

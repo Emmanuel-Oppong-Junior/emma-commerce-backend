@@ -98,6 +98,9 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
 
   // Store payment settings back to their defaults: no stored provider keys, every method on through Paystack
   await prisma.paymentProviderConfig.deleteMany();
+  // Every store feature back to its default (P8-F); suites that switch one off switch it back through setStoreFeature,
+  // which also clears the cached switches in Redis
+  await prisma.storeFeature.deleteMany();
   await prisma.store.updateMany({
     data: {
       cardPaymentsEnabled: true,
@@ -107,7 +110,6 @@ export async function resetDb(prisma: PrismaService): Promise<void> {
       mobileMoneyPaymentProvider: 'PAYSTACK',
       returnWindowDays: 14,
       abandonedCartReminderDelayHours: 4,
-      loyaltyEnabled: true,
       loyaltyEarnPointsPerCedi: 1,
       loyaltyRedeemPointsPerCedi: 100,
       loyaltyMinRedeemPoints: 500,

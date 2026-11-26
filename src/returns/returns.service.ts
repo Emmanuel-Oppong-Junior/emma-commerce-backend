@@ -10,6 +10,7 @@ import {
 } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../commons/audit.service';
+import { StoreFeaturesService } from '../store-features/store-features.service';
 import { CloudinaryService } from '../commons/cloudinary.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -85,6 +86,7 @@ export class ReturnsService {
     private readonly ledgerRepository: StockLedgerRepository,
     private readonly stockLocations: StockLocationsService,
     private readonly ordersRepository: OrdersRepository,
+    private readonly features: StoreFeaturesService,
   ) {}
 
   /**
@@ -98,6 +100,7 @@ export class ReturnsService {
    */
   async requestReturn(userId: string, params: ReturnRequestParams): Promise<CustomerReturn> {
     const created = await this.prisma.$transaction(async (tx) => {
+      await this.features.assertEnabled('RETURNS', tx);
       const order = await this.repository.lockOrder(tx, params.orderId);
       if (!order || order.deleted || order.userId !== userId) {
         throw new NotFoundException(`Order "${params.orderId}" not found`);
@@ -189,6 +192,7 @@ export class ReturnsService {
 
   /** The customer withdraws their own return before the goods arrive back. */
   async cancelReturn(userId: string, returnRequestId: string): Promise<CustomerReturn> {
+    await this.features.assertEnabled('RETURNS');
     const request = await this.repository.findById(returnRequestId);
     if (request?.userId !== userId) throw new NotFoundException(`Return request "${returnRequestId}" not found`);
     assertReturnTransition(returnRequestId, request.status, ReturnStatus.CANCELLED);

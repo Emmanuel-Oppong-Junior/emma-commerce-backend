@@ -49,18 +49,21 @@ export enum ReferralDisqualification {
   PHONE_NOT_VERIFIED = 'PHONE_NOT_VERIFIED',
   /** The new customer verified the phone the referrer holds. */
   SAME_PHONE = 'SAME_PHONE',
+  REFERRALS_DISABLED = 'REFERRALS_DISABLED',
   LOYALTY_DISABLED = 'LOYALTY_DISABLED',
 }
 
 /**
  * Whether a referral qualifies when the new customer's first order completes: they need a verified phone that is not
- * the referrer's, and the loyalty programme must be on. Null when it qualifies.
+ * the referrer's, and referrals and the loyalty programme must be on (P8-F). Null when it qualifies.
  */
 export function referralDisqualification(facts: {
   refereeVerifiedPhone: string | null;
   referrerPhones: readonly (string | null)[];
+  referralsEnabled: boolean;
   loyaltyEnabled: boolean;
 }): ReferralDisqualification | null {
+  if (!facts.referralsEnabled) return ReferralDisqualification.REFERRALS_DISABLED;
   if (!facts.loyaltyEnabled) return ReferralDisqualification.LOYALTY_DISABLED;
   if (facts.refereeVerifiedPhone === null) return ReferralDisqualification.PHONE_NOT_VERIFIED;
   if (facts.referrerPhones.includes(facts.refereeVerifiedPhone)) return ReferralDisqualification.SAME_PHONE;

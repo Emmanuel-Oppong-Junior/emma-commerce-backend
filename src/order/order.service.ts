@@ -60,6 +60,7 @@ import { ExpiredLotUnits, sellableLevels } from '../inventory/lots/lots';
 import { SerialUnitsService } from '../inventory/serials/serial-units.service';
 import { LOYALTY_BALANCE_CHANGED, LoyaltyLedger } from '../loyalty/loyalty-ledger.service';
 import { PointsNotRedeemableError, PointsRefusal, PricingLoyalty } from '../pricing/points-redemption';
+import { featureDisabled } from '../store-features/require-feature';
 
 export const ORDER_EXPIRY_LOCK_KEY = 70_412_001;
 /** An unpaid online order, and the stock reserved for it, expires after this long without payment activity. */
@@ -822,6 +823,7 @@ export class OrdersService {
     } catch (error) {
       if (error instanceof CouponNotApplicableError) throw new BadRequestException(error.message);
       if (error instanceof PointsNotRedeemableError) {
+        if (error.reason === PointsRefusal.LOYALTY_DISABLED) throw featureDisabled('LOYALTY');
         if (placing && error.reason === PointsRefusal.INSUFFICIENT_POINTS) {
           throw new ConflictException({ message: error.message, extensions: { reason: LOYALTY_BALANCE_CHANGED } });
         }

@@ -8,6 +8,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { CartModule } from '../cart/cart.module';
 import { LoyaltyModule } from '../loyalty/loyalty.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
+import { StoreFeaturesModule } from '../store-features/store-features.module';
 import { OutboxRelay } from '../outbox/outbox.relay';
 import { ExpiredOrdersTask } from '../order/tasks/expired-orders.task';
 import { PaymentReconciliationTask } from '../payment/tasks/payment-reconciliation.task';
@@ -41,6 +42,7 @@ import { ImportsProcessor } from '../imports/imports.processor';
     LoyaltyModule,
     ImportsModule,
     AnalyticsModule,
+    StoreFeaturesModule,
   ],
   providers: [
     OutboxRelay,

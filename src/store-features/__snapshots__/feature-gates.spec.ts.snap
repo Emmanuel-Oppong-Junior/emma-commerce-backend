@@ -1,0 +1,34 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`Store feature gates matches the reviewed list of gated operations 1`] = `
+"
+GUEST_CHECKOUT             Mutation addToGuestCart
+GUEST_CHECKOUT             Mutation createGuestCart
+GUEST_CHECKOUT             Mutation createGuestOrder
+GUEST_CHECKOUT             Mutation removeFromGuestCart
+GUEST_CHECKOUT             Mutation requestGuestPhoneVerification
+GUEST_CHECKOUT             Mutation updateGuestCartItem
+GUEST_CHECKOUT             Mutation verifyGuestPhone
+GUEST_CHECKOUT             Query guestCheckoutQuote
+REFERRALS                  Mutation applyReferralCode
+REFERRALS                  Query myReferrals
+REVIEWS                    Mutation createReview
+REVIEWS                    Mutation deleteReview
+REVIEWS                    Mutation removeReviewPhoto
+REVIEWS                    Mutation reportReview
+REVIEWS                    Mutation updateReview
+REVIEWS                    REST POST /reviews/:reviewId/photos
+PRODUCT_QA                 Mutation askProductQuestion
+PRODUCT_QA                 Mutation reportProductQuestion
+RECENTLY_VIEWED            Mutation recordProductView
+RETURNS                    Mutation cancelReturn
+RETURNS                    Mutation requestReturn
+RETURNS                    REST POST /returns/orders/:orderId/photos
+SAVED_FOR_LATER            Mutation moveSavedItemToCart
+SAVED_FOR_LATER            Mutation removeSavedItem
+SAVED_FOR_LATER            Mutation saveCartItemForLater
+WISHLIST                   Mutation addToWishlist
+WISHLIST                   Mutation clearWishlist
+WISHLIST                   Mutation removeFromWishlist
+"
+`;

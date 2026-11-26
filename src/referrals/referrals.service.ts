@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../commons/logger.service';
 import { VelocityService } from '../fraud/velocity.service';
 import { VelocityCheckpoint, VelocityEvent, velocitySubjects } from '../fraud/velocity-rules';
+import { StoreFeaturesService } from '../store-features/store-features.service';
 import {
   generateReferralCode,
   normaliseReferralCode,
@@ -36,6 +37,7 @@ export class ReferralsService {
     private readonly prisma: PrismaService,
     private readonly velocity: VelocityService,
     private readonly logger: LoggerService,
+    private readonly features: StoreFeaturesService,
   ) {}
 
   /** The user's referral code, created on first use (unique; a clash with another code is retried). */
@@ -64,10 +66,12 @@ export class ReferralsService {
   }
 
   /**
-   * Finds the code's owner and screens their referral sign-ups: BAD_REQUEST with reason INVALID_REFERRAL_CODE for a
-   * code nobody holds, FORBIDDEN with reason VELOCITY_LIMIT above the hard limit. Records nothing.
+   * Finds the code's owner and screens their referral sign-ups: BAD_REQUEST with reason FEATURE_DISABLED while
+   * referrals are switched off, INVALID_REFERRAL_CODE for a code nobody holds, FORBIDDEN with reason VELOCITY_LIMIT
+   * above the hard limit. Records nothing.
    */
   async check(rawCode: string): Promise<CheckedReferralCode> {
+    await this.features.assertEnabled('REFERRALS');
     const code = normaliseReferralCode(rawCode);
     const referrer =
       code && (await this.prisma.user.findUnique({ where: { referralCode: code }, select: { id: true } }));

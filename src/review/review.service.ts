@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ContentReportReason, ModerationStatus, Review, ReviewPhoto } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
+import { StoreFeaturesService } from '../store-features/store-features.service';
 import { CreateReviewInput } from './dto/create-review.input';
 import { UpdateReviewInput } from './dto/update-review.input';
 import { ModerateContentInput, ReplyToReviewInput, ReportContentInput } from './dto/review-moderation.inputs';
@@ -29,10 +30,12 @@ export class ReviewService {
   constructor(
     private readonly reviewRepository: ReviewRepository,
     private readonly audit: AuditService,
+    private readonly features: StoreFeaturesService,
   ) {}
 
   /** A verified buyer's one review of a public product, published at once; the product's rating follows. */
   async createReview(userId: string, input: CreateReviewInput): Promise<Review> {
+    await this.features.assertEnabled('REVIEWS');
     await this.assertPublicProduct(input.productId);
     return this.reviewRepository.transaction(async (tx) => {
       if (!(await this.reviewRepository.lockProduct(tx, input.productId))) {
@@ -66,6 +69,7 @@ export class ReviewService {
   }
 
   async updateReview(userId: string, input: UpdateReviewInput): Promise<Review> {
+    await this.features.assertEnabled('REVIEWS');
     const existing = await this.ownReview(userId, input.id);
     return this.reviewRepository.transaction(async (tx) => {
       await this.reviewRepository.lockProduct(tx, existing.productId);
@@ -82,6 +86,7 @@ export class ReviewService {
 
   /** Deletes the caller's review for good (the customer may then write a new one). */
   async deleteReview(userId: string, reviewId: string): Promise<Review> {
+    await this.features.assertEnabled('REVIEWS');
     const existing = await this.ownReview(userId, reviewId);
     return this.reviewRepository.transaction(async (tx) => {
       await this.reviewRepository.lockProduct(tx, existing.productId);
@@ -116,6 +121,7 @@ export class ReviewService {
   }
 
   async reportReview(userId: string, input: ReportContentInput): Promise<boolean> {
+    await this.features.assertEnabled('REVIEWS');
     const review = await this.getReview(input.id, { canModerate: false });
     const refusal = reportRefusal(review.userId, userId);
     if (refusal) throw new BadRequestException(refusal);
@@ -187,6 +193,7 @@ export class ReviewService {
 
   /** Checks before uploading that the caller owns the review and it has room for another photo. */
   async assertCanAddPhoto(userId: string, reviewId: string): Promise<void> {
+    await this.features.assertEnabled('REVIEWS');
     await this.ownReview(userId, reviewId);
     await this.reviewRepository.transaction(async (tx) => this.assertPhotoRoom(tx, reviewId));
   }
@@ -201,6 +208,7 @@ export class ReviewService {
   }
 
   async removePhoto(userId: string, photoId: string): Promise<boolean> {
+    await this.features.assertEnabled('REVIEWS');
     const photo = await this.reviewRepository.findPhoto(photoId);
     if (!photo || photo.review.userId !== userId) throw new NotFoundException(`Review photo "${photoId}" not found`);
     await this.reviewRepository.deletePhoto(photoId);

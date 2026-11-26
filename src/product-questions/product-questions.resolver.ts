@@ -15,6 +15,7 @@ import { UsersLoader } from '../users/loaders/users.loader';
 import { ProductQuestion, ReportedProductQuestion } from './product-question.entity';
 import { AnswerProductQuestionInput, AskProductQuestionInput, ProductQuestionsArgs } from './product-questions.inputs';
 import { ProductQuestionsService } from './product-questions.service';
+import { RequireFeature } from '../store-features/require-feature';
 
 @Auth(AuthType.Bearer)
 @Resolver(() => ProductQuestion)
@@ -76,6 +77,7 @@ export class ProductQuestionsResolver {
 
   @CustomerOnly()
   @Throttle(CONTENT_WRITE_LIMIT)
+  @RequireFeature('PRODUCT_QA')
   @Mutation(() => ProductQuestion, {
     name: 'askProductQuestion',
     description: 'Asks a question about a public product; it shows publicly once the store answers it',
@@ -86,6 +88,7 @@ export class ProductQuestionsResolver {
 
   @CustomerOnly()
   @Throttle(CONTENT_WRITE_LIMIT)
+  @RequireFeature('PRODUCT_QA')
   @Mutation(() => Boolean, {
     name: 'reportProductQuestion',
     description: 'Reports a public question to staff; once per customer and question (ALREADY_REPORTED)',

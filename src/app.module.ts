@@ -57,6 +57,7 @@ import { PhoneVerificationModule } from './phone-verification/phone-verification
 import { GuestCheckoutModule } from './guest-checkout/guest-checkout.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { ContentModule } from './content/content.module';
+import { StoreFeaturesModule } from './store-features/store-features.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { ImportsModule } from './imports/imports.module';
 import { ExportsModule } from './exports/exports.module';
@@ -196,6 +197,7 @@ const THROTTLERS: ThrottlerOptions[] = [
     ImportsModule,
     ExportsModule,
     ContentModule,
+    StoreFeaturesModule,
   ],
   controllers: [AppController],
   providers: [

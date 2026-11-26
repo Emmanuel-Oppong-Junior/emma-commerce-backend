@@ -4,6 +4,8 @@ import { ProductQuestion } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { ProductQuestionsRepository } from './product-questions.repository';
 import { ProductQuestionsService } from './product-questions.service';
+import { StoreFeaturesService } from '../store-features/store-features.service';
+import { featureDisabled } from '../store-features/require-feature';
 
 describe('ProductQuestionsService', () => {
   let service: ProductQuestionsService;
@@ -25,6 +27,7 @@ describe('ProductQuestionsService', () => {
     resolveReports: jest.fn(),
   };
   const audit = { log: jest.fn() };
+  const features = { assertEnabled: jest.fn() };
 
   const question = (overrides: Partial<ProductQuestion> = {}): ProductQuestion => ({
     id: 'q1',
@@ -51,9 +54,22 @@ describe('ProductQuestionsService', () => {
         ProductQuestionsService,
         { provide: ProductQuestionsRepository, useValue: repo },
         { provide: AuditService, useValue: audit },
+        { provide: StoreFeaturesService, useValue: features },
       ],
     }).compile();
     service = module.get(ProductQuestionsService);
+  });
+
+  it('refuses asking and reporting while product Q&A is switched off (P8-F)', async () => {
+    features.assertEnabled.mockRejectedValue(featureDisabled('PRODUCT_QA'));
+
+    await expect(service.ask('asker', { productId: 'prod1', body: 'Does it fit?' })).rejects.toMatchObject({
+      response: { extensions: { reason: 'FEATURE_DISABLED', feature: 'PRODUCT_QA' } },
+    });
+    await expect(service.report('u2', { id: 'q1', reason: 'SPAM' } as never)).rejects.toThrow(BadRequestException);
+    expect(features.assertEnabled).toHaveBeenCalledWith('PRODUCT_QA');
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.createReport).not.toHaveBeenCalled();
   });
 
   it('asks a question about a public product only', async () => {

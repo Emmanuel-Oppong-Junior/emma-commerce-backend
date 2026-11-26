@@ -16,6 +16,7 @@ import { ActiveUser } from '../iam/authentication/decorators/active-user.decorat
 import { CustomerOnly } from '../iam/authorization/policy.decorators';
 import { PrismaService } from '../prisma/prisma.service';
 import { returnPhotoFolder } from './return-rules';
+import { RequireFeature } from '../store-features/require-feature';
 
 const multerOptions = { storage: memoryStorage(), limits: { fileSize: MAX_IMAGE_FILE_SIZE_BYTES } };
 
@@ -38,6 +39,7 @@ export class ReturnPhotoController {
 
   @CustomerOnly()
   @Throttle({ upload: { limit: 10, ttl: 60000 } })
+  @RequireFeature('RETURNS')
   @Post('orders/:orderId/photos')
   @UseInterceptors(FileInterceptor('file', multerOptions))
   async uploadReturnPhoto(

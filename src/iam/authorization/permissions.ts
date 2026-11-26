@@ -48,6 +48,8 @@ export const PERMISSION_CATALOGUE = {
   'staff.manage': 'Create accounts, assign and remove staff roles, manage custom roles and staff accounts',
   'report.view': 'Read sales reports and the dashboard',
   'store.settings.manage': 'Change the store settings',
+  'store.features.manage':
+    'Switch store-level features such as guest checkout, loyalty or reviews on and off (Owner only)',
   'jobs.manage': 'Read and retry failed background jobs',
 } as const;
 

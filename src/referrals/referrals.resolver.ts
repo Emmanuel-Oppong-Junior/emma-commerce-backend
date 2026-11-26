@@ -5,6 +5,7 @@ import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { CustomerOnly, RequirePermission } from '../iam/authorization/policy.decorators';
 import { ReferralsService } from './referrals.service';
 import { ApplyReferralCodeInput, CustomerReferrals, CustomerReferralsArgs, MyReferrals } from './referrals.entities';
+import { RequireFeature } from '../store-features/require-feature';
 
 /** Referrals (P6-L.2). */
 @Resolver()
@@ -12,6 +13,7 @@ export class ReferralsResolver {
   constructor(private readonly referrals: ReferralsService) {}
 
   @Auth(AuthType.Bearer)
+  @RequireFeature('REFERRALS')
   @Query(() => MyReferrals, {
     description: 'Your referral code (created on first use), who referred you, and the friends who used your code',
   })
@@ -20,6 +22,7 @@ export class ReferralsResolver {
   }
 
   @CustomerOnly()
+  @RequireFeature('REFERRALS')
   @Mutation(() => MyReferrals, {
     description:
       "Enter a friend's referral code, once and before your first order. BAD_REQUEST with reason " +

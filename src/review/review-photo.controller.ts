@@ -10,6 +10,7 @@ import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { CustomerOnly } from '../iam/authorization/policy.decorators';
 import { ReviewService } from './review.service';
 import { reviewPhotoFolder } from './review-rules';
+import { RequireFeature } from '../store-features/require-feature';
 
 const multerOptions = { storage: memoryStorage(), limits: { fileSize: MAX_IMAGE_FILE_SIZE_BYTES } };
 
@@ -32,6 +33,7 @@ export class ReviewPhotoController {
   ) {}
 
   @Throttle({ upload: { limit: 10, ttl: 60000 } })
+  @RequireFeature('REVIEWS')
   @Post(':reviewId/photos')
   @UseInterceptors(FileInterceptor('file', multerOptions))
   async uploadReviewPhoto(

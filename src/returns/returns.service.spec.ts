@@ -12,6 +12,8 @@ import { StockLedgerService } from '../inventory/stock-ledger.service';
 import { StockLedgerRepository } from '../inventory/stock-ledger.repository';
 import { StockLocationsService } from '../inventory/locations/stock-locations.service';
 import { OrdersRepository } from '../order/order.repository';
+import { StoreFeaturesService } from '../store-features/store-features.service';
+import { featureDisabled } from '../store-features/require-feature';
 import { RefundsService } from './refunds.service';
 import { RefundRepository } from './refund.repository';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
@@ -109,6 +111,7 @@ describe('ReturnsService', () => {
   const ledgerRepository = { defaultLocationId: jest.fn(async () => 'loc_default') };
   const stockLocations = { candidatesFor: jest.fn(async () => ['loc_branch']), lockFulfilmentLocation: jest.fn() };
   const orders = { createReplacement: jest.fn(), lockSellableVariant: jest.fn(async () => true) };
+  const features = { assertEnabled: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -128,6 +131,7 @@ describe('ReturnsService', () => {
         { provide: StockLedgerRepository, useValue: ledgerRepository },
         { provide: StockLocationsService, useValue: stockLocations },
         { provide: OrdersRepository, useValue: orders },
+        { provide: StoreFeaturesService, useValue: features },
       ],
     }).compile();
     service = module.get(ReturnsService);
@@ -167,6 +171,16 @@ describe('ReturnsService', () => {
       });
       expect(created).not.toHaveProperty('staffNote');
       expect(created.lines[0]).not.toHaveProperty('restockQuantity');
+    });
+
+    it('refuses while returns are switched off, checked on the return transaction (P8-F)', async () => {
+      features.assertEnabled.mockRejectedValueOnce(featureDisabled('RETURNS'));
+
+      await expect(service.requestReturn('u1', request())).rejects.toMatchObject({
+        response: { extensions: { reason: 'FEATURE_DISABLED', feature: 'RETURNS' } },
+      });
+      expect(features.assertEnabled).toHaveBeenCalledWith('RETURNS', tx);
+      expect(repository.create).not.toHaveBeenCalled();
     });
 
     it("refuses another customer's order as NOT_FOUND", async () => {

@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ContentReportReason, ModerationStatus, ProductQuestion } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
+import { StoreFeaturesService } from '../store-features/store-features.service';
 import { ContentPageArgs } from '../review/dto/review-list.args';
 import { ModerateContentInput, ReportContentInput } from '../review/dto/review-moderation.inputs';
 import { cleanText, ModerationAction, moderationRefusal, reportRefusal } from '../review/review-rules';
@@ -18,10 +19,12 @@ export class ProductQuestionsService {
   constructor(
     private readonly repository: ProductQuestionsRepository,
     private readonly audit: AuditService,
+    private readonly features: StoreFeaturesService,
   ) {}
 
   /** A signed-in customer's question on a public product; it shows publicly once staff answer it. */
   async ask(userId: string, input: AskProductQuestionInput): Promise<ProductQuestion> {
+    await this.features.assertEnabled('PRODUCT_QA');
     await this.assertPublicProduct(input.productId);
     return this.repository.create({ productId: input.productId, userId, body: input.body });
   }
@@ -79,6 +82,7 @@ export class ProductQuestionsService {
   }
 
   async report(userId: string, input: ReportContentInput): Promise<boolean> {
+    await this.features.assertEnabled('PRODUCT_QA');
     const question = await this.getQuestion(input.id, { canModerate: false });
     const refusal = reportRefusal(question.userId, userId);
     if (refusal) throw new BadRequestException(refusal);
