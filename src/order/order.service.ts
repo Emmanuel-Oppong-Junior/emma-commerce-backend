@@ -27,7 +27,8 @@ import { DeliveryZone, ShippingZonesService } from '../shipping-zones/shipping-z
 import { DELIVERY_LEVEL_UNAVAILABLE, deliveryFee, DeliveryFee, offeredLevels } from '../shipping-zones/delivery-fee';
 import { LoggerService } from '../commons/logger.service';
 import { formatOpeningHours } from '../pickup-locations/opening-hours';
-import { DeliverySlotsService } from '../shipping-zones/slots/delivery-slots.service';
+import { DeliverySlotsService, toAvailableDeliverySlot } from '../shipping-zones/slots/delivery-slots.service';
+import { AvailableDeliverySlot } from '../shipping-zones/slots/delivery-slots.types';
 import {
   AvailableSlot,
   bookableSlot,
@@ -110,12 +111,12 @@ export interface CheckoutQuote extends Omit<Quote, 'lines' | 'adjustments' | 'de
   adjustments: (QuoteAdjustment & { allocations: { cartItemId: string; amount: Decimal }[] })[];
   /** Whether this checkout could be paid on delivery (P3-B), whatever payment method was asked for. */
   cashOnDelivery: CodAvailability;
-  /** DELIVERY: the zone, rule and fee priced; null for pickup. */
-  delivery: DeliveryQuote | null;
+  /** DELIVERY: the zone, rule and fee priced, with the booked slot's window; null for pickup. */
+  delivery: (Omit<DeliveryQuote, 'slot'> & { slot: AvailableDeliverySlot | null }) | null;
   /** DELIVERY: every service level the zone offers with its fee for this cart; empty for pickup. */
   deliveryOptions: DeliveryFee[];
   /** STANDARD delivery: the zone's slots of the next days (full ones with 0 remaining); empty otherwise. */
-  deliverySlots: AvailableSlot[];
+  deliverySlots: AvailableDeliverySlot[];
   /** createOrder needs a deliverySlot: STANDARD delivery to a zone with active slots. */
   deliverySlotRequired: boolean;
   /** A customer's loyalty points for this checkout (P6-L.1); null for a guest. */
@@ -287,9 +288,12 @@ export class OrdersService {
         allocations: sharesByCartItem(allocations, cartItemIds),
       })),
       cashOnDelivery,
-      delivery: delivery?.quote ?? null,
+      delivery: delivery && {
+        ...delivery.quote,
+        slot: delivery.quote.slot && toAvailableDeliverySlot(delivery.quote.slot),
+      },
       deliveryOptions: delivery?.options ?? [],
-      deliverySlots: delivery?.slots ?? [],
+      deliverySlots: (delivery?.slots ?? []).map(toAvailableDeliverySlot),
       deliverySlotRequired: delivery?.slotRequired ?? false,
       loyalty: loyalty && {
         balance: loyalty.balance,

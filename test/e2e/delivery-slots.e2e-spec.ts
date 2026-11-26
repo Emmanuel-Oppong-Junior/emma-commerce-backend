@@ -131,6 +131,50 @@ describe('Delivery slots (P5-A.2, e2e)', () => {
     });
   });
 
+  it('shows the windows of the listed and chosen slots in the GraphQL quote', async () => {
+    const cart = await prisma.cart.upsert({
+      where: { userId: 'seed_user' },
+      create: { userId: 'seed_user' },
+      update: {},
+    });
+    await prisma.cartItem.create({
+      data: { cartId: cart.id, productId: 'seed_prod2', variantId: 'seed_var2', quantity: 1 },
+    });
+    const address = await prisma.address.create({
+      data: {
+        userId: 'seed_user',
+        recipientName: 'Kofi Mensah',
+        phone: '+233244000001',
+        street: '2 Slot St',
+        city: 'Accra',
+        region: 'GREATER_ACCRA',
+        country: 'GH',
+      },
+    });
+
+    const res = await gqlRequest(
+      app,
+      `query($input: CheckoutQuoteInput!) { checkoutQuote(input: $input) {
+        deliverySlots { slotId date startTime endTime remaining }
+        delivery { slot { slotId startTime endTime remaining } } } }`,
+      {
+        input: {
+          fulfillmentType: 'DELIVERY',
+          shippingAddressId: address.id,
+          deliverySlot: { slotId: afternoon, date: tomorrow },
+        },
+      },
+      await signInUser(app),
+    ).expect(200);
+
+    expect(res.body.errors).toBeUndefined();
+    const quote = res.body.data.checkoutQuote;
+    expect(quote.deliverySlots).toContainEqual(
+      expect.objectContaining({ slotId: morning, date: tomorrow, startTime: '09:00', endTime: '12:00' }),
+    );
+    expect(quote.delivery.slot).toMatchObject({ slotId: afternoon, startTime: '13:00', endTime: '17:00' });
+  });
+
   it('gives the last place to one of two simultaneous orders; the other gets SLOT_FULL and nothing is placed', async () => {
     const first = await newShopper();
     const second = await newShopper();

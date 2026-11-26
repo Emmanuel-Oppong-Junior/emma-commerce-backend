@@ -14,6 +14,7 @@ import {
 } from './delivery-slots';
 import { DeliverySlotsRepository, fromDbDate, SlotData } from './delivery-slots.repository';
 import {
+  AvailableDeliverySlot,
   CreateDeliverySlotInput,
   DeliveryBooking,
   DeliveryClosureEntity,
@@ -60,6 +61,11 @@ export const toWindow = (
   date: slot.date,
   startTime: formatMinutes(slot.startMinute),
   endTime: formatMinutes(slot.endMinute),
+});
+
+export const toAvailableDeliverySlot = (slot: AvailableSlot): AvailableDeliverySlot => ({
+  ...toWindow(slot),
+  remaining: slot.remaining,
 });
 
 const toClosureEntity = (closure: DeliveryClosure): DeliveryClosureEntity => ({
