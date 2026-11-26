@@ -1,4 +1,6 @@
+import { UseInterceptors } from '@nestjs/common';
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { CountCartStarts } from '../analytics/counters/counting.interceptors';
 import { CartService } from './cart.service';
 import { AddToCartInput } from './dto/add-to-cart.input';
 import { UpdateCartItemInput } from './dto/update-cart.input';
@@ -21,6 +23,7 @@ export class CartResolver {
     return this.cartService.getCart(userId);
   }
 
+  @UseInterceptors(CountCartStarts)
   @Mutation(() => Cart, { description: 'Adds a product to the user’s cart' })
   async addToCart(@ActiveUser('id') userId: string, @Args('input') input: AddToCartInput) {
     return this.cartService.addToCart(userId, input);

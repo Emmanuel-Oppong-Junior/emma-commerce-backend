@@ -11,6 +11,7 @@ import {
   ReturnStatus,
 } from '../../src/generated/prisma/client';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { AnalyticsRollupService } from '../../src/analytics/rollup/analytics-rollup.service';
 import { createTestApp } from '../helpers/app.helper';
 import { ghs, gqlRequest, MoneyValue } from '../helpers/graphql.helper';
 import { signInAdmin } from '../helpers/auth.helper';
@@ -29,14 +30,17 @@ interface SalesReport {
   grossRevenue: MoneyValue;
   refunds: MoneyValue;
   netRevenue: MoneyValue;
-  totalRevenue: MoneyValue;
   itemSales: MoneyValue;
-  orderCount: number;
+  paidOrders: number;
   averageOrderValue: MoneyValue;
 }
 
 const M = '{ amount currency }';
-const SALES_FIELDS = `grossRevenue ${M} refunds ${M} netRevenue ${M} totalRevenue ${M} itemSales ${M} orderCount averageOrderValue ${M}`;
+const SALES_FIELDS = `grossRevenue ${M} refunds ${M} netRevenue ${M} itemSales ${M} paidOrders averageOrderValue ${M}`;
+const OLD_DAY = '2020-06-01';
+const dayKey = (at: Date) => at.toISOString().slice(0, 10);
+const add = (...values: MoneyValue[]) =>
+  ghs(values.reduce((total, value) => total.add(value.amount), new Prisma.Decimal(0)).toFixed(2));
 
 describe('Analytics revenue (e2e)', () => {
   let app: INestApplication;
@@ -49,12 +53,13 @@ describe('Analytics revenue (e2e)', () => {
     expect(body.errors).toBeUndefined();
     return body.data as T;
   };
-  const salesReport = async (start: Date, end: Date) =>
+  // P8-A: reports read the daily rollups, rebuilt below after seeding; ranges are inclusive UTC days.
+  const salesReport = async (firstDay: string, lastDay: string) =>
     (
-      await gql<{ salesReport: SalesReport }>(
-        `{ salesReport(startDate: "${start.toISOString()}", endDate: "${end.toISOString()}") { ${SALES_FIELDS} } }`,
+      await gql<{ salesReport: { totals: SalesReport } }>(
+        `{ salesReport(firstDay: "${firstDay}", lastDay: "${lastDay}") { totals { ${SALES_FIELDS} } } }`,
       )
-    ).salesReport;
+    ).salesReport.totals;
 
   const createOrder = async (order: {
     status: OrderStatus;
@@ -248,6 +253,10 @@ describe('Analytics revenue (e2e)', () => {
       amount: 30,
       updatedAt: oldPaidAt,
     });
+
+    const rollups = app.get(AnalyticsRollupService);
+    await rollups.rebuildRecent();
+    await rollups.rebuild({ from: new Date(`${OLD_DAY}T00:00:00Z`), to: new Date('2020-06-02T00:00:00Z') });
   });
 
   afterAll(async () => {
@@ -255,39 +264,45 @@ describe('Analytics revenue (e2e)', () => {
     await app.close();
   });
 
-  const startOfToday = () => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    return start;
-  };
-  const inAMinute = () => new Date(Date.now() + 60_000);
+  const today = () => dayKey(new Date());
 
   it("reports today's revenue from accepted payments minus processed refunds, ignoring unpaid and review payments", async () => {
-    expect(await salesReport(startOfToday(), inAMinute())).toEqual({
+    // P8-A decision: the average order value is net revenue / paid orders (it was gross / orders, 125.00).
+    expect(await salesReport(today(), today())).toEqual({
       grossRevenue: ghs('375.00'),
       refunds: ghs('40.00'),
       netRevenue: ghs('335.00'),
-      totalRevenue: ghs('335.00'),
       itemSales: ghs('340.00'),
-      orderCount: 3,
-      averageOrderValue: ghs('125.00'),
+      paidOrders: 3,
+      averageOrderValue: ghs('111.67'),
     });
   });
 
-  it('recognises a payment when it was accepted, so an all-time report also counts the 2020 order', async () => {
-    expect(await salesReport(new Date('2000-01-01'), inAMinute())).toEqual({
+  it('recognises a payment when it was accepted, so the 2020 order counts on its 2020 day', async () => {
+    // A report spans at most 731 days, so all time is the 2020 day plus today (nothing else was paid).
+    const old = await salesReport(OLD_DAY, OLD_DAY);
+    const recent = await salesReport(today(), today());
+
+    expect(old).toEqual({
+      grossRevenue: ghs('30.00'),
+      refunds: ghs('0.00'),
+      netRevenue: ghs('30.00'),
+      itemSales: ghs('30.00'),
+      paidOrders: 1,
+      averageOrderValue: ghs('30.00'),
+    });
+    expect({
+      grossRevenue: add(old.grossRevenue, recent.grossRevenue),
+      refunds: add(old.refunds, recent.refunds),
+      netRevenue: add(old.netRevenue, recent.netRevenue),
+      itemSales: add(old.itemSales, recent.itemSales),
+      paidOrders: old.paidOrders + recent.paidOrders,
+    }).toEqual({
       grossRevenue: ghs('405.00'),
       refunds: ghs('40.00'),
       netRevenue: ghs('365.00'),
-      totalRevenue: ghs('365.00'),
       itemSales: ghs('370.00'),
-      orderCount: 4,
-      averageOrderValue: ghs('101.25'),
-    });
-    expect(await salesReport(new Date('2020-06-01'), new Date('2020-06-02'))).toMatchObject({
-      grossRevenue: ghs('30.00'),
-      refunds: ghs('0.00'),
-      orderCount: 1,
+      paidOrders: 4,
     });
   });
 
@@ -295,13 +310,13 @@ describe('Analytics revenue (e2e)', () => {
     const { dashboardSummary } = await gql<{ dashboardSummary: Record<string, unknown> }>(
       `{ dashboardSummary { ordersToday revenueToday ${M} grossRevenueToday ${M} refundsToday ${M} } }`,
     );
-    const today = await salesReport(startOfToday(), inAMinute());
+    const todays = await salesReport(today(), today());
 
     expect(dashboardSummary).toEqual({
-      ordersToday: today.orderCount,
-      revenueToday: today.netRevenue,
-      grossRevenueToday: today.grossRevenue,
-      refundsToday: today.refunds,
+      ordersToday: todays.paidOrders,
+      revenueToday: todays.netRevenue,
+      grossRevenueToday: todays.grossRevenue,
+      refundsToday: todays.refunds,
     });
     expect(dashboardSummary).toEqual({
       ordersToday: 3,
@@ -311,32 +326,41 @@ describe('Analytics revenue (e2e)', () => {
     });
   });
 
-  it('breaks down item sales of paid orders only, adding up to the all-time item sales', async () => {
-    const { topProducts, revenueByCategory } = await gql<{
-      topProducts: { productId: string; totalQuantitySold: number; totalRevenue: MoneyValue }[];
-      revenueByCategory: { categoryName: string; totalRevenue: MoneyValue; orderCount: number }[];
-    }>(
-      `{
-        topProducts(limit: 10) { productId totalQuantitySold totalRevenue ${M} }
-        revenueByCategory { categoryName totalRevenue ${M} orderCount }
-      }`,
-    );
-    const allTime = await salesReport(new Date('2000-01-01'), inAMinute());
+  it('breaks down item sales of paid orders only, adding up to the item sales of the same days', async () => {
+    const breakdowns = async (firstDay: string, lastDay: string) =>
+      gql<{
+        topProducts: { productId: string; unitsSold: number; sales: MoneyValue }[];
+        topCategories: { categoryName: string; sales: MoneyValue }[];
+      }>(
+        `{
+          topProducts(firstDay: "${firstDay}", lastDay: "${lastDay}", first: 10) { productId unitsSold sales ${M} }
+          topCategories(firstDay: "${firstDay}", lastDay: "${lastDay}") { categoryName sales ${M} }
+        }`,
+      );
+    const recent = await breakdowns(today(), today());
+    const old = await breakdowns(OLD_DAY, OLD_DAY);
+    const recentSales = await salesReport(today(), today());
+    const oldSales = await salesReport(OLD_DAY, OLD_DAY);
 
-    expect(topProducts).toEqual([
-      { productId: NOVEL, totalQuantitySold: 4, totalRevenue: ghs('120.00') },
-      { productId: LAPTOP, totalQuantitySold: 2, totalRevenue: ghs('200.00') },
-      { productId: PHONE, totalQuantitySold: 1, totalRevenue: ghs('50.00') },
+    expect(recent.topProducts).toEqual([
+      { productId: NOVEL, unitsSold: 3, sales: ghs('90.00') },
+      { productId: LAPTOP, unitsSold: 2, sales: ghs('200.00') },
+      { productId: PHONE, unitsSold: 1, sales: ghs('50.00') },
     ]);
-    expect(revenueByCategory).toEqual([
-      { categoryName: 'Electronics', totalRevenue: ghs('250.00'), orderCount: 2 },
-      { categoryName: 'Books', totalRevenue: ghs('120.00'), orderCount: 3 },
+    expect(old.topProducts).toEqual([{ productId: NOVEL, unitsSold: 1, sales: ghs('30.00') }]);
+    expect(recent.topCategories).toEqual([
+      { categoryName: 'Electronics', sales: ghs('250.00') },
+      { categoryName: 'Books', sales: ghs('90.00') },
     ]);
-    const sum = (values: MoneyValue[]) =>
-      values.reduce((total, value) => total.add(value.amount), new Prisma.Decimal(0)).toFixed(2);
-    expect(sum(topProducts.map((p) => p.totalRevenue))).toBe(allTime.itemSales.amount);
-    expect(sum(revenueByCategory.map((c) => c.totalRevenue))).toBe(allTime.itemSales.amount);
+    expect(old.topCategories).toEqual([{ categoryName: 'Books', sales: ghs('30.00') }]);
+    // All time, as before P8-A: the novel sold 4 units for 120.00, books 120.00 in all.
+    expect(add(recent.topProducts[0].sales, old.topProducts[0].sales)).toEqual(ghs('120.00'));
+    expect(add(...recent.topProducts.map((p) => p.sales))).toEqual(recentSales.itemSales);
+    expect(add(...recent.topCategories.map((c) => c.sales))).toEqual(recentSales.itemSales);
+    expect(add(...old.topCategories.map((c) => c.sales))).toEqual(oldSales.itemSales);
     // Paid orders' shipping (20 + 15 + 10) minus their coupon discount (10).
-    expect(new Prisma.Decimal(allTime.grossRevenue.amount).sub(allTime.itemSales.amount).toFixed(2)).toBe('35.00');
+    expect(new Prisma.Decimal(recentSales.grossRevenue.amount).sub(recentSales.itemSales.amount).toFixed(2)).toBe(
+      '35.00',
+    );
   });
 });

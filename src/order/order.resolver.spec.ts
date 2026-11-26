@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { AnalyticsCounters } from '../analytics/counters/analytics-counters';
 import { OrdersResolver } from './order.resolver';
 import { OrdersService } from './order.service';
 import { CreateOrderInput } from './dto/create-order.input';
@@ -71,6 +72,8 @@ describe('OrdersResolver', () => {
         OrdersResolver,
         { provide: OrdersService, useValue: mockOrdersService },
         { provide: UsersLoader, useValue: { loader: { load: jest.fn() } } },
+        // checkoutQuote counts quotes through an interceptor (P8-A)
+        { provide: AnalyticsCounters, useValue: { increment: jest.fn() } },
       ],
     })
       .overrideProvider(ActiveUser)

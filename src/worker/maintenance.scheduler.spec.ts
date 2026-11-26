@@ -44,6 +44,7 @@ describe('MaintenanceScheduler', () => {
       [MaintenanceJob.RemindAbandonedCarts]: { pattern: '20 * * * *', tz: 'UTC' },
       [MaintenanceJob.PurgeGuestCarts]: { pattern: '45 3 * * *', tz: 'UTC' },
       [MaintenanceJob.ExpireLoyaltyPoints]: { pattern: '50 0 * * *', tz: 'UTC' },
+      [MaintenanceJob.RollupAnalytics]: { pattern: '*/15 * * * *', tz: 'UTC' },
     });
   });
 

@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { AnalyticsCounters } from '../analytics/counters/analytics-counters';
 import { CartResolver } from './cart.resolver';
 import { CartService } from './cart.service';
 import { AddToCartInput } from './dto/add-to-cart.input';
@@ -48,7 +49,12 @@ describe('CartResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CartResolver, { provide: CartService, useValue: mockCartService }],
+      providers: [
+        CartResolver,
+        { provide: CartService, useValue: mockCartService },
+        // addToCart counts carts started through an interceptor (P8-A)
+        { provide: AnalyticsCounters, useValue: { increment: jest.fn() } },
+      ],
     }).compile();
 
     resolver = module.get<CartResolver>(CartResolver);

@@ -105,6 +105,7 @@ Mutation moveSavedItemToCart             authenticated
 Mutation openStockTake                   permission: inventory.adjust
 Mutation permanentlyDeleteProduct        permission: catalog.product.write
 Mutation processPendingRefund            permission: order.refund; step-up
+Mutation rebuildAnalytics                permission: report.view + jobs.manage
 Mutation receivePurchaseOrder            permission: purchasing.receive
 Mutation receiveReturn                   permission: return.manage
 Mutation receiveStockTransfer            permission: inventory.transfer
@@ -230,6 +231,8 @@ Query checkoutQuote                      authenticated
 Query codBlacklist                       permission: payment.settings.manage
 Query codCashReport                      permission: cod.cash.manage
 Query codRiskSettings                    permission: payment.settings.manage
+Query cohortReport                       permission: report.view
+Query conversionReport                   permission: report.view
 Query customerConsentHistory             permission: user.view
 Query customerGroup                      permission: customer.group.manage
 Query customerGroups                     permission: customer.group.manage
@@ -247,7 +250,9 @@ Query getUserPayment                     permission: payment.view
 Query guestCart                          public
 Query guestCheckoutQuote                 public
 Query guestOrder                         public
+Query inventoryValuation                 permission: report.view + inventory.cost.view
 Query loyaltySettings                    public
+Query marginReport                       permission: report.view + inventory.cost.view
 Query myDeliveries                       permission: delivery.ride
 Query myDelivery                         permission: delivery.ride
 Query myLoyalty                          authenticated
@@ -276,6 +281,7 @@ Query products                           public, optional sign-in
 Query productType                        public
 Query productTypes                       public
 Query promotion                          permission: promotion.manage
+Query promotionPerformance               permission: report.view
 Query promotions                         permission: promotion.manage
 Query purchaseOrder                      permission: purchasing.view
 Query purchaseOrders                     permission: purchasing.view
@@ -286,7 +292,6 @@ Query reportedProductQuestions           permission: review.moderate
 Query reportedReviews                    permission: review.moderate
 Query returnRequest                      permission: return.manage
 Query returns                            permission: return.manage
-Query revenueByCategory                  permission: report.view
 Query review                             public, optional sign-in
 Query riders                             permission: order.fulfil
 Query salesReport                        permission: report.view
@@ -318,6 +323,7 @@ Query tag                                authenticated
 Query tags                               authenticated
 Query tax                                permission: tax.manage
 Query taxes                              permission: tax.manage
+Query topCategories                      permission: report.view
 Query topProducts                        permission: report.view
 Query unansweredProductQuestions         permission: review.moderate
 Query unreadNotificationCount            authenticated

@@ -2819,3 +2819,92 @@ model Referral {
 
   @@index([referrerId, createdAt])
 }
+
+/// Daily analytics rollups (P8-A), rebuilt by the analytics.rollup job and the rebuildAnalytics backfill: each run
+/// recomputes whole UTC days (= Africa/Accra), so re-running is idempotent. Reports read only these tables. A sale
+/// counts on the day its order was paid (first accepted payment: online capture or cash collected), a refund on the
+/// day it was processed (PROCESSED refunds of accepted payments), a restock on the day the units came back.
+model AnalyticsDailySales {
+  day                DateTime @id @db.Date
+  /// Orders whose first accepted payment fell on the day
+  paidOrders         Int
+  unitsSold          Int
+  /// Σ grandTotal of the paid orders
+  grossRevenue       Decimal  @db.Decimal(14, 2)
+  /// Σ what their lines were charged (lineTotal + orderAdjustmentShare), tax included
+  itemSales          Decimal  @db.Decimal(14, 2)
+  /// Product discounts (Σ unitDiscount x quantity)
+  itemDiscounts      Decimal  @db.Decimal(14, 2)
+  /// Cart promotions and coupons (order-level merchandise adjustments, loyalty points excluded)
+  orderDiscounts     Decimal  @db.Decimal(14, 2)
+  loyaltyDiscounts   Decimal  @db.Decimal(14, 2)
+  /// Σ shippingTotal (after free-shipping promotions)
+  shipping           Decimal  @db.Decimal(14, 2)
+  shippingDiscounts  Decimal  @db.Decimal(14, 2)
+  tax                Decimal  @db.Decimal(14, 2)
+  refundCount        Int
+  refunds            Decimal  @db.Decimal(14, 2)
+  refundedShipping   Decimal  @db.Decimal(14, 2)
+  refundedTax        Decimal  @db.Decimal(14, 2)
+  /// Refunded goods not attributed to order lines (refunds without lines, e.g. older return refunds)
+  unallocatedRefunds Decimal  @db.Decimal(14, 2)
+  /// Orders placed (created) on the day, paid or not
+  ordersPlaced       Int
+  /// Carts that got their first item, and checkout quotes given (counted in Redis, copied by the job)
+  cartsStarted       Int      @default(0)
+  checkoutQuotes     Int      @default(0)
+  computedAt         DateTime
+}
+
+/// Per day and variant (P8-A). Net sales are tax-exclusive and net of the line refunds processed on the day; cost of
+/// goods sold is units sold x the line's unitCost minus units restocked x that cost. Lines of unknown cost are kept
+/// apart (unknownCost*), never counted at zero cost.
+model AnalyticsDailyVariant {
+  day                 DateTime @db.Date
+  variantId           String
+  productId           String
+  unitsSold           Int
+  /// What the units sold were charged, tax included
+  sales               Decimal  @db.Decimal(14, 2)
+  unitsRefunded       Int
+  refunds             Decimal  @db.Decimal(14, 2)
+  unitsRestocked      Int
+  /// Tax-exclusive net sales of lines with a known cost
+  costedNetSales      Decimal  @db.Decimal(14, 2)
+  cogs                Decimal  @db.Decimal(16, 4)
+  unknownCostUnits    Int
+  unknownCostNetSales Decimal  @db.Decimal(14, 2)
+
+  @@id([day, variantId])
+  @@index([productId, day])
+}
+
+/// Per day, promotion and coupon code ('' for an automatic promotion) of the orders paid on the day (P8-A).
+model AnalyticsDailyPromotion {
+  day         DateTime @db.Date
+  promotionId String
+  couponCode  String   @default("")
+  orders      Int
+  /// Σ what the promotion took off (merchandise and delivery fee), positive
+  discount    Decimal  @db.Decimal(14, 2)
+  /// Σ grandTotal of those orders
+  revenue     Decimal  @db.Decimal(14, 2)
+  /// Units bought at the promotional price (Redemption.units)
+  units       Int
+
+  @@id([day, promotionId, couponCode])
+  @@index([promotionId, day])
+}
+
+/// Per day and customer (P8-A), for cohorts. customerKey is the user id, or for a guest order not attached to an
+/// account "guest:" + SHA-256 of its verified phone (never the phone itself).
+model AnalyticsDailyCustomer {
+  day         DateTime @db.Date
+  customerKey String
+  orders      Int
+  revenue     Decimal  @db.Decimal(14, 2)
+  refunds     Decimal  @db.Decimal(14, 2)
+
+  @@id([day, customerKey])
+  @@index([customerKey, day])
+}

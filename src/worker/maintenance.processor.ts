@@ -16,6 +16,11 @@ import { AbandonedCartTask } from '../cart/abandoned/abandoned-cart.task';
 import { GuestCartPurgeTask } from '../cart/guest-cart-purge.task';
 import { LoyaltyExpiryTask } from '../loyalty/loyalty-expiry.task';
 import { MaintenanceJob } from './maintenance-jobs';
+import {
+  ANALYTICS_REBUILD_JOB,
+  AnalyticsRollupService,
+  RebuildJobData,
+} from '../analytics/rollup/analytics-rollup.service';
 
 const CONTEXT = 'MaintenanceProcessor';
 
@@ -37,6 +42,7 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly abandonedCarts: AbandonedCartTask,
     private readonly guestCarts: GuestCartPurgeTask,
     private readonly loyaltyExpiry: LoyaltyExpiryTask,
+    private readonly analyticsRollup: AnalyticsRollupService,
   ) {
     super();
   }
@@ -46,6 +52,8 @@ export class MaintenanceProcessor extends WorkerHost {
   }
 
   private async run(job: Job): Promise<void> {
+    // A one-off job (rebuildAnalytics), not a schedule.
+    if (job.name === ANALYTICS_REBUILD_JOB) return this.analyticsRollup.rebuildJob(job.data as RebuildJobData);
     switch (job.name as MaintenanceJob) {
       case MaintenanceJob.ExpireAbandonedOrders:
         return this.expiredOrders.cancelAbandonedOrders();
@@ -74,6 +82,8 @@ export class MaintenanceProcessor extends WorkerHost {
       case MaintenanceJob.ExpireLoyaltyPoints:
         await this.loyaltyExpiry.expire();
         return;
+      case MaintenanceJob.RollupAnalytics:
+        return this.analyticsRollup.rebuildRecent();
       default:
         throw new Error(`Unknown maintenance job "${job.name}"`);
     }

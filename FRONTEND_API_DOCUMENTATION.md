@@ -3473,76 +3473,55 @@ Taxes are named, Ghana-wide rates (e.g. VAT, NHIS levy) with no country or regio
 
 ### 2.19 Analytics
 
-All analytics queries: `ADMIN`, `SUPER_ADMIN` only. Every figure uses one revenue definition, described under [16. Analytics Queries](#16-analytics-queries).
+Staff reports (P8-A). Every query needs `report.view`; `marginReport` and `inventoryValuation` also need `inventory.cost.view`; `rebuildAnalytics` needs `report.view` + `jobs.manage`. Definitions are in [16. Analytics Queries](#16-analytics-queries).
 
----
+> **Breaking changes (P8-A)** `[breaking-api]`: `salesReport(startDate, endDate)` → `salesReport(firstDay, lastDay, bucket)` returning `{ totals, buckets, refreshedAt, daysNotComputed }`; `SalesReport.orderCount` → `paidOrders`; `totalRevenue` removed (use `netRevenue`); `averageOrderValue` is now **net** revenue / paid orders (was gross / orders). `topProducts(limit)` → `topProducts(firstDay, lastDay, first, orderBy)` with `unitsSold`, `unitsRefunded`, `sales`, `refunds`, `netSales`, `archived` (was `totalQuantitySold`, `totalRevenue`, all time). `revenueByCategory` → `topCategories(firstDay, lastDay, first)` (no `orderCount`). `dashboardSummary` today figures come from the rollups (up to 15 minutes behind) and "today" is the UTC day. New: `marginReport`, `conversionReport`, `cohortReport`, `inventoryValuation`, `promotionPerformance`, `rebuildAnalytics`, `OrderItem.unitCost`.
 
-#### `salesReport`
-- **Type**: Query
-- **Args**: `startDate: DateTime!`, `endDate: DateTime!` (both inclusive, top-level arguments: `salesReport(startDate: "…", endDate: "…")`)
-- **Response: `SalesReport`**:
-```typescript
-{
-  grossRevenue: Money;      // Payments accepted for orders in the period
-  refunds: Money;           // Refunds processed in the period
-  netRevenue: Money;        // grossRevenue - refunds
-  totalRevenue: Money;      // Deprecated: same value as netRevenue
-  itemSales: Money;         // Item sales of the orders paid in the period
-  orderCount: number;       // Orders paid in the period
-  averageOrderValue: Money; // grossRevenue / orderCount
-}
+Range arguments (`firstDay`, `lastDay`) are inclusive days `YYYY-MM-DD` in UTC (= Ghana time); a malformed value is `BAD_USER_INPUT`, a day that does not exist, a last day before the first or more than 731 days is `BAD_REQUEST`. `first` is 1-100 (default 10). `bucket` is `DAY` (default), `WEEK` (ISO, Monday-Sunday) or `MONTH`; the first and last bucket are cut to the range.
+
+```graphql
+salesReport(firstDay: String!, lastDay: String!, bucket: ReportBucket = DAY): SalesReport!
+topProducts(firstDay: String!, lastDay: String!, first: Int = 10, orderBy: TopProductsOrder = UNITS): [TopProduct!]!   # UNITS | SALES
+topCategories(firstDay: String!, lastDay: String!, first: Int = 10): [TopCategory!]!
+marginReport(firstDay: String!, lastDay: String!, first: Int = 10): MarginReport!          # + inventory.cost.view
+conversionReport(firstDay: String!, lastDay: String!, bucket: ReportBucket = DAY): ConversionReport!
+cohortReport(firstMonth: String!, lastMonth: String!, followMonths: Int = 12): [Cohort!]!   # YYYY-MM, <= 24 cohorts, followMonths 0-24
+inventoryValuation: InventoryValuation!                                                    # + inventory.cost.view
+promotionPerformance(firstDay: String!, lastDay: String!, first: Int = 10): [PromotionPerformance!]!
+dashboardSummary: DashboardSummary!
+rebuildAnalytics(input: { firstDay: String!, lastDay: String! }): AnalyticsRebuild!        # mutation, + jobs.manage
 ```
 
----
-
-#### `topProducts`
-- **Type**: Query
-- **Args**: `limit: Int!` (default 10, 1–100; may be omitted)
-- **Response**: `[TopProduct!]!` (paid orders, all time)
-
 ```typescript
-{
-  productId: string;
-  productName: string;
-  totalQuantitySold: number; // Units sold in paid orders
-  totalRevenue: Money;       // Item sales in paid orders
+SalesFigures {
+  paidOrders: Int; unitsSold: Int;
+  grossRevenue: Money;      // Σ grandTotal of the orders paid
+  itemSales: Money;         // Σ what their lines were charged (after product discounts and their share of cart discounts), tax included
+  itemDiscounts: Money; orderDiscounts: Money /* cart promotions + coupons */; loyaltyDiscounts: Money;
+  shipping: Money /* delivery fees charged */; shippingDiscounts: Money /* free shipping */; tax: Money;
+  refundCount: Int; refunds: Money; refundedShipping: Money; refundedTax: Money;
+  netRevenue: Money;        // grossRevenue - refunds (negative when refunds exceed sales)
+  averageOrderValue: Money; // netRevenue / paidOrders, 0 without paid orders
 }
+SalesReport { totals: SalesFigures; buckets: (SalesFigures & { firstDay: String; lastDay: String })[]; refreshedAt?: DateTime; daysNotComputed: Int }
+TopProduct { productId; productName; archived: Boolean; unitsSold; unitsRefunded; sales: Money; refunds: Money; netSales: Money }
+TopCategory { categoryId?; categoryName?; unitsSold; sales: Money; refunds: Money; netSales: Money }
+MarginFigures {
+  unitsSold: Int; netSales: Money /* tax-exclusive, all lines */; costedNetSales: Money /* lines of known cost */;
+  cogs: Money; grossMargin: Money /* costedNetSales - cogs */; marginRate?: Decimal /* 4 dp, 0.2500 = 25 % */;
+  unknownCostUnits: Int; unknownCostNetSales: Money /* left out of the margin */
+}
+MarginReport { overall: MarginFigures; byProduct: (MarginFigures & { productId; productName; archived })[]; byCategory: (MarginFigures & { categoryId?; categoryName? })[]; unallocatedRefunds: Money }
+ConversionReport { totals: FunnelFigures; buckets: (FunnelFigures & { firstDay; lastDay })[]; refreshedAt?; daysNotComputed }
+FunnelFigures { cartsStarted; checkoutQuotes; ordersPlaced; paidOrders; quoteRate?: Float; placementRate?: Float; paymentRate?: Float; conversionRate?: Float }
+Cohort { month: String /* YYYY-MM */; customers; repeatCustomers; repeatRate?: Float; months: { offset; activeCustomers; orders; netRevenue: Money }[] }
+InventoryValuation { units; value: Money; unknownCostUnits; unknownCostVariants; locations: { locationId; locationName; isActive; units; value: Money; unknownCostUnits }[] }
+PromotionPerformance { promotionId; promotionName? /* null once deleted */; couponCode?; orders; discount: Money; revenue: Money; units }
+AnalyticsRebuild { jobId: ID; firstDay; lastDay }
+DashboardSummary { totalUsers; ordersToday; revenueToday /* net */; grossRevenueToday; refundsToday; lowStockProductCount; lowStockVariantCount }
 ```
 
----
-
-#### `revenueByCategory`
-- **Type**: Query
-- **Response**: `[RevenueByCategoryEntity!]!` (paid orders, all time)
-
-```typescript
-{
-  categoryId?: string;
-  categoryName?: string;
-  totalRevenue: Money; // Item sales in paid orders
-  orderCount: number;  // Paid orders containing this category
-}
-```
-
----
-
-#### `dashboardSummary`
-- **Type**: Query
-- **Response: `DashboardSummary`**:
-
-```typescript
-{
-  totalUsers: number;
-  ordersToday: number;       // Orders paid today
-  revenueToday: Money;       // Net revenue today
-  grossRevenueToday: Money;  // Payments accepted today
-  refundsToday: Money;       // Refunds processed today
-  lowStockProductCount: number;  // Active products with at least one active variant at or below its low-stock level
-  lowStockVariantCount: number;  // Active variants of active products at or below their low-stock level
-}
-```
-
-A variant is low on stock when its available stock (on hand minus reserved) is at or below its `lowStockThreshold` (default 5; set on `createVariant`/`updateVariant`/`createProduct`, read on `Variant.lowStockThreshold`).
+A variant is low on stock when its available stock (on hand minus reserved) is at or below its `lowStockThreshold` (default 5). Expiring stock is the existing `expiringStock` query ([2.15](#215-inventory)). CSV export of reports is not part of this API yet.
 
 ---
 
@@ -4002,7 +3981,7 @@ A Pharmacist role comes with its vertical. The Owner can create **custom roles**
 | `customer.data.export` | `addresses` without `userId` (every customer address) |
 | `staff.view` | `staffRoles`, `staffPermissions`, `staffMembers` |
 | `staff.manage` | `createUser`, `assignStaffRole`, `removeStaffRole`, `createStaffRole`, `updateStaffRole`, managing staff accounts |
-| `report.view` | `salesReport`, `topProducts`, `revenueByCategory`, `dashboardSummary` |
+| `report.view` | `salesReport`, `topProducts`, `topCategories`, `conversionReport`, `cohortReport`, `promotionPerformance`, `dashboardSummary`; with `inventory.cost.view`: `marginReport`, `inventoryValuation`; with `jobs.manage`: `rebuildAnalytics` |
 | `store.settings.manage` | `updateStoreSettings` |
 | `jobs.manage` | `failedJobs`, `retryFailedJob` |
 
@@ -4405,10 +4384,10 @@ type Money {
 | `Payment.amount`; `RefundEntity.amount`; `ReturnRequest.refundAmount` (was `ReturnRequestEntity`) |
 | `Coupon.minimumOrderAmount`; `CouponValidation.discountAmount`; `Discount.minimumPurchase` |
 | `ShippingZoneEntity.fee`; query `getShippingFee` (`Float!` → `Money!`; both removed in P5-A.1, see `RateRule.baseFee`) |
-| `SalesReport.grossRevenue`, `refunds`, `netRevenue`, `totalRevenue`, `itemSales`, `averageOrderValue` |
-| `DashboardSummary.revenueToday`, `grossRevenueToday`, `refundsToday`; `TopProduct.totalRevenue`; `RevenueByCategoryEntity.totalRevenue` |
+| `SalesReport.grossRevenue`, `refunds`, `netRevenue`, `totalRevenue`, `itemSales`, `averageOrderValue` (reshaped in P8-A, see [2.19](#219-analytics)) |
+| `DashboardSummary.revenueToday`, `grossRevenueToday`, `refundsToday`; `TopProduct.totalRevenue`; `RevenueByCategoryEntity.totalRevenue` (both removed in P8-A) |
 
-Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice`, `Product.priceRange.min` / `max` (P1-V.3).
+Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice`, `Product.priceRange.min` / `max` (P1-V.3); the P8-A report amounts (`SalesFigures`, `MarginFigures`, `TopProduct`/`TopCategory`, `CohortMonth.netRevenue`, `InventoryValuation.value`, `PromotionPerformance`).
 
 | Changed fields (output, `Float` → `Decimal`) |
 |---|
@@ -4468,7 +4447,7 @@ Money fields added since: `Variant.basePrice` (P1-V.4), `Variant.discountedPrice
 | `ReturnRequest`, `CustomerReturn`, `ReturnLine`, `RefundEntity` | [2.16](#216-returns) |
 | `Review` | [2.17](#217-reviews) |
 | `TaxEntity` | [2.18](#218-tax) |
-| `SalesReport`, `TopProduct`, `RevenueByCategoryEntity`, `DashboardSummary` | [2.19](#219-analytics), [16](#16-analytics-queries) |
+| `SalesReport`, `SalesFigures`, `TopProduct`, `TopCategory`, `MarginReport`, `ConversionReport`, `Cohort`, `InventoryValuation`, `PromotionPerformance`, `AnalyticsRebuild`, `DashboardSummary` | [2.19](#219-analytics), [16](#16-analytics-queries) |
 | `Address` | [2.20](#220-addresses) |
 | `ShippingZoneEntity`, `PickupLocationEntity` | [2.21](#221-shipping-zones--pickup-locations) |
 | `PageInfo`, `PaginationArgs` | [13](#13-pagination--filtering) |
@@ -5224,91 +5203,25 @@ Messages are sent by the background worker, never on the request path, so they d
 
 ## 16. Analytics Queries
 
-All analytics are `ADMIN`/`SUPER_ADMIN` only. Amounts are GHS.
+Staff only (see [2.19](#219-analytics) for permissions and shapes). Amounts are GHS.
 
-### Revenue definition
+### How the figures are computed
 
-Revenue comes from the payment ledger, not from order status:
+Reports read **daily rollups** (UTC days = Ghana time), not live order data. A maintenance job rebuilds today and the 7 days before every 15 minutes, so reports lag by at most 15 minutes and late events (cash recorded days after it was collected, a payment settling late) still land on the right day. `rebuildAnalytics` queues a rebuild of any range of up to 731 days (after a data correction, or once after deploying P8-A to fill history). `refreshedAt` is when the oldest day of the range was last computed; `daysNotComputed` counts days with no rollup yet (future days, or before a backfill), reported as zeros. `inventoryValuation` and the dashboard's low-stock counts are live.
 
-- **Paid order**: an order with an accepted payment, meaning an online payment that settled for the order, or cash collected for a cash-on-delivery order. Unpaid online checkouts, cancelled orders and cash-on-delivery orders not yet collected are not paid orders.
-- **Gross revenue**: the accepted payments (the order total: items + shipping - coupon discount). A payment is counted when it was accepted: when the online payment settled, or when the cash was collected. Payments captured but not accepted for their order (for example a late payment on a cancelled order) are never revenue; they are refunded automatically.
-- **Refunds**: refunds with status `PROCESSED` against accepted payments, counted when they were processed. Pending, sending or failed refunds are not deducted.
-- **Net revenue**: gross revenue - refunds.
-- **Order count** and **average order value** (gross revenue / order count) cover the orders paid in the period.
+### Definitions
 
-The dashboard's "today" figures are `salesReport` from the start of today (server time) until now.
-
-### Product and category breakdowns
-
-`topProducts` and `revenueByCategory` cover the same population (paid orders), all time. Their `totalRevenue` is **item sales**: unit price paid × quantity, after item-level discounts but before the order-level coupon, without shipping, and before refunds (refunds are recorded per order, not per item). Relation to the sales report over the same paid orders:
-
-```
-itemSales    = sum of topProducts.totalRevenue over all products = sum of revenueByCategory.totalRevenue
-grossRevenue = itemSales + shipping fees - coupon discounts
-netRevenue   = grossRevenue - refunds
-```
-
-`salesReport.itemSales` is the item sales of the orders paid in the requested period, so an all-time `salesReport` reconciles with the breakdowns.
-
-### `salesReport(startDate, endDate)`
-
-Both dates are inclusive.
-
-```typescript
-{
-  grossRevenue: Money;          // Accepted payments in the period
-  refunds: Money;               // Processed refunds in the period
-  netRevenue: Money;            // grossRevenue - refunds
-  totalRevenue: Money;          // Deprecated: same value as netRevenue
-  itemSales: Money;             // Item sales of the orders paid in the period
-  orderCount: number;           // Orders paid in the period
-  averageOrderValue: Money;     // grossRevenue / orderCount (0 when there are no paid orders)
-}
-```
-
-### `topProducts(limit?)`
-
-Returns the best-selling products of paid orders by quantity, descending:
-
-```typescript
-[{
-  productId: string;
-  productName: string;
-  totalQuantitySold: number;
-  totalRevenue: Money;          // Item sales
-}]
-```
-
-Default `limit`: 10. Max: 100.
-
-### `revenueByCategory()`
-
-Returns item sales of paid orders grouped by category, highest first:
-
-```typescript
-[{
-  categoryId?: string;
-  categoryName?: string;
-  totalRevenue: Money;          // Item sales
-  orderCount: number;           // Paid orders containing this category
-}]
-```
-
-### `dashboardSummary()`
-
-Snapshot of key admin metrics:
-
-```typescript
-{
-  totalUsers: number;
-  ordersToday: number;          // Orders paid today
-  revenueToday: Money;          // Net revenue today
-  grossRevenueToday: Money;     // Accepted payments today
-  refundsToday: Money;          // Processed refunds today
-  lowStockProductCount: number; // Active products with at least one active variant at or below its low-stock level
-  lowStockVariantCount: number; // Active variants of active products at or below their low-stock level (default 5)
-}
-```
+- **Paid order**: an order with an accepted payment: an online payment captured for it, or cash collected for a cash-on-delivery order. Unpaid checkouts, orders cancelled before payment, cash-on-delivery orders not collected yet and payments held for review (e.g. a late payment on a cancelled order, refunded automatically) are never sales. Guest orders count like any other.
+- **Recognised**: a paid order counts on the day of its first accepted payment (settlement, or when the cash was collected), whenever it was placed.
+- **Gross revenue**: Σ `grandTotal` of the orders paid. Split: `itemSales` (what the lines were charged, tax included, after product discounts and their share of cart discounts and loyalty points) + `shipping` (delivery fees after free shipping); `grossRevenue = itemSales + shipping` (orders placed before P1-O.1 without line shares also subtract their coupon). Discounts: `itemDiscounts` (product promotions), `orderDiscounts` (cart promotions and coupons), `loyaltyDiscounts` (points redeemed), `shippingDiscounts` (free shipping). `tax` is the tax included in the orders.
+- **Refunds**: refunds with status `PROCESSED` against accepted payments, counted on the day they were processed; pending, sending and failed refunds are not deducted. Returns and cancellations reach revenue only through their refunds, so nothing is counted twice.
+- **Net revenue** = gross revenue - refunds. **Average order value** = net revenue / paid orders.
+- **Products and categories**: `sales` is the lines' share of `itemSales` (Σ over products = `itemSales` of the same days), `refunds` the line refunds processed in the period, `netSales = sales - refunds`. Categories are the products' current categories; archived products are labelled.
+- **Margins**: each order line keeps the variant's weighted-average unit cost from the moment its stock was consumed (`OrderItem.unitCost`: online payment captured, cash-on-delivery dispatch); later cost changes never change past margins. Net sales are tax-exclusive (line charge minus its tax) net of line refunds (refunded amount × the line's tax-exclusive share). COGS = units sold × unit cost, minus units put back in stock (paid order cancelled before dispatch, returned goods restocked) × that cost, on the day they came back. `grossMargin = costedNetSales - cogs`. Lines whose cost was unknown when sold are reported in `unknownCostUnits`/`unknownCostNetSales` and left out of the margin, never counted at zero cost. Refunds not attributed to lines are `unallocatedRefunds` (in net revenue, not in margins).
+- **Conversion** (no tracking pixel): `cartsStarted` = add-to-cart calls that put the first item into an empty cart (account or guest), `checkoutQuotes` = checkout quotes given (`checkoutQuote`, `guestCheckoutQuote`; refusals not counted), both counted per day in Redis; `ordersPlaced` = orders created that day (admin-deleted excluded); `paidOrders` as above. Each step counts on its own day, so ratios over a short period can exceed 1; a ratio is null when the step before is 0.
+- **Cohorts**: a customer is an account, or the verified phone of a guest order not attached to an account. A cohort is the customers whose first paid order fell in the month; `repeatCustomers` paid for at least one more order since (any time). `months[offset]` gives the customers active that month, their paid orders and their paid totals minus refunds processed that month.
+- **Inventory valuation**: on-hand units × the variant's current cost price, per stock location; variants without a cost price are counted apart (`unknownCostUnits`, `unknownCostVariants`).
+- **Promotion performance**: per promotion and coupon code, the paid orders it applied to, what it took off them (goods and delivery fee), their `grandTotal`, and the units bought at its price (flash sales, BXGY, tiers).
 
 ---
 

@@ -119,6 +119,8 @@ const AUDITED: Record<string, string> = {
   updateStoreSettings: 'store.service.spec',
   // Not transactional (the job lives in Redis): the audit row is written right after the retry succeeds.
   retryFailedJob: 'failed-jobs.service.spec',
+  // Not transactional either: the audit row is written right after the rebuild job is queued.
+  rebuildAnalytics: 'analytics.service.spec (requestRebuild)',
   setPaystackConfig: 'payment-settings.service.spec (audited without the secret)',
   removePaystackConfig: 'payment-settings.service.spec',
   updatePaymentMethods: 'payment-settings.service.spec',
