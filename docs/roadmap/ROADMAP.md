@@ -30,9 +30,9 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 5 — Delivery & fulfilment | 7 / 8 | 🔄 in progress (P5-D deferred) |
 | 6 — Customer engagement | 14 / 17 | 🔄 in progress (N.3, S.3, L.3 deferred) |
 | 7 — Vertical packs | 0 / 8 | ⏭ not in the base (built per client on top of it) |
-| 8 — Admin, analytics & content | 1 / 4 | 🔄 in progress |
+| 8 — Admin, analytics & content | 4 / 4 | ✅ complete |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **123 / 154** | |
+| **All** | **126 / 154** | |
 
 ---
 
@@ -482,23 +482,23 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > L · ⬜
 - [ ] **Services/bookings** Appointment slots
 
-## Phase 8 — Admin, analytics & content 🔄 in progress
+## Phase 8 — Admin, analytics & content ✅ complete
 
-### P8-A — Analytics
+### P8-A — Analytics ✅ complete
 > L · 🟥 sales/margin / 🟧 rest
-- [ ] 🔄 **P8-A** Sales, margins (cost price on SKU), AOV, conversion, cohorts, inventory valuation, expiring stock, coupon performance; pre-aggregated by jobs
+- [x] **P8-A** Sales, margins (cost price on SKU), AOV, conversion, cohorts, inventory valuation, expiring stock, coupon performance; pre-aggregated by jobs [d5c53ea]
 
-### P8-C — Content
+### P8-C — Content ✅ complete
 > M · 🟧
-- [ ] 🔄 **P8-C** Banners, homepage sections, collections, SEO slugs/meta, redirects
+- [x] **P8-C** Banners, homepage sections, collections, SEO slugs/meta, redirects [6678552]
 
 ### P8-I — Import/export ✅ complete
 > M · 🟧
 - [x] **P8-I** CSV/Excel bulk products & stock via jobs with validation report [2efd90b]
 
-### P8-F — Feature flags
+### P8-F — Feature flags ✅ complete
 > S · 🟥
-- [ ] 🔄 **P8-F** Store-level vertical/feature toggles + admin UI endpoints
+- [x] **P8-F** Store-level vertical/feature toggles + admin UI endpoints [96f0d0f]
 
 ## Phase 9 — Scale & hardening
 
