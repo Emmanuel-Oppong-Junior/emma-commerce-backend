@@ -107,10 +107,14 @@ export class OrdersRepository {
     }) as unknown as Promise<OrderWithItems[]>;
   }
 
-  async findAll(): Promise<Order[]> {
+  /** Newest first; `after` is the id of the last order of the previous page. */
+  async findPage(filter: { status?: OrderStatus }, page: { take: number; after?: string }): Promise<Order[]> {
     return this.prisma.order.findMany({
-      where: { deleted: false },
+      where: { deleted: false, status: filter.status },
       include: ORDER_INCLUDE,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: page.take,
+      ...(page.after && { cursor: { id: page.after }, skip: 1 }),
     }) as unknown as Promise<Order[]>;
   }
 

@@ -6,6 +6,7 @@ import { Order } from './entities/order.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { CreateOrderInput } from './dto/create-order.input';
 import { CheckoutQuoteInput } from './dto/checkout-quote.input';
+import { OrdersArgs } from './dto/orders.args';
 import { CheckoutQuote } from './entities/checkout-quote.entity';
 import { OrderStatusEvent } from './entities/order-status-event.entity';
 import { Shipment } from './entities/shipment.entity';
@@ -47,10 +48,12 @@ export class OrdersResolver {
   @RequirePermission('order.view')
   @Query(() => [Order], {
     name: 'orders',
-    description: 'Retrieves all orders (admin only)',
+    description:
+      'Orders newest first, optionally of one status, a page at a time: pass the last id as after (staff). ' +
+      'A page shorter than first is the last one',
   })
-  async getOrders() {
-    return this.ordersService.getOrders();
+  async getOrders(@Args() { first, after, status }: OrdersArgs) {
+    return this.ordersService.getOrders({ status }, first, after);
   }
 
   @RequirePermission('order.view')

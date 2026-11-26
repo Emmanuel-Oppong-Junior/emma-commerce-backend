@@ -487,8 +487,8 @@ export class OrdersService {
   /**
    * Retrieves all orders in the system (admin only).
    */
-  async getOrders(): Promise<Order[]> {
-    return this.ordersRepository.findAll();
+  async getOrders(filter: { status?: OrderStatus }, first: number, after?: string): Promise<Order[]> {
+    return this.ordersRepository.findPage(filter, { take: first, after });
   }
 
   /**

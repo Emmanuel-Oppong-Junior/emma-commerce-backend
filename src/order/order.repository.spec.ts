@@ -115,14 +115,36 @@ describe('OrdersRepository', () => {
     });
   });
 
-  describe('findAll', () => {
-    it('should return all non-deleted orders', async () => {
+  describe('findPage', () => {
+    it('reads at most one page of non-deleted orders, newest first', async () => {
       mockPrismaOrder.findMany.mockResolvedValue([mockOrder]);
 
-      const result = await repository.findAll();
+      const result = await repository.findPage({}, { take: 20 });
 
       expect(result).toEqual([mockOrder]);
-      expect(mockPrismaOrder.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { deleted: false } }));
+      expect(mockPrismaOrder.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { deleted: false, status: undefined },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 20,
+        }),
+      );
+      expect(mockPrismaOrder.findMany.mock.calls[0][0]).not.toHaveProperty('cursor');
+    });
+
+    it('continues after the given order and filters by status', async () => {
+      mockPrismaOrder.findMany.mockResolvedValue([]);
+
+      await repository.findPage({ status: 'CONFIRMED' }, { take: 50, after: 'order_9' });
+
+      expect(mockPrismaOrder.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { deleted: false, status: 'CONFIRMED' },
+          take: 50,
+          cursor: { id: 'order_9' },
+          skip: 1,
+        }),
+      );
     });
   });
 
