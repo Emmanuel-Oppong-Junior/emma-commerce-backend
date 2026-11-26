@@ -31,8 +31,8 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 6 — Customer engagement | 14 / 17 | 🔄 in progress (N.3, S.3, L.3 deferred) |
 | 7 — Vertical packs | 0 / 8 | ⏭ not in the base (built per client on top of it) |
 | 8 — Admin, analytics & content | 4 / 4 | ✅ complete |
-| 9 — Scale & hardening | 1 / 5 | 🔄 in progress (T, M parked) |
-| **All** | **127 / 154** | |
+| 9 — Scale & hardening | 3 / 5 | ✅ done except T, M (parked on their triggers) |
+| **All** | **129 / 154** | |
 
 ---
 
@@ -500,15 +500,15 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > S · 🟥
 - [x] **P8-F** Store-level vertical/feature toggles + admin UI endpoints [96f0d0f]
 
-## Phase 9 — Scale & hardening 🔄 in progress
+## Phase 9 — Scale & hardening (L, C, D done; T, M parked on their triggers)
 
-### P9-L — Load test
+### P9-L — Load test ✅ complete
 > M · 🟥 (before first promotion)
-- [ ] 🔄 **P9-L** k6 scenarios from `03-performance-review.md` §8 against staging at client peak ×3; fix regressions
+- [x] **P9-L** k6 scenarios from `03-performance-review.md` §8 against staging at client peak ×3; fix regressions [fc26039]
 
-### P9-C — Caching/CDN
+### P9-C — Caching/CDN ✅ complete
 > M · 🟧
-- [ ] 🔄 **P9-C** Persisted queries + CDN for anonymous catalogue; event-driven invalidation
+- [x] **P9-C** Persisted queries + CDN for anonymous catalogue; event-driven invalidation [b7af954]
 
 ### P9-D — DR ✅ complete
 > S · 🟥
