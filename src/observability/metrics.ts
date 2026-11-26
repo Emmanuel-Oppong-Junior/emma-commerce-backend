@@ -54,6 +54,7 @@ export class AppMetrics {
   private readonly deliveryCodeFailures: Counter;
   private readonly deliveryOverrides: Counter;
   private readonly smsMessages: Counter;
+  private readonly cdnPurgeRequests: Counter;
   private readonly operationNames = new Set<string>();
 
   constructor(@Inject(METER) meter: Meter) {
@@ -110,6 +111,9 @@ export class AppMetrics {
     });
     this.smsMessages = meter.createCounter('sms_messages', {
       description: 'SMS handled by the notification dispatcher, by template and outcome (sent, failed, skipped)',
+    });
+    this.cdnPurgeRequests = meter.createCounter('cdn_purge_requests', {
+      description: 'CDN purge calls by the kind of catalogue change behind them (one call can count for several)',
     });
   }
 
@@ -195,6 +199,11 @@ export class AppMetrics {
   /** `template` is a key of the template registry, so the label stays bounded. */
   recordSms(template: string, outcome: SmsOutcome): void {
     this.smsMessages.add(1, { template, outcome });
+  }
+
+  /** `reason` is a CatalogueChangeReason from code, so the series stay bounded. */
+  recordCdnPurgeRequest(reason: string): void {
+    this.cdnPurgeRequests.add(1, { reason });
   }
 
   private boundedOperationName(name: string | null | undefined): string {

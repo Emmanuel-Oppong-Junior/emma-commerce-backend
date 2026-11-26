@@ -22,6 +22,8 @@ import {
   AnalyticsRollupService,
   RebuildJobData,
 } from '../analytics/rollup/analytics-rollup.service';
+import { CDN_FLUSH_JOB, CdnPurges } from '../cdn/cdn-purges';
+import { DomainEventJobData } from '../outbox/domain-events';
 
 const CONTEXT = 'MaintenanceProcessor';
 
@@ -45,6 +47,7 @@ export class MaintenanceProcessor extends WorkerHost {
     private readonly loyaltyExpiry: LoyaltyExpiryTask,
     private readonly importRetention: ImportRetentionTask,
     private readonly analyticsRollup: AnalyticsRollupService,
+    private readonly cdnPurges: CdnPurges,
   ) {
     super();
   }
@@ -56,6 +59,9 @@ export class MaintenanceProcessor extends WorkerHost {
   private async run(job: Job): Promise<void> {
     // A one-off job (rebuildAnalytics), not a schedule.
     if (job.name === ANALYTICS_REBUILD_JOB) return this.analyticsRollup.rebuildJob(job.data as RebuildJobData);
+    // CDN invalidation (P9-C): an outbox event, then the flush it schedules.
+    if (job.name === 'catalogue.changed.v1') return this.cdnPurges.enqueue((job.data as DomainEventJobData).payload);
+    if (job.name === CDN_FLUSH_JOB) return this.cdnPurges.flush();
     switch (job.name as MaintenanceJob) {
       case MaintenanceJob.ExpireAbandonedOrders:
         return this.expiredOrders.cancelAbandonedOrders();

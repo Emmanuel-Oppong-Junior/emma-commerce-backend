@@ -62,7 +62,14 @@ async function bootstrapApi() {
     origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', REQUEST_ID_HEADER],
+    // apollo-require-preflight / x-apollo-operation-name: Apollo's CSRF check requires one on GET queries (APQ, CDN).
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      REQUEST_ID_HEADER,
+      'apollo-require-preflight',
+      'x-apollo-operation-name',
+    ],
     exposedHeaders: [REQUEST_ID_HEADER],
   });
 
