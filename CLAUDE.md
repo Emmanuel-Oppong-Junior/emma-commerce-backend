@@ -78,6 +78,11 @@ psql "$DATABASE_URL" -f scripts/reports/promotions-migration-report.sql  # Split
 psql "$DATABASE_URL" -f scripts/reports/delivery-zones-migration-report.sql  # Cities the P5-A.1 zone migration dropped or moved, zones without areas/rates (read-only)
 psql "$DATABASE_URL" -f scripts/reports/pickup-points-migration-report.sql  # Pickup states the P5-E.1 migration could not map, points without hours/contact (read-only)
 psql "$DATABASE_URL" -f scripts/reports/returns-migration-report.sql  # Legacy whole-order return requests left without lines, open ones to act on (read-only)
+
+# Disaster recovery (P9-D; runbooks in docs/runbooks/)
+bash scripts/dr/restore-drill.sh        # Restore drill in throwaway Docker containers: seed + fixture, pg_dump, pg_restore, checks, timed report (exit 1 on mismatch)
+psql "$DATABASE_URL" -X -f scripts/dr/verify.sql  # Integrity checks of a (restored) database: stock/lot/serial ledger, payment ledger, sequences, append-only triggers (rolled back; exit 3 on FAIL)
+psql "$DATABASE_URL" -X -At -f scripts/dr/fingerprint.sql  # Per-table row counts + checksums and the schema objects, to diff a restore against its source
 ```
 
 ## Non-negotiables
@@ -225,6 +230,12 @@ Optional:  PORT, ROLE (api | worker, default api), ALLOWED_ORIGINS, LOG_LEVEL,
            METRICS_ENABLED ('true' | 'false', default 'true'), METRICS_PORT (default 9464)
 Seeding:   SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD
 ```
+
+### Disaster recovery (P9-D)
+
+- Runbooks in `docs/runbooks/`: `backup-and-restore.md` (provider PITR vs logical dumps, restore procedures, verifying a restore, the drill), `redis-loss.md` (what is lost with Redis and how the app recovers: payment sweep, outbox re-drive, restarting workers for the schedulers), `zero-downtime-migrations.md` (expand → backfill → switch → contract with this repo's migrations as examples, `NOT VALID`/`VALIDATE`, concurrent indexes, rolling deploys), `quarterly-drill-checklist.md` (roles, steps, result record, proposed RPO ≤ 15 min / RTO ≤ 2 h).
+- `scripts/dr/restore-drill.sh` needs only bash and Docker: two `postgres:16` containers (`emma-dr-source`, `emma-dr-target`) on a private network, Node steps in the e2e runner image, removed at the end (`--keep` / `--cleanup`). The source is migrations + seed + `scripts/dr/fixture.sql` (direct SQL that keeps the ledger invariants by construction). The drill fails if a table with an append-only/forbid-delete trigger has no fixture row: a new append-only table needs rows in `fixture.sql`.
+- `scripts/dr/verify.sql` duplicates the nightly reconciliation queries (stock ledger, lots, serial shelf) as plain SQL; when those queries change, change it too.
 
 ### Testing
 
