@@ -1,0 +1,25 @@
+{
+  "productCount": 2000,
+  "apparelEvery": 3,
+  "sizes": ["S", "M", "L", "XL"],
+  "categoryCount": 12,
+  "brandCount": 40,
+  "customerCount": 1000,
+  "staffCount": 5,
+  "historyOrders": 20000,
+  "historyDays": 365,
+  "productSlug": "load-product-{n}",
+  "customerEmail": "load.customer.{n}@loadtest.example.com",
+  "staffEmail": "load.staff.{n}@loadtest.example.com",
+  "searchTerms": [
+    "kettle",
+    "smart phone",
+    "kente shirt",
+    "solar",
+    "premium speaker",
+    "sneaker",
+    "blender pro",
+    "lotion"
+  ],
+  "suggestionPrefixes": ["ke", "sma", "pre", "sol", "sne", "ble", "lap", "dre"]
+}
