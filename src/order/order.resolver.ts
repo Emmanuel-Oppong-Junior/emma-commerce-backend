@@ -1,4 +1,6 @@
+import { UseInterceptors } from '@nestjs/common';
 import { Args, Context, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { CountCheckoutQuotes } from '../analytics/counters/counting.interceptors';
 import { Request } from 'express';
 import { Order } from './entities/order.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
@@ -61,6 +63,7 @@ export class OrdersResolver {
   }
 
   @Auth(AuthType.Bearer)
+  @UseInterceptors(CountCheckoutQuotes)
   @Query(() => CheckoutQuote, {
     description:
       "Prices the current user's cart for checkout with the chosen fulfilment and coupon: the full breakdown and the " +

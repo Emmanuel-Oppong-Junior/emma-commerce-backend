@@ -1,4 +1,6 @@
+import { UseInterceptors } from '@nestjs/common';
 import { Args, Context, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { CountCartStarts, CountCheckoutQuotes } from '../analytics/counters/counting.interceptors';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
@@ -55,6 +57,7 @@ export class GuestCheckoutResolver {
     return this.guestCheckout.getCart(token);
   }
 
+  @UseInterceptors(CountCartStarts)
   @Mutation(() => GuestCart, { description: 'Add a variant to the guest cart (as addToCart)' })
   addToGuestCart(
     @Args(TOKEN_ARG.name, { description: TOKEN_ARG.description }) token: string,
@@ -105,6 +108,7 @@ export class GuestCheckoutResolver {
     return this.guestCheckout.verifyPhone(token, input.code);
   }
 
+  @UseInterceptors(CountCheckoutQuotes)
   @Query(() => CheckoutQuote, {
     description:
       'checkoutQuote for the guest cart: the same breakdown and quoteHash, priced as a visitor (no customer-group, ' +

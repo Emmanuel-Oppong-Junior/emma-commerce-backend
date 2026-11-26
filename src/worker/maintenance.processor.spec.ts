@@ -1,6 +1,7 @@
 import { Job } from 'bullmq';
 import { MaintenanceProcessor } from './maintenance.processor';
 import { MaintenanceJob } from './maintenance-jobs';
+import { ANALYTICS_REBUILD_JOB } from '../analytics/rollup/analytics-rollup.service';
 
 function buildProcessor() {
   const expiredOrders = { cancelAbandonedOrders: jest.fn().mockResolvedValue(undefined) };
@@ -16,6 +17,10 @@ function buildProcessor() {
   const guestCarts = { purge: jest.fn().mockResolvedValue(0) };
   const loyaltyExpiry = { expire: jest.fn().mockResolvedValue(0) };
   const importRetention = { purge: jest.fn().mockResolvedValue(0) };
+  const analyticsRollup = {
+    rebuildRecent: jest.fn().mockResolvedValue(undefined),
+    rebuildJob: jest.fn().mockResolvedValue(undefined),
+  };
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
   const processor = new MaintenanceProcessor(
     expiredOrders as never,
@@ -30,6 +35,7 @@ function buildProcessor() {
     guestCarts as never,
     loyaltyExpiry as never,
     importRetention as never,
+    analyticsRollup as never,
   );
   return {
     processor,
@@ -43,6 +49,7 @@ function buildProcessor() {
     guestCarts,
     loyaltyExpiry,
     importRetention,
+    analyticsRollup,
     logger,
   };
 }
@@ -62,6 +69,8 @@ describe('MaintenanceProcessor', () => {
     [MaintenanceJob.PurgeGuestCarts, 'guestCarts', 'purge'],
     [MaintenanceJob.ExpireLoyaltyPoints, 'loyaltyExpiry', 'expire'],
     [MaintenanceJob.PurgeImports, 'importRetention', 'purge'],
+    [MaintenanceJob.RollupAnalytics, 'analyticsRollup', 'rebuildRecent'],
+    [ANALYTICS_REBUILD_JOB, 'analyticsRollup', 'rebuildJob'],
   ] as const)('runs %s through %s.%s exactly once', async (name, target, method) => {
     const built = buildProcessor();
 
@@ -81,8 +90,19 @@ describe('MaintenanceProcessor', () => {
       built.guestCarts.purge,
       built.loyaltyExpiry.expire,
       built.importRetention.purge,
+      built.analyticsRollup.rebuildRecent,
+      built.analyticsRollup.rebuildJob,
     ].reduce((total, mock) => total + mock.mock.calls.length, 0);
     expect(allCalls).toBe(1);
+  });
+
+  it('hands a rebuild job its days', async () => {
+    const built = buildProcessor();
+    const rebuild = { ...job(ANALYTICS_REBUILD_JOB), data: { from: '2026-01-01', to: '2026-02-01' } } as unknown as Job;
+
+    await built.processor.process(rebuild);
+
+    expect(built.analyticsRollup.rebuildJob).toHaveBeenCalledWith({ from: '2026-01-01', to: '2026-02-01' });
   });
 
   it('fails a job with an unknown name so it lands in the failed set', async () => {

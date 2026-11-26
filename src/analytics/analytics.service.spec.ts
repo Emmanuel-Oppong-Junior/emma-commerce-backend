@@ -1,229 +1,140 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { AnalyticsService } from './analytics.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { ReportBucket } from './domain/report-range';
+import { ANALYTICS_REBUILD_JOB } from './rollup/analytics-rollup.service';
 
-const mockPrisma = {
-  user: {
-    count: jest.fn(),
-  },
-  $queryRaw: jest.fn(),
-};
+const d = (value: string) => new Prisma.Decimal(value);
 
-const salesRow = (values: {
-  grossRevenue: string;
-  refunds: string;
-  netRevenue: string;
-  itemSales: string;
-  orderCount: number;
-  averageOrderValue: string;
-}) => ({
-  ...values,
-  grossRevenue: new Prisma.Decimal(values.grossRevenue),
-  refunds: new Prisma.Decimal(values.refunds),
-  netRevenue: new Prisma.Decimal(values.netRevenue),
-  itemSales: new Prisma.Decimal(values.itemSales),
-  averageOrderValue: new Prisma.Decimal(values.averageOrderValue),
-});
-
-/** Joins the static SQL of a tagged-template `$queryRaw` call, inlining nested Prisma.sql fragments. */
-const sqlOf = (call: unknown[]): string => {
-  const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
-  return strings.reduce((sql, part, i) => {
-    const value = values[i - 1];
-    const fragment = typeof value === 'object' && value !== null && 'sql' in value ? (value as Prisma.Sql).sql : '?';
-    return sql + fragment + part;
-  });
-};
+function salesRow(day: string, values: Record<string, unknown> = {}) {
+  const zero = d('0');
+  return {
+    day: new Date(`${day}T00:00:00Z`),
+    paidOrders: 0,
+    unitsSold: 0,
+    grossRevenue: zero,
+    itemSales: zero,
+    itemDiscounts: zero,
+    orderDiscounts: zero,
+    loyaltyDiscounts: zero,
+    shipping: zero,
+    shippingDiscounts: zero,
+    tax: zero,
+    refundCount: 0,
+    refunds: zero,
+    refundedShipping: zero,
+    refundedTax: zero,
+    unallocatedRefunds: zero,
+    ordersPlaced: 0,
+    cartsStarted: 0,
+    checkoutQuotes: 0,
+    computedAt: new Date('2026-03-04T10:00:00Z'),
+    ...values,
+  };
+}
 
 describe('AnalyticsService', () => {
+  let prisma: {
+    user: { count: jest.Mock };
+    analyticsDailySales: { findMany: jest.Mock; findUnique: jest.Mock };
+    $queryRaw: jest.Mock;
+  };
+  let audit: { log: jest.Mock };
+  let queue: { add: jest.Mock };
   let service: AnalyticsService;
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [AnalyticsService, { provide: PrismaService, useValue: mockPrisma }],
-    }).compile();
-
-    service = module.get<AnalyticsService>(AnalyticsService);
-    jest.clearAllMocks();
+  beforeEach(() => {
+    prisma = {
+      user: { count: jest.fn().mockResolvedValue(100) },
+      analyticsDailySales: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn().mockResolvedValue(null) },
+      $queryRaw: jest.fn().mockResolvedValue([{ count: 0 }]),
+    };
+    audit = { log: jest.fn() };
+    queue = { add: jest.fn().mockResolvedValue({ id: '42' }) };
+    service = new AnalyticsService(prisma as never, audit as never, queue as never);
   });
 
-  describe('getSalesReport', () => {
-    it('maps gross revenue, refunds and net revenue computed in SQL, with totalRevenue equal to net revenue', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        salesRow({
-          grossRevenue: '375.00',
-          refunds: '40.00',
-          netRevenue: '335.00',
-          itemSales: '340.00',
-          orderCount: 3,
-          averageOrderValue: '125.00',
-        }),
+  describe('salesReport', () => {
+    it('reads the rollup rows of the inclusive range and fills days not computed with zeros', async () => {
+      prisma.analyticsDailySales.findMany.mockResolvedValue([
+        salesRow('2026-03-02', { paidOrders: 2, grossRevenue: d('300.00'), refunds: d('20.00') }),
       ]);
 
-      const result = await service.getSalesReport(new Date('2025-01-01'), new Date('2025-01-31'));
+      const report = await service.salesReport('2026-03-01', '2026-03-03', ReportBucket.DAY);
 
-      expect(result).toEqual({
-        grossRevenue: new Prisma.Decimal('375'),
-        refunds: new Prisma.Decimal('40'),
-        netRevenue: new Prisma.Decimal('335'),
-        totalRevenue: new Prisma.Decimal('335'),
-        itemSales: new Prisma.Decimal('340'),
-        orderCount: 3,
-        averageOrderValue: new Prisma.Decimal('125'),
+      expect(prisma.analyticsDailySales.findMany).toHaveBeenCalledWith({
+        where: { day: { gte: new Date('2026-03-01T00:00:00Z'), lt: new Date('2026-03-04T00:00:00Z') } },
+        orderBy: { day: 'asc' },
       });
+      expect(report.totals).toMatchObject({ paidOrders: 2, netRevenue: d('280'), averageOrderValue: d('140') });
+      expect(report.buckets.map((bucket) => [bucket.firstDay, bucket.paidOrders])).toEqual([
+        ['2026-03-01', 0],
+        ['2026-03-02', 2],
+        ['2026-03-03', 0],
+      ]);
+      expect(report.daysNotComputed).toBe(2);
+      expect(report.refreshedAt).toEqual(new Date('2026-03-04T10:00:00Z'));
     });
 
-    it('counts only accepted payments and processed refunds against them, within the period', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        salesRow({
-          grossRevenue: '0',
-          refunds: '0',
-          netRevenue: '0',
-          itemSales: '0',
-          orderCount: 0,
-          averageOrderValue: '0',
-        }),
-      ]);
-      const start = new Date('2025-01-01');
-      const end = new Date('2025-01-31');
+    it('refuses an invalid range with BAD_REQUEST before reading anything', async () => {
+      await expect(service.salesReport('2026-03-02', '2026-03-01', ReportBucket.DAY)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.analyticsDailySales.findMany).not.toHaveBeenCalled();
+    });
+  });
 
-      const result = await service.getSalesReport(start, end);
+  describe('dashboardSummary', () => {
+    it("reports today's paid orders and revenue from today's UTC rollup row", async () => {
+      prisma.analyticsDailySales.findUnique.mockResolvedValue(
+        salesRow('2026-03-04', { paidOrders: 5, grossRevenue: d('1300.00'), refunds: d('50.00') }),
+      );
+      prisma.$queryRaw.mockResolvedValueOnce([{ count: 3 }]).mockResolvedValueOnce([{ count: 7 }]);
 
-      expect(result).toMatchObject({
-        grossRevenue: new Prisma.Decimal('0'),
-        netRevenue: new Prisma.Decimal('0'),
-        orderCount: 0,
-        averageOrderValue: new Prisma.Decimal('0'),
+      const summary = await service.dashboardSummary(new Date('2026-03-04T23:30:00Z'));
+
+      expect(prisma.analyticsDailySales.findUnique).toHaveBeenCalledWith({
+        where: { day: new Date('2026-03-04T00:00:00Z') },
       });
-      const call = mockPrisma.$queryRaw.mock.calls[0];
-      const sql = sqlOf(call);
-      expect(sql).toContain(`pa.status = 'CAPTURED' AND pa."reviewReason" IS NULL AND pa.deleted = false`);
-      expect(sql).toContain(`r.status = 'PROCESSED'`);
-      expect(sql).not.toContain('"Order"');
-      expect(call.slice(1)).toEqual(expect.arrayContaining([start, end]));
-    });
-  });
-
-  describe('getTopProducts', () => {
-    it('maps top products of paid orders', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        {
-          productId: 'p1',
-          productName: 'T-Shirt',
-          totalQuantitySold: BigInt(50),
-          totalRevenue: new Prisma.Decimal('999.50'),
-        },
-        {
-          productId: 'p2',
-          productName: 'Hoodie',
-          totalQuantitySold: BigInt(30),
-          totalRevenue: new Prisma.Decimal(1500),
-        },
-      ]);
-
-      const result = await service.getTopProducts(5);
-
-      expect(result).toEqual([
-        { productId: 'p1', productName: 'T-Shirt', totalQuantitySold: 50, totalRevenue: new Prisma.Decimal('999.5') },
-        { productId: 'p2', productName: 'Hoodie', totalQuantitySold: 30, totalRevenue: new Prisma.Decimal('1500') },
-      ]);
-      expect(sqlOf(mockPrisma.$queryRaw.mock.calls[0])).toContain(`pa."reviewReason" IS NULL`);
-    });
-
-    it('returns an empty array when nothing was paid', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([]);
-
-      expect(await service.getTopProducts(5)).toEqual([]);
-    });
-  });
-
-  describe('getRevenueByCategory', () => {
-    it('maps category item sales of paid orders', async () => {
-      mockPrisma.$queryRaw.mockResolvedValue([
-        {
-          categoryId: 'cat1',
-          categoryName: 'Clothing',
-          totalRevenue: new Prisma.Decimal(3000),
-          orderCount: BigInt(15),
-        },
-        { categoryId: null, categoryName: null, totalRevenue: new Prisma.Decimal(500), orderCount: BigInt(5) },
-      ]);
-
-      const result = await service.getRevenueByCategory();
-
-      expect(result).toEqual([
-        { categoryId: 'cat1', categoryName: 'Clothing', totalRevenue: new Prisma.Decimal('3000'), orderCount: 15 },
-        { categoryId: undefined, categoryName: undefined, totalRevenue: new Prisma.Decimal('500'), orderCount: 5 },
-      ]);
-      expect(sqlOf(mockPrisma.$queryRaw.mock.calls[0])).toContain(`pa."reviewReason" IS NULL`);
-    });
-  });
-
-  describe('getDashboardSummary', () => {
-    it("reports today's paid orders and revenue from the sales report since the start of today", async () => {
-      mockPrisma.user.count.mockResolvedValue(100);
-      mockPrisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
-        const sql = strings.join('?');
-        if (sql.includes('FROM "Product"')) return Promise.resolve([{ count: BigInt(3) }]);
-        if (sql.includes('FROM "Variant"')) return Promise.resolve([{ count: BigInt(7) }]);
-        return Promise.resolve([
-          salesRow({
-            grossRevenue: '1300.00',
-            refunds: '50.00',
-            netRevenue: '1250.00',
-            itemSales: '1200.00',
-            orderCount: 5,
-            averageOrderValue: '260.00',
-          }),
-        ]);
-      });
-
-      const result = await service.getDashboardSummary();
-
-      expect(result).toEqual({
+      expect(summary).toEqual({
         totalUsers: 100,
         ordersToday: 5,
-        revenueToday: new Prisma.Decimal('1250'),
-        grossRevenueToday: new Prisma.Decimal('1300'),
-        refundsToday: new Prisma.Decimal('50'),
+        revenueToday: d('1250'),
+        grossRevenueToday: d('1300'),
+        refundsToday: d('50'),
         lowStockProductCount: 3,
         lowStockVariantCount: 7,
       });
-      const salesCall = mockPrisma.$queryRaw.mock.calls.find((call) => sqlOf(call).includes('"recognisedAt"'))!;
-      const [start, end] = salesCall.slice(1).filter((value: unknown) => value instanceof Date) as Date[];
-      expect(start.getHours()).toBe(0);
-      expect(start.getMinutes()).toBe(0);
-      expect(end.getTime()).toBeGreaterThanOrEqual(start.getTime());
     });
 
-    it('reports zero revenue today when nothing was paid', async () => {
-      mockPrisma.user.count.mockResolvedValue(0);
-      mockPrisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
-        const sql = strings.join('?');
-        if (sql.includes('FROM "Product"') || sql.includes('FROM "Variant"')) {
-          return Promise.resolve([{ count: BigInt(0) }]);
-        }
-        return Promise.resolve([
-          salesRow({
-            grossRevenue: '0',
-            refunds: '0',
-            netRevenue: '0',
-            itemSales: '0',
-            orderCount: 0,
-            averageOrderValue: '0',
-          }),
-        ]);
-      });
+    it('reports zeros before today was computed', async () => {
+      const summary = await service.dashboardSummary(new Date('2026-03-04T00:01:00Z'));
 
-      const result = await service.getDashboardSummary();
+      expect(summary).toMatchObject({ ordersToday: 0, revenueToday: d('0'), refundsToday: d('0') });
+    });
+  });
 
-      expect(result).toMatchObject({
-        totalUsers: 0,
-        ordersToday: 0,
-        revenueToday: new Prisma.Decimal('0'),
-        refundsToday: new Prisma.Decimal('0'),
+  describe('requestRebuild', () => {
+    it('queues the rebuild of the half-open range on the maintenance queue, then audits who asked', async () => {
+      const result = await service.requestRebuild('2026-01-01', '2026-01-31', 'admin1');
+
+      expect(queue.add).toHaveBeenCalledWith(ANALYTICS_REBUILD_JOB, { from: '2026-01-01', to: '2026-02-01' });
+      expect(audit.log).toHaveBeenCalledWith({
+        entity: 'AnalyticsRollup',
+        entityId: '42',
+        action: 'CREATE',
+        userId: 'admin1',
+        details: { firstDay: '2026-01-01', lastDay: '2026-01-31', days: 31 },
       });
+      expect(result).toEqual({ jobId: '42', firstDay: '2026-01-01', lastDay: '2026-01-31' });
+    });
+
+    it('queues nothing for a range over two years', async () => {
+      await expect(service.requestRebuild('2020-01-01', '2026-01-01', 'admin1')).rejects.toThrow(
+        'A report covers at most 731 days',
+      );
+      expect(queue.add).not.toHaveBeenCalled();
+      expect(audit.log).not.toHaveBeenCalled();
     });
   });
 });

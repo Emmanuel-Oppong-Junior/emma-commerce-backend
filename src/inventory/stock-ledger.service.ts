@@ -252,8 +252,8 @@ export class StockLedgerService {
   }
 
   /**
-   * The sale happened (online payment captured, or a cash-on-delivery order dispatched): ACTIVE -> CONSUMED. A
-   * lot-tracked variant's units come from its unexpired lots, first expiry first; if they run short (expired units
+   * The sale happened (online payment captured, or a cash-on-delivery order dispatched): ACTIVE -> CONSUMED, and the
+   * line's unit cost is snapshotted for margins. A lot-tracked variant's units come from its unexpired lots, first expiry first; if they run short (expired units
    * held for the order), the expired lots make up the rest and a warning is logged.
    */
   async consumeOrder(tx: Tx, orderId: string, actorId?: string): Promise<number> {
@@ -273,6 +273,7 @@ export class StockLedgerService {
         { refType: 'Order', refId: orderId, actorId },
         { policy: DrawPolicy.Sale },
       );
+      await this.repository.recordSaleCost(tx, reservation.orderItemId);
       consumed += 1;
     }
     return consumed;

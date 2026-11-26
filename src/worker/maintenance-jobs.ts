@@ -13,6 +13,7 @@ export enum MaintenanceJob {
   PurgeGuestCarts = 'cart.purge-guest-carts',
   ExpireLoyaltyPoints = 'loyalty.expire-points',
   PurgeImports = 'imports.purge',
+  RollupAnalytics = 'analytics.rollup',
 }
 
 // Same cadence the in-process crons had. BullMQ creates one job per tick for the whole cluster.
@@ -31,4 +32,6 @@ export const MAINTENANCE_SCHEDULES: Record<MaintenanceJob, Omit<RepeatOptions, '
   // Daily; spending and refunds expire a customer's due points themselves in between.
   [MaintenanceJob.ExpireLoyaltyPoints]: { pattern: '50 0 * * *', tz: 'UTC' },
   [MaintenanceJob.PurgeImports]: { pattern: '25 4 * * *', tz: 'UTC' },
+  // Report rollups of today and the 7 days before: reports lag sales by at most 15 minutes.
+  [MaintenanceJob.RollupAnalytics]: { pattern: '*/15 * * * *', tz: 'UTC' },
 };

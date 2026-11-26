@@ -120,6 +120,14 @@ input AdjustVariantStockInput {
   variantId: ID!
 }
 
+type AnalyticsRebuild {
+  firstDay: String!
+
+  """The maintenance job rebuilding the days"""
+  jobId: ID!
+  lastDay: String!
+}
+
 input AnswerProductQuestionInput {
   """Up to 2000 characters, trimmed; replaces an earlier answer"""
   answer: String!
@@ -566,6 +574,36 @@ type Category {
   updatedAt: DateTime!
 }
 
+type CategoryMargin {
+  """Null for products without a category"""
+  categoryId: ID
+  categoryName: String
+
+  """Cost of goods sold of those lines"""
+  cogs: Money!
+
+  """Tax-exclusive net sales of lines with a known cost"""
+  costedNetSales: Money!
+
+  """costedNetSales - cogs"""
+  grossMargin: Money!
+
+  """
+  grossMargin / costedNetSales, 4 dp (0.2500 = 25 %); null without costed sales
+  """
+  marginRate: Decimal
+
+  """Tax-exclusive net sales of every line (costed + unknown cost)"""
+  netSales: Money!
+  unitsSold: Int!
+
+  """Their tax-exclusive net sales, left out of the margin"""
+  unknownCostNetSales: Money!
+
+  """Units sold whose cost was unknown"""
+  unknownCostUnits: Int!
+}
+
 input ChangeUserPasswordInput {
   """
   The new password to set: 8-128 characters, with at least one uppercase letter, one lowercase letter, one number and one special character (@$!%*?&_-#); no other characters
@@ -864,6 +902,35 @@ type CodUncollectedDelivery {
   orderNumber: Int!
 }
 
+"""
+Customers whose first paid order fell in the month. A customer is an account, or a guest phone for guest orders not attached to an account.
+"""
+type Cohort {
+  customers: Int!
+
+  """YYYY-MM"""
+  month: String!
+  months: [CohortMonth!]!
+
+  """Customers who paid for at least one more order since"""
+  repeatCustomers: Int!
+
+  """repeatCustomers / customers, 4 dp"""
+  repeatRate: Float
+}
+
+type CohortMonth {
+  """Customers of the cohort who paid for an order that month"""
+  activeCustomers: Int!
+
+  """Their paid order totals minus refunds processed that month"""
+  netRevenue: Money!
+
+  """Months after the cohort month (0 = that month)"""
+  offset: Int!
+  orders: Int!
+}
+
 """A merchandised product list with its own page"""
 type Collection {
   createdAt: DateTime!
@@ -1059,6 +1126,16 @@ enum ContentReportReason {
   OTHER
   PERSONAL_INFORMATION
   SPAM
+}
+
+"""
+Reports read daily rollups rebuilt every 15 minutes (today and the 7 days before) and by rebuildAnalytics
+"""
+type ConversionReport {
+  buckets: [FunnelBucket!]!
+  daysNotComputed: Int!
+  refreshedAt: DateTime
+  totals: FunnelFigures!
 }
 
 """
@@ -2390,6 +2467,49 @@ input FulfilmentLocationsInput {
   locationIds: [ID!]!
 }
 
+type FunnelBucket {
+  cartsStarted: Int!
+  checkoutQuotes: Int!
+
+  """paidOrders / cartsStarted, 4 dp"""
+  conversionRate: Float
+  firstDay: String!
+  lastDay: String!
+  ordersPlaced: Int!
+  paidOrders: Int!
+
+  """paidOrders / ordersPlaced, 4 dp"""
+  paymentRate: Float
+
+  """ordersPlaced / checkoutQuotes, 4 dp"""
+  placementRate: Float
+
+  """checkoutQuotes / cartsStarted, 4 dp"""
+  quoteRate: Float
+}
+
+"""
+The checkout funnel (no tracking pixel): carts started (first item added to an empty cart), checkout quotes given, orders placed, orders paid. Each step counts on its own day, so a short period can show ratios above 1.
+"""
+type FunnelFigures {
+  cartsStarted: Int!
+  checkoutQuotes: Int!
+
+  """paidOrders / cartsStarted, 4 dp"""
+  conversionRate: Float
+  ordersPlaced: Int!
+  paidOrders: Int!
+
+  """paidOrders / ordersPlaced, 4 dp"""
+  paymentRate: Float
+
+  """ordersPlaced / checkoutQuotes, 4 dp"""
+  placementRate: Float
+
+  """checkoutQuotes / cartsStarted, 4 dp"""
+  quoteRate: Float
+}
+
 """One of Ghana's 16 administrative regions"""
 enum GhanaRegion {
   AHAFO
@@ -2802,6 +2922,19 @@ input InspectedReturnLineInput {
 }
 
 """
+Stock on hand at weighted-average cost now (report.view and inventory.cost.view), computed live. Variants without a cost price are counted apart, never valued at zero.
+"""
+type InventoryValuation {
+  locations: [LocationValuation!]!
+  units: Int!
+  unknownCostUnits: Int!
+
+  """Variants with stock on hand and no cost price"""
+  unknownCostVariants: Int!
+  value: Money!
+}
+
+"""
 The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
 """
 scalar JSON
@@ -2817,6 +2950,21 @@ enum JobQueue {
   MAINTENANCE
   NOTIFICATIONS
   WEBHOOKS
+}
+
+type LocationValuation {
+  isActive: Boolean!
+  locationId: ID!
+  locationName: String!
+
+  """Units on hand"""
+  units: Int!
+
+  """Units on hand of variants with no cost price, left out of value"""
+  unknownCostUnits: Int!
+
+  """Units of known cost x the variant cost price"""
+  value: Money!
 }
 
 """A batch of a lot-tracked variant with its expiry (P4-C.1)"""
@@ -2977,6 +3125,52 @@ enum LoyaltyTransactionType {
 
   """Earned points taken back because the order was refunded"""
   REVERSE
+}
+
+"""
+Margin of the units sold (P8-A): tax-exclusive net sales (net of line refunds) minus the cost of goods sold at each line's cost snapshotted when its stock was consumed, less units put back in stock. Lines whose cost was unknown are reported apart and left out of the margin.
+"""
+type MarginFigures {
+  """Cost of goods sold of those lines"""
+  cogs: Money!
+
+  """Tax-exclusive net sales of lines with a known cost"""
+  costedNetSales: Money!
+
+  """costedNetSales - cogs"""
+  grossMargin: Money!
+
+  """
+  grossMargin / costedNetSales, 4 dp (0.2500 = 25 %); null without costed sales
+  """
+  marginRate: Decimal
+
+  """Tax-exclusive net sales of every line (costed + unknown cost)"""
+  netSales: Money!
+  unitsSold: Int!
+
+  """Their tax-exclusive net sales, left out of the margin"""
+  unknownCostNetSales: Money!
+
+  """Units sold whose cost was unknown"""
+  unknownCostUnits: Int!
+}
+
+"""
+Margins over a period (report.view and inventory.cost.view). Reports read daily rollups rebuilt every 15 minutes (today and the 7 days before) and by rebuildAnalytics
+"""
+type MarginReport {
+  """Highest gross margin first (by current product category)"""
+  byCategory: [CategoryMargin!]!
+
+  """Highest gross margin first"""
+  byProduct: [ProductMargin!]!
+  overall: MarginFigures!
+
+  """
+  Goods refunded without order lines (e.g. older return refunds): in netRevenue, not in margins
+  """
+  unallocatedRefunds: Money!
 }
 
 """
@@ -3469,6 +3663,11 @@ type Mutation {
   Send a PENDING refund (e.g. an auto-refund of a flagged payment) or resend a FAILED one (admin only)
   """
   processPendingRefund(refundId: ID!): RefundEntity!
+
+  """
+  Rebuilds the report rollups of a range of days in the background (after a data correction, or for history before analytics existed). BAD_REQUEST for a day that does not exist, a last day before the first or more than 731 days
+  """
+  rebuildAnalytics(input: RebuildAnalyticsInput!): AnalyticsRebuild!
 
   """
   Receive a delivery against a sent purchase order into its location; lot-tracked lines name their lot, serial-tracked lines their serials (staff)
@@ -4236,6 +4435,11 @@ type OrderItem {
   """Taxes included in the line; empty on orders placed before"""
   taxLines: [OrderLineTax!]!
 
+  """
+  The variant's unit cost (tax-exclusive, 4 dp) when the sale's stock was consumed; null when unknown or not sold yet. Never changes afterwards (inventory.cost.view)
+  """
+  unitCost: Decimal
+
   """Product discount taken off one unit"""
   unitDiscount: Money!
 
@@ -4948,6 +5152,37 @@ input ProductFilterArgs {
   tagName: String
 }
 
+type ProductMargin {
+  """The product is archived"""
+  archived: Boolean!
+
+  """Cost of goods sold of those lines"""
+  cogs: Money!
+
+  """Tax-exclusive net sales of lines with a known cost"""
+  costedNetSales: Money!
+
+  """costedNetSales - cogs"""
+  grossMargin: Money!
+
+  """
+  grossMargin / costedNetSales, 4 dp (0.2500 = 25 %); null without costed sales
+  """
+  marginRate: Decimal
+
+  """Tax-exclusive net sales of every line (costed + unknown cost)"""
+  netSales: Money!
+  productId: ID!
+  productName: String!
+  unitsSold: Int!
+
+  """Their tax-exclusive net sales, left out of the margin"""
+  unknownCostNetSales: Money!
+
+  """Units sold whose cost was unknown"""
+  unknownCostUnits: Int!
+}
+
 """A customer's question on a product and the store's answer"""
 type ProductQuestion {
   """The store's answer; null until answered"""
@@ -5154,6 +5389,28 @@ type Promotion {
   A percentage (PERCENT; BXGY: off each reward unit) or an amount in the store currency; null for TIERED
   """
   value: Decimal
+}
+
+"""How a promotion (and coupon code) did on the orders paid in a period"""
+type PromotionPerformance {
+  """The coupon code that unlocked it; null when automatic"""
+  couponCode: String
+
+  """What it took off those orders (goods and delivery fee)"""
+  discount: Money!
+
+  """Paid orders it applied to (redemptions)"""
+  orders: Int!
+  promotionId: ID!
+
+  """Null once the promotion was deleted"""
+  promotionName: String
+
+  """Σ grandTotal of those orders"""
+  revenue: Money!
+
+  """Units bought at its price (flash sales, BXGY, tiers)"""
+  units: Int!
 }
 
 """What a promotion targets"""
@@ -5508,12 +5765,39 @@ type Query {
   codRiskSettings: CodRiskSettingsEntity!
 
   """
+  Customer cohorts by the month of their first paid order: size, repeat rate and activity in the months after. BAD_REQUEST for more than 24 cohorts or a last month before the first
+  """
+  cohortReport(
+    """First cohort: the month of a first paid order (YYYY-MM)"""
+    firstMonth: String!
+
+    """Months followed after the first (0-24), never past the current month"""
+    followMonths: Int! = 12
+
+    """Last cohort (YYYY-MM); at most 24 cohorts"""
+    lastMonth: String!
+  ): [Cohort!]!
+
+  """
   The live collection with this current slug, else null (an old slug: resolveSlug)
   """
   collection(slug: String!): Collection
 
   """The live collections by name (at most 100)"""
   collections: [Collection!]!
+
+  """
+  The checkout funnel per day, week or month. BAD_REQUEST for a day that does not exist, a last day before the first or more than 731 days
+  """
+  conversionReport(
+    bucket: ReportBucket! = DAY
+
+    """First day included (YYYY-MM-DD, UTC = Ghana time)"""
+    firstDay: String!
+
+    """Last day included (YYYY-MM-DD); at most 731 days after firstDay"""
+    lastDay: String!
+  ): ConversionReport!
 
   """A customer's consent ledger, newest first (staff)"""
   customerConsentHistory(userId: ID!): [ConsentEventEntity!]!
@@ -5537,7 +5821,7 @@ type Query {
   """A customer's referral code and referrals (staff)"""
   customerReferrals(userId: ID!): CustomerReferrals!
 
-  """Admin dashboard summary (admin only)"""
+  """Today's sales (from the rollups) and live low-stock counts"""
   dashboardSummary: DashboardSummary!
 
   """
@@ -5622,8 +5906,25 @@ type Query {
   """Admin: every homepage section, live or not, by position"""
   homepageSections: [HomepageSection!]!
 
+  """Stock on hand valued at weighted-average cost, per location"""
+  inventoryValuation: InventoryValuation!
+
   """How the loyalty programme earns and redeems points (public)"""
   loyaltySettings: LoyaltySettingsEntity!
+
+  """
+  Gross margin overall, by product and by category (first: rows per list). BAD_REQUEST for a day that does not exist, a last day before the first or more than 731 days
+  """
+  marginReport(
+    """At most this many rows (1-100)"""
+    first: Int! = 10
+
+    """First day included (YYYY-MM-DD, UTC = Ghana time)"""
+    firstDay: String!
+
+    """Last day included (YYYY-MM-DD); at most 731 days after firstDay"""
+    lastDay: String!
+  ): MarginReport!
 
   """
   Shipments assigned to the signed-in rider: open ones by default, oldest assignment first
@@ -5810,6 +6111,20 @@ type Query {
   """Admin: one promotion with its targets and coupon codes"""
   promotion(id: ID!): Promotion!
 
+  """
+  Promotions and coupon codes by discount given on paid orders in a period. BAD_REQUEST for a day that does not exist, a last day before the first or more than 731 days
+  """
+  promotionPerformance(
+    """At most this many rows (1-100)"""
+    first: Int! = 10
+
+    """First day included (YYYY-MM-DD, UTC = Ghana time)"""
+    firstDay: String!
+
+    """Last day included (YYYY-MM-DD); at most 731 days after firstDay"""
+    lastDay: String!
+  ): [PromotionPerformance!]!
+
   """Admin: promotions, newest first, optionally filtered"""
   promotions(isActive: Boolean, scope: PromotionScope): [Promotion!]!
 
@@ -5913,9 +6228,6 @@ type Query {
     status: ReturnStatus
   ): ReturnRequestPage!
 
-  """Item sales of paid orders grouped by category, all time (admin only)"""
-  revenueByCategory: [RevenueByCategoryEntity!]!
-
   """
   A published review of a public product; its author and moderators also see it hidden
   """
@@ -5925,9 +6237,17 @@ type Query {
   riders: [DeliveryRider!]!
 
   """
-  Gross revenue, refunds and net revenue recognised in a date range (admin only)
+  Sales recognised per day, week or month: paid orders, revenue, discounts, refunds, AOV. BAD_REQUEST for a day that does not exist, a last day before the first or more than 731 days
   """
-  salesReport(endDate: DateTime!, startDate: DateTime!): SalesReport!
+  salesReport(
+    bucket: ReportBucket! = DAY
+
+    """First day included (YYYY-MM-DD, UTC = Ghana time)"""
+    firstDay: String!
+
+    """Last day included (YYYY-MM-DD); at most 731 days after firstDay"""
+    lastDay: String!
+  ): SalesReport!
 
   """Your items saved for later, newest first (at most 100)"""
   savedItems: [SavedCartItem!]!
@@ -6104,9 +6424,33 @@ type Query {
   taxes: [TaxEntity!]!
 
   """
-  Best-selling products of paid orders by quantity, all time (admin only)
+  Categories by sales of paid orders in a period. BAD_REQUEST for a day that does not exist, a last day before the first or more than 731 days
   """
-  topProducts(limit: Int! = 10): [TopProduct!]!
+  topCategories(
+    """At most this many rows (1-100)"""
+    first: Int! = 10
+
+    """First day included (YYYY-MM-DD, UTC = Ghana time)"""
+    firstDay: String!
+
+    """Last day included (YYYY-MM-DD); at most 731 days after firstDay"""
+    lastDay: String!
+  ): [TopCategory!]!
+
+  """
+  Best-selling products of paid orders in a period. BAD_REQUEST for a day that does not exist, a last day before the first or more than 731 days
+  """
+  topProducts(
+    """At most this many rows (1-100)"""
+    first: Int! = 10
+
+    """First day included (YYYY-MM-DD, UTC = Ghana time)"""
+    firstDay: String!
+
+    """Last day included (YYYY-MM-DD); at most 731 days after firstDay"""
+    lastDay: String!
+    orderBy: TopProductsOrder! = UNITS
+  ): [TopProduct!]!
 
   """Published questions waiting for an answer, oldest first"""
   unansweredProductQuestions(
@@ -6342,6 +6686,14 @@ type RatingBucket {
 
   """1-5"""
   stars: Int!
+}
+
+input RebuildAnalyticsInput {
+  """First day to rebuild (YYYY-MM-DD)"""
+  firstDay: String!
+
+  """Last day to rebuild (YYYY-MM-DD); at most 731 days"""
+  lastDay: String!
 }
 
 input ReceivePurchaseOrderInput {
@@ -6700,6 +7052,18 @@ input ReplyToReviewInput {
   reviewId: ID!
 }
 
+"""How a report groups its days (UTC = Ghana time)"""
+enum ReportBucket {
+  """One bucket per day"""
+  DAY
+
+  """Calendar months; the first and last are cut to the range"""
+  MONTH
+
+  """ISO weeks, Monday to Sunday; the first and last are cut to the range"""
+  WEEK
+}
+
 input ReportContentInput {
   """The review or question reported"""
   id: ID!
@@ -6937,19 +7301,6 @@ input ReturnStepInput {
   staffNote: String
 }
 
-type RevenueByCategoryEntity {
-  categoryId: ID
-  categoryName: String
-
-  """Paid orders containing this category"""
-  orderCount: Int!
-
-  """
-  Item sales of this category in paid orders (unit price paid x quantity)
-  """
-  totalRevenue: Money!
-}
-
 type Review {
   comment: String
   createdAt: DateTime!
@@ -7052,32 +7403,132 @@ enum Role {
   USER
 }
 
-"""
-Revenue recognised in a period. A payment counts when it is accepted for its order (online payment settled, or cash collected); a refund counts when it is processed.
-"""
-type SalesReport {
-  """grossRevenue / orderCount"""
+type SalesBucket {
+  """netRevenue / paidOrders (0 without paid orders)"""
   averageOrderValue: Money!
 
-  """
-  Payments accepted for orders in the period (order totals incl. shipping, after coupons)
-  """
+  """First day of the bucket (YYYY-MM-DD)"""
+  firstDay: String!
+
+  """Σ grandTotal of the paid orders (what was charged)"""
   grossRevenue: Money!
 
+  """Product discounts on the paid orders"""
+  itemDiscounts: Money!
+
   """
-  Item sales (unit price paid x quantity) of the orders paid in the period. grossRevenue = itemSales + shipping fees - coupon discounts.
+  Σ what their lines were charged: after product discounts and their share of cart discounts, tax included
   """
   itemSales: Money!
 
-  """grossRevenue minus refunds"""
+  """Last day of the bucket (YYYY-MM-DD)"""
+  lastDay: String!
+
+  """Loyalty points redeemed on the paid orders"""
+  loyaltyDiscounts: Money!
+
+  """grossRevenue - refunds; negative when refunds exceed sales"""
   netRevenue: Money!
 
-  """Orders paid in the period"""
-  orderCount: Int!
+  """Cart promotions and coupons on the paid orders"""
+  orderDiscounts: Money!
 
-  """Refunds processed in the period against accepted payments"""
+  """Orders paid"""
+  paidOrders: Int!
+
+  """Refunds processed"""
+  refundCount: Int!
+
+  """The delivery fees in those refunds"""
+  refundedShipping: Money!
+
+  """The tax in those refunds"""
+  refundedTax: Money!
+
+  """Refunds processed (FAILED and pending refunds excluded)"""
   refunds: Money!
-  totalRevenue: Money! @deprecated(reason: "Same value as netRevenue; use netRevenue.")
+
+  """Delivery fees charged (after free-shipping promotions)"""
+  shipping: Money!
+
+  """Free-shipping promotions taken off delivery fees"""
+  shippingDiscounts: Money!
+
+  """Tax included in the paid orders"""
+  tax: Money!
+
+  """Units on the paid orders"""
+  unitsSold: Int!
+}
+
+"""
+Sales recognised in a period (P8-A). An order counts on the day it was paid (first accepted payment: online payment captured or cash collected), whenever it was placed; a refund counts on the day it was processed. grossRevenue = itemSales + shipping - order discounts not shared over the lines (only orders placed before P1-O.1); netRevenue = grossRevenue - refunds.
+"""
+type SalesFigures {
+  """netRevenue / paidOrders (0 without paid orders)"""
+  averageOrderValue: Money!
+
+  """Σ grandTotal of the paid orders (what was charged)"""
+  grossRevenue: Money!
+
+  """Product discounts on the paid orders"""
+  itemDiscounts: Money!
+
+  """
+  Σ what their lines were charged: after product discounts and their share of cart discounts, tax included
+  """
+  itemSales: Money!
+
+  """Loyalty points redeemed on the paid orders"""
+  loyaltyDiscounts: Money!
+
+  """grossRevenue - refunds; negative when refunds exceed sales"""
+  netRevenue: Money!
+
+  """Cart promotions and coupons on the paid orders"""
+  orderDiscounts: Money!
+
+  """Orders paid"""
+  paidOrders: Int!
+
+  """Refunds processed"""
+  refundCount: Int!
+
+  """The delivery fees in those refunds"""
+  refundedShipping: Money!
+
+  """The tax in those refunds"""
+  refundedTax: Money!
+
+  """Refunds processed (FAILED and pending refunds excluded)"""
+  refunds: Money!
+
+  """Delivery fees charged (after free-shipping promotions)"""
+  shipping: Money!
+
+  """Free-shipping promotions taken off delivery fees"""
+  shippingDiscounts: Money!
+
+  """Tax included in the paid orders"""
+  tax: Money!
+
+  """Units on the paid orders"""
+  unitsSold: Int!
+}
+
+"""
+Reports read daily rollups rebuilt every 15 minutes (today and the 7 days before) and by rebuildAnalytics
+"""
+type SalesReport {
+  """One per bucket, in order"""
+  buckets: [SalesBucket!]!
+
+  """Days of the range not computed yet (future days, or before a backfill)"""
+  daysNotComputed: Int!
+
+  """When the oldest day of the range was last computed"""
+  refreshedAt: DateTime
+  totals: SalesFigures!
 }
 
 """A variant saved for later, out of the cart"""
@@ -8029,15 +8480,50 @@ type TaxEntity {
   updatedAt: DateTime!
 }
 
+"""
+A category ranked by what its products sold in a period (current categorisation)
+"""
+type TopCategory {
+  """Null for products without a category"""
+  categoryId: ID
+  categoryName: String
+
+  """sales - refunds"""
+  netSales: Money!
+  refunds: Money!
+
+  """What the units sold were charged, tax included"""
+  sales: Money!
+  unitsSold: Int!
+}
+
+"""A product ranked by what it sold in a period (paid orders)"""
 type TopProduct {
+  """The product is archived"""
+  archived: Boolean!
+
+  """sales - refunds"""
+  netSales: Money!
   productId: ID!
   productName: String!
 
-  """Units sold in paid orders"""
-  totalQuantitySold: Int!
+  """Line refunds processed in the period"""
+  refunds: Money!
 
-  """Item sales of this product in paid orders (unit price paid x quantity)"""
-  totalRevenue: Money!
+  """What the units sold were charged, tax included (itemSales share)"""
+  sales: Money!
+
+  """Units refunded in the period"""
+  unitsRefunded: Int!
+  unitsSold: Int!
+}
+
+enum TopProductsOrder {
+  """Highest sales first"""
+  SALES
+
+  """Most units sold first"""
+  UNITS
 }
 
 """
