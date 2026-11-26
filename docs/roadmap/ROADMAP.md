@@ -29,10 +29,10 @@ Legend: `- [x]` done (commit in brackets) · `- [ ] 🔄` in progress · `- [ ]`
 | 4 — Inventory | 7 / 7 | ✅ complete |
 | 5 — Delivery & fulfilment | 7 / 8 | 🔄 in progress (P5-D deferred) |
 | 6 — Customer engagement | 14 / 17 | 🔄 in progress (N.3, S.3, L.3 deferred) |
-| 7 — Vertical packs | 0 / 8 | ⬜ not started |
-| 8 — Admin, analytics & content | 0 / 4 | ⬜ not started |
+| 7 — Vertical packs | 0 / 8 | ⏭ not in the base (built per client on top of it) |
+| 8 — Admin, analytics & content | 1 / 4 | 🔄 in progress |
 | 9 — Scale & hardening | 0 / 5 | ⬜ not started |
-| **All** | **122 / 154** | |
+| **All** | **123 / 154** | |
 
 ---
 
@@ -448,6 +448,7 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 - [ ] **P6-L.3** Store credit / wallet / gift cards (**legal sign-off first — BoG e-money**)
 
 ## Phase 7 — Vertical packs (each pack = product types + attribute sets + capability flags + rules)
+> **Not part of the base (Emmanuel, 2026-11-25):** each client's vertical features are built on top of the base when a client needs them.
 
 ### P7 — Fashion & beauty
 > Depends: V, P6-S · M · 🟧
@@ -481,23 +482,23 @@ A first real client can go live when **Phase 0 + Phase 1 + the 🟥 parts of Pha
 > L · ⬜
 - [ ] **Services/bookings** Appointment slots
 
-## Phase 8 — Admin, analytics & content
+## Phase 8 — Admin, analytics & content 🔄 in progress
 
 ### P8-A — Analytics
 > L · 🟥 sales/margin / 🟧 rest
-- [ ] **P8-A** Sales, margins (cost price on SKU), AOV, conversion, cohorts, inventory valuation, expiring stock, coupon performance; pre-aggregated by jobs
+- [ ] 🔄 **P8-A** Sales, margins (cost price on SKU), AOV, conversion, cohorts, inventory valuation, expiring stock, coupon performance; pre-aggregated by jobs
 
 ### P8-C — Content
 > M · 🟧
-- [ ] **P8-C** Banners, homepage sections, collections, SEO slugs/meta, redirects
+- [ ] 🔄 **P8-C** Banners, homepage sections, collections, SEO slugs/meta, redirects
 
-### P8-I — Import/export
+### P8-I — Import/export ✅ complete
 > M · 🟧
-- [ ] **P8-I** CSV/Excel bulk products & stock via jobs with validation report
+- [x] **P8-I** CSV/Excel bulk products & stock via jobs with validation report [2efd90b]
 
 ### P8-F — Feature flags
 > S · 🟥
-- [ ] **P8-F** Store-level vertical/feature toggles + admin UI endpoints
+- [ ] 🔄 **P8-F** Store-level vertical/feature toggles + admin UI endpoints
 
 ## Phase 9 — Scale & hardening
 
