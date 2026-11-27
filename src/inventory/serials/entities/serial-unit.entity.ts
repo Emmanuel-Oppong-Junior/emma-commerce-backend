@@ -54,6 +54,18 @@ export class SerialUnit {
   warrantyEndsAt: Date | null;
 }
 
+@ObjectType()
+export class SerialUnitPage {
+  @Field(() => [SerialUnit])
+  nodes: SerialUnit[];
+
+  @Field(() => Int)
+  totalCount: number;
+
+  @Field({ description: 'Pass the last node id as `after` to read the next page' })
+  hasNextPage: boolean;
+}
+
 /** A unit found by serial with what a warranty or theft enquiry needs (staff). */
 @ObjectType()
 export class SerialUnitLookup {

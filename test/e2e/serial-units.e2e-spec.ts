@@ -683,6 +683,73 @@ describe('Serial units (P4-D.1, e2e)', () => {
     });
   });
 
+  describe('listing', () => {
+    const list = (args: string, token = clerkToken) =>
+      gql(`{ serialUnits(${args}) { totalCount hasNextPage nodes { id serial status locationId variantId } } }`, token);
+
+    it('lists the units in stock of a variant by serial, per location, a page at a time', async () => {
+      const variantId = await newPhone();
+      const atMain = nextImeis(3);
+      const atBranch = nextImeis(2);
+      expect((await restock(variantId, [...atMain].reverse())).errors).toBeUndefined();
+      expect((await restock(variantId, atBranch, 2, { locationId: branchId })).errors).toBeUndefined();
+
+      const all = await list(`variantId: "${variantId}"`);
+      expect(all.errors).toBeUndefined();
+      expect(all.data!.serialUnits).toMatchObject({ totalCount: 5, hasNextPage: false });
+      expect(all.data!.serialUnits.nodes.map((n: { serial: string }) => n.serial)).toEqual(
+        [...atMain, ...atBranch].sort(),
+      );
+
+      const branch = await list(`variantId: "${variantId}", locationId: "${branchId}"`);
+      expect(branch.data!.serialUnits.nodes).toEqual(
+        atBranch.map((serial) =>
+          expect.objectContaining({ serial, status: 'IN_STOCK', locationId: branchId, variantId }),
+        ),
+      );
+
+      const first = await list(`variantId: "${variantId}", locationId: "${mainId}", first: 2`);
+      expect(first.data!.serialUnits).toMatchObject({ totalCount: 3, hasNextPage: true });
+      expect(first.data!.serialUnits.nodes.map((n: { serial: string }) => n.serial)).toEqual(atMain.slice(0, 2));
+      const lastId = first.data!.serialUnits.nodes[1].id as string;
+      const second = await list(`variantId: "${variantId}", locationId: "${mainId}", first: 2, after: "${lastId}"`);
+      expect(second.data!.serialUnits).toMatchObject({ totalCount: 3, hasNextPage: false });
+      expect(second.data!.serialUnits.nodes.map((n: { serial: string }) => n.serial)).toEqual([atMain[2]]);
+    });
+
+    it('filters by status: in stock by default, others on request', async () => {
+      const { variantId, serials } = await stockedPhone(3);
+      const written = await gql(
+        'mutation($input: AdjustVariantStockInput!) { adjustVariantStock(input: $input) { id } }',
+        clerkToken,
+        { input: { variantId, delta: -1, reason: 'DAMAGED', serials: [serials[1]] } },
+      );
+      expect(written.errors).toBeUndefined();
+
+      const inStock = await list(`variantId: "${variantId}"`);
+      expect(inStock.data!.serialUnits.nodes.map((n: { serial: string }) => n.serial)).toEqual([
+        serials[0],
+        serials[2],
+      ]);
+      const writtenOff = await list(`variantId: "${variantId}", statuses: [WRITTEN_OFF]`);
+      expect(writtenOff.data!.serialUnits.nodes).toEqual([
+        expect.objectContaining({ serial: serials[1], status: 'WRITTEN_OFF', locationId: null }),
+      ]);
+      const both = await list(`variantId: "${variantId}", statuses: [IN_STOCK, WRITTEN_OFF]`);
+      expect(both.data!.serialUnits.totalCount).toBe(3);
+    });
+
+    it('answers NOT_FOUND for an unknown variant and needs inventory.view', async () => {
+      const { variantId } = await stockedPhone(1);
+      expect(codeOf(await list('variantId: "no-such-variant"'))).toBe('NOT_FOUND');
+      expect(codeOf(await list(`variantId: "${variantId}"`, supportToken))).toBe('FORBIDDEN');
+      expect(codeOf(await list(`variantId: "${variantId}"`, catalogToken))).toBe('FORBIDDEN');
+      expect(codeOf(await list(`variantId: "${variantId}"`, customerToken))).toBe('FORBIDDEN');
+      expect((await list(`variantId: "${variantId}"`, managerToken)).data!.serialUnits.totalCount).toBe(1);
+      expect(codeOf(await list(`variantId: "${variantId}", first: 101`))).toBe('BAD_USER_INPUT');
+    });
+  });
+
   describe('reconciliation', () => {
     it('reports units on a shelf that the ledger does not account for', async () => {
       const variantId = await newPhone();

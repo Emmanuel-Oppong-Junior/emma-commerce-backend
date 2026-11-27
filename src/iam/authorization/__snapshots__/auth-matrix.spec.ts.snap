@@ -333,6 +333,7 @@ Query savedItems                         authenticated
 Query searchSuggestions                  public, optional sign-in
 Query searchSynonyms                     permission: catalog.product.read
 Query serialUnitLookup                   permission: order.view
+Query serialUnits                        permission: inventory.view
 Query shippingZone                       permission: shipping.manage
 Query shippingZones                      permission: shipping.manage
 Query staffMembers                       permission: staff.view

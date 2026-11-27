@@ -6289,6 +6289,22 @@ type Query {
   """
   serialUnitLookup(serial: String!): [SerialUnitLookup!]!
 
+  """
+  A variant’s serialised units by serial, IN_STOCK by default, optionally at one location (staff). For checking stock; picking names the unit in hand with assignShipmentItemSerials. NOT_FOUND for an unknown variant
+  """
+  serialUnits(
+    """Id of the last unit of the previous page"""
+    after: ID
+
+    """1-100"""
+    first: Int! = 50
+
+    """Units at this location only (IN_STOCK and ASSIGNED have one)"""
+    locationId: ID
+    statuses: [SerialUnitStatus!]! = [IN_STOCK]
+    variantId: ID!
+  ): SerialUnitPage!
+
   """Get a shipping zone by ID (admin only)"""
   shippingZone(id: ID!): ShippingZoneEntity!
 
@@ -7652,6 +7668,13 @@ type SerialUnitLookup {
   productName: String!
   sku: String!
   unit: SerialUnit!
+}
+
+type SerialUnitPage {
+  """Pass the last node id as `after` to read the next page"""
+  hasNextPage: Boolean!
+  nodes: [SerialUnit!]!
+  totalCount: Int!
 }
 
 """Where a serialised unit is"""

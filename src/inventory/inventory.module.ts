@@ -26,6 +26,7 @@ import { LotsService } from './lots/lots.service';
 import { LotLoader, LotsResolver, StockMovementLotResolver } from './lots/lots.resolver';
 import { SerialUnitsRepository } from './serials/serial-units.repository';
 import { SerialUnitsService } from './serials/serial-units.service';
+import { SerialUnitsResolver } from './serials/serial-units.resolver';
 
 @Module({
   imports: [CommonsModule, OutboxModule],
@@ -58,6 +59,7 @@ import { SerialUnitsService } from './serials/serial-units.service';
     StockMovementLotResolver,
     SerialUnitsRepository,
     SerialUnitsService,
+    SerialUnitsResolver,
   ],
   exports: [
     InventoryService,

@@ -393,6 +393,22 @@ export class SerialUnitsService {
     return this.repository.lookup([...new Set([compact, compact.replace(/-/g, '')])]);
   }
 
+  /**
+   * A page of a variant's units by serial, optionally at one location, in the given statuses.
+   * @throws NotFoundException for an unknown variant.
+   */
+  async listUnits(
+    filter: { variantId: string; locationId?: string; statuses: readonly SerialUnitStatus[] },
+    first: number,
+    after?: string,
+  ): Promise<{ nodes: SerialUnit[]; totalCount: number; hasNextPage: boolean }> {
+    if (!(await this.repository.variantExists(filter.variantId))) {
+      throw new NotFoundException(`Variant "${filter.variantId}" not found`);
+    }
+    const [rows, totalCount] = await this.repository.listUnits(filter, { take: first + 1, after });
+    return { nodes: rows.slice(0, first), totalCount, hasNextPage: rows.length > first };
+  }
+
   /** Units assigned to or sold on each order line, grouped by line in the order given. */
   async unitsOnOrderItems(orderItemIds: readonly string[]): Promise<SerialUnit[][]> {
     const units = await this.repository.findByOrderItems(orderItemIds);

@@ -228,6 +228,31 @@ export class SerialUnitsRepository {
     });
   }
 
+  async variantExists(variantId: string): Promise<boolean> {
+    return (await this.prisma.variant.count({ where: { id: variantId } })) > 0;
+  }
+
+  /** One page of a variant's units by serial, plus the total; `after` is the id of the previous page's last unit. */
+  async listUnits(
+    filter: { variantId: string; locationId?: string; statuses: readonly SerialUnitStatus[] },
+    page: { take: number; after?: string },
+  ): Promise<[SerialUnit[], number]> {
+    const where: Prisma.SerialUnitWhereInput = {
+      variantId: filter.variantId,
+      status: { in: [...filter.statuses] },
+      ...(filter.locationId && { locationId: filter.locationId }),
+    };
+    return Promise.all([
+      this.prisma.serialUnit.findMany({
+        where,
+        orderBy: [{ serial: 'asc' }, { id: 'asc' }],
+        take: page.take,
+        ...(page.after && { cursor: { id: page.after }, skip: 1 }),
+      }),
+      this.prisma.serialUnit.count({ where }),
+    ]);
+  }
+
   /** Units assigned to or sold on each order line, in serial order. */
   async findByOrderItems(orderItemIds: readonly string[]): Promise<SerialUnit[]> {
     return this.prisma.serialUnit.findMany({
