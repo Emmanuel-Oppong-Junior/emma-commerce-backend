@@ -56,7 +56,7 @@ describe('RefundsService', () => {
   };
   const paystack = { createRefund: jest.fn() };
   const logger = { log: jest.fn(), error: jest.fn(), warn: jest.fn() };
-  const disputes = { assertRefundAllowed: jest.fn() };
+  const disputes = { assertRefundAllowed: jest.fn(), assertNewRefundAllowed: jest.fn() };
   let auditService: ReturnType<typeof createAuditServiceMock>;
   let service: RefundsService;
 
@@ -263,7 +263,7 @@ describe('RefundsService', () => {
     const openWith = (result: Refund, replayed = false, checkLedger: RefundLedger = ledger) =>
       repository.openForOrder.mockImplementation(async (_request, check, onOpened) => {
         if (!replayed) {
-          check(checkLedger, plan, result.method);
+          await check(AUDIT_TX, checkLedger, plan, result.method);
           await onOpened(AUDIT_TX, result);
         }
         return { refund: result, replayed };
@@ -312,6 +312,22 @@ describe('RefundsService', () => {
       expect(auditService.log.mock.calls[0][0]).toMatchObject({ action: 'REFUND' });
     });
 
+    it('checks the disputes inside the opening transaction, so a disputed payment is refused before the refund is written', async () => {
+      const disputed = new ConflictException({
+        message: 'Payment "attempt1" has an unresolved dispute',
+        extensions: { reason: 'PAYMENT_DISPUTED' },
+      });
+      disputes.assertNewRefundAllowed.mockRejectedValueOnce(disputed);
+      openWith(opened());
+
+      await expect(service.refundOrder(params, 'admin1')).rejects.toBe(disputed);
+
+      expect(disputes.assertNewRefundAllowed).toHaveBeenCalledWith(AUDIT_TX, ledger, plan.amount);
+      expect(auditService.log).not.toHaveBeenCalled();
+      expect(repository.claimForSending).not.toHaveBeenCalled();
+      expect(paystack.createRefund).not.toHaveBeenCalled();
+    });
+
     it('refuses a missing note for OTHER and a system reason before writing anything', async () => {
       await expect(service.refundOrder({ ...params, reason: RefundReason.OTHER, note: ' ' }, 'admin1')).rejects.toThrow(
         BadRequestException,
@@ -327,7 +343,7 @@ describe('RefundsService', () => {
     const plan = { amount: new Prisma.Decimal('40.50') };
     const openWith = (opened: Refund, openLedger: RefundLedger = ledger) =>
       repository.openForReturnLines.mockImplementation(async (_request, check, onOpened) => {
-        check(openLedger, plan, opened.method);
+        await check(AUDIT_TX, openLedger, plan, opened.method);
         await onOpened(AUDIT_TX, opened, inspected);
         return opened;
       });
@@ -373,6 +389,19 @@ describe('RefundsService', () => {
       });
       expect(paystack.createRefund).not.toHaveBeenCalled();
       expect(auditService.log.mock.calls[0][0]).toMatchObject({ action: 'REFUND', details: { to: 'REFUNDED' } });
+    });
+
+    it('refuses a disputed payment inside the opening transaction, before the return refund is written', async () => {
+      disputes.assertNewRefundAllowed.mockRejectedValueOnce(new ConflictException('disputed'));
+      openWith({ ...refund, method: RefundMethod.PROVIDER, shippingAmount: new Prisma.Decimal(0) } as Refund);
+
+      await expect(service.refundReturnLines(inspected, { shipping: false, note: null }, 'admin1')).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(disputes.assertNewRefundAllowed).toHaveBeenCalledWith(AUDIT_TX, ledger, plan.amount);
+      expect(auditService.log).not.toHaveBeenCalled();
+      expect(paystack.createRefund).not.toHaveBeenCalled();
     });
 
     it('resends the existing refund of a REFUND_PENDING return instead of opening another', async () => {

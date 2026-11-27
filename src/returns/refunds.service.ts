@@ -11,7 +11,7 @@ import {
 } from '../generated/prisma/client';
 import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
-import { assertRefundable, assertWithinCaptured } from './refund-cap';
+import { assertRefundable, assertWithinCaptured, RefundLedger } from './refund-cap';
 import { PaymentProviderRegistry } from '../payment/providers/payment-provider.registry';
 import { ProviderRequestRejected } from '../payment/providers/payment-provider.port';
 import { RecordedRefund, RefundRepository, RefundWithOrderLines, staffRefundKey } from './refund.repository';
@@ -73,10 +73,7 @@ export class RefundsService {
         createdById: adminUserId,
         parts: { lines: params.lines, shipping: params.shipping, amount: params.amount },
       },
-      (ledger, plan, method) =>
-        method === RefundMethod.CASH
-          ? assertWithinCaptured(ledger, { amount: plan.amount })
-          : assertRefundable(ledger, { amount: plan.amount }),
+      (tx, ledger, plan, method) => this.assertNewRefund(tx, ledger, plan.amount, method),
       (tx, opened) =>
         this.auditService.log(
           {
@@ -120,7 +117,7 @@ export class RefundsService {
       returnRequest,
       attemptId,
       adminUserId,
-      (ledger) => assertRefundable(ledger, { amount: returnRequest.refundAmount }),
+      (tx, ledger) => this.assertNewRefund(tx, ledger, returnRequest.refundAmount, RefundMethod.PROVIDER),
       (tx, refund) =>
         this.auditService.log(
           {
@@ -162,10 +159,7 @@ export class RefundsService {
     }
     const refund = await this.refundRepository.openForReturnLines(
       { returnRequestId: returnRequest.id, shipping: params.shipping, actorId: adminUserId, note: params.note },
-      (ledger, plan, method) =>
-        method === RefundMethod.CASH
-          ? assertWithinCaptured(ledger, { amount: plan.amount })
-          : assertRefundable(ledger, { amount: plan.amount }),
+      (tx, ledger, plan, method) => this.assertNewRefund(tx, ledger, plan.amount, method),
       async (tx, opened, request) => {
         const cash = opened.method === RefundMethod.CASH;
         await this.auditService.log(
@@ -338,6 +332,18 @@ export class RefundsService {
         );
       }
     });
+  }
+
+  /** Runs inside the opening transaction, under the ledger lock: a refused refund leaves no row and no audit entry. */
+  private async assertNewRefund(
+    tx: Prisma.TransactionClient,
+    ledger: RefundLedger,
+    amount: Prisma.Decimal,
+    method: RefundMethod,
+  ): Promise<void> {
+    if (method === RefundMethod.CASH) assertWithinCaptured(ledger, { amount });
+    else assertRefundable(ledger, { amount });
+    await this.disputes.assertNewRefundAllowed(tx, ledger, amount);
   }
 
   private async recordRejected(refund: Refund, reason: string, adminUserId: string): Promise<void> {

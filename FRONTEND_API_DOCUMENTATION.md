@@ -3176,7 +3176,7 @@ interface ReturnRequest {
 - **Args**: `refundId: ID!`
 - **Response**: `RefundEntity`
 - **Description**: Sends a `PENDING` refund through Paystack, or resends a `FAILED` one. Used for auto-refunds that payment verification queues when money arrives for a cancelled, already-paid or wrong-amount payment (these are never sent automatically). A refund linked to a return request also completes that request. Same cap, claim and error rules as `processRefund`: a second call gets `CONFLICT`.
-- **Disputes (P3-E.2):** every refund send (`processRefund`, `processPendingRefund`) is refused with `CONFLICT` and `extensions.reason: "PAYMENT_DISPUTED"` while the payment has an unresolved dispute (`OPEN`, `AWAITING_EVIDENCE`, `UNDER_REVIEW`): the bank may still return the money. A dispute resolved `LOST` or `ACCEPTED` counts as money already returned, so only what is left after it (and earlier refunds) can be refunded, else the same `CONFLICT`. Nothing is sent.
+- **Disputes (P3-E.2):** every refund (`refundOrder`, `refundReturn`, `processPendingRefund`) is refused with `CONFLICT` and `extensions.reason: "PAYMENT_DISPUTED"` while the payment has an unresolved dispute (`OPEN`, `AWAITING_EVIDENCE`, `UNDER_REVIEW`): the bank may still return the money. A dispute resolved `LOST` or `ACCEPTED` counts as money already returned, so only what is left after it (and earlier refunds) can be refunded, else the same `CONFLICT`. Nothing is sent, and a new refund (`refundOrder`, `refundReturn`) is refused before anything is recorded: no `Refund` row, no audit entry, the return stays `INSPECTED`. An existing `PENDING` refund stays `PENDING`.
 
 ---
 
