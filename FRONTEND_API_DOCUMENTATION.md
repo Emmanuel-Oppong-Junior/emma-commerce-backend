@@ -517,7 +517,7 @@ query {
 #### `userById` (ADMIN, SUPER_ADMIN)
 - **Type**: Query
 - **Args**: `id: String!`
-- **Response**: `User!`. An unknown ID returns an error (the resolver returns null for a non-null field), not `NOT_FOUND`.
+- **Response**: `User!`. An unknown ID is `NOT_FOUND`.
 
 ---
 
@@ -538,7 +538,7 @@ query {
 #### `userProfile`
 - **Type**: Query
 - **Auth Required**: Yes (any signed-in user)
-- **Response**: `User!` for the caller, with `addresses` and `orders` available.
+- **Response**: `User!` for the caller, with `addresses` and `orders` available. `NOT_FOUND` if the account no longer exists.
 
 ---
 

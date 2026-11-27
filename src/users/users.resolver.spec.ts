@@ -19,8 +19,8 @@ const mockUsersService = {
   createUserByAuthProvider: jest.fn(),
   findAll: jest.fn(),
   findOne: jest.fn(),
-  findUserByEmail: jest.fn(),
-  findUserByProviderId: jest.fn(),
+  findUserByEmailOrThrow: jest.fn(),
+  findUserByProviderIdOrThrow: jest.fn(),
   update: jest.fn(),
   adminUpdateUser: jest.fn(),
   remove: jest.fn(),
@@ -153,23 +153,12 @@ describe('UsersResolver', () => {
         isActive: true,
       } as User;
 
-      mockUsersService.findUserByEmail.mockResolvedValue(user);
+      mockUsersService.findUserByEmailOrThrow.mockResolvedValue(user);
 
       const result = await resolver.findUserByEmail(email);
 
-      expect(usersService.findUserByEmail).toHaveBeenCalledWith(email);
+      expect(usersService.findUserByEmailOrThrow).toHaveBeenCalledWith(email);
       expect(result).toEqual(user);
-    });
-
-    it('should return null if user not found', async () => {
-      const email = 'nonexistent@example.com';
-
-      mockUsersService.findUserByEmail.mockResolvedValue(null);
-
-      const result = await resolver.findUserByEmail(email);
-
-      expect(usersService.findUserByEmail).toHaveBeenCalledWith(email);
-      expect(result).toBeNull();
     });
   });
 
@@ -183,11 +172,11 @@ describe('UsersResolver', () => {
         isActive: true,
       } as User;
 
-      mockUsersService.findUserByProviderId.mockResolvedValue(user);
+      mockUsersService.findUserByProviderIdOrThrow.mockResolvedValue(user);
 
       const result = await resolver.findUserByProviderId(providerId);
 
-      expect(usersService.findUserByProviderId).toHaveBeenCalledWith(providerId);
+      expect(usersService.findUserByProviderIdOrThrow).toHaveBeenCalledWith(providerId);
       expect(result).toEqual(user);
     });
   });

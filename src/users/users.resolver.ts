@@ -73,7 +73,7 @@ export class UsersResolver {
     description: 'Fetch a user by email',
   })
   findUserByEmail(@Args('email', { type: () => String }) email: string) {
-    return this.usersService.findUserByEmail(email);
+    return this.usersService.findUserByEmailOrThrow(email);
   }
   @RequirePermission('user.view')
   @Query(() => User, {
@@ -81,7 +81,7 @@ export class UsersResolver {
     description: 'Fetch a user by OAuth provider ID',
   })
   findUserByProviderId(@Args('providerId', { type: () => String }) providerId: string) {
-    return this.usersService.findUserByProviderId(providerId);
+    return this.usersService.findUserByProviderIdOrThrow(providerId);
   }
 
   @RequirePermission('user.manage')

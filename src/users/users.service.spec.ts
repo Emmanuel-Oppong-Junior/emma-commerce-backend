@@ -247,6 +247,30 @@ describe('UsersService', () => {
       expect(usersRepository.findById).toHaveBeenCalledWith('1');
       expect(result).toEqual(mockUser);
     });
+
+    it('answers NOT_FOUND for an unknown ID instead of null', async () => {
+      mockUsersRepository.findById.mockResolvedValue(null);
+
+      await expect(service.findOne('missing')).rejects.toThrow(new NotFoundException('User not found'));
+    });
+  });
+
+  describe('findUserByEmailOrThrow / findUserByProviderIdOrThrow', () => {
+    it('return the user when found', async () => {
+      mockUsersRepository.findByEmail.mockResolvedValue(mockUser);
+      mockUsersRepository.findByProviderId.mockResolvedValue(mockUser);
+
+      await expect(service.findUserByEmailOrThrow('john@example.com')).resolves.toEqual(mockUser);
+      await expect(service.findUserByProviderIdOrThrow('google123')).resolves.toEqual(mockUser);
+    });
+
+    it('answer NOT_FOUND instead of null', async () => {
+      mockUsersRepository.findByEmail.mockResolvedValue(null);
+      mockUsersRepository.findByProviderId.mockResolvedValue(null);
+
+      await expect(service.findUserByEmailOrThrow('nobody@example.com')).rejects.toThrow(NotFoundException);
+      await expect(service.findUserByProviderIdOrThrow('nobody')).rejects.toThrow(NotFoundException);
+    });
   });
 
   describe('findUserByEmail', () => {
