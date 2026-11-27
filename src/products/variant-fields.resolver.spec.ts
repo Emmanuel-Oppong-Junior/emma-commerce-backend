@@ -1,11 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { VariantFieldsResolver } from './variant-fields.resolver';
 import { PromotionLoader } from './loaders/promotion.loader';
+import { ProductsLoader } from './loaders/products.loader';
+import { NotFoundException } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client';
 import { Variant } from '../variant/entities/variant.entity';
 
 const mockLoad = jest.fn();
 const mockPromotionLoader = { loader: { load: mockLoad } };
+const mockProductLoad = jest.fn();
 const mockVariant = { id: 'var1', productId: 'prod1', sku: 'TSHIRT-M' } as unknown as Variant;
 
 describe('VariantFieldsResolver', () => {
@@ -13,11 +16,45 @@ describe('VariantFieldsResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [VariantFieldsResolver, { provide: PromotionLoader, useValue: mockPromotionLoader }],
+      providers: [
+        VariantFieldsResolver,
+        { provide: PromotionLoader, useValue: mockPromotionLoader },
+        { provide: ProductsLoader, useValue: { loader: { load: mockProductLoad } } },
+      ],
     }).compile();
 
     resolver = module.get<VariantFieldsResolver>(VariantFieldsResolver);
     jest.clearAllMocks();
+  });
+
+  describe('product', () => {
+    it('loads the product when the parent carries none (variants query)', async () => {
+      mockProductLoad.mockResolvedValue({ id: 'prod1', name: 'T-Shirt' });
+
+      await expect(resolver.product(mockVariant)).resolves.toEqual({ id: 'prod1', name: 'T-Shirt' });
+      expect(mockProductLoad).toHaveBeenCalledWith('prod1');
+    });
+
+    it('loads the product when the parent has only its id and name (variant query)', async () => {
+      mockProductLoad.mockResolvedValue({ id: 'prod1', name: 'T-Shirt', slug: 't-shirt' });
+      const partial = { ...mockVariant, product: { id: 'prod1', name: 'T-Shirt' } } as unknown as Variant;
+
+      await expect(resolver.product(partial)).resolves.toMatchObject({ slug: 't-shirt' });
+    });
+
+    it('uses a full product row the parent already carries', async () => {
+      const full = { id: 'prod1', name: 'T-Shirt', createdAt: new Date() };
+      const parent = { ...mockVariant, product: full } as unknown as Variant;
+
+      await expect(resolver.product(parent)).resolves.toBe(full);
+      expect(mockProductLoad).not.toHaveBeenCalled();
+    });
+
+    it('fails with NOT_FOUND when the product is gone, keeping the field non-null', async () => {
+      mockProductLoad.mockResolvedValue(null);
+
+      await expect(resolver.product(mockVariant)).rejects.toThrow(NotFoundException);
+    });
   });
 
   describe('discountedPrice', () => {
