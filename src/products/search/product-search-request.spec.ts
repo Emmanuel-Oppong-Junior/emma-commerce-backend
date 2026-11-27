@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/client';
 import { ProductSortField } from '../enums/product-sort-field.enum';
 import { SortOrder } from '../../commons/enums/sort-order.enum';
 import { ProductStatusEnum } from '../enums/product.enum';
+import { ProductFilterArgs } from '../dto/product-filter.args';
 import {
   MAX_PAGE_SIZE,
   searchFiltersProblem,
@@ -63,6 +64,12 @@ describe('product search request', () => {
         priceMax: new Decimal(9),
         inStock: true,
       });
+    });
+
+    it('treats a null or absent isActive as no filter for staff', () => {
+      const nullFilter = { isActive: null } as unknown as ProductFilterArgs;
+      expect(toSearchFilters(nullFilter, 'ADMIN').isActive).toBeUndefined();
+      expect(toSearchFilters({}, 'ADMIN').isActive).toBeUndefined();
     });
 
     it('drops isActive and status from a public search, keeps them for staff', () => {

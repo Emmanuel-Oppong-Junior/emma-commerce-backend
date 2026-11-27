@@ -27,7 +27,7 @@ export function searchText(raw: string | undefined): string | undefined {
 export function toSearchFilters(filter: ProductFilterArgs, visibility: SearchVisibility): ProductSearchFilters {
   return {
     visibility,
-    ...(visibility === 'ADMIN' && { isActive: filter.isActive, status: filter.status }),
+    ...(visibility === 'ADMIN' && { isActive: filter.isActive ?? undefined, status: filter.status }),
     text: searchText(filter.search),
     categoryId: filter.categoryId,
     categoryName: filter.categoryName,

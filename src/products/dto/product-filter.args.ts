@@ -52,8 +52,7 @@ export class ProductFilterArgs {
 
   @Field(() => Boolean, {
     nullable: true,
-    description: 'Filter by active status',
-    defaultValue: true,
+    description: 'Admin queries only: filter by active status; absent or null matches active and archived products',
   })
   @IsOptional()
   @IsBoolean()
