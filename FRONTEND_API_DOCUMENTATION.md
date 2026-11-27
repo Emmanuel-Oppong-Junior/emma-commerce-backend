@@ -5091,6 +5091,7 @@ GraphQL errors follow the standard Apollo format:
 | Query too deep (> 8), too many aliases (> 15) or too costly (> 3000), HTTP 400 | `GRAPHQL_VALIDATION_FAILED` |
 | Any other 4xx (e.g. 422 wishlist full, 413, 429 rate limit) | `BAD_REQUEST`, with the real status in `extensions.status` |
 | Schema errors: unknown field or argument, wrong type, missing required value (HTTP 400) | `GRAPHQL_VALIDATION_FAILED` / `BAD_USER_INPUT` (Apollo) |
+| A variable that is missing, `null` for a non-null type or of the wrong type (`Variable "$first" of required type "Int!" was not provided.`), HTTP 400 | `BAD_USER_INPUT` (Apollo) |
 | Any 5xx, and unexpected errors (incl. a null returned for a non-null field) | `INTERNAL_SERVER_ERROR` (message "Internal server error"; `extensions.status` carries e.g. 503 for a provider outage) |
 
 **`extensions.reason`** narrows some `FORBIDDEN` / `UNAUTHENTICATED` errors so the frontend can react (details in [2.25](#225-two-factor-authentication-and-step-up)):
@@ -5102,6 +5103,8 @@ GraphQL errors follow the standard Apollo format:
 | `FORBIDDEN` | `STEP_UP_REQUIRED` | Sensitive action without a two-factor verification in the last 10 minutes | Ask for a code, call `stepUp`, retry |
 
 REST endpoints return the same `reason` field in their JSON error body.
+
+**Breaking changes (error handling)** `[breaking-api]`: a missing or invalid variable value is HTTP **400** `BAD_USER_INPUT` (it was HTTP 500 `INTERNAL_SERVER_ERROR`, because the query cost check failed on it first).
 
 **Query cost:** each field costs 1; a list costs its page size (`first`, or 10 when not given) times the cost of its fields. A page of 50 products with variants and reviews costs about 2,800.
 

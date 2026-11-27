@@ -184,7 +184,7 @@ Supporting modules: `prisma` (PrismaService), `config` (Joi env validation in `e
 - `CloudinaryService` — image upload/storage (`upload.controller.ts` exposes the REST upload)
 - `AuditService` — writes to the `AuditLog` model
 - Global exception filter (`AllExceptionsFilter` + `error-classification.ts`) maps HTTP statuses to GraphQL codes (400 `BAD_REQUEST`, 401 `UNAUTHENTICATED`, 403 `FORBIDDEN`, 404 `NOT_FOUND`, 409 `CONFLICT`; ValidationPipe failures `BAD_USER_INPUT`) and Prisma P2002/P2003 → `CONFLICT`, P2025 → `NOT_FOUND` with safe messages; an HttpException whose response has `extensions` (e.g. `reason`) passes them on; stack traces are logged only in development
-- GraphQL query limits (`commons/graphql/query-limits.ts`): depth ≤ 8, aliases ≤ 15, estimated cost ≤ 3000 (`graphql-query-complexity`); introspection is exempt and off in production
+- GraphQL query limits (`commons/graphql/query-limits.ts`): depth ≤ 8, aliases ≤ 15, estimated cost ≤ 3000 (`graphql-query-complexity`; skipped when the variables do not coerce, so Apollo answers them HTTP 400 `BAD_USER_INPUT` via `status400ForVariableCoercionErrors`); introspection is exempt and off in production
 - `GqlThrottlerGuard` — global rate limiting (stricter limits on auth mutations such as `forgotPassword`/`resetPassword`)
 - `PaginationArgs` / `PageInfo` entities are shared across all list queries
 

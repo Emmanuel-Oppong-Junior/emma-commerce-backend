@@ -1,6 +1,7 @@
-import { buildSchema, getIntrospectionQuery, parse, validate } from 'graphql';
+import { GraphQLRequestContextDidResolveOperation, GraphQLRequestListener } from '@apollo/server';
+import { buildSchema, getIntrospectionQuery, GraphQLError, OperationDefinitionNode, parse, validate } from 'graphql';
 import { getComplexity } from 'graphql-query-complexity';
-import { aliasLimitRule, depthLimitRule, listAwareEstimator } from './query-limits';
+import { aliasLimitRule, depthLimitRule, listAwareEstimator, queryCostPlugin } from './query-limits';
 
 const schema = buildSchema(`
   input PaginationArgs { first: Int }
@@ -107,5 +108,47 @@ describe('listAwareEstimator', () => {
 
   it('does not charge for introspection', () => {
     expect(cost('{ __schema { types { name fields { name } } } }')).toBe(0);
+  });
+});
+
+describe('queryCostPlugin', () => {
+  const resolveOperation = async (query: string, variables?: Record<string, unknown>, maxCost = 3000) => {
+    const listener = (await queryCostPlugin(maxCost).requestDidStart!({} as never)) as GraphQLRequestListener<
+      Record<string, never>
+    >;
+    const document = parse(query);
+    const context = {
+      request: { query, variables },
+      document,
+      schema,
+      operation: document.definitions[0] as OperationDefinitionNode,
+    } as unknown as GraphQLRequestContextDidResolveOperation<Record<string, never>>;
+    return listener.didResolveOperation!(context);
+  };
+
+  const pageQuery = 'query($n: Int!) { products(paginationArgs: { first: $n }) { edges { node { name } } } }';
+
+  it('lets a query within budget through', async () => {
+    await expect(resolveOperation(pageQuery, { n: 20 })).resolves.toBeUndefined();
+  });
+
+  it('refuses a query over budget as a validation failure', async () => {
+    const refusal = resolveOperation(pageQuery, { n: 100 }, 100);
+
+    await expect(refusal).rejects.toThrow(GraphQLError);
+    await expect(refusal).rejects.toMatchObject({
+      message: 'Query cost 301 exceeds the maximum of 100',
+      extensions: { code: 'GRAPHQL_VALIDATION_FAILED', http: { status: 400 } },
+    });
+  });
+
+  // Execution reports variables that do not coerce as BAD_USER_INPUT; the estimate must not throw first.
+  it('leaves a missing required variable to execution', async () => {
+    await expect(resolveOperation(pageQuery, {})).resolves.toBeUndefined();
+    await expect(resolveOperation(pageQuery)).resolves.toBeUndefined();
+  });
+
+  it('leaves a wrongly typed variable to execution', async () => {
+    await expect(resolveOperation(pageQuery, { n: 'many' })).resolves.toBeUndefined();
   });
 });

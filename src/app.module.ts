@@ -139,8 +139,7 @@ const THROTTLERS: ThrottlerOptions[] = [
       useFactory: (logger: LoggerService, metrics: AppMetrics, redis: Redis) => ({
         playground: false,
         introspection: process.env.NODE_ENV !== 'production',
-        // Apollo 5 answers bad variable values with HTTP 400; keep v4's 200 until the frontend is checked against it.
-        status400ForVariableCoercionErrors: false,
+        status400ForVariableCoercionErrors: true,
         formatError: formatError(logger),
         persistedQueries: persistedQueries(redis),
         plugins: [

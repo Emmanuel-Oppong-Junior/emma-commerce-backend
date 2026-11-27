@@ -4,6 +4,7 @@ import {
   FieldNode,
   FragmentDefinitionNode,
   getNamedType,
+  getVariableValues,
   GraphQLError,
   isListType,
   isNonNullType,
@@ -102,12 +103,16 @@ export function queryCostPlugin(maxCost = MAX_QUERY_COST): ApolloServerPlugin {
   return {
     async requestDidStart() {
       return {
-        async didResolveOperation({ request, document, schema }) {
+        async didResolveOperation({ request, document, schema, operation }) {
+          const variables = request.variables ?? {};
+          // getComplexity would throw the coercion error itself, before Apollo can answer it as 400 BAD_USER_INPUT;
+          // execution refuses the operation before resolving anything, so it needs no estimate.
+          if (getVariableValues(schema, operation?.variableDefinitions ?? [], variables).errors) return;
           const cost = getComplexity({
             schema,
             query: document,
             operationName: request.operationName ?? undefined,
-            variables: request.variables ?? {},
+            variables,
             estimators: [listAwareEstimator],
           });
           if (cost > maxCost) {

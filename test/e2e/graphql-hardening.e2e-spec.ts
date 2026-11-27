@@ -70,6 +70,24 @@ describe('GraphQL hardening (e2e)', () => {
     });
   });
 
+  describe('variables', () => {
+    const flaggedOrders = 'query ($first: Int!) { flaggedOrders(first: $first) { id } }';
+
+    it('answers a missing required variable with 400 BAD_USER_INPUT', async () => {
+      const res = await gqlRequest(app, flaggedOrders, {}, adminToken).expect(400);
+
+      expect(codeOf(res)).toBe('BAD_USER_INPUT');
+      expect(res.body.errors[0].message).toMatch(/\$first/);
+    });
+
+    it('answers a wrongly typed variable with 400 BAD_USER_INPUT', async () => {
+      const res = await gqlRequest(app, flaggedOrders, { first: 'ten' }, adminToken).expect(400);
+
+      expect(codeOf(res)).toBe('BAD_USER_INPUT');
+      expect(res.body.errors[0].message).toMatch(/\$first/);
+    });
+  });
+
   describe('query limits', () => {
     it('still serves a normal catalogue page', async () => {
       const res = await gqlRequest(
