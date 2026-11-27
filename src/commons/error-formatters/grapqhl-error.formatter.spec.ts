@@ -31,4 +31,28 @@ describe('formatError', () => {
     expect(format(formatted, new GraphQLError(formatted.message))).toBe(formatted);
     expect(reportError).not.toHaveBeenCalled();
   });
+
+  describe('in production', () => {
+    const nodeEnv = process.env.NODE_ENV;
+    beforeEach(() => (process.env.NODE_ENV = 'production'));
+    afterEach(() => (process.env.NODE_ENV = nodeEnv));
+
+    it('masks an internal error', () => {
+      const formatted = { message: 'relation "Order" does not exist', extensions: { code: 'INTERNAL_SERVER_ERROR' } };
+
+      expect(format(formatted, new Error('x'))).toEqual({
+        message: 'Internal server error',
+        extensions: { code: 'INTERNAL_SERVER_ERROR' },
+      });
+    });
+
+    it('keeps the message and reason of a service the store cannot use right now', () => {
+      const formatted = {
+        message: 'Image upload is unavailable, try again later',
+        extensions: { code: 'SERVICE_UNAVAILABLE', reason: 'IMAGE_STORAGE_UNAVAILABLE', status: 503 },
+      };
+
+      expect(format(formatted, new Error('x'))).toBe(formatted);
+    });
+  });
 });

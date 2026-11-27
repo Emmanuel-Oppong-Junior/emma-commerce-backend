@@ -4466,7 +4466,7 @@ The endpoint no longer answers `503` when processing fails: the stored event is 
 }
 ```
 
-**Errors**: 400 for a missing file, an unsupported format, an unreadable header or more than 40 megapixels; 413 for a file over 5 MB; 401/403 for auth.
+**Errors**: 400 for a missing file, an unsupported format, an unreadable header, more than 40 megapixels or a file the image storage refuses; 413 for a file over 5 MB; 401/403 for auth; 503 with `"reason": "IMAGE_STORAGE_UNAVAILABLE"` (`Image upload is unavailable, try again later`) when the image storage cannot be used (credentials, rate limit, outage). The same applies to the return, review and proof-of-delivery photo uploads.
 
 ---
 
@@ -5092,7 +5092,8 @@ GraphQL errors follow the standard Apollo format:
 | Any other 4xx (e.g. 422 wishlist full, 413, 429 rate limit) | `BAD_REQUEST`, with the real status in `extensions.status` |
 | Schema errors: unknown field or argument, wrong type, missing required value (HTTP 400) | `GRAPHQL_VALIDATION_FAILED` / `BAD_USER_INPUT` (Apollo) |
 | A variable that is missing, `null` for a non-null type or of the wrong type (`Variable "$first" of required type "Int!" was not provided.`), HTTP 400 | `BAD_USER_INPUT` (Apollo) |
-| Any 5xx, and unexpected errors (incl. a null returned for a non-null field) | `INTERNAL_SERVER_ERROR` (message "Internal server error"; `extensions.status` carries e.g. 503 for a provider outage) |
+| A 503 that names a `reason` (a service the store needs is unusable right now, see below) | `SERVICE_UNAVAILABLE`, with its message and `extensions.reason` |
+| Any other 5xx, and unexpected errors (incl. a null returned for a non-null field) | `INTERNAL_SERVER_ERROR` (message "Internal server error"; `extensions.status` carries e.g. 503 for a provider outage) |
 
 **`extensions.reason`** narrows some `FORBIDDEN` / `UNAUTHENTICATED` errors so the frontend can react (details in [2.25](#225-two-factor-authentication-and-step-up)):
 
@@ -5101,16 +5102,18 @@ GraphQL errors follow the standard Apollo format:
 | `UNAUTHENTICATED` | `MFA_REQUIRED` | Password or social sign-in succeeded; second factor needed. `extensions.mfaChallenge` holds the challenge (5 minutes) | Ask for a code, call `completeMfaSignIn` |
 | `FORBIDDEN` | `MFA_ENROLLMENT_REQUIRED` | The staff role requires two-factor authentication and the user has not enrolled | Run the enrolment flow, then retry |
 | `FORBIDDEN` | `STEP_UP_REQUIRED` | Sensitive action without a two-factor verification in the last 10 minutes | Ask for a code, call `stepUp`, retry |
+| `SERVICE_UNAVAILABLE` | `IMAGE_STORAGE_UNAVAILABLE` | An image upload could not reach the image storage (credentials, rate limit or outage) | Retry later |
+| `SERVICE_UNAVAILABLE` | `SMS_UNAVAILABLE` | Phone verification while SMS is not configured | Offer another payment method |
 
 REST endpoints return the same `reason` field in their JSON error body.
 
-**Breaking changes (error handling)** `[breaking-api]`: a missing or invalid variable value is HTTP **400** `BAD_USER_INPUT` (it was HTTP 500 `INTERNAL_SERVER_ERROR`, because the query cost check failed on it first).
+**Breaking changes (error handling)** `[breaking-api]`: a missing or invalid variable value is HTTP **400** `BAD_USER_INPUT` (it was HTTP 500 `INTERNAL_SERVER_ERROR`, because the query cost check failed on it first). A failed image upload is **400** when the image storage refuses the file and **503** `IMAGE_STORAGE_UNAVAILABLE` otherwise (was 500). `SMS_UNAVAILABLE` now reaches the client with its message (it was masked as `INTERNAL_SERVER_ERROR`).
 
 **Query cost:** each field costs 1; a list costs its page size (`first`, or 10 when not given) times the cost of its fields. A page of 50 products with variants and reviews costs about 2,800.
 
 ### Production vs. Development
 
-In **production**: only errors with codes `BAD_USER_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `BAD_REQUEST`, `GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED` expose their real message. All other errors return `{ "message": "Internal server error", "extensions": { "code": "INTERNAL_SERVER_ERROR" } }`.
+In **production**: only errors with codes `BAD_USER_INPUT`, `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `BAD_REQUEST`, `GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, `SERVICE_UNAVAILABLE` expose their real message. All other errors return `{ "message": "Internal server error", "extensions": { "code": "INTERNAL_SERVER_ERROR" } }`.
 
 Outside production every message is returned unmasked, and Apollo's default may add `extensions.stacktrace` in development; never rely on it.
 
@@ -5269,7 +5272,7 @@ files: <image3>
 
 ### Accepted Formats
 
-JPEG, PNG and WebP only, identified from the file content (magic bytes), not the file name or MIME type. Anything else is rejected with 400.
+JPEG, PNG and WebP only, identified from the file content (magic bytes), not the file name or MIME type. Anything else is rejected with 400, as is a file the image storage refuses. When the image storage itself cannot be used the upload is 503 with `"reason": "IMAGE_STORAGE_UNAVAILABLE"`; retry later.
 
 ### Limits
 

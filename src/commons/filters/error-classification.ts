@@ -18,6 +18,10 @@ const CODE_BY_STATUS: Record<number, string> = {
   [HttpStatus.CONFLICT]: 'CONFLICT',
 };
 
+const SERVER_CODE_BY_STATUS: Record<number, string> = {
+  [HttpStatus.SERVICE_UNAVAILABLE]: 'SERVICE_UNAVAILABLE',
+};
+
 const INTERNAL: ClassifiedError = {
   status: HttpStatus.INTERNAL_SERVER_ERROR,
   code: 'INTERNAL_SERVER_ERROR',
@@ -106,7 +110,11 @@ export function describeErrorForLog(exception: unknown): string {
     return `Prisma ${exception.code}${where ? ` on ${where}` : ''}`;
   }
   if (exception instanceof Prisma.PrismaClientValidationError) return 'Prisma validation error';
-  return exception instanceof Error ? exception.message : String(exception);
+  if (exception instanceof Error) return exception.message;
+  if (isRecord(exception) && typeof exception.message === 'string') {
+    return typeof exception.name === 'string' ? `${exception.name}: ${exception.message}` : exception.message;
+  }
+  return String(exception);
 }
 
 /** The one stack-trace policy for logs: stacks only in development (Sentry keeps them elsewhere). */
@@ -122,11 +130,13 @@ export function classifyError(exception: unknown): ClassifiedError {
   }
   if (!(exception instanceof HttpException)) return INTERNAL;
   const status = exception.getStatus();
-  if (status >= HttpStatus.INTERNAL_SERVER_ERROR) return { ...INTERNAL, status };
   const extensions = httpExtensions(exception);
+  // A server error is shown only when it names a reason: its message was then written for the client.
+  if (status >= HttpStatus.INTERNAL_SERVER_ERROR && typeof extensions?.reason !== 'string')
+    return { ...INTERNAL, status };
   return {
     status,
-    code: errorCodeForStatus(status),
+    code: SERVER_CODE_BY_STATUS[status] ?? errorCodeForStatus(status),
     message: httpMessage(exception),
     ...(extensions && { extensions }),
   };

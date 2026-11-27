@@ -1,9 +1,12 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, HttpStatus, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
 import { sharp } from './sharp';
 import { LoggerService } from './logger.service';
 import { MAX_IMAGE_PIXELS } from './image-upload-validation';
+import { describeErrorForLog } from './filters/error-classification';
+
+export const IMAGE_STORAGE_UNAVAILABLE = 'IMAGE_STORAGE_UNAVAILABLE';
 
 @Injectable()
 export class CloudinaryService {
@@ -37,10 +40,30 @@ export class CloudinaryService {
     return new Promise((resolve, reject) => {
       cloudinary.uploader
         .upload_stream({ folder, resource_type: 'image', allowed_formats: ['jpg', 'png', 'webp'] }, (error, result) => {
-          if (error) return reject(error);
+          if (error) return reject(this.uploadFailure(error, file.originalname));
           resolve(result);
         })
         .end(resizedBuffer);
+    });
+  }
+
+  // Cloudinary calls back with a plain { message, name, http_code } object. Only its 400 is about the file; every other
+  // failure (credentials, rate limit, outage) is ours, and its message may name the account, so it stays in the log.
+  private uploadFailure(error: { http_code?: number }, filename: string): Error {
+    const status = error.http_code;
+    this.logger.error(
+      `Cloudinary upload failed | http_code: ${status ?? 'none'} | ${describeErrorForLog(error)}`,
+      undefined,
+      'CloudinaryService',
+    );
+    if (status === HttpStatus.BAD_REQUEST) {
+      return new BadRequestException(
+        `File "${filename}" was refused by the image storage: upload a JPEG, PNG or WebP image`,
+      );
+    }
+    return new ServiceUnavailableException({
+      message: 'Image upload is unavailable, try again later',
+      extensions: { reason: IMAGE_STORAGE_UNAVAILABLE },
     });
   }
 

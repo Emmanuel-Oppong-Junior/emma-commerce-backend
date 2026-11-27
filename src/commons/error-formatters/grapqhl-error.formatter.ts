@@ -26,6 +26,7 @@ const isSafeToExpose = (extensions: GraphQLFormattedError['extensions']): boolea
     'BAD_REQUEST',
     'GRAPHQL_VALIDATION_FAILED',
     'GRAPHQL_PARSE_FAILED',
+    'SERVICE_UNAVAILABLE',
   ];
   return !!code && safeCode.includes(code);
 };
