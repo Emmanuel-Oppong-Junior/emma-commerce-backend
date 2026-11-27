@@ -131,6 +131,10 @@ export class DisputesRepository {
   }
 
   /** The refund's payment with its disputes and other refunds; null for an unknown refund. */
+  async findForAttempt(tx: Tx, attemptId: string): Promise<DisputedPayment['disputes']> {
+    return tx.dispute.findMany({ where: { attemptId }, select: { id: true, status: true, amount: true } });
+  }
+
   async findDisputedPayment(
     refundId: string,
   ): Promise<{ payment: DisputedPayment; refund: { id: string; amount: Prisma.Decimal } } | null> {

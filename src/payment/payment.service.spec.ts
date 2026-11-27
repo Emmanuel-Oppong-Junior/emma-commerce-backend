@@ -31,6 +31,7 @@ const mockPaymentRepository = {
   recordCheckout: jest.fn(),
   markInitializationFailed: jest.fn(),
   findById: jest.fn(),
+  restoreDeleted: jest.fn(),
   findByReference: jest.fn(),
   findByOrderId: jest.fn(),
   findByUser: jest.fn(),
@@ -597,19 +598,18 @@ describe('PaymentService', () => {
     };
     const restoredPayment = { ...payment, deleted: false, deletedAt: null };
 
-    it('should restore payment successfully', async () => {
-      mockPaymentRepository.findById.mockResolvedValue(payment);
-      mockPaymentRepository.update.mockResolvedValue(restoredPayment);
+    it('restores a soft-deleted payment without first looking it up among the visible ones', async () => {
+      mockPaymentRepository.restoreDeleted.mockResolvedValue(restoredPayment);
 
       const result = await service.restore(paymentId);
 
-      expect(paymentRepository.findById).toHaveBeenCalledWith(paymentId);
-      expect(paymentRepository.update).toHaveBeenCalledWith(paymentId, { deleted: false, deletedAt: null });
+      expect(paymentRepository.restoreDeleted).toHaveBeenCalledWith(paymentId);
+      expect(paymentRepository.findById).not.toHaveBeenCalled();
       expect(result).toEqual(restoredPayment);
     });
 
-    it('should throw NotFoundException if payment not found', async () => {
-      mockPaymentRepository.findById.mockResolvedValue(null);
+    it('answers NOT_FOUND when no soft-deleted payment has the id (unknown or not deleted)', async () => {
+      mockPaymentRepository.restoreDeleted.mockResolvedValue(null);
 
       await expect(service.restore(paymentId)).rejects.toThrow(new NotFoundException('Payment Not found'));
     });

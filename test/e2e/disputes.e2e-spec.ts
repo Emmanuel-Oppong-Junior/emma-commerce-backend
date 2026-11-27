@@ -342,6 +342,31 @@ describe('Disputes and chargebacks (P3-E.2, e2e)', () => {
       expect((await prisma.refund.findUniqueOrThrow({ where: { id: refund.id } })).status).toBe('PENDING');
     });
 
+    it('refuses refundOrder on a disputed payment before writing anything: no refund row, no refund audit entry', async () => {
+      const { paymentId, orderId } = await capturedPayment();
+      const dispute = (await recordDispute(managerToken, { paymentId, amount: '100.00' })).body.data.recordDispute;
+      const refundAuditEntries = () => prisma.auditLog.count({ where: { entity: 'Refund' } });
+      const auditsBefore = await refundAuditEntries();
+      const refundOrder = (key: string) =>
+        gql(`mutation ($input: RefundOrderInput!) { refundOrder(input: $input) { id status } }`, managerToken, {
+          input: { orderId, amount: '30.00', reason: 'PRICE_ADJUSTMENT', idempotencyKey: key },
+        });
+
+      expect(errorOf(await refundOrder('disputed-open-0001'))).toMatchObject({
+        code: 'CONFLICT',
+        reason: 'PAYMENT_DISPUTED',
+      });
+      await updateStatus(managerToken, { disputeId: dispute.id, status: 'LOST' });
+      expect(errorOf(await refundOrder('disputed-lost-0001'))).toMatchObject({
+        code: 'CONFLICT',
+        reason: 'PAYMENT_DISPUTED',
+      });
+
+      expect(await prisma.refund.count({ where: { attemptId: paymentId } })).toBe(0);
+      expect(await refundAuditEntries()).toBe(auditsBefore);
+      expect(paystack.createRefund).not.toHaveBeenCalled();
+    });
+
     it('sends the refund once the dispute is WON', async () => {
       const { paymentId } = await capturedPayment();
       const refund = await prisma.refund.create({

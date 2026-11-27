@@ -10,6 +10,7 @@ import {
 import { AuditService } from '../../commons/audit.service';
 import { LoggerService } from '../../commons/logger.service';
 import { OutboxService } from '../../outbox/outbox.service';
+import { capturedAmount, RefundLedger } from '../../returns/refund-cap';
 import { DisputeNotice } from './dispute-notice';
 import { assertDisputesAllowRefund } from './dispute-refund-guard';
 import {
@@ -240,6 +241,28 @@ export class DisputesService {
     const found = await this.repository.findDisputedPayment(refundId);
     if (!found) throw new NotFoundException(`Refund "${refundId}" not found`);
     assertDisputesAllowRefund(found.payment, found.refund);
+  }
+
+  /**
+   * The same guard for a refund about to be recorded, on the caller's transaction after it locked the payment's
+   * refund ledger, so a refused refund writes nothing.
+   */
+  async assertNewRefundAllowed(
+    tx: Prisma.TransactionClient,
+    ledger: RefundLedger,
+    amount: Prisma.Decimal,
+  ): Promise<void> {
+    const disputes = await this.repository.findForAttempt(tx, ledger.attempt.id);
+    assertDisputesAllowRefund(
+      {
+        attemptId: ledger.attempt.id,
+        currency: ledger.attempt.currency,
+        captured: capturedAmount(ledger),
+        disputes,
+        refunds: ledger.refunds,
+      },
+      { amount },
+    );
   }
 
   private async recordOpened(tx: Prisma.TransactionClient, dispute: Dispute): Promise<void> {

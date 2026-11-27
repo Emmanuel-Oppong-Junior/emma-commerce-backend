@@ -25,7 +25,7 @@ const MONEY_MOVING_REFUNDS: RefundStatus[] = [RefundStatus.PENDING, RefundStatus
  */
 export function assertDisputesAllowRefund(
   payment: DisputedPayment,
-  refund: { id: string; amount: Prisma.Decimal },
+  refund: { id?: string; amount: Prisma.Decimal },
 ): void {
   const open = payment.disputes.find((dispute) => UNRESOLVED_DISPUTE_STATUSES.includes(dispute.status));
   if (open) {

@@ -49,6 +49,20 @@ describe('User Account (e2e)', () => {
     });
   });
 
+  describe('user lookups', () => {
+    it('answers NOT_FOUND for an unknown id, email or provider id instead of null in a non-null field', async () => {
+      for (const query of [
+        `{ userById(id: "no-such-user") { id } }`,
+        `{ userByEmail(email: "nobody@example.com") { id } }`,
+        `{ userByProviderId(providerId: "no-such-provider-id") { id } }`,
+      ]) {
+        const res = await gqlRequest(app, query, undefined, adminToken).expect(200);
+
+        expect(res.body.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
+      }
+    });
+  });
+
   // ─── updateMyProfile ──────────────────────────────────────────────────────────
 
   describe('updateMyProfile', () => {

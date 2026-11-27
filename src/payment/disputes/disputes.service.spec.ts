@@ -16,6 +16,7 @@ describe('DisputesService', () => {
     update: jest.fn(),
     addNote: jest.fn(),
     findById: jest.fn(),
+    findForAttempt: jest.fn(),
   };
   const entries: unknown[] = [];
   const auditService = {
@@ -223,6 +224,32 @@ describe('DisputesService', () => {
 
       expect(repository.addNote).toHaveBeenCalledWith(tx, 'dsp-1', 'staff-1', 'Signed delivery note');
       expect(entries).toEqual([expect.objectContaining({ action: 'UPDATE', details: { noteAdded: 'note-1' } })]);
+    });
+  });
+  describe('assertNewRefundAllowed', () => {
+    const ledger = {
+      attempt: { ...attempt, provider: 'PAYSTACK' as const, status: 'CAPTURED' as const, reference: 'ref-1' },
+      refunds: [{ id: 'rf-1', amount: new Prisma.Decimal(30), status: 'PROCESSED' as const, idempotencyKey: 'k' }],
+    };
+
+    it('reads the disputes on the caller transaction and refuses while one is unresolved', async () => {
+      repository.findForAttempt.mockResolvedValue([{ id: 'dsp-1', status: 'OPEN', amount: new Prisma.Decimal(100) }]);
+
+      await expect(
+        service.assertNewRefundAllowed(tx as never, ledger as never, new Prisma.Decimal(10)),
+      ).rejects.toMatchObject({ response: { extensions: { reason: 'PAYMENT_DISPUTED' } } });
+      expect(repository.findForAttempt).toHaveBeenCalledWith(tx, 'pay-1');
+    });
+
+    it('counts a lost chargeback and the earlier refunds against what is left', async () => {
+      repository.findForAttempt.mockResolvedValue([{ id: 'dsp-1', status: 'LOST', amount: new Prisma.Decimal(60) }]);
+
+      await expect(
+        service.assertNewRefundAllowed(tx as never, ledger as never, new Prisma.Decimal(10)),
+      ).resolves.toBeUndefined();
+      await expect(
+        service.assertNewRefundAllowed(tx as never, ledger as never, new Prisma.Decimal('10.01')),
+      ).rejects.toThrow(ConflictException);
     });
   });
 });

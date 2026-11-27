@@ -260,11 +260,12 @@ export class PaymentService {
    * and clearing the deletion timestamp.
    * @param id - The ID of the payment to be restored.
    * @returns The updated payment record.
-   * @throws NotFoundException if the payment is not found.
+   * @throws NotFoundException if no soft-deleted payment has this ID.
    */
   async restore(id: string) {
-    await this.findPaymentOrThrow(id);
-    return this.paymentRepository.update(id, { deleted: false, deletedAt: null });
+    const restored = await this.paymentRepository.restoreDeleted(id);
+    if (!restored) throw new NotFoundException('Payment Not found');
+    return restored;
   }
 
   /** The client may name the currency, but never choose it: the store currency is the only one charged. */

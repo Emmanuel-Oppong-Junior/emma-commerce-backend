@@ -111,7 +111,7 @@ export class RefundRepository {
    */
   async openForOrder(
     request: StaffRefundRequest,
-    check: (ledger: RefundLedger, plan: RefundPlan, method: RefundMethod) => void,
+    check: (tx: Tx, ledger: RefundLedger, plan: RefundPlan, method: RefundMethod) => Promise<void>,
     onOpened: (tx: Tx, refund: Refund) => Promise<void>,
   ): Promise<OpenedRefund> {
     return this.prisma.$transaction(async (tx) => {
@@ -135,7 +135,7 @@ export class RefundRepository {
       const plan = planRefund(await this.refundableOrder(tx, request.orderId, ledger), request.parts);
       const method =
         ledger.attempt.provider === PaymentProvider.CASH_ON_DELIVERY ? RefundMethod.CASH : RefundMethod.PROVIDER;
-      check(ledger, plan, method);
+      await check(tx, ledger, plan, method);
       const refund = await tx.refund.create({
         data: {
           attemptId: payment.id,
@@ -167,7 +167,7 @@ export class RefundRepository {
     returnRequest: ReturnRequest & { refundAmount: Prisma.Decimal },
     attemptId: string,
     actorId: string,
-    check: (ledger: RefundLedger) => void,
+    check: (tx: Tx, ledger: RefundLedger) => Promise<void>,
     onOpened: (tx: Tx, refund: Refund) => Promise<void>,
   ): Promise<Refund> {
     return this.prisma.$transaction(async (tx) => {
@@ -178,7 +178,7 @@ export class RefundRepository {
         throw new ConflictException(`Return request "${returnRequest.id}" is no longer APPROVED`);
       }
       const ledger = await this.lockLedger(tx, attemptId);
-      check(ledger);
+      await check(tx, ledger);
       const taxAmount = refundTax(returnRequest.refundAmount, await this.orderTax(tx, returnRequest.orderId));
       const refund = await tx.refund.create({
         data: {
@@ -206,7 +206,7 @@ export class RefundRepository {
    */
   async openForReturnLines(
     request: { returnRequestId: string; shipping: boolean; actorId: string; note: string | null },
-    check: (ledger: RefundLedger, plan: RefundPlan, method: RefundMethod) => void,
+    check: (tx: Tx, ledger: RefundLedger, plan: RefundPlan, method: RefundMethod) => Promise<void>,
     onOpened: (tx: Tx, refund: Refund, returnRequest: ReturnRequest) => Promise<void>,
   ): Promise<Refund> {
     return this.prisma.$transaction(async (tx) => {
@@ -236,7 +236,7 @@ export class RefundRepository {
         await this.refundableOrder(tx, returnRequest.orderId, ledger),
         returnRefundParts(returnRequest.lines, request.shipping),
       );
-      check(ledger, plan, method);
+      await check(tx, ledger, plan, method);
       const refund = await tx.refund.create({
         data: {
           attemptId: payment.id,

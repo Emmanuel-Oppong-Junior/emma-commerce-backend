@@ -223,13 +223,9 @@ export class UsersService {
     };
   }
 
-  /**
-   * Retrieves a user by their ID.
-   * @param id - The ID of the user.
-   * @returns The user record, or null if not found.
-   */
+  /** @throws NotFoundException if no user has this ID. */
   findOne(id: string) {
-    return this.usersRepository.findById(id);
+    return this.findUserByIdOrThrow(id);
   }
 
   findWithStaffRole(id: string) {
@@ -245,6 +241,12 @@ export class UsersService {
     return this.usersRepository.findByEmail(email);
   }
 
+  async findUserByEmailOrThrow(email: string) {
+    const user = await this.usersRepository.findByEmail(email);
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
   /**
    * Retrieves a user linked to a specific OAuth provider ID.
    * @param providerId - The provider-assigned unique identifier.
@@ -252,6 +254,12 @@ export class UsersService {
    */
   findUserByProviderId(providerId: string) {
     return this.usersRepository.findByProviderId(providerId);
+  }
+
+  async findUserByProviderIdOrThrow(providerId: string) {
+    const user = await this.usersRepository.findByProviderId(providerId);
+    if (!user) throw new NotFoundException('User not found');
+    return user;
   }
 
   /**
