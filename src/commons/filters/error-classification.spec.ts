@@ -5,6 +5,7 @@ import {
   ImATeapotException,
   InternalServerErrorException,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma/client';
@@ -71,6 +72,28 @@ describe('classifyError', () => {
       status: 500,
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Internal server error',
+    });
+  });
+
+  it('hides the message of a server error that names no reason', () => {
+    expect(classifyError(new ServiceUnavailableException('Redis at 10.0.0.3 is down'))).toEqual({
+      status: 503,
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Internal server error',
+    });
+  });
+
+  it('passes on the message of a server error that names a reason', () => {
+    const unavailable = new ServiceUnavailableException({
+      message: 'Online payment is unavailable',
+      extensions: { reason: 'PAYMENT_PROVIDER_MISCONFIGURED' },
+    });
+
+    expect(classifyError(unavailable)).toEqual({
+      status: 503,
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'Online payment is unavailable',
+      extensions: { reason: 'PAYMENT_PROVIDER_MISCONFIGURED' },
     });
   });
 
@@ -175,5 +198,14 @@ describe('describeErrorForLog', () => {
 
   it('keeps our own exception messages', () => {
     expect(describeErrorForLog(new NotFoundException('Product not found'))).toBe('Product not found');
+  });
+
+  // Cloudinary's upload callback rejects with a plain object like this one.
+  it('reads the name and message of an error that is not an Error', () => {
+    expect(describeErrorForLog({ message: 'Invalid image file', name: 'Error', http_code: 400 })).toBe(
+      'Error: Invalid image file',
+    );
+    expect(describeErrorForLog({ message: 'Invalid image file' })).toBe('Invalid image file');
+    expect(describeErrorForLog('plain text')).toBe('plain text');
   });
 });

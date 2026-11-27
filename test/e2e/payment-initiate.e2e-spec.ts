@@ -3,6 +3,7 @@ import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '../../src/gen
 import * as request from 'supertest';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { PaystackClient } from '../../src/payment/paystack.client';
+import { ProviderCredentialsRejected } from '../../src/payment/providers/payment-provider.port';
 import { createTestApp } from '../helpers/app.helper';
 import { gqlRequest } from '../helpers/graphql.helper';
 import { signInUser } from '../helpers/auth.helper';
@@ -180,5 +181,23 @@ describe('Payment initiation (e2e)', () => {
     const [failed, retried] = await attemptsOf(orderId);
     expect(failed).toMatchObject({ status: PaymentStatus.FAILED, idempotencyKey: null });
     expect(retried).toMatchObject({ status: PaymentStatus.PENDING, idempotencyKey: 'retry-key' });
+  });
+
+  it('answers 503 PAYMENT_PROVIDER_MISCONFIGURED when Paystack rejects the store key', async () => {
+    const orderId = await createOrder();
+    paystack.initializeTransaction.mockRejectedValueOnce(
+      new ProviderCredentialsRejected('Paystack initialize failed with HTTP 401: Invalid key'),
+    );
+
+    const res = await initiate({ orderId, idempotencyKey: 'bad-key' }).expect(503);
+
+    expect(res.body).toMatchObject({
+      statusCode: 503,
+      message: "Online payment is unavailable: the payment provider rejected the store's credentials.",
+      reason: 'PAYMENT_PROVIDER_MISCONFIGURED',
+    });
+    expect(JSON.stringify(res.body)).not.toContain('Invalid key');
+    const [failed] = await attemptsOf(orderId);
+    expect(failed).toMatchObject({ status: PaymentStatus.FAILED, idempotencyKey: null });
   });
 });

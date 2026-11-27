@@ -9,6 +9,7 @@ import {
 import {
   ListedTransaction,
   ListTransactionsRequest,
+  ProviderCredentialsRejected,
   ProviderRequestRejected,
   TransactionPage,
 } from './providers/payment-provider.port';
@@ -16,6 +17,8 @@ import {
 export type { ListedTransaction, ListTransactionsRequest, TransactionPage };
 
 export const PAYSTACK_TIMEOUT_MS = 8000;
+
+const CREDENTIAL_REJECTIONS: number[] = [401, 403];
 
 export interface InitializeTransactionRequest {
   email: string;
@@ -67,7 +70,7 @@ export class PaystackRequestRejected extends ProviderRequestRejected {}
 
 /**
  * The Paystack calls the app makes, over `fetch` with a timeout, authenticated with the store's current Paystack
- * secret key (503 when there is none). Transport failures, timeouts, non-2xx answers and malformed envelopes all
+ * secret key (503 when there is none or Paystack rejects it). Transport failures, timeouts, non-2xx answers and malformed envelopes all
  * surface as 502/504 so callers never act on a response they could not read.
  */
 @Injectable()
@@ -154,6 +157,7 @@ export class PaystackClient {
     if (!response.ok || envelope.status !== true) {
       const message = typeof envelope.message === 'string' ? `: ${envelope.message.slice(0, 200)}` : '';
       const failure = `Paystack ${operation} failed with HTTP ${response.status}${message}`;
+      if (CREDENTIAL_REJECTIONS.includes(response.status)) throw new ProviderCredentialsRejected(failure);
       const rejected = response.status >= 400 && response.status < 500 && envelope.status === false;
       throw rejected ? new PaystackRequestRejected(failure) : new BadGatewayException(failure);
     }
