@@ -1,5 +1,6 @@
 import { BadGatewayException, GatewayTimeoutException, ServiceUnavailableException } from '@nestjs/common';
 import { PAYSTACK_TIMEOUT_MS, PaystackClient, PaystackRequestRejected } from './paystack.client';
+import { ProviderCredentialsRejected } from './providers/payment-provider.port';
 
 const jsonResponse = (status: number, body: unknown) =>
   new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
@@ -56,6 +57,31 @@ describe('PaystackClient', () => {
       fetchMock.mockResolvedValue(jsonResponse(200, { status: true, data: { reference: 'ref1' } }));
 
       await expect(client.initializeTransaction(request)).rejects.toThrow(BadGatewayException);
+    });
+
+    it.each([401, 403])(
+      'answers 503 PAYMENT_PROVIDER_MISCONFIGURED when Paystack rejects the secret key with %i',
+      async (status) => {
+        fetchMock.mockResolvedValue(jsonResponse(status, { status: false, message: 'Invalid key' }));
+
+        const error = await client.initializeTransaction(request).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ProviderCredentialsRejected);
+        expect(error).not.toBeInstanceOf(PaystackRequestRejected);
+        const rejected = error as ProviderCredentialsRejected;
+        expect(rejected.getStatus()).toBe(503);
+        expect(rejected.getResponse()).toEqual({
+          message: "Online payment is unavailable: the payment provider rejected the store's credentials.",
+          extensions: { reason: 'PAYMENT_PROVIDER_MISCONFIGURED' },
+        });
+        expect(rejected.cause).toEqual(new Error(`Paystack initialize failed with HTTP ${status}: Invalid key`));
+      },
+    );
+
+    it('keeps any other 4xx refusal a rejected request', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(400, { status: false, message: 'Invalid amount' }));
+
+      await expect(client.initializeTransaction(request)).rejects.toThrow(PaystackRequestRejected);
     });
   });
 
@@ -188,6 +214,15 @@ describe('PaystackClient', () => {
       fetchMock.mockResolvedValue(jsonResponse(400, { status: false, message: 'Transaction has been fully reversed' }));
 
       await expect(client.createRefund(request)).rejects.toThrow(PaystackRequestRejected);
+    });
+
+    it('reports a rejected secret key as a credentials problem, not as a refusal of the refund', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(401, { status: false, message: 'Invalid key' }));
+
+      const error = await client.createRefund(request).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ProviderCredentialsRejected);
+      expect(error).not.toBeInstanceOf(PaystackRequestRejected);
     });
 
     it.each([

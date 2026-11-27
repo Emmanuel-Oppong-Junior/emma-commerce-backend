@@ -11,6 +11,7 @@ import {
 import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
 import { PaystackRequestRejected } from '../payment/paystack.client';
+import { ProviderCredentialsRejected } from '../payment/providers/payment-provider.port';
 import { providerRegistryWith } from '../../test/helpers/payment-providers.helper';
 import { AUDIT_TX, createAuditServiceMock } from '../../test/helpers/audit.helper';
 import { RefundLedger } from './refund-cap';
@@ -211,6 +212,20 @@ describe('RefundsService', () => {
       },
       AUDIT_TX,
     );
+    expect(repository.recordProcessed).not.toHaveBeenCalled();
+  });
+
+  it('marks the refund FAILED but answers 503 when Paystack rejects the store credentials', async () => {
+    const error = new ProviderCredentialsRejected('Paystack refund failed with HTTP 401: Invalid key');
+    paystack.createRefund.mockRejectedValue(error);
+
+    await expect(service.send('refund1', 'admin1')).rejects.toBe(error);
+    expect(repository.recordRejected).toHaveBeenCalledWith(
+      'refund1',
+      "Paystack rejected the store's credentials; nothing was refunded",
+      expect.any(Function),
+    );
+    expect(repository.noteUnknownOutcome).not.toHaveBeenCalled();
     expect(repository.recordProcessed).not.toHaveBeenCalled();
   });
 

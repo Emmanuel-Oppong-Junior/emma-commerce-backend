@@ -4373,7 +4373,7 @@ The amount is always the order total at the first initialization; any other fiel
 - Only the owner's `PENDING`, non-deleted, online-payment order can be paid. A cancelled, processing, shipped or delivered order returns 400, a cash-on-delivery order returns 400, an already paid order returns 400 (`Payment for this order has already been completed`), a missing or deleted order returns 404, and another user's order returns 403.
 - Each call without a known key opens a **new attempt** with its own reference. The previous pending attempt is marked `CANCELLED`; it is kept, and if the customer still completes that older checkout the payment is matched.
 - Repeating an `idempotencyKey` for the same order returns the same attempt and the same `authorizationUrl` without opening a new checkout. It returns **409** if that attempt is still being set up (retry shortly) or is no longer `PENDING` (use a new key).
-- If Paystack cannot open the checkout the request fails and the same key may be retried.
+- If Paystack cannot open the checkout the request fails and the same key may be retried. When Paystack rejects the store's secret key (its 401/403) the answer is **503** with `"reason": "PAYMENT_PROVIDER_MISCONFIGURED"` and the message `Online payment is unavailable: the payment provider rejected the store's credentials.`; other Paystack failures are 502 (504 on a timeout).
 - **Velocity checks (P3-E.1):** too many payment attempts in a short time from the same account or IP address, or too many failed payments on the account, return **403** with `"reason": "VELOCITY_LIMIT"` before any attempt is opened. A repeated `idempotencyKey` is not counted as a new attempt.
 - The checkout is opened with the provider the store configured for the method (Paystack), limited to that channel (`card` or `mobile_money`). Paystack's `callback_url` is the store's configured callback URL, else `PAYSTACK_CALLBACK_URL` (a frontend page; see [Section 8](#8-payment-integration-paystack)).
 
@@ -5102,12 +5102,13 @@ GraphQL errors follow the standard Apollo format:
 | `UNAUTHENTICATED` | `MFA_REQUIRED` | Password or social sign-in succeeded; second factor needed. `extensions.mfaChallenge` holds the challenge (5 minutes) | Ask for a code, call `completeMfaSignIn` |
 | `FORBIDDEN` | `MFA_ENROLLMENT_REQUIRED` | The staff role requires two-factor authentication and the user has not enrolled | Run the enrolment flow, then retry |
 | `FORBIDDEN` | `STEP_UP_REQUIRED` | Sensitive action without a two-factor verification in the last 10 minutes | Ask for a code, call `stepUp`, retry |
+| `SERVICE_UNAVAILABLE` | `PAYMENT_PROVIDER_MISCONFIGURED` | Paystack rejected the store's secret key (`POST /payment/initialize`, payment verification, refunds). Nothing was charged or refunded | Tell the customer online payment is unavailable; staff fix the Paystack keys in the payment settings. A refund it hit is `FAILED` and can be sent again |
 | `SERVICE_UNAVAILABLE` | `IMAGE_STORAGE_UNAVAILABLE` | An image upload could not reach the image storage (credentials, rate limit or outage) | Retry later |
 | `SERVICE_UNAVAILABLE` | `SMS_UNAVAILABLE` | Phone verification while SMS is not configured | Offer another payment method |
 
 REST endpoints return the same `reason` field in their JSON error body.
 
-**Breaking changes (error handling)** `[breaking-api]`: a missing or invalid variable value is HTTP **400** `BAD_USER_INPUT` (it was HTTP 500 `INTERNAL_SERVER_ERROR`, because the query cost check failed on it first). A failed image upload is **400** when the image storage refuses the file and **503** `IMAGE_STORAGE_UNAVAILABLE` otherwise (was 500). `SMS_UNAVAILABLE` now reaches the client with its message (it was masked as `INTERNAL_SERVER_ERROR`).
+**Breaking changes (error handling)** `[breaking-api]`: a missing or invalid variable value is HTTP **400** `BAD_USER_INPUT` (it was HTTP 500 `INTERNAL_SERVER_ERROR`, because the query cost check failed on it first). Paystack rejecting the store's key is `SERVICE_UNAVAILABLE` (REST: **503**) with `reason: "PAYMENT_PROVIDER_MISCONFIGURED"` (was 502 `INTERNAL_SERVER_ERROR`). A failed image upload is **400** when the image storage refuses the file and **503** `IMAGE_STORAGE_UNAVAILABLE` otherwise (was 500). `SMS_UNAVAILABLE` now reaches the client with its message (it was masked as `INTERNAL_SERVER_ERROR`).
 
 **Query cost:** each field costs 1; a list costs its page size (`first`, or 10 when not given) times the cost of its fields. A page of 50 products with variants and reviews costs about 2,800.
 

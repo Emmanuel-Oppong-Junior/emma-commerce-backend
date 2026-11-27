@@ -13,7 +13,7 @@ import { AuditService } from '../commons/audit.service';
 import { LoggerService } from '../commons/logger.service';
 import { assertRefundable, assertWithinCaptured } from './refund-cap';
 import { PaymentProviderRegistry } from '../payment/providers/payment-provider.registry';
-import { ProviderRequestRejected } from '../payment/providers/payment-provider.port';
+import { ProviderCredentialsRejected, ProviderRequestRejected } from '../payment/providers/payment-provider.port';
 import { RecordedRefund, RefundRepository, RefundWithOrderLines, staffRefundKey } from './refund.repository';
 import { staffRefundNote } from './refund-reason';
 
@@ -276,6 +276,20 @@ export class RefundsService {
       providerRefundId = await provider.refund({ reference, amount: refund.amount });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      // Nothing was refunded, so it can be sent again once the keys are fixed; the 503 is reported, unlike a refusal.
+      if (error instanceof ProviderCredentialsRejected) {
+        this.logger.error(
+          `${provider.label} rejected the store's credentials; refund marked FAILED, send it again once the payment settings are fixed | refundId: ${refund.id} | reference: ${reference}`,
+          undefined,
+          'RefundsService',
+        );
+        await this.recordRejected(
+          refund,
+          `${provider.label} rejected the store's credentials; nothing was refunded`,
+          adminUserId,
+        );
+        throw error;
+      }
       if (error instanceof ProviderRequestRejected) {
         this.logger.warn(
           `${provider.label} refused refund; marked FAILED, it can be sent again | refundId: ${refund.id} | reference: ${reference}`,

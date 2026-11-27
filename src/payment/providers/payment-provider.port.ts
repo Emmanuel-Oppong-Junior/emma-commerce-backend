@@ -1,4 +1,4 @@
-import { BadGatewayException, UnauthorizedException } from '@nestjs/common';
+import { BadGatewayException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { PaymentProvider as ProviderName, Prisma } from '../../generated/prisma/client';
 import { ProviderVerification } from '../payment-verification';
 import { OnlinePaymentMethod } from '../settings/payment-methods';
@@ -74,6 +74,24 @@ export type WebhookHeaders = Record<string, string | string[] | undefined>;
  * failure leaves the outcome unknown.
  */
 export class ProviderRequestRejected extends BadGatewayException {}
+
+export const PAYMENT_PROVIDER_MISCONFIGURED = 'PAYMENT_PROVIDER_MISCONFIGURED';
+
+/**
+ * The provider refused the store's credentials (for Paystack: 401 or 403), so it did nothing and nothing will work
+ * until staff fix the payment settings. `detail` (the provider's answer) is kept as the cause, out of the message.
+ */
+export class ProviderCredentialsRejected extends ServiceUnavailableException {
+  constructor(detail: string) {
+    super(
+      {
+        message: "Online payment is unavailable: the payment provider rejected the store's credentials.",
+        extensions: { reason: PAYMENT_PROVIDER_MISCONFIGURED },
+      },
+      { cause: new Error(detail) },
+    );
+  }
+}
 
 /** The webhook signature did not check out against the provider secret, or there is no secret to check it with. */
 export class WebhookSignatureRejected extends UnauthorizedException {}
