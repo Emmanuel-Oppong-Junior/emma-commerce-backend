@@ -126,6 +126,45 @@ describe('Payment ledger schema (e2e)', () => {
     expect(await prisma.paymentAttempt.findUnique({ where: { id: paymentId } })).not.toBeNull();
   });
 
+  it('restores a soft-deleted payment so it is visible again, and answers NOT_FOUND for one that is not deleted', async () => {
+    const orderId = await createOrder();
+    const { paymentId } = await seedPaymentAttempt(prisma, { orderId, status: PaymentStatus.CAPTURED });
+    const adminToken = await signInAdmin(app);
+    const readPayment = () =>
+      gqlRequest(app, `query($id: String!) { payment(id: $id) { id } }`, { id: paymentId }, adminToken);
+
+    const deleted = await gqlRequest(
+      app,
+      `mutation($id: String!) { softDeletePayment(id: $id) { id } }`,
+      { id: paymentId },
+      adminToken,
+    );
+    expect(deleted.body.errors).toBeUndefined();
+    expect((await readPayment()).body.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
+
+    const restored = await gqlRequest(
+      app,
+      `mutation($id: String!) { restorePayment(id: $id) { id } }`,
+      { id: paymentId },
+      adminToken,
+    );
+    expect(restored.body.errors).toBeUndefined();
+    expect(restored.body.data.restorePayment.id).toBe(paymentId);
+    expect((await readPayment()).body.data.payment.id).toBe(paymentId);
+    expect(await prisma.paymentAttempt.findUniqueOrThrow({ where: { id: paymentId } })).toMatchObject({
+      deleted: false,
+      deletedAt: null,
+    });
+
+    const again = await gqlRequest(
+      app,
+      `mutation($id: String!) { restorePayment(id: $id) { id } }`,
+      { id: paymentId },
+      adminToken,
+    );
+    expect(again.body.errors?.[0]?.extensions?.code).toBe('NOT_FOUND');
+  });
+
   it('no longer exposes the removePayment mutation', async () => {
     const adminToken = await signInAdmin(app);
 

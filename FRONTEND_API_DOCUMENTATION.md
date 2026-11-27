@@ -2425,7 +2425,7 @@ Dispute {
 - **Roles**: `ADMIN` only (a `SUPER_ADMIN` gets `FORBIDDEN`)
 - **Args**: `id: String!`
 - **Response**: `Payment!`
-- **Note**: There is no `removePayment`. Payment records are financial history and cannot be deleted; `softDeletePayment` only hides one, `restorePayment` un-hides it. `NOT_FOUND` for an unknown ID.
+- **Note**: There is no `removePayment`. Payment records are financial history and cannot be deleted; `softDeletePayment` only hides one, `restorePayment` un-hides it (it is then returned by `payment`, `payments` and the other payment reads again). `NOT_FOUND` for an unknown ID; `restorePayment` also answers `NOT_FOUND` for a payment that is not soft-deleted.
 
 ---
 

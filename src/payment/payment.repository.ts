@@ -310,6 +310,15 @@ export class PaymentRepository {
     return attempt && toPaymentRecord(attempt);
   }
 
+  /** Null when no soft-deleted payment has this id. */
+  async restoreDeleted(id: string): Promise<PaymentRecord | null> {
+    const { count } = await this.prisma.paymentAttempt.updateMany({
+      where: { id, deleted: true },
+      data: { deleted: false, deletedAt: null },
+    });
+    return count === 0 ? null : this.findById(id);
+  }
+
   async findByReference(reference: string): Promise<PaymentRecord | null> {
     const attempt = await this.prisma.paymentAttempt.findFirst({
       where: { reference, deleted: false },
