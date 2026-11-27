@@ -74,6 +74,21 @@ describe('Catalogue visibility (e2e)', () => {
     expectOnlyPublished(res.body);
   });
 
+  it('resolves SubCategory.category as a Category, with its own subcategories', async () => {
+    const res = await gqlRequest(
+      app,
+      '{ subCategories { name category { __typename name subcategories { name } } } }',
+      undefined,
+      userToken,
+    ).expect(200);
+
+    expect(res.body.errors).toBeUndefined();
+    expect(res.body.data.subCategories[0]).toEqual({
+      name: 'Laptops',
+      category: { __typename: 'Category', name: 'Electronics', subcategories: [{ name: 'Laptops' }] },
+    });
+  });
+
   it('caps nested products with first', async () => {
     const res = await gqlRequest(app, '{ categories { products(first: 1) { name } } }').expect(200);
 
@@ -97,6 +112,24 @@ describe('Catalogue visibility (e2e)', () => {
     expect(res.body.errors).toBeUndefined();
     const names = res.body.data.adminProducts.edges.map((e: { node: { name: string } }) => e.node.name).sort();
     expect(names).toEqual(['Discontinued Watch', 'Laptop', 'Phone', 'Unreleased Tablet']);
+  });
+
+  it.each([
+    ['isActive: null', ['Discontinued Watch', 'Laptop', 'Phone', 'Unreleased Tablet']],
+    ['search: null', ['Discontinued Watch', 'Laptop', 'Phone', 'Unreleased Tablet']],
+    ['isActive: true', ['Laptop', 'Phone', 'Unreleased Tablet']],
+    ['isActive: false', ['Discontinued Watch']],
+  ])('adminProducts with filterArgs { %s } returns %j', async (filter, expected) => {
+    const res = await gqlRequest(
+      app,
+      `{ adminProducts(paginationArgs: { first: 50 }, filterArgs: { ${filter} }) { edges { node { name } } } }`,
+      undefined,
+      adminToken,
+    ).expect(200);
+
+    expect(res.body.errors).toBeUndefined();
+    const names = res.body.data.adminProducts.edges.map((e: { node: { name: string } }) => e.node.name).sort();
+    expect(names).toEqual(expected);
   });
 
   it('returns a draft to admins through adminProduct', async () => {

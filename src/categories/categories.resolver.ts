@@ -1,6 +1,8 @@
-import { Args, Info, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Info, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { CategoriesService } from './categories.service';
 import { Category } from './entities/category.entity';
+import { SubCategory } from '../sub-categories/entities/sub-category.entity';
+import { SubCategoriesOfCategoryLoader } from './subcategories.loader';
 import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
@@ -11,7 +13,16 @@ import { RequirePermission } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => Category)
 export class CategoriesResolver {
-  constructor(private readonly categoriesService: CategoriesService) {}
+  constructor(
+    private readonly categoriesService: CategoriesService,
+    private readonly subCategoriesLoader: SubCategoriesOfCategoryLoader,
+  ) {}
+
+  // Reached through SubCategory.category or a mutation result, where no select loaded them.
+  @ResolveField(() => [SubCategory], { description: 'List of subcategories under this category (empty if none)' })
+  subcategories(@Parent() category: Category) {
+    return category.subcategories ?? this.subCategoriesLoader.loader.load(category.id);
+  }
 
   @RequirePermission('catalog.taxonomy.write')
   @Mutation(() => Category, {

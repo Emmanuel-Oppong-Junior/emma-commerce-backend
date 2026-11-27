@@ -3,6 +3,10 @@ import { CategoriesResolver } from './categories.resolver';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryInput } from './dto/create-category.input';
 import { UpdateCategoryInput } from './dto/update-category.input';
+import { SubCategoriesOfCategoryLoader } from './subcategories.loader';
+import { Category } from './entities/category.entity';
+
+const mockLoad = jest.fn();
 
 const mockCategoriesService = {
   create: jest.fn(),
@@ -18,12 +22,32 @@ describe('CategoriesResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [CategoriesResolver, { provide: CategoriesService, useValue: mockCategoriesService }],
+      providers: [
+        CategoriesResolver,
+        { provide: CategoriesService, useValue: mockCategoriesService },
+        { provide: SubCategoriesOfCategoryLoader, useValue: { loader: { load: mockLoad } } },
+      ],
     }).compile();
 
     resolver = module.get<CategoriesResolver>(CategoriesResolver);
     service = module.get<CategoriesService>(CategoriesService);
     jest.clearAllMocks();
+  });
+
+  describe('subcategories', () => {
+    it('loads them when no select did (reached through SubCategory.category)', async () => {
+      mockLoad.mockResolvedValue([{ id: 'sub1' }]);
+
+      await expect(resolver.subcategories({ id: 'cat1' } as Category)).resolves.toEqual([{ id: 'sub1' }]);
+      expect(mockLoad).toHaveBeenCalledWith('cat1');
+    });
+
+    it('keeps the ones the categories select loaded', () => {
+      const subcategories = [{ id: 'sub1' }];
+
+      expect(resolver.subcategories({ id: 'cat1', subcategories } as unknown as Category)).toBe(subcategories);
+      expect(mockLoad).not.toHaveBeenCalled();
+    });
   });
 
   describe('createCategory', () => {

@@ -26,7 +26,7 @@ export class SubCategory extends SeoFields {
   @Field(() => [Product], { nullable: true })
   products: Product[];
 
-  @Field(() => SubCategory, { nullable: true })
+  @Field(() => Category, { nullable: true })
   category: Category;
 
   @Field(() => Date, { description: 'Timestamp when the sub category was created' })

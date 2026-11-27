@@ -4,6 +4,10 @@ import { SubCategoriesService } from './sub-categories.service';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
 import { SubCategory } from '../generated/prisma/client';
+import { CategoryLoader } from './category.loader';
+import { SubCategory as SubCategoryEntity } from './entities/sub-category.entity';
+
+const mockLoad = jest.fn();
 
 const mockSubCategoriesService = {
   create: jest.fn(),
@@ -19,12 +23,35 @@ describe('SubCategoriesResolver', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SubCategoriesResolver, { provide: SubCategoriesService, useValue: mockSubCategoriesService }],
+      providers: [
+        SubCategoriesResolver,
+        { provide: SubCategoriesService, useValue: mockSubCategoriesService },
+        { provide: CategoryLoader, useValue: { loader: { load: mockLoad } } },
+      ],
     }).compile();
 
     resolver = module.get<SubCategoriesResolver>(SubCategoriesResolver);
     service = module.get<SubCategoriesService>(SubCategoriesService);
     jest.clearAllMocks();
+  });
+
+  describe('category', () => {
+    it('loads the parent category when the query did not include it', async () => {
+      mockLoad.mockResolvedValue({ id: 'cat1', name: 'Clothing' });
+
+      await expect(resolver.category({ id: 'sub1', categoryId: 'cat1' } as SubCategoryEntity)).resolves.toEqual({
+        id: 'cat1',
+        name: 'Clothing',
+      });
+      expect(mockLoad).toHaveBeenCalledWith('cat1');
+    });
+
+    it('uses the category the query included', () => {
+      const category = { id: 'cat1', name: 'Clothing' };
+
+      expect(resolver.category({ id: 'sub1', categoryId: 'cat1', category } as SubCategoryEntity)).toBe(category);
+      expect(mockLoad).not.toHaveBeenCalled();
+    });
   });
 
   describe('createSubCategory', () => {

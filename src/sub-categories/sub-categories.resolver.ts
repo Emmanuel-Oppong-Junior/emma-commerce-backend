@@ -1,16 +1,26 @@
-import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { SubCategoriesService } from './sub-categories.service';
 import { CreateSubCategoryInput } from './dto/create-sub-category.input';
 import { UpdateSubCategoryInput } from './dto/update-sub-category.input';
 
 import { SubCategory } from './entities/sub-category.entity';
+import { Category } from '../categories/entities/category.entity';
+import { CategoryLoader } from './category.loader';
 import { Auth } from '../iam/authentication/decorators/auth.decorator';
 import { AuthType } from '../iam/authentication/enums/auth-type.enum';
 import { RequirePermission } from '../iam/authorization/policy.decorators';
 
 @Resolver(() => SubCategory)
 export class SubCategoriesResolver {
-  constructor(private readonly subCategoriesService: SubCategoriesService) {}
+  constructor(
+    private readonly subCategoriesService: SubCategoriesService,
+    private readonly categoryLoader: CategoryLoader,
+  ) {}
+
+  @ResolveField(() => Category, { nullable: true, description: 'The parent category' })
+  category(@Parent() subCategory: SubCategory) {
+    return subCategory.category ?? this.categoryLoader.loader.load(subCategory.categoryId);
+  }
 
   @RequirePermission('catalog.taxonomy.write')
   @Mutation(() => SubCategory, {

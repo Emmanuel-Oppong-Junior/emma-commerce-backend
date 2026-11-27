@@ -694,7 +694,7 @@ query {
   categoryName?: string;      // Exact, case-insensitive
   subCategoryName?: string;   // The sub-category's name, exact, case-insensitive
   subcategoryId?: string;
-  isActive?: boolean;         // Default true; ignored by public queries
+  isActive?: boolean;         // Admin queries only (ignored by public ones). Absent or null: active and archived alike (breaking change: no default of true)
   status?: ProductStatus;     // DRAFT | PUBLISHED | ARCHIVED; ignored by public queries
   search?: string;            // Full-text search, max 200 characters: see "Search" below
   createdAfter?: string;      // ISO date string
@@ -862,7 +862,7 @@ query { searchSuggestions(prefix: "gal", first: 5) { products { id name } brands
 - **Type**: Query
 - **Roles**: `ADMIN`, `SUPER_ADMIN`
 - **Args**: same as `products`: `paginationArgs: PaginationArgs`, `filterArgs: ProductFilterArgs`, `sortArgs: ProductSortArgs`
-- **Description**: Products in any status, including `DRAFT`, `ARCHIVED` and inactive. Use `filterArgs.status` / `filterArgs.isActive` to narrow. Omit `filterArgs` entirely to get every product (sending `filterArgs` without `isActive` applies its default `true`).
+- **Description**: Products in any status, including `DRAFT`, `ARCHIVED` and inactive. Use `filterArgs.status` / `filterArgs.isActive` to narrow. Without `isActive` (omitted or `null`) active and archived products are both returned. **Breaking change** `[breaking-api]`: `ProductFilterArgs.isActive` no longer defaults to `true`, and `null` no longer behaves as `true`.
 - **Response**: `ProductConnection!`
 
 ---
@@ -1061,7 +1061,7 @@ Resolver default: `ADMIN`, `SUPER_ADMIN`; reads are open to any signed-in user.
   description?: string;
   image?: string;
   categoryId: string;
-  category?: SubCategory;   // Typed SubCategory in schema.gql (schema defect); use categoryId
+  category?: Category;      // The parent category (was typed SubCategory by mistake, breaking change)
   products?: Product[];     // products(first: Int! = 20): published only, newest first, 1–100
   createdAt: DateTime;
   updatedAt: DateTime;
@@ -1300,6 +1300,7 @@ All variant operations need a staff permission. Customers see the active variant
   onHand?: Int;               // staff with inventory.view only (admin variant/variants queries), else FORBIDDEN
   reserved?: Int;             // staff with inventory.view only
   lowStockThreshold?: Int;    // available stock at or below which inventory.low_stock is raised (default 5)
+  product: Product!;          // The variant's product (also on `variants` and `variant`, loaded on demand)
   price?: Money;              // selling price: basePrice, plus tax when the product is taxable; null only for an unpriced migrated variant
   basePrice?: Money;          // price before tax, as entered
   discountedPrice?: Money;    // price of one unit after the best automatic promotion on it (on the variant, its product, category or brand); null without one. Coupons and cart minimums apply only in checkoutQuote. Signed in (P2-W.1): starts from the customer's price-list price when it applies to one unit (then null unless that list allows promotions) and includes their customer-group and first-order promotions

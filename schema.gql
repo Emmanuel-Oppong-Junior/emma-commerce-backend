@@ -5118,8 +5118,10 @@ input ProductFilterArgs {
   """
   inStock: Boolean
 
-  """Filter by active status"""
-  isActive: Boolean = true
+  """
+  Admin queries only: filter by active status; absent or null matches active and archived products
+  """
+  isActive: Boolean
 
   """
   Maximum price (inclusive) of an active variant, on its stored selling price (see priceMin)
@@ -8433,7 +8435,8 @@ type StoreSettings {
 }
 
 type SubCategory {
-  category: SubCategory
+  """The parent category"""
+  category: Category
 
   """Id of parent category"""
   categoryId: ID!
