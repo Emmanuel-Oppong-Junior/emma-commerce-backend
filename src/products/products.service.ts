@@ -88,7 +88,7 @@ export class ProductsService {
     return this.auditService.record(
       async (tx) => {
         const product = await this.productsRepository.create(
-          { ...rest, productType: { connect: { id: productType.id } }, attributes, isTaxable: isTaxable ?? false },
+          { ...rest, productTypeId: productType.id, attributes, isTaxable: isTaxable ?? false },
           { category: true, subcategory: true },
           tx,
         );
@@ -118,7 +118,7 @@ export class ProductsService {
     await this.slugs.assertAvailable('PRODUCT', updateProductInput.slug, id);
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- type and attributes are validated by retype
     const { productTypeId, attributes, priceChangeReason, ...rest } = updateProductInput;
-    const updateData: Prisma.ProductUpdateInput = { ...rest };
+    const updateData: Prisma.ProductUncheckedUpdateInput = { ...rest };
     const retyped = await this.retype(existing, updateProductInput, updateData);
     const reprice = rest.isTaxable !== undefined && rest.isTaxable !== existing.isTaxable;
     const retrack = rest.trackSerials !== undefined && rest.trackSerials !== existing.trackSerials;
@@ -304,14 +304,14 @@ export class ProductsService {
   private async retype(
     existing: Product,
     input: UpdateProductInput,
-    updateData: Prisma.ProductUpdateInput,
+    updateData: Prisma.ProductUncheckedUpdateInput,
   ): Promise<VariantOptions[]> {
     if (input.productTypeId === undefined && input.attributes === undefined) return [];
     const changesType = input.productTypeId !== undefined && input.productTypeId !== existing.productTypeId;
     const productType = await this.findProductType(input.productTypeId ?? existing.productTypeId);
     updateData.attributes = this.checkAttributes(productType, input.attributes ?? existing.attributes);
     if (!changesType) return [];
-    updateData.productType = { connect: { id: productType.id } };
+    updateData.productTypeId = productType.id;
     const variants = await this.productsRepository.findVariantOptions(existing.id);
     return variants.map((variant) => {
       const checked = checkOptionValues(productType.attributes, variant.optionValues);
@@ -342,6 +342,10 @@ export class ProductsService {
 
   private async validateProductInput(input: CreateProductInput | (UpdateProductInput & { id: string })) {
     await this.validateCategoryAndSubcategory(input.categoryId ?? '', input.subcategoryId);
+    if (input.brandId) {
+      const brand = await this.productsRepository.findBrandById(input.brandId);
+      if (!brand) throw new NotFoundException(`Brand ID "${input.brandId}" not found`);
+    }
   }
 
   private async validateCategoryAndSubcategory(categoryId: string, subcategoryId?: string): Promise<void> {

@@ -34,6 +34,7 @@ const mockProductsRepository = {
   updateTags: jest.fn(),
   findCategoryById: jest.fn(),
   findSubCategoryById: jest.fn(),
+  findBrandById: jest.fn(),
   findTagById: jest.fn(),
   countCartItems: jest.fn(),
   countOrderItems: jest.fn(),
@@ -112,13 +113,38 @@ describe('ProductsService', () => {
           subcategoryId: 'sub1',
           isActive: true,
           images: ['https://example.com/tshirt.jpg'],
-          productType: { connect: { id: 'product_type_general' } },
+          productTypeId: 'product_type_general',
           attributes: {},
         },
         { category: true, subcategory: true },
         AUDIT_TX,
       );
       expect(result).toEqual(product);
+    });
+
+    it('passes only scalar foreign keys (never a relation next to them) with category, subcategory and brand', async () => {
+      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
+      mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
+      mockProductsRepository.findBrandById.mockResolvedValue({ id: 'brand1' });
+      mockProductsRepository.create.mockResolvedValue({ id: 'prod1' });
+
+      await service.create({ ...input, brandId: 'brand1' }, 'admin1');
+
+      const data = mockProductsRepository.create.mock.calls[0][0];
+      expect(data).toMatchObject({ categoryId: 'cat1', subcategoryId: 'sub1', brandId: 'brand1' });
+      expect(data).not.toHaveProperty('productType');
+      expect(data).not.toHaveProperty('category');
+    });
+
+    it('rejects an unknown brand with NOT_FOUND', async () => {
+      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
+      mockProductsRepository.findSubCategoryById.mockResolvedValue({ id: 'sub1', categoryId: 'cat1' });
+      mockProductsRepository.findBrandById.mockResolvedValue(null);
+
+      await expect(service.create({ ...input, brandId: 'nope' }, 'admin1')).rejects.toThrow(
+        new NotFoundException('Brand ID "nope" not found'),
+      );
+      expect(mockProductsRepository.create).not.toHaveBeenCalled();
     });
 
     it('creates every given variant in the same transaction', async () => {
@@ -806,7 +832,7 @@ describe('ProductsService', () => {
       await service.create({ ...base, productTypeId: 'type-phone', attributes: { warranty: '12' } }, 'admin1');
 
       expect(productsRepository.create).toHaveBeenCalledWith(
-        expect.objectContaining({ productType: { connect: { id: 'type-phone' } }, attributes: { warranty: 12 } }),
+        expect.objectContaining({ productTypeId: 'type-phone', attributes: { warranty: 12 } }),
         expect.anything(),
         AUDIT_TX,
       );
@@ -840,10 +866,26 @@ describe('ProductsService', () => {
       ).toHaveBeenCalledWith({ id: 'v1', optionValues: {}, optionsKey: '' }, AUDIT_TX);
       expect(productsRepository.update).toHaveBeenCalledWith(
         'prod1',
-        expect.objectContaining({ productType: { connect: { id: 'type-phone' } }, attributes: { warranty: 24 } }),
+        expect.objectContaining({ productTypeId: 'type-phone', attributes: { warranty: 24 } }),
         expect.anything(),
         AUDIT_TX,
       );
+    });
+
+    it('changes type together with category and brand without mixing relation and scalar inputs', async () => {
+      (mockProductsRepository as unknown as Record<string, jest.Mock>).findVariantOptions.mockResolvedValue([]);
+      mockProductsRepository.findCategoryById.mockResolvedValue({ id: 'cat1' });
+      mockProductsRepository.findBrandById.mockResolvedValue({ id: 'brand1' });
+
+      await service.update(
+        'prod1',
+        { productTypeId: 'type-phone', attributes: { warranty: 24 }, categoryId: 'cat1', brandId: 'brand1' },
+        'admin1',
+      );
+
+      const data = mockProductsRepository.update.mock.calls[0][1];
+      expect(data).toMatchObject({ productTypeId: 'type-phone', categoryId: 'cat1', brandId: 'brand1' });
+      expect(data).not.toHaveProperty('productType');
     });
 
     it('refuses a type change a variant does not fit', async () => {
