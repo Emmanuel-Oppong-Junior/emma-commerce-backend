@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { Parent, ResolveField, Resolver } from '@nestjs/graphql';
 import { Variant } from '../variant/entities/variant.entity';
 import { MoneyObject } from '../commons/money/money.object';
@@ -6,6 +7,8 @@ import { VariantPriceTier } from '../price-lists/entities/price-list.entity';
 import { ActiveUser } from '../iam/authentication/decorators/active-user.decorator';
 import { ListPrice } from '../pricing/price';
 import { PromotionLoader } from './loaders/promotion.loader';
+import { ProductsLoader } from './loaders/products.loader';
+import { Product } from './entities/product.entity';
 
 const toTier = (tier: ListPrice): VariantPriceTier => ({
   minQuantity: tier.minQuantity,
@@ -16,7 +19,22 @@ const toTier = (tier: ListPrice): VariantPriceTier => ({
 // Viewer-dependent price fields of a variant: they need the product module's loader, keyed by the signed-in user.
 @Resolver(() => Variant)
 export class VariantFieldsResolver {
-  constructor(private readonly promotionLoader: PromotionLoader) {}
+  constructor(
+    private readonly promotionLoader: PromotionLoader,
+    private readonly productsLoader: ProductsLoader,
+  ) {}
+
+  // variants/variant select only id and name of the product (or none), so use the parent's product only when it is a
+  // full row; otherwise load it. The loader is unfiltered: staff reads and the variants of a product, cart or order the
+  // viewer can already see.
+  @ResolveField(() => Product)
+  async product(@Parent() variant: Variant): Promise<Product> {
+    const loaded = variant.product as Partial<Product> | undefined;
+    if (loaded && 'createdAt' in loaded) return loaded as Product;
+    const product = await this.productsLoader.loader.load(variant.productId);
+    if (!product) throw new NotFoundException(`Product "${variant.productId}" not found`);
+    return product as unknown as Product;
+  }
 
   @ResolveField(() => MoneyObject, {
     nullable: true,

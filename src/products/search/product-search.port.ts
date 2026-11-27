@@ -19,7 +19,7 @@ export interface AttributeFilter {
 
 export interface ProductSearchFilters {
   visibility: SearchVisibility;
-  /** ADMIN only. */
+  /** ADMIN only; absent means active and archived alike. */
   isActive?: boolean;
   /** ADMIN only. */
   status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';

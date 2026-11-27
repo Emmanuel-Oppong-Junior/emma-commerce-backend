@@ -190,6 +190,44 @@ describe('Variants as SKUs: admin API (e2e)', () => {
     expect(customerOne.body.errors[0].extensions.code).toBe('FORBIDDEN');
   });
 
+  it('resolves Variant.product on variants, variant and a created variant', async () => {
+    const created = await createVariant({ optionValues: { size: 'M' } });
+    const id = created.body.data.createVariant.id;
+
+    const list = await gql(
+      `{ variants(productId: "${SHIRT}") { edges { node { product { id name slug } } } } }`,
+      adminToken,
+    );
+    const one = await gql(`{ variant(variantId: "${id}") { product { id name slug } } }`, adminToken);
+
+    expect(list.body.errors).toBeUndefined();
+    expect(list.body.data.variants.edges[0].node.product).toMatchObject({ id: SHIRT });
+    expect(one.body.errors).toBeUndefined();
+    expect(one.body.data.variant.product).toMatchObject({ id: SHIRT, slug: expect.any(String) });
+  });
+
+  it('creates a product with category, subcategory and brand, and refuses an unknown brand', async () => {
+    await prisma.subCategory.create({ data: { id: 'seed_sub_create', name: 'Create subs', categoryId: 'seed_cat' } });
+    const create = (brandId: string) =>
+      gql(
+        `mutation { createProduct(createProductInput: { name: "Linked product", categoryId: "seed_cat",
+          subcategoryId: "seed_sub_create", brandId: "${brandId}", variants: [{ basePrice: "10.00", quantity: 1 }] }) {
+          id categoryId subcategoryId brandId } }`,
+        adminToken,
+      );
+
+    const ok = await create('seed_brand');
+    const unknown = await create('nope');
+
+    expect(ok.body.errors).toBeUndefined();
+    expect(ok.body.data.createProduct).toMatchObject({
+      categoryId: 'seed_cat',
+      subcategoryId: 'seed_sub_create',
+      brandId: 'seed_brand',
+    });
+    expect(unknown.body.errors[0].extensions.code).toBe('NOT_FOUND');
+  });
+
   it('refuses variant writes to customers', async () => {
     const res = await createVariant({ optionValues: { size: 'M' } }, customerToken);
 

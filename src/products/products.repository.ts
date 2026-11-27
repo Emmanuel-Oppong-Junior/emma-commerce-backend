@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { Category, Prisma, Product, SubCategory, Tag } from '../generated/prisma/client';
+import { Brand, Category, Prisma, Product, SubCategory, Tag } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PriceChangeOrigin } from '../price-history/price-change';
 import { insertRepricedChanges } from '../price-history/price-history.repository';
@@ -15,7 +15,7 @@ export class ProductsRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(
-    data: Prisma.ProductCreateInput,
+    data: Prisma.ProductUncheckedCreateInput,
     include?: Prisma.ProductInclude,
     db: Prisma.TransactionClient = this.prisma,
   ): Promise<Product> {
@@ -31,7 +31,7 @@ export class ProductsRepository {
 
   async update(
     id: string,
-    data: Prisma.ProductUpdateInput,
+    data: Prisma.ProductUpdateInput | Prisma.ProductUncheckedUpdateInput,
     include?: Prisma.ProductInclude,
     db: Prisma.TransactionClient = this.prisma,
   ): Promise<Product> {
@@ -116,6 +116,10 @@ export class ProductsRepository {
 
   async findSubCategoryById(id: string): Promise<SubCategory | null> {
     return this.prisma.subCategory.findUnique({ where: { id } });
+  }
+
+  async findBrandById(id: string): Promise<Brand | null> {
+    return this.prisma.brand.findUnique({ where: { id } });
   }
 
   async findTagById(id: string): Promise<Tag | null> {
