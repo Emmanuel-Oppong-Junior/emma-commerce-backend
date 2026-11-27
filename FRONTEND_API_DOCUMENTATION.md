@@ -1713,7 +1713,7 @@ All order operations require `Bearer` JWT.
   unitTax?: Money;            // Tax included in one discounted unit; null on pricingVersion 0
   lineTotal: Money;           // (unitListPrice - unitDiscount) × quantity = (unitNet + unitTax) × quantity
   taxLines: OrderLineTax[];   // One per tax included in the line; empty on pricingVersion 0 and untaxed lines
-  unitCost?: Decimal;         // P8-A, inventory.cost.view only (others get FORBIDDEN on the field): the variant's weighted-average cost (tax-exclusive, 4 dp) when the sale's stock was consumed (online payment captured, or cash-on-delivery dispatch). Written once, never changed by later cost changes; null when the cost was unknown then or the stock is not consumed yet
+  unitCost?: Decimal;         // P8-A, inventory.cost.view only (others get null here plus a FORBIDDEN error for the field): the variant's weighted-average cost (tax-exclusive, 4 dp) when the sale's stock was consumed (online payment captured, or cash-on-delivery dispatch). Written once, never changed by later cost changes; null when the cost was unknown then or the stock is not consumed yet
   createdAt: DateTime;
   updatedAt: DateTime;
   product: Product;
@@ -2929,7 +2929,7 @@ StockTakeLine {
 - `stockTakes(status?, locationId?, first = 20 (1-200), after?)` → `StockTakePage! { nodes, totalCount, hasNextPage }`, newest first (`inventory.view`).
 - `stockTake(id)` → `StockTake!` (`inventory.view`).
 - `stockTakeLines(stockTakeId, counted?: Boolean, first = 50 (1-200), after?)` → `StockTakeLinePage!`, in SKU order (`inventory.view`; `counted: false` lists what is left to count).
-- `stockTakeVarianceReport(id)` → `StockTakeVarianceReport! { stockTake, lines, totals }` (`inventory.stocktake.approve`): each counted line with `expectedAtOpen`, `changeSinceOpen` (how the expected quantity moved before the count), `expectedQuantity`, `countedQuantity`, `variance`, `unitPrice` and `varianceValue` (`Money`, at the variant's **current price**; null without a price), and since P4-E.1 `unitCost` (`Decimal`, the weighted-average cost) and `varianceCostValue` (`Money`; null when the cost is unknown); `totals`: `lineCount`, `countedCount`, `uncountedCount`, `linesWithVariance`, `shortageUnits`, `surplusUnits`, `netVarianceUnits`, `shortageValue`, `surplusValue`, `netVarianceValue`, and at cost `shortageCostValue`, `surplusCostValue`, `netVarianceCostValue` (lines of unknown cost add nothing). Every cost field needs `inventory.cost.view` as well (`FORBIDDEN` on that field, `null` in `data`, otherwise).
+- `stockTakeVarianceReport(id)` → `StockTakeVarianceReport! { stockTake, lines, totals }` (`inventory.stocktake.approve`): each counted line with `expectedAtOpen`, `changeSinceOpen` (how the expected quantity moved before the count), `expectedQuantity`, `countedQuantity`, `variance`, `unitPrice` and `varianceValue` (`Money`, at the variant's **current price**; null without a price), and since P4-E.1 `unitCost` (`Decimal`, the weighted-average cost) and `varianceCostValue` (`Money`; null when the cost is unknown); `totals`: `lineCount`, `countedCount`, `uncountedCount`, `linesWithVariance`, `shortageUnits`, `surplusUnits`, `netVarianceUnits`, `shortageValue`, `surplusValue`, `netVarianceValue`, and at cost `shortageCostValue`, `surplusCostValue`, `netVarianceCostValue` (lines of unknown cost add nothing). Every cost field needs `inventory.cost.view` as well; without it each one is `null` in `data` plus its own `FORBIDDEN` entry in `errors`.
 
 #### Lots and expiry (P4-C.1)
 
@@ -2964,8 +2964,8 @@ ExpiringStockLine {
   onHand: number;
   unitPrice?: Money;               // the variant's current selling price
   value?: Money;                   // onHand x unitPrice
-  unitCost?: Decimal;              // P4-E.1, inventory.cost.view: the variant's weighted-average cost; null when unknown
-  costValue?: Money;               // P4-E.1, inventory.cost.view: onHand x unitCost; null when the cost is unknown
+  unitCost?: Decimal;              // P4-E.1, inventory.cost.view (others: null plus a FORBIDDEN error): the variant's weighted-average cost; null when unknown
+  costValue?: Money;               // P4-E.1, inventory.cost.view (others: null plus a FORBIDDEN error): onHand x unitCost; null when the cost is unknown
 }
 ```
 
@@ -3013,7 +3013,7 @@ OrderItemSerial { serial: string; status: SerialUnitStatus; soldAt?: DateTime; w
 
 Staff buy stock from **suppliers** on **purchase orders**; each delivery received adds the units at the order's stock location and updates the variant's **weighted-average cost**. All of it is additive (no existing operation changed). Not in this release: emailing or printing purchase orders, approvals, other currencies, landed costs (freight, duty), supplier invoices and reorder suggestions.
 
-**Permissions**: reads `purchasing.view` (Owner, Manager, Inventory clerk); suppliers and purchase-order changes `purchasing.manage` (Owner, Manager); receiving `purchasing.receive` (Owner, Manager, Inventory clerk). **Costs are hidden** without `inventory.cost.view` (Owner, Manager): every cost field below is nullable and, for anyone else, resolves to `null` with a `FORBIDDEN` error on that field, so an Inventory clerk should simply not select them. No step-up: costs never change a selling price.
+**Permissions**: reads `purchasing.view` (Owner, Manager, Inventory clerk); suppliers and purchase-order changes `purchasing.manage` (Owner, Manager); receiving `purchasing.receive` (Owner, Manager, Inventory clerk). **Costs are hidden** without `inventory.cost.view` (Owner, Manager): every cost field below is nullable and, for anyone else, resolves to `null` in `data` **and** adds one `FORBIDDEN` entry to `errors` for each cost field selected (one per field per object, so a list of 20 lines with `unitCost` gives 20 errors); the rest of the response still resolves. An Inventory clerk should simply not select them. No step-up: costs never change a selling price.
 
 - **Suppliers.** `name` is unique ignoring case and spacing (`CONFLICT`). They are paid in the store currency (`currency` defaults to it; any other is `BAD_REQUEST`). A supplier a purchase order refers to cannot be deleted (`CONFLICT`): deactivate it (`updateSupplier` with `isActive: false`); an inactive supplier takes no new orders (`BAD_REQUEST`).
 - **Status** (`PurchaseOrderStatus`): `DRAFT` → `SENT` | `CANCELLED`; `SENT` → `PARTIALLY_RECEIVED` | `RECEIVED` (by receipts) | `CANCELLED` (nothing has arrived); `PARTIALLY_RECEIVED` → `PARTIALLY_RECEIVED` | `RECEIVED` (more receipts) | `CLOSED` (closed short: the rest will not come). `RECEIVED`, `CLOSED`, `CANCELLED` are final. Anything else is `CONFLICT`; of two concurrent changes one wins and the other gets `CONFLICT`. There is no approval step.
@@ -3994,7 +3994,7 @@ A Pharmacist role comes with its vertical. The Owner can create **custom roles**
 | `inventory.location.manage` | `createStockLocation`, `updateStockLocation`, `deleteStockLocation`, `setShippingZoneFulfilmentLocations`, `setPickupLocationFulfilmentLocations` (P4-A.1; held by Owner and Manager) |
 | `inventory.stocktake.approve` | `approveStockTake`, `cancelStockTake`, `stockTakeVarianceReport`; the `StockTakeLine.expectedAtOpen`, `expectedQuantity` and `variance` fields (P4-B.1; held by Owner and Manager) |
 | `inventory.transfer` | `createStockTransfer`, `dispatchStockTransfer`, `receiveStockTransfer`, `cancelStockTransfer` (P4-A.2; held by Owner, Manager and Inventory clerk) |
-| `inventory.cost.view` | `variantCostHistory`, `setVariantCost` (with `purchasing.manage`); every cost field: `Variant.costPrice`, `StockMovement.unitCost`, purchase-order `unitCost`/`lineCost`/`cost`/`totalCost`/`receivedCost`, cost values in `expiringStock` and `stockTakeVarianceReport` (P4-E.1; held by Owner and Manager) |
+| `inventory.cost.view` | `variantCostHistory`, `setVariantCost` (with `purchasing.manage`); every cost field: `Variant.costPrice`, `StockMovement.unitCost`, purchase-order `unitCost`/`lineCost`/`cost`/`totalCost`/`receivedCost`, cost values in `expiringStock` and `stockTakeVarianceReport` (P4-E.1; held by Owner and Manager). Without it a selected cost field is `null` in `data` and adds one `FORBIDDEN` error per field (per object); the rest of the response resolves |
 | `purchasing.view` | `suppliers`, `supplier`, `purchaseOrders`, `purchaseOrder` (P4-E.1; held by Owner, Manager and Inventory clerk) |
 | `purchasing.manage` | `createSupplier`, `updateSupplier`, `deleteSupplier`, `createPurchaseOrder`, `updatePurchaseOrder`, `sendPurchaseOrder`, `cancelPurchaseOrder`, `closePurchaseOrder`, `setVariantCost` (P4-E.1; held by Owner and Manager) |
 | `purchasing.receive` | `receivePurchaseOrder` (P4-E.1; held by Owner, Manager and Inventory clerk) |
